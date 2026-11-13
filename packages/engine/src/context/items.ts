@@ -21,6 +21,7 @@ import { caches, rulesPresenceKey } from "../cache";
 import { isAgentOnlyDm } from "../dms";
 import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
 import { type Judge, triesToChangePermissions } from "../judge";
+import { InvalidJudgeAnswerError } from "../judge-answer";
 import { can, getMembership, type Membership, requirePermission } from "../organizations";
 import { hasContact } from "../outside";
 import { enqueueIndex, userVisibleChannels } from "../search";
@@ -113,7 +114,7 @@ export function checkContent(text: string) {
  */
 export async function checkPermissionText(judge: Judge | undefined, orgId: string, text: string) {
   if (!judge || !text.trim()) return;
-  const changes = await triesToChangePermissions(judge, { orgId, text }).catch(() => false);
+  const changes = await triesToChangePermissions(judge, { orgId, text }).catch(permissionCheckFailure);
   if (changes) {
     throw new ValidationError(
       "Context can't change permissions or approvals. Ask an admin to change scopes instead.",
@@ -125,7 +126,13 @@ export async function checkPermissionText(judge: Judge | undefined, orgId: strin
 /** Like `checkPermissionText`, as a yes/no (jobs skip such text instead of failing). */
 export async function changesPermissions(judge: Judge | undefined, orgId: string, text: string) {
   if (!judge || !text.trim()) return false;
-  return triesToChangePermissions(judge, { orgId, text }).catch(() => false);
+  return triesToChangePermissions(judge, { orgId, text }).catch(permissionCheckFailure);
+}
+
+/** Preserve legacy outage behavior, but a malformed answer is never a negative permission judgment. */
+function permissionCheckFailure(error: unknown): false {
+  if (error instanceof InvalidJudgeAnswerError) throw error;
+  return false;
 }
 
 // ── Evidence ─────────────────────────────────────────────────────────────────

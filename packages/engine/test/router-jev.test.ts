@@ -166,6 +166,10 @@ function fakeJev(
     }
     if (body.questions.social && r.social)
       answers.social = { type: "choice", ...r.social, probabilities: { [r.social.choice]: r.social.confidence } };
+    // Provider-contract fixtures answer every requested question; omission has its own integrity tests.
+    if (body.questions.social && !r.social)
+      answers.social = { type: "choice", choice: "none", probabilities: { none: 1 }, confidence: 1 };
+    if (body.questions.already_answered) answers.already_answered = { type: "noul", noul: 0 };
     return Response.json({ model: "jev-1.14.0", answers, usage: { input_tokens: 1200, output_tokens: 30 } });
   }) as unknown as typeof fetch;
   return { fetcher, requests };
@@ -194,8 +198,8 @@ describe("Jev's questions", () => {
     expect((await socialOf({ choice: "🌙", confidence: 0.9 })).decided.social).toEqual({ react: true, emoji: "🌙" });
     expect((await socialOf({ choice: "🌙", confidence: 0.3 })).decided.social).toEqual({ react: false, emoji: "🌙" });
     expect((await socialOf({ choice: "none", confidence: 0.9 })).decided.social).toEqual({ react: false, emoji: "" });
-    expect((await socialOf({ choice: "🖕", confidence: 0.9 })).decided.social).toEqual({ react: false, emoji: "" });
-    expect((await socialOf(undefined)).decided.social).toBeUndefined();
+    await expect(socialOf({ choice: "🖕", confidence: 0.9 })).rejects.toThrow("judge: invalid answer");
+    expect((await socialOf(undefined)).decided.social).toEqual({ react: false, emoji: "" });
   });
 
   test("insisting that nobody answered is a yes to 'should any agent reply?'", async () => {

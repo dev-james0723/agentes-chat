@@ -3,6 +3,7 @@ import { and, type Database, type Executor, eq, gte, schema, sql } from "@agente
 import { type AuditEntry, auditEveryOrg } from "./audit";
 import { openSecret, sealSecret } from "./crypto";
 import { ConflictError, ValidationError } from "./errors";
+import { InvalidJudgeAnswerError } from "./judge-answer";
 import { monthStartUtc } from "./usage";
 
 const { instanceSecrets, usageRecords } = schema;
@@ -95,20 +96,38 @@ export interface JevCall {
 /** One `POST /v1/systemone`. `state` is null when our own deadline passed or the answer is the request's fault. */
 async function systemOne(apiKey: string, call: JevCall) {
   const base = (call.baseURL ?? "https://api.typesafe.ai").replace(/\/$/, "");
-  let res: Response;
+  const signal = AbortSignal.timeout(call.timeoutMs);
+  let res: Response | undefined;
+  let body: unknown;
   try {
     res = await (call.fetch ?? fetch)(`${base}/v1/systemone`, {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", ...call.headers },
       body: JSON.stringify(call.body),
-      signal: AbortSignal.timeout(call.timeoutMs),
+      signal,
+    });
+    // The deadline covers the body too, including a transport that does not propagate abort to its reader.
+    const response = res;
+    body = await new Promise<unknown>((resolve, reject) => {
+      const aborted = () => reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      if (signal.aborted) aborted();
+      response
+        .json()
+        .then(resolve, () => resolve(null))
+        .finally(() => signal.removeEventListener("abort", aborted));
     });
   } catch (error) {
     // A deadline we set says the request was slow, not that TypeSafe is down: one server calls for every workspace.
     const late = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    return { state: late ? null : ("down" as const), status: 0, body: null };
+    return {
+      state: res && !res.ok ? jevStateOf(res.status) : late ? null : ("down" as const),
+      status: res?.status ?? 0,
+      body: null,
+      retryAfterMs:
+        Number(res?.headers.get("retry-after")) > 0 ? Number(res?.headers.get("retry-after")) * 1000 : undefined,
+    };
   }
-  const body: unknown = await res.json().catch(() => null);
   const seconds = Number(res.headers.get("retry-after"));
   return {
     state: jevStateOf(res.status, body),
@@ -125,6 +144,7 @@ export async function callJev<T>(source: JevKeySource, call: JevCall): Promise<T
   if (!apiKey) throw new JevOffError();
   const r = await systemOne(apiKey, call);
   if (r.state) jev.report(r.state, r.retryAfterMs, apiKey);
+  if (r.state === "ok" && r.body === null) throw new InvalidJudgeAnswerError("judge: invalid answer (response body)");
   if (r.state !== "ok" || r.body === null) {
     throw new Error(r.status ? `TypeSafe answered ${r.status}` : "TypeSafe didn't answer");
   }

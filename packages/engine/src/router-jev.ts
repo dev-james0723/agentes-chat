@@ -1,5 +1,7 @@
 import { cutText } from "./format";
 import { callJev, type JevKeySource, JevOffError } from "./jev-key";
+import type { JudgeQuestion } from "./judge";
+import { InvalidJudgeAnswerError, validateJudgeAnswers } from "./judge-answer";
 import {
   asksAddressee,
   ROUTER_MESSAGE_CHARS,
@@ -33,6 +35,8 @@ import {
 export interface JevUsage {
   orgId: string;
   model: string;
+  requestedModel?: string;
+  partial?: boolean;
   inputTokens: number;
   outputTokens: number;
 }
@@ -100,7 +104,7 @@ export function createJevRouterStrategy(options: {
           can: c.can ?? null,
         })),
       };
-      const questions: Record<string, unknown> = {
+      const questions: Record<string, JudgeQuestion> = {
         needs_agent: {
           type: "noul",
           instructions: `Should any AI agent reply to \`latest_message\`? ${whoFor()} ${input.personal ? PERSONAL_CHAT : TEAM_CHAT}: an agent should reply only when the message speaks to an agent (by @, by name or by its role), asks the agents or anyone something an agent can help with ("does anyone know…", "alguém sabe…"), speaks to the agents as a group, or continues a conversation with an agent. Also yes when the person insists or complains that nobody answered ("alô???", "ninguém vai responder?", a greeting again after nobody answered the first): they want an agent's reply. Otherwise, when unsure, no.`,
@@ -179,6 +183,7 @@ export function createJevRouterStrategy(options: {
         };
       }
 
+      const requestedModel = options.model ?? "jev-latest";
       const body = await callJev<{
         model?: string;
         answers?: Record<string, JevAnswer>;
@@ -186,17 +191,21 @@ export function createJevRouterStrategy(options: {
       }>(options.key, {
         fetch: options.fetch,
         baseURL: options.baseURL,
-        body: { state, model: options.model ?? "jev-latest", questions },
+        body: { state, model: requestedModel, questions },
         timeoutMs: options.timeoutMs ?? 2000,
       });
+      const resolvedModel = typeof body.model === "string" && body.model.trim() ? body.model : null;
       await options
         .recordUsage({
           orgId: input.orgId,
-          model: body.model ?? options.model ?? "jev-latest",
-          inputTokens: body.usage?.input_tokens ?? 0,
-          outputTokens: body.usage?.output_tokens ?? 0,
+          model: resolvedModel ?? requestedModel,
+          requestedModel,
+          partial: !validTokens(body.usage?.input_tokens) || !validTokens(body.usage?.output_tokens) || !resolvedModel,
+          inputTokens: validTokens(body.usage?.input_tokens) ? body.usage.input_tokens : 0,
+          outputTokens: validTokens(body.usage?.output_tokens) ? body.usage.output_tokens : 0,
         })
         .catch(() => {});
+      validateJudgeAnswers(questions, body.answers);
       const answers = body.answers ?? {};
       const best = answers.best_agent?.probabilities ?? {};
       const to = answers.addressee?.probabilities ?? {};
@@ -251,6 +260,7 @@ export function createJevRouterStrategy(options: {
 }
 
 const clamp = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
+const validTokens = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
 /**
  * The router's chain (ADR 0074): each step in order until one decides. A step that can't read this message
@@ -282,6 +292,7 @@ export function routeChain(
           const skipped = error instanceof RouterSkip || error instanceof JevOffError;
           timed(skipped ? "skipped" : "failed");
           if (!skipped) failures.push(`${step.name}: ${error instanceof Error ? error.message : String(error)}`);
+          if (error instanceof InvalidJudgeAnswerError) throw new RouterChainEnd(failures);
         }
       }
       throw new RouterChainEnd(failures);

@@ -846,6 +846,10 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       kind: "router" | "agent";
       provider: string;
       model: string;
+      /** Keep an alias separate from the model resolved by the external service. */
+      requestedModel?: string;
+      /** Missing service counters/model are unknown, even though legacy numeric columns require zeroes. */
+      partial?: boolean;
       inputTokens: number;
       outputTokens: number;
       costNanoUsd: number;
@@ -860,7 +864,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           credentialId: null,
           provider: input.provider,
           model: input.model,
-          requestedModel: input.model,
+          requestedModel: input.requestedModel ?? input.model,
+          partial: input.partial ?? false,
           inputTokens: input.inputTokens,
           outputTokens: input.outputTokens,
           costNanoUsd: input.costNanoUsd,
