@@ -75,6 +75,21 @@ describe("ACP isolated process smoke", () => {
     const { handleAntigravityBrainTurn } = await import("../../runner/brain-antigravity");
     const root = fs.mkdtempSync(path.join(import.meta.dir, "host-acp-dispatch-test-"));
     const binary = path.join(root, "fake.py");
+    const mcpBinary = path.join(root, "mcp-fake.py");
+    fs.writeFileSync(
+      mcpBinary,
+      `#!/usr/bin/python3
+import json,sys
+for line in sys.stdin:
+ m=json.loads(line); method=m.get('method'); ident=m.get('id')
+ if ident is None: continue
+ if method=='initialize': result={'protocolVersion':'2024-11-05','capabilities':{'tools':{}},'serverInfo':{'name':'fake','version':'1'}}
+ elif method=='tools/list': result={'tools':[],'_meta':{'agenteschat/runStateVersion':3}}
+ else: continue
+ print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result}),flush=True)
+`,
+      { mode: 0o700 },
+    );
     fs.writeFileSync(
       binary,
       `#!/usr/bin/python3
@@ -84,7 +99,8 @@ for line in sys.stdin:
  if method=='initialize': result={'protocolVersion':1}
  elif method=='session/new': result={'sessionId':'s1','models':{'currentModelId':'gemini-4-argon-high','availableModels':[{'modelId':'gemini-4-argon-high'}]}}
  elif method=='session/prompt':
-  print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'HOST_READY'}}}}),flush=True)
+  text=json.dumps({'type':'final','text':'HOST_READY'})
+  print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':text}}}}),flush=True)
   result={'stopReason':'end_turn'}
  else: continue
  print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result}),flush=True)
@@ -105,7 +121,7 @@ for line in sys.stdin:
               throw new Error("Managed account must not be used");
             },
           },
-          mcp: { socketPath: "/tmp/mcp-test.sock", command: ["/bin/echo"] },
+          mcp: { socketPath: "/tmp/mcp-test.sock", command: [mcpBinary] },
         },
         {
           kind: "antigravity",
@@ -143,7 +159,7 @@ for line in sys.stdin:
   print(json.dumps({'jsonrpc':'2.0','id':90,'method':'session/request_permission','params':{'sessionId':'s1','toolCall':{'title':'Run mcp_agenteschat_agentes_test','kind':'other','rawInput':{}},'options':[{'optionId':'yes','kind':'allow_once'}]}}),flush=True)
   permission=json.loads(sys.stdin.readline())
   if permission.get('result',{}).get('outcome',{}).get('outcome')!='cancelled': sys.exit(8)
-  for text in ['before secret-', 'run-token after']:
+  for text in ['{"type":"final","text":"before secret-', 'run-token after"}']:
    print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':text}}}}),flush=True)
   result={'stopReason':'end_turn'}
  else: continue
@@ -159,6 +175,15 @@ for line in sys.stdin:
         sessionId: "session-12345678",
         model: "gemini-4-argon-high",
         prompt: "test",
+        profile: "plan",
+        connectMcp: async () =>
+          ({
+            listTools: async () => ({ tools: [], _meta: { "agenteschat/runStateVersion": 3 } }),
+            callTool: async () => {
+              throw new Error("unexpected");
+            },
+            close: async () => {},
+          }) as any,
         bin: binary,
         mcp: { token: "secret-run-token", socketPath: "/tmp/mcp-test.sock", command: ["/bin/echo"] },
         signal: new AbortController().signal,
@@ -197,6 +222,7 @@ for line in sys.stdin:
         sessionId: "session-12345678",
         model: "gemini-4-argon-high",
         prompt: "test",
+        profile: "plan",
         bin: binary,
         mcp: { token: "secret-run-token", socketPath: "/tmp/mcp-test.sock", command: ["/bin/echo"] },
         signal: controller.signal,
@@ -207,6 +233,77 @@ for line in sys.stdin:
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe("error");
       expect(events[0].code).toBe("antigravity_failed");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+  test("executes one listed MCP tool and returns its answer without exposing token to ACP", async () => {
+    if (process.platform !== "darwin") return;
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { runHostAcpTurn } = await import("../../runner/host-acp-runtime");
+    const root = fs.mkdtempSync(path.join(import.meta.dir, "host-acp-tool-loop-test-"));
+    const binary = path.join(root, "fake.py"),
+      trace = path.join(root, "trace.json");
+    const script = `#!/usr/bin/python3
+import json,sys,os
+count=0
+for line in sys.stdin:
+ m=json.loads(line); method=m.get('method'); ident=m.get('id')
+ if method=='initialize': result={'protocolVersion':1}
+ elif method=='session/new':
+  open(${JSON.stringify(trace)},'w').write(json.dumps({'mcp':m['params']['mcpServers'],'hasToken':bool(os.getenv('AGENTES_MCP_TOKEN'))}))
+  result={'sessionId':'s1','models':{'currentModelId':'gemini-4-argon-high','availableModels':[{'modelId':'gemini-4-argon-high'}]}}
+ elif method=='session/prompt':
+  count+=1
+  text=json.dumps({'type':'tool_call','name':'list_issues','arguments':{}} if count==1 else {'type':'final','text':'Found 3 issues.'})
+  print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s1','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':text}}}}),flush=True)
+  result={'stopReason':'end_turn'}
+ else: continue
+ print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result}),flush=True)
+`;
+    fs.writeFileSync(binary, script, { mode: 0o700 });
+    const calls: any[] = [],
+      events: any[] = [];
+    const tool = {
+      name: "list_issues",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      _meta: { "agenteschat/runStateEnforced": true },
+    };
+    try {
+      await runHostAcpTurn({
+        cwd: root,
+        runnerHome: root,
+        runId: "run-12345678",
+        sessionId: "session-12345678",
+        model: "gemini-4-argon-high",
+        prompt: "List issues",
+        profile: "work",
+        bin: binary,
+        mcp: { token: "secret-run-token", socketPath: "/tmp/mcp-test.sock", command: ["/bin/echo"] },
+        signal: new AbortController().signal,
+        isAuthorized: () => true,
+        emit: (e) => events.push(e),
+        connectMcp: async () =>
+          ({
+            listTools: async () => ({ tools: [tool], _meta: { "agenteschat/runStateVersion": 3 } }),
+            callTool: async (call: unknown) => {
+              calls.push(call);
+              return {
+                content: [{ type: "text", text: "3 issues" }],
+                _meta: {
+                  "agenteschat/runState": "completed",
+                  "agenteschat/imageOmitted": false,
+                  "agenteschat/complete": true,
+                },
+              };
+            },
+            close: async () => {},
+          }) as any,
+      });
+      expect(calls).toEqual([{ name: "list_issues", arguments: {} }]);
+      expect(events.at(-1)).toMatchObject({ type: "done", text: "Found 3 issues." });
+      expect(JSON.parse(fs.readFileSync(trace, "utf8"))).toEqual({ mcp: [], hasToken: false });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

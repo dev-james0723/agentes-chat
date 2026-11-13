@@ -541,6 +541,7 @@ export async function handleAntigravityBrainTurn(
       runId: req.runId,
       sessionId: req.session.id,
       model: req.model,
+      profile: req.permissions?.mode === "work" ? "work" : "plan",
       prompt: [req.system, req.prompt].filter((x): x is string => typeof x === "string" && x.length > 0).join("\n\n"),
       mcp: { ...ctx.mcp, token: req.mcp.token },
       signal: scope.signal,

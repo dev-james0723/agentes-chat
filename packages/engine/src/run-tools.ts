@@ -59,6 +59,8 @@ export interface RunToolsDeps {
 export interface BridgeCallResult {
   result: ToolResult;
   code?: string;
+  /** Images cannot be consumed by the text-only ACP adapter, even when the bridge carries them. */
+  imageOmitted?: boolean;
 }
 
 /** Where a run's events and cards go. */
@@ -678,9 +680,12 @@ export async function invokeToolForRun(
     : await tools.invoke(ctx, { toolUseId: call.id, name: call.name, input });
   if (run && where) await recordBridgeEffects(deps, run, where, use, outcome);
   const wait = outcome.type === "result" && !outcome.output.isError ? waitOf(outcome.output.data) : null;
+  // Malformed image data is also treated as omitted, never silently as text-only.
+  const images = outcome.type === "result" ? outcome.output.images : undefined;
+  const imageOmitted = images !== undefined && (!Array.isArray(images) || images.length > 0);
   const suspend = async (pause: RunPause, r: AgentRun): Promise<BridgeCallResult> => {
     const result = await suspendRunForTool(deps, r, { id: call.id, name: call.name }, pause);
-    return result.isError ? { result, code: "bridge.run_not_running" } : { result };
+    return result.isError ? { result, code: "bridge.run_not_running" } : { result, imageOmitted };
   };
   if (wait && run) {
     return suspend(
@@ -696,6 +701,7 @@ export async function invokeToolForRun(
         ...(isError ? { isError: true } : {}),
         ...(outcome.output.images?.length ? { images: outcome.output.images } : {}),
       },
+      imageOmitted,
       ...(isError ? { code: codeOf(outcome.output.content, outcome.output.data) } : {}),
     };
   }

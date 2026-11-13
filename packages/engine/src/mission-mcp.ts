@@ -73,11 +73,11 @@ const { machineTasks } = schema;
  */
 export type McpCallFrame = Extract<RunnerFrame, { type: "mcp.call" }>;
 export type McpOutcome =
-  | { ok: true; text: string; images?: ToolImage[] }
+  | { ok: true; text: string; images?: ToolImage[]; runState?: "completed" | "suspended"; imageOmitted?: boolean }
   | { ok: false; error: { code: string; message: string } };
 export type McpListFrame = Extract<RunnerFrame, { type: "mcp.list" }>;
 export type McpListOutcome =
-  | { ok: true; tools: McpToolInfo[] }
+  | { ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
   | { ok: false; error: { code: string; message: string } };
 
 const refuse = (code: string, message: string): McpOutcome => ({ ok: false, error: { code, message } });
@@ -388,9 +388,16 @@ export async function handleMissionMcpCall(
       name: frame.tool,
       input: frame.args,
     });
-    if (!out.result.isError) {
-      return { ok: true, text: out.result.content, ...(out.result.images ? { images: out.result.images } : {}) };
-    }
+    if (!out.result.isError && typeof out.imageOmitted === "boolean")
+      return {
+        ok: true,
+        text: out.result.content,
+        ...(out.result.images ? { images: out.result.images } : {}),
+        runState: out.result.pause ? "suspended" : "completed",
+        imageOmitted: out.imageOmitted,
+      };
+    if (!out.result.isError)
+      return refuse("bridge.image_state_unknown", "The tool result's image state is unknown. Stop without retry.");
     const code = out.code ?? "tool.failed";
     return refuse((id.taskId && TASK_CODES[code]) || code, out.result.content);
   } catch (error) {
@@ -421,6 +428,7 @@ export async function handleMissionMcpList(
     );
     return {
       ok: true,
+      runStateVersion: 3,
       tools: tools.slice(0, MCP_TOOLS_MAX).map((t) => ({
         name: t.name,
         description: cutText(t.description, 4000),

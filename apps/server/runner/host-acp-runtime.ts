@@ -6,9 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { CodexBrainEvent } from "./brain-codex";
+import { runStructuredToolLoop, ToolSuspended } from "./host-acp-intent";
+import { connectHostMcp } from "./host-acp-mcp";
 import type { Spawn } from "./scope-gate";
 
-const SERVER = "agenteschat_agentes";
 const RUN_ID = /^[a-zA-Z0-9-]{8,64}$/;
 
 type AcpPeer = { request(method: string, params: unknown): Promise<any> };
@@ -196,6 +197,9 @@ export interface HostAcpTurn {
   sessionId: string;
   model: string;
   prompt: string;
+  profile: "plan" | "work";
+  /** Test seam; normal runs use the local stdio MCP client. */
+  connectMcp?: typeof connectHostMcp;
   mcp: { token: string; socketPath: string; command: string[] };
   signal: AbortSignal;
   emit: (event: CodexBrainEvent) => void;
@@ -213,6 +217,9 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
   let peer: Peer | undefined;
   let resultText: string | undefined;
   let groupGone = false;
+  let failReason = "The host Antigravity ACP turn could not complete.";
+  let mcpClient: Awaited<ReturnType<typeof connectHostMcp>> | undefined;
+  const mcpAbort = new AbortController();
   try {
     if (
       process.platform !== "darwin" ||
@@ -276,9 +283,6 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
     const env: NodeJS.ProcessEnv = {};
     for (const k of ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG"]) if (process.env[k]) env[k] = process.env[k];
     env.HOME = hostHome;
-    env.AGENTES_MCP_TOKEN = input.mcp.token;
-    env.AGENTES_MCP_SOCKET = input.mcp.socketPath;
-    env.AGENTES_RUNNER_HOME = root;
     child = (input.spawn ?? spawn)(input.bin, args, {
       cwd: input.cwd,
       env,
@@ -292,7 +296,10 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
     const events = child as unknown as EventEmitter;
     events.on("error", () => peer?.close());
     events.on("exit", () => peer?.close());
-    const cancel = () => peer?.cancel();
+    const cancel = () => {
+      mcpAbort.abort();
+      peer?.cancel();
+    };
     input.signal.addEventListener("abort", cancel, { once: true });
     // The signal may have fired during setup, before the listener was installed.
     if (input.signal.aborted) cancel();
@@ -307,28 +314,58 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
         clientInfo: { name: "agenteschat", version: "0.1" },
       });
       if (init.protocolVersion !== 1) throw new Error("ACP protocol unsupported");
-      const [command, ...prefix] = input.mcp.command;
-      const session = await peer.request("session/new", {
-        cwd: input.cwd,
-        mcpServers: [{ name: SERVER, command, args: [...prefix, "mcp", "--run", input.runId], env: [] }],
-      });
+      const session = await peer.request("session/new", { cwd: input.cwd, mcpServers: [] });
       if (typeof session.sessionId !== "string" || !session.sessionId) throw new Error("ACP session missing");
       peer.sessionId = session.sessionId;
       await selectAcpModel(peer, session, input.model);
       if (!input.isAuthorized()) throw new Error("ACP authorization revoked");
-      const result = await peer.request("session/prompt", {
-        sessionId: peer.sessionId,
-        prompt: [{ type: "text", text: input.prompt }],
+      mcpClient = await (input.connectMcp ?? connectHostMcp)({
+        ...input.mcp,
+        runnerHome: root,
+        cwd: input.cwd,
+        runId: input.runId,
+        profile: input.profile,
+        signal: mcpAbort.signal,
       });
-      if (result.stopReason !== "end_turn" || input.signal.aborted) throw new Error("ACP turn incomplete");
-      resultText = clean(peer.text);
+      const turnPeer = peer;
+      try {
+        const answer = await runStructuredToolLoop({
+          mcp: mcpClient,
+          prompt: input.prompt,
+          signal: mcpAbort.signal,
+          isAuthorized: input.isAuthorized,
+          // Pilot only. Expand after typed image/pause and per-tool acceptance tests.
+          allowed: new Set(["list_issues", "load_skill"]),
+          ask: async (text) => {
+            turnPeer.text = "";
+            const result = await turnPeer.request("session/prompt", {
+              sessionId: turnPeer.sessionId,
+              prompt: [{ type: "text", text }],
+            });
+            if (result.stopReason !== "end_turn" || input.signal.aborted) throw new Error("ACP turn incomplete");
+            return turnPeer.text;
+          },
+        });
+        resultText = clean(answer);
+      } catch (error) {
+        if (error instanceof ToolSuspended) resultText = "";
+        else throw error;
+      }
     } finally {
       clearInterval(authorizationPoll);
       input.signal.removeEventListener("abort", cancel);
     }
-  } catch {
+  } catch (error) {
     resultText = undefined;
+    if (error instanceof Error && /delivery unknown/.test(error.message))
+      failReason = "A tool call's delivery is unknown. It was not retried; check its result before trying again.";
+    else if (error instanceof Error && /image or non-text/.test(error.message))
+      failReason = "This tool returned an image or other content the agent cannot read yet.";
+    else if (error instanceof Error && /run-state capability unavailable/.test(error.message))
+      failReason = "This computer's app bridge is too old to safely run tools.";
   } finally {
+    mcpAbort.abort();
+    await mcpClient?.close().catch(() => undefined);
     peer?.close();
     groupGone = child ? await stopHostAcpGroup(child) : true;
     // If the group could not be confirmed gone, retain private scratch for reconciliation.
@@ -349,7 +386,7 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
     input.emit({
       type: "error",
       code: "antigravity_failed",
-      message: "The host Antigravity ACP turn could not complete.",
+      message: failReason,
       retryable: false,
     });
   } else {

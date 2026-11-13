@@ -13,6 +13,7 @@ import {
   parseServerFrame,
   type RunnerFrame,
 } from "@agenteschat/adapters/machine-protocol";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   ALWAYS_LOADED,
   claudeMcpConfig,
@@ -113,12 +114,195 @@ test("MCP JSON-RPC: initialize, notifications, tools/list, tools/call and errors
   });
 });
 
+test("typed run state is returned only when a server actually supplied it", async () => {
+  const message = { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "report", arguments: {} } };
+  for (const state of ["completed", "suspended"] as const) {
+    const reply = await handleMcpMessage(message, async () => ({ ok: true, text: "ok", runState: state }));
+    expect(reply).toMatchObject({ result: { _meta: { "agenteschat/runState": state } } });
+  }
+  const legacy = await handleMcpMessage(message, async () => ({ ok: true, text: "old" }));
+  expect((legacy?.result as { _meta?: unknown } | undefined)?._meta).toBeUndefined();
+});
+
+test("MCP preserves explicit omitted-image states without inventing one for a legacy result", async () => {
+  const msg = { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "report", arguments: {} } };
+  for (const omitted of [true, false]) {
+    const reply = await handleMcpMessage(msg, async () => ({
+      ok: true,
+      text: "ok",
+      runState: "completed",
+      imageOmitted: omitted,
+    }));
+    expect(reply).toMatchObject({
+      result: { _meta: { "agenteschat/runState": "completed", "agenteschat/imageOmitted": omitted } },
+    });
+  }
+  const legacy = await handleMcpMessage(msg, async () => ({ ok: true, text: "old", runState: "completed" }));
+  expect(
+    (legacy?.result as { _meta?: Record<string, unknown> } | undefined)?._meta?.["agenteschat/imageOmitted"],
+  ).toBeUndefined();
+});
+
+test("SDK v1 receives gateway v3 capability and complete result state through the actual stdio server", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let required = false;
+  const tool = { name: "list_issues", description: "list", inputSchema: { type: "object", properties: {} } };
+  const server = runMcpServer({
+    taskId: TASK,
+    socketPath: "unused",
+    token: "synthetic",
+    input,
+    output,
+    requireComplete: true,
+    ipc: async (req) => {
+      if (req.kind === "list") return { ok: true, text: "", tools: [tool], runStateVersion: 3 };
+      required = req.requireComplete === true;
+      return { ok: true, text: "image result", runState: "completed", imageOmitted: true, complete: true };
+    },
+  });
+  let buffered = "";
+  const transport: any = {
+    onmessage: undefined,
+    onclose: undefined,
+    async start() {},
+    async send(message: unknown) {
+      input.write(`${JSON.stringify(message)}\n`);
+    },
+    async close() {
+      input.end();
+      this.onclose?.();
+    },
+  };
+  output.on("data", (chunk: Buffer) => {
+    buffered += chunk.toString("utf8");
+    for (;;) {
+      const n = buffered.indexOf("\n");
+      if (n < 0) break;
+      const line = buffered.slice(0, n);
+      buffered = buffered.slice(n + 1);
+      if (line) transport.onmessage?.(JSON.parse(line));
+    }
+  });
+  const client = new Client({ name: "typed-state-test", version: "1" });
+  try {
+    await client.connect(transport);
+    const listed = await client.listTools();
+    expect(listed._meta?.["agenteschat/runStateVersion"]).toBe(3);
+    expect(listed.tools[0]?._meta?.["agenteschat/runStateEnforced"]).toBe(true);
+    const result = await client.callTool({ name: "list_issues", arguments: {} });
+    expect(required).toBe(true);
+    expect(result._meta).toMatchObject({
+      "agenteschat/runState": "completed",
+      "agenteschat/imageOmitted": true,
+      "agenteschat/complete": true,
+    });
+  } finally {
+    await client.close();
+    await server;
+  }
+});
+
+test("typed-state capability is advertised only after a server list explicitly supports it", async () => {
+  let version: 1 | 2 | undefined = 2;
+  const tools = [
+    { name: "list_issues", description: "read", inputSchema: { type: "object" } },
+    {
+      name: "permission_prompt",
+      description: "prompt",
+      inputSchema: { type: "object" },
+      _meta: { "agenteschat/runStateEnforced": true },
+    },
+  ];
+  const cache = new McpToolCache(async () => ({
+    ok: true,
+    text: "",
+    tools,
+    ...(version ? { runStateVersion: version } : {}),
+  }));
+  const list = () => cache.get();
+  const message = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+  const call = async () => ({ ok: false as const, error: "unused" });
+  const supported = await handleMcpMessage(message, call, undefined, list, "work", {}, () => cache.runStateVersion);
+  expect(supported).toMatchObject({ result: { _meta: { "agenteschat/runStateVersion": 2 } } });
+  const first =
+    (supported?.result as { tools: { name: string; _meta?: Record<string, unknown> }[] } | undefined)?.tools ?? [];
+  expect(first.find((t) => t.name === "list_issues")?._meta?.["agenteschat/runStateEnforced"]).toBe(true);
+  expect(first.find((t) => t.name === "permission_prompt")?._meta?.["agenteschat/runStateEnforced"]).toBeUndefined();
+  version = 1;
+  await cache.refresh();
+  const older = await handleMcpMessage(message, call, undefined, list, "work", {}, () => cache.runStateVersion);
+  expect(older).toMatchObject({ result: { _meta: { "agenteschat/runStateVersion": 1 } } });
+  version = undefined;
+  await cache.refresh();
+  const legacy = await handleMcpMessage(message, call, undefined, list, "work", {}, () => cache.runStateVersion);
+  expect((legacy?.result as { _meta?: unknown } | undefined)?._meta).toBeUndefined();
+  const legacyTools = (legacy?.result as { tools: { _meta?: Record<string, unknown> }[] } | undefined)?.tools;
+  expect(legacyTools).toBeDefined();
+  expect(legacyTools?.every((t) => t._meta?.["agenteschat/runStateEnforced"] !== true)).toBe(true);
+});
+
 function bridge(task: McpTaskInfo | null, socketPath = "unused") {
   const frames: RunnerFrame[] = [];
   const b = new McpBridge({ socketPath, task: (id) => (id === TASK ? task : null), callTimeoutMs: 2000 });
   closers.push(() => b.close());
   return { b, frames };
 }
+
+test("daemon bridge keeps both v2 capability and explicit omitted-image state", async () => {
+  const { b, frames } = bridge({
+    token: "secret-token-1",
+    missionId: "m1",
+    running: true,
+    serverToken: "server-token",
+    runId: TASK,
+  });
+  b.attach((f) => frames.push(f));
+  const list = b.handle({ taskId: TASK, token: "secret-token-1", tool: "", args: {}, kind: "list" });
+  await waitFor(() => frames.length === 1);
+  const listCall = frames[0] as Extract<RunnerFrame, { type: "mcp.list" }>;
+  b.tools({ type: "mcp.tools", callId: listCall.callId, ok: true, tools: [], runStateVersion: 2 });
+  expect(await list).toMatchObject({ ok: true, runStateVersion: 2 });
+  for (const omitted of [true, false]) {
+    const call = b.handle({ taskId: TASK, token: "secret-token-1", tool: "list_issues", args: {} });
+    await waitFor(() => frames.length >= (omitted ? 2 : 3));
+    const frame = frames.at(-1) as Extract<RunnerFrame, { type: "mcp.call" }>;
+    b.result({
+      type: "mcp.result",
+      callId: frame.callId,
+      ok: true,
+      text: "ok",
+      runState: "completed",
+      imageOmitted: omitted,
+    });
+    expect(await call).toMatchObject({ ok: true, runState: "completed", imageOmitted: omitted });
+  }
+});
+
+test("daemon sends the opt-in completeness requirement and preserves its acknowledgement", async () => {
+  const { b, frames } = bridge({ token: "secret-token-1", missionId: "m1", running: true, serverToken: "srv-token-1" });
+  b.attach((frame) => frames.push(frame));
+  const call = b.handle({
+    taskId: TASK,
+    token: "secret-token-1",
+    tool: "list_issues",
+    args: {},
+    requireComplete: true,
+  });
+  await waitFor(() => frames.length === 1);
+  const frame = frames[0] as Extract<RunnerFrame, { type: "mcp.call" }>;
+  expect(frame.requireComplete).toBe(true);
+  b.result({
+    type: "mcp.result",
+    callId: frame.callId,
+    ok: true,
+    text: "ok",
+    runState: "completed",
+    imageOmitted: false,
+    complete: true,
+  });
+  expect(await call).toMatchObject({ ok: true, complete: true });
+});
 
 test("the bridge checks the task's token, needs a connection, relays the call and its answer", async () => {
   const { b, frames } = bridge({ token: "secret-token-1", missionId: "m1", running: true });

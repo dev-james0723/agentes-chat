@@ -47,16 +47,38 @@ const refSource: ToolSource = {
       },
       execute: async () => ({ content: "found" }),
     },
+    {
+      name: "image_demo",
+      description: "A synthetic image result",
+      scope: "github:pr.read",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      execute: async () => ({
+        content: "A picture was attached",
+        images: [{ mediaType: "image/png", data: "FAKE_IMAGE_BYTES" }],
+      }),
+    },
+    {
+      name: "long_demo",
+      description: "A synthetic oversized text result",
+      scope: "github:pr.read",
+      inputSchema: {
+        type: "object",
+        properties: { length: { type: "integer", enum: [50_000, 50_001] } },
+        required: ["length"],
+        additionalProperties: false,
+      },
+      execute: async (input) => ({ content: "x".repeat(input.length as number) }),
+    },
   ],
 };
 
 /** A fake runner that can send bridge frames and wait for the answer. */
-function bridgeRunner(hub: MachineHub) {
-  const runner = missionRunner(hub);
+function bridgeRunner(hub: MachineHub, protocol?: number) {
+  const runner = missionRunner(hub, protocol === undefined ? {} : { protocol });
   let n = 0;
-  const wait = async <T extends ServerFrame>(pick: (s: ServerFrame) => s is T): Promise<T> => {
+  const wait = async <T extends ServerFrame>(pick: (s: ServerFrame) => s is T, after = 0): Promise<T> => {
     for (let i = 0; i < 400; i++) {
-      const found = runner.sent.find(pick);
+      const found = runner.sent.slice(after).find(pick);
       if (found) return found;
       await new Promise((r) => setTimeout(r, 5));
     }
@@ -69,10 +91,26 @@ function bridgeRunner(hub: MachineHub) {
       await runner.frame({ type: "mcp.list", callId, taskId, token });
       return wait((s): s is McpTools => s.type === "mcp.tools" && s.callId === callId);
     },
-    async call(token: string, tool: string, args: Record<string, unknown>, taskId = "run"): Promise<McpResult> {
-      const callId = `call-${++n}`;
-      await runner.frame({ type: "mcp.call", callId, taskId, tool, args, token });
-      return wait((s): s is McpResult => s.type === "mcp.result" && s.callId === callId);
+    async call(
+      token: string,
+      tool: string,
+      args: Record<string, unknown>,
+      taskId = "run",
+      repeatCallId?: string,
+      requireComplete = true,
+    ): Promise<McpResult> {
+      const callId = repeatCallId ?? `call-${++n}`;
+      const after = runner.sent.length;
+      await runner.frame({
+        type: "mcp.call",
+        callId,
+        taskId,
+        tool,
+        args,
+        token,
+        ...(requireComplete ? { requireComplete: true } : {}),
+      });
+      return wait((s): s is McpResult => s.type === "mcp.result" && s.callId === callId, after);
     },
   };
 }
@@ -110,7 +148,7 @@ async function otherMachine() {
 }
 
 describe("runner MCP bridge (ADR 0032)", () => {
-  async function connected() {
+  async function connected(protocol?: number) {
     const gh = fakeGithub();
     f = await setup({ machines: true, toolSources: [gh.source, refSource], reply: () => ({ chunks: ["ok"] }) });
     const paired = await pairedMachine(f);
@@ -118,10 +156,54 @@ describe("runner MCP bridge (ADR 0032)", () => {
       { connectionId: null, scope: "github:pr.read" },
       { connectionId: null, scope: "github:pr.merge" },
     ]);
-    const runner = bridgeRunner(f.machineHub as MachineHub);
+    const runner = bridgeRunner(f.machineHub as MachineHub, protocol);
     await runner.hello(paired.token);
     return { gh, paired, runner };
   }
+
+  test("older runners retain the native bridge's truncation and do not advertise typed state", async () => {
+    const { paired, runner } = await connected(63);
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const list = await runner.list(token);
+    expect(list.ok && list.runStateVersion).toBeUndefined();
+    const result = await runner.call(token, "long_demo", { length: 50_001 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Legacy result unexpectedly failed");
+    expect(result.text.length).toBe(50_000);
+    expect(result.runState).toBeUndefined();
+  });
+
+  test("a current native client that did not request complete results keeps legacy truncation", async () => {
+    const { paired, runner } = await connected(65);
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const result = await runner.call(token, "long_demo", { length: 50_001 }, "run", undefined, false);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Native result unexpectedly failed");
+    expect(result.text.length).toBe(50_000);
+    const replay = await runner.call(token, "long_demo", { length: 50_001 }, "run", result.callId, true);
+    expect(replay).toMatchObject({ ok: false, error: { code: "bridge.completeness_unknown" } });
+    const mergeArgs = {
+      repo: "a/b",
+      pr: 3,
+      why: "The checks passed and the change was reviewed: this action finishes what was asked.",
+    };
+    const suspended = await runner.call(token, "github_merge_pr", mergeArgs, "run", undefined, false);
+    expect(suspended).toMatchObject({ ok: true, runState: "suspended" });
+    const resumed = await runner.call(token, "github_merge_pr", mergeArgs, "run", suspended.callId, true);
+    expect(resumed).toEqual(suspended);
+  });
 
   test("tools/list returns the run's tools with the agent's scopes, schemas the CLIs accept", async () => {
     const { paired, runner } = await connected();
@@ -134,6 +216,7 @@ describe("runner MCP bridge (ADR 0032)", () => {
     });
     const listed = await runner.list(token);
     expect(listed.ok).toBe(true);
+    expect(listed).toMatchObject({ ok: true, runStateVersion: 3 });
     // github:pr.write isn't granted: github_close_pr isn't listed.
     expect(names(listed)).toContain("github_get_pr");
     expect(names(listed)).toContain("github_merge_pr");
@@ -160,10 +243,39 @@ describe("runner MCP bridge (ADR 0032)", () => {
       runId: run.id,
     });
     const read = await runner.call(token, "github_get_pr", { repo: "a/b", pr: 3 });
-    expect(read).toMatchObject({ ok: true, text: "github_get_pr ok: a/b#3" });
+    expect(read).toMatchObject({
+      ok: true,
+      text: "github_get_pr ok: a/b#3",
+      runState: "completed",
+      imageOmitted: false,
+      complete: true,
+    });
     expect(gh.executed).toEqual([{ tool: "github_get_pr", input: { repo: "a/b", pr: 3 } }]);
     const steps = await f.db.select().from(schema.agentRunSteps).where(eq(schema.agentRunSteps.runId, run.id));
     expect(steps.map((s) => s.kind)).toEqual(["tool_call", "tool_result"]);
+    const image = await runner.call(token, "image_demo", {});
+    expect(image).toMatchObject({
+      ok: true,
+      runState: "completed",
+      imageOmitted: true,
+      text: "A picture was attached",
+    });
+    // Protocol 62 now carries images for native clients; the text-only ACP
+    // adapter still receives the typed warning and rejects the image content.
+    expect(image).toMatchObject({ images: [{ mediaType: "image/png", data: "FAKE_IMAGE_BYTES" }] });
+    expect(await runner.call(token, "github_get_pr", { repo: "a/b", pr: 3 }, "run", read.callId)).toEqual(read);
+    expect(await runner.call(token, "image_demo", {}, "run", image.callId)).toEqual(image);
+    expect(gh.executed).toHaveLength(1);
+    const boundary = await runner.call(token, "long_demo", { length: 50_000 });
+    expect(boundary).toMatchObject({ ok: true, runState: "completed", imageOmitted: false });
+    expect(boundary.ok && boundary.text.length).toBe(50_000);
+    const long = await runner.call(token, "long_demo", { length: 50_001 });
+    expect(long).toMatchObject({ ok: false, error: { code: "bridge.result_too_large" } });
+    const beforeReplay = await f.db.select().from(schema.agentRunSteps).where(eq(schema.agentRunSteps.runId, run.id));
+    expect(await runner.call(token, "long_demo", { length: 50_001 }, "run", long.callId)).toEqual(long);
+    expect(await f.db.select().from(schema.agentRunSteps).where(eq(schema.agentRunSteps.runId, run.id))).toHaveLength(
+      beforeReplay.length,
+    );
 
     // Bad input and tools the agent lacks: refused by the gateway, with codes.
     expect(await runner.call(token, "github_get_pr", { repo: "a/b" })).toMatchObject({
@@ -181,6 +293,7 @@ describe("runner MCP bridge (ADR 0032)", () => {
       why: "The checks passed and the change was reviewed: this action finishes what was asked.",
     });
     expect(merge.ok && merge.text).toContain("Waiting for a person to approve");
+    expect(merge).toMatchObject({ ok: true, runState: "suspended", imageOmitted: false });
     expect(gh.executed).toHaveLength(1);
     const [approval] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.runId, run.id));
     expect(approval).toMatchObject({ tool: "github_merge_pr", status: "pending" });
@@ -189,8 +302,28 @@ describe("runner MCP bridge (ADR 0032)", () => {
     expect(card?.authorAgentId).toBe(f.agent.id);
     const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
     expect(after?.status).toBe("waiting_approval");
+    // A reconnect must replay the original typed result, without executing the
+    // write again or turning a pending approval into a completed result.
+    const reconnected = bridgeRunner(f.machineHub as MachineHub);
+    await reconnected.hello(paired.token);
+    expect(
+      await reconnected.call(
+        token,
+        "github_merge_pr",
+        {
+          repo: "a/b",
+          pr: 3,
+          why: "The checks passed and the change was reviewed: this action finishes what was asked.",
+        },
+        "run",
+        merge.callId,
+      ),
+    ).toEqual(merge);
+    expect(await f.db.select().from(schema.approvals).where(eq(schema.approvals.runId, run.id))).toHaveLength(1);
     // While it waits, the brain gets no more tools.
-    expect(await runner.call(token, "github_get_pr", { repo: "a/b", pr: 4 })).toMatchObject({
+    expect(
+      await reconnected.call(token, "github_get_pr", { repo: "a/b", pr: 4 }, "run", "call-after-reconnect"),
+    ).toMatchObject({
       ok: false,
       error: { code: "bridge.run_waiting" },
     });

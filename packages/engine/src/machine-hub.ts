@@ -16,6 +16,7 @@ import {
   type MachineReplies,
   type MachineRequest,
   MCP_IMAGES_PROTOCOL,
+  MCP_RUN_STATE_PROTOCOL,
   type McpToolInfo,
   MIN_RUNNER_PROTOCOL,
   machineRpcReplyTopic,
@@ -426,7 +427,14 @@ const MCP_CUT_OFF =
   "This call was cut off before it finished (the server restarted or lost the connection): it may have run in part. Check before doing it again.";
 
 type McpOutcome =
-  | { ok: true; text: string; images?: ToolImage[] }
+  | {
+      ok: true;
+      text: string;
+      images?: ToolImage[];
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      complete?: true;
+    }
   | { ok: false; error: { code: string; message: string } };
 
 /** What an agent reads where its computer's app is too old to hand it a picture or a PDF the tool returned. */
@@ -439,6 +447,14 @@ const MCP_IMAGES_TOO_BIG =
 export function mcpResultFrame(callId: string, out: McpOutcome, protocol: number) {
   if (!out.ok) return { type: "mcp.result" as const, callId, ok: false as const, error: out.error };
   const images = out.images?.length ? out.images : null;
+  const state =
+    protocol >= MCP_RUN_STATE_PROTOCOL
+      ? {
+          ...(out.runState ? { runState: out.runState } : {}),
+          ...(typeof out.imageOmitted === "boolean" ? { imageOmitted: out.imageOmitted || !!images } : {}),
+          ...(out.complete === true ? { complete: true as const } : {}),
+        }
+      : {};
   const note =
     images && protocol < MCP_IMAGES_PROTOCOL
       ? MCP_IMAGES_TOO_OLD
@@ -446,12 +462,13 @@ export function mcpResultFrame(callId: string, out: McpOutcome, protocol: number
         images && images.reduce((n, i) => n + i.data.length, Buffer.byteLength(out.text)) > MAX_FRAME_BYTES - 64 * 1024
         ? MCP_IMAGES_TOO_BIG
         : null;
-  if (note) return { type: "mcp.result" as const, callId, ok: true as const, text: `${out.text}\n${note}` };
+  if (note) return { type: "mcp.result" as const, callId, ok: true as const, text: `${out.text}\n${note}`, ...state };
   return {
     type: "mcp.result" as const,
     callId,
     ok: true as const,
     text: out.text,
+    ...state,
     ...(images
       ? { images: images.map(({ mediaType, data, name }) => ({ mediaType, data, ...(name ? { name } : {}) })) }
       : {}),
@@ -468,7 +485,10 @@ export interface MachineMissionHooks {
   mcpList?(
     machineId: string,
     frame: Extract<RunnerFrame, { type: "mcp.list" }>,
-  ): Promise<{ ok: true; tools: McpToolInfo[] } | { ok: false; error: { code: string; message: string } }>;
+  ): Promise<
+    | { ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
+    | { ok: false; error: { code: string; message: string } }
+  >;
   online?(machineId: string): Promise<void>;
   /** The phones a computer reports changed (one came, went, got ready or was let go): its phones as stored now. */
   phonesChanged?(machine: { id: string; orgId: string }, phones: MachinePhoneRow[]): Promise<void>;
@@ -962,12 +982,30 @@ export function createMachineHub(deps: MachineHubDeps) {
             ok: false as const,
             error: { code: "mission.unavailable", message: "Missions are not available on this server." },
           });
-    void mcpOnce(conn, frame.callId, run)
+    void mcpOnce(conn, frame.callId, run, frame.requireComplete === true)
       .catch((error: unknown) => ({
         ok: false as const,
         error: { code: "internal", message: error instanceof Error ? error.message : String(error) },
       }))
-      .then((out) => send(conn, mcpResultFrame(frame.callId, out, conn.protocol)));
+      .then((out) => {
+        // A replay may have been stored by a legacy call that shortened its text.
+        // Preserve suspension, but never claim a cached slice is complete.
+        const checked: McpOutcome =
+          conn.protocol >= MCP_RUN_STATE_PROTOCOL &&
+          frame.requireComplete &&
+          out.ok &&
+          out.runState !== "suspended" &&
+          out.complete !== true
+            ? {
+                ok: false,
+                error: {
+                  code: "bridge.completeness_unknown",
+                  message: "The saved result's completeness is unknown; stop without retry.",
+                },
+              }
+            : out;
+        send(conn, mcpResultFrame(frame.callId, checked, conn.protocol));
+      });
   }
 
   /**
@@ -975,11 +1013,16 @@ export function createMachineHub(deps: MachineHubDeps) {
    * same id, and that copy gets the first run's answer. Run here: the copy waits on it. Run by another
    * process: the copy waits a short while for its answer to land, then hears it was cut off.
    */
-  function mcpOnce(conn: MachineConnection, callId: string, run: () => Promise<McpOutcome>): Promise<McpOutcome> {
+  function mcpOnce(
+    conn: MachineConnection,
+    callId: string,
+    run: () => Promise<McpOutcome>,
+    requireComplete: boolean,
+  ): Promise<McpOutcome> {
     const id = `${conn.machineId}:${callId}`;
     const here = mcpCalls.get(id);
     if (here) return here;
-    const out = answerOnce(conn, callId, run).finally(() => mcpCalls.delete(id));
+    const out = answerOnce(conn, callId, run, requireComplete).finally(() => mcpCalls.delete(id));
     mcpCalls.set(id, out);
     return out;
   }
@@ -988,6 +1031,7 @@ export function createMachineHub(deps: MachineHubDeps) {
     conn: MachineConnection,
     callId: string,
     run: () => Promise<McpOutcome>,
+    requireComplete: boolean,
   ): Promise<McpOutcome> {
     void pruneRows();
     const machineId = conn.machineId as string;
@@ -1002,7 +1046,30 @@ export function createMachineHub(deps: MachineHubDeps) {
         ok: false as const,
         error: { code: "internal", message: error instanceof Error ? error.message : String(error) },
       }));
-      const kept: McpOutcome = out.ok ? { ...out, text: cutText(out.text, 50_000) } : out;
+      // A typed completion must not pretend that a silently shortened skill or
+      // tool result is complete. Preserve the original legacy bridge behavior.
+      const kept: McpOutcome =
+        out.ok &&
+        conn.protocol >= MCP_RUN_STATE_PROTOCOL &&
+        requireComplete &&
+        out.runState === "completed" &&
+        out.text.length > 50_000
+          ? {
+              ok: false,
+              error: {
+                code: "bridge.result_too_large",
+                message: "The tool result exceeds the bridge limit; stopped without retry.",
+              },
+            }
+          : out.ok
+            ? {
+                ...out,
+                text: cutText(out.text, 50_000),
+                ...(conn.protocol >= MCP_RUN_STATE_PROTOCOL && requireComplete && out.runState === "completed"
+                  ? { complete: true as const }
+                  : {}),
+              }
+            : out;
       await db
         .update(machineMcpCalls)
         .set({ result: kept })
@@ -1038,7 +1105,16 @@ export function createMachineHub(deps: MachineHubDeps) {
         send(
           conn,
           out.ok
-            ? { type: "mcp.tools", callId: frame.callId, ok: true, tools: out.tools }
+            ? {
+                type: "mcp.tools",
+                callId: frame.callId,
+                ok: true,
+                tools: out.tools,
+                ...(conn.protocol >= MCP_RUN_STATE_PROTOCOL &&
+                (out.runStateVersion === 1 || out.runStateVersion === 2 || out.runStateVersion === 3)
+                  ? { runStateVersion: out.runStateVersion }
+                  : {}),
+              }
             : { type: "mcp.tools", callId: frame.callId, ok: false, error: out.error },
         ),
       );

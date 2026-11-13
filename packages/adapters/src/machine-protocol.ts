@@ -7,7 +7,9 @@ import type { MergeDone } from "./command-policy";
  */
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
-export const MACHINE_PROTOCOL_VERSION = 64;
+export const MACHINE_PROTOCOL_VERSION = 65;
+/** MCP list capability and tool-result state for a run suspended by the gateway. */
+export const MCP_RUN_STATE_PROTOCOL = 65;
 /** A locally opted-in, owner-bound macOS Antigravity host account. */
 export const HOST_ANTIGRAVITY_PROTOCOL = 64;
 export const HOST_ANTIGRAVITY_PROVIDER = "host-macos";
@@ -2913,10 +2915,14 @@ export type ServerFrame =
       text: string;
       /** `MCP_IMAGES_PROTOCOL`: pictures (PNG, JPEG, GIF, WebP) and PDFs the tool returned, base64. */
       images?: { mediaType: string; data: string; name?: string }[];
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      /** The server confirmed this completed result was not shortened. */
+      complete?: true;
     }
   | { type: "mcp.result"; callId: string; ok: false; error: { code: string; message: string } }
   /** Protocol 8: the answer to an `mcp.list`: the tools this run may use (JSON Schemas simplified for the CLIs). */
-  | { type: "mcp.tools"; callId: string; ok: true; tools: McpToolInfo[] }
+  | { type: "mcp.tools"; callId: string; ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
   | { type: "mcp.tools"; callId: string; ok: false; error: { code: string; message: string } }
   /**
    * Protocol 9: the agents of the organization that use this machine (pointed
@@ -2975,6 +2981,8 @@ export type RunnerFrame =
       taskId: string;
       tool: string;
       args: Record<string, unknown>;
+      /** Protocol 65: refuse a completed tool result if the bridge must shorten its text. */
+      requireComplete?: true;
       /** Protocol 8: the server-issued token of the task or run (ADR 0032); without it, the legacy mission path. */
       token?: string;
     }
@@ -3675,6 +3683,7 @@ export function parseRunnerFrame(raw: string): RunnerFrame | null {
         taskId: f.taskId.slice(0, 64),
         tool: f.tool.slice(0, 64),
         args,
+        ...(f.requireComplete === true ? { requireComplete: true as const } : {}),
         ...(isRunToolToken(f.token) ? { token: f.token } : {}),
       };
     }
