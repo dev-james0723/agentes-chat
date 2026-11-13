@@ -9,6 +9,8 @@ import { type HostMcpReply, type HostMcpRequest, isHostMcpRequest, isMcpResultMe
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
 export const MACHINE_PROTOCOL_VERSION = 67;
+/** Owner-registered project proof and a dedicated guarded turn. */
+export const PAPERCLIP_WORKSPACE_PROTOCOL = 66;
 /** MCP list capability and tool-result state for a run suspended by the gateway. */
 export const MCP_RUN_STATE_PROTOCOL = 65;
 /** A locally opted-in, owner-bound macOS Antigravity host account. */
@@ -1982,6 +1984,19 @@ export const STEER_LIMITS = { messages: 20, text: 100_000 } as const;
  * `brain.event` frames (by `runId`), then `brain.done`, then the request's
  * `result` with the final event (a `done` or an `error`).
  */
+/** Prototype capability: selected only by an owner-registered project mapping. No path can be supplied to attest. */
+export interface PaperclipWorkspaceProof {
+  bindingId: string;
+  orgId: string;
+  machineId: string;
+  ownerId: string;
+  agentId: string;
+  generation: string;
+  runId: string;
+  connectionId: string;
+  nonce: string;
+  expiresAt: number;
+}
 export interface BrainTurnRequest {
   runId: string;
   /**
@@ -2358,6 +2373,9 @@ export interface AgentScope {
 
 /** What the server asks. Paths are always relative to the workspace (the agent's folder when `agent` is set). */
 export type MachineRequest = (
+  | { op: "paperclip.workspace.probe" }
+  | { op: "paperclip.workspace.attest"; proof: PaperclipWorkspaceProof }
+  | ({ op: "paperclip.brain.turn"; paperclipProof: PaperclipWorkspaceProof } & BrainTurnRequest)
   | {
       op: "exec";
       command: string;
@@ -2578,6 +2596,9 @@ export type MachineOp = MachineRequest["op"];
 
 export const MACHINE_OPS: readonly MachineOp[] = [
   "host_mcp",
+  "paperclip.workspace.probe",
+  "paperclip.workspace.attest",
+  "paperclip.brain.turn",
   "exec",
   "read",
   "write",
@@ -2642,6 +2663,22 @@ export const MACHINE_OPS: readonly MachineOp[] = [
 /** What each op answers with `ok: true`. */
 export interface MachineReplies {
   host_mcp: HostMcpReply;
+  "paperclip.workspace.probe": { version: 1; connectionId: string };
+  "paperclip.workspace.attest": {
+    bindingId: string;
+    nonce: string;
+    runId: string;
+    generation: string;
+    targetCwd: string;
+    bindingDigest: string;
+    sourceCompanyId: string;
+    sourceProjectId: string;
+    sourceWorkspaceId: string;
+    projectDigest: string;
+    snapshotDigest: string;
+    agentIds: string[];
+  };
+  "paperclip.brain.turn": MachineReplies["brain.turn"];
   exec: {
     exitCode: number;
     stdout: string;

@@ -1654,6 +1654,8 @@ export interface DelegatedTurn {
 }
 
 export interface BrainTurnContext {
+  /** Optional owner-registered workspace guard, checked immediately before process creation. */
+  beforeLaunch?: (cwd: string) => Promise<void>;
   agent: AgentScope;
   /** The agent's folder (real path). */
   folder: string;
@@ -1979,6 +1981,11 @@ export class BrainManager {
     await yieldRoute("claude_code", ctx.accountHome);
     const sig = this.signature(cwd, req, ctx);
     let live = this.live.get(key);
+    // A registered project run must start its own guarded process; never reuse an existing session.
+    if (ctx.beforeLaunch) {
+      if (live) return errorEvent("workspace_session_busy", "The project session is already active.", false);
+      return this.oneShot(key, session, cwd, req, ctx, sig, false, false);
+    }
     // A turn Claude Code runs by itself there (or one due): its output would read as this turn's. Wait for
     // its end (output discarded) and keep the process, with the agent's background jobs; kill only a stuck one.
     if (live && live.sig === sig && live.proc.onItsOwn) live = await this.awaitOwnTurn(live, session, ctx);
@@ -2420,6 +2427,7 @@ export class BrainManager {
     });
     // Claimed before it starts: a CLI that dies in its first turn still left a transcript that is this agent's.
     if (delegated && !resume) claimSession(delegated.room, session, ctx.agent.id, String(req.account));
+    await ctx.beforeLaunch?.(launched?.cwd ?? cwd);
     const proc = new ClaudeProcess(
       launched?.command ?? this.opts.claudeCommand ?? ["claude"],
       args,

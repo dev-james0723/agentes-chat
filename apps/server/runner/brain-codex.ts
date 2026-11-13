@@ -768,6 +768,7 @@ export class CodexEventMapper {
 }
 
 export interface CodexTurnOptions {
+  beforeLaunch?: (cwd: string) => Promise<void>;
   threads: CodexThreads;
   /** A scratch folder for this turn (`last.txt`); removed afterwards. */
   workDir: string;
@@ -873,13 +874,14 @@ export async function runCodexTurn(input: CodexTurnInput, opts: CodexTurnOptions
   // A long-lived app-server takes messages mid-turn; exec runs the turns it can't (an older CLI, a failed handshake…).
   // A `chat` turn's flags exist only for `exec`, and so does leaving someone's own Codex rules out (`--ignore-rules`),
   // which a turn needs wherever Codex would load some (an allow there runs a command outside the sandbox, unasked).
-  const appServer = !codexRulesNear(codexHomeOf(input.account), input.cwd);
+  const appServer = opts.app && !codexRulesNear(codexHomeOf(input.account), input.cwd);
   const run = (turn: CodexTurnInput, turnOpts: CodexTurnOptions) =>
     turnOpts.app && !turn.chat && appServer
       ? turnOpts.app.turn({ ...turn, version }, turnOpts, () => runCodexExec(turn, turnOpts))
       : runCodexExec(turn, turnOpts);
   const { speed: _speed, ...standard } = input;
-  if (input.speed !== "fast" || (!input.account && !(await ownChatGptSignIn(opts)))) return run(standard, opts);
+  if (opts.beforeLaunch || input.speed !== "fast" || (!input.account && !(await ownChatGptSignIn(opts))))
+    return run(standard, opts);
   // Fast never costs a reply: failed before anything happened, the same turn goes again at standard speed.
   const first: { started?: boolean; refused?: string } = {};
   await run(input, {
@@ -908,7 +910,7 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
   const fail = (code: string, message: string, retryable?: boolean) =>
     opts.emit({ type: "error", code, message, ...(retryable ? { retryable } : {}) });
   const threadKey = codexThreadKey(input.sessionId, input.account?.id);
-  const thread = opts.threads.get(threadKey);
+  const thread = opts.beforeLaunch ? undefined : opts.threads.get(threadKey);
   const platform = opts.platform ?? process.platform;
   const windows = platform === "win32";
   mkdirSync(opts.workDir, { recursive: true });
@@ -953,6 +955,7 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
   if ("error" in launch) return fail(launch.missing ? "codex_missing" : "codex_failed", launch.error);
   let child: ChildProcess;
   try {
+    await opts.beforeLaunch?.(input.cwd);
     child = (opts.spawn ?? spawn)(launch.file, launch.args, {
       cwd: input.cwd,
       env: launch.env ? { ...env, ...launch.env } : env,
@@ -1054,6 +1057,7 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
 
 /** What the runner's `brain.turn` handler hands the Codex branch. */
 export interface CodexBrainContext {
+  beforeLaunch?: (cwd: string) => Promise<void>;
   /** The agent's own folder (real path), as `handleRequest` resolved it for the request. */
   folder: string;
   /** `false`: started with `--no-exec`. */
@@ -1178,6 +1182,7 @@ export async function handleCodexBrainTurn(
         ...(ctx.bin ? { bin: ctx.bin } : {}),
         ...(ctx.app ? { app: ctx.app } : {}),
         ...(ctx.spawn ? { spawn: ctx.spawn } : {}),
+        ...(ctx.beforeLaunch ? { beforeLaunch: ctx.beforeLaunch } : {}),
       },
     );
   } finally {

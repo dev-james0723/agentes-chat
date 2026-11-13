@@ -2976,3 +2976,33 @@ test.if(posix)("turn.context: the worker's answer: the folder as the agent resol
   expect(said).toContain("?? CLAUDE.md");
   expect(said).toContain("first");
 });
+
+test("owner workspace guard checks the actual Claude cwd before process spawn", async () => {
+  const { turn, spawns } = setup();
+  let checked = "";
+  const out = await turn(1, "hello", {}, undefined, {
+    beforeLaunch: async (cwd) => {
+      checked = cwd;
+      throw new Error("workspace drift");
+    },
+  });
+  expect(checked.length).toBeGreaterThan(0);
+  expect(spawns()).toHaveLength(0);
+  expect(out.final.type).toBe("error");
+});
+
+test.if(posix)("guarded Claude turns do not reuse an existing live session", async () => {
+  const { turn, spawns } = setup();
+  const first = await turn(1, "hello");
+  expect(first.final.type).toBe("done");
+  const before = spawns().length;
+  let checked = false;
+  const second = await turn(2, "do something", { keepAlive: false }, undefined, {
+    beforeLaunch: async () => {
+      checked = true;
+    },
+  });
+  expect(second.final).toMatchObject({ type: "error", code: "workspace_session_busy" });
+  expect(checked).toBe(false);
+  expect(spawns()).toHaveLength(before);
+});

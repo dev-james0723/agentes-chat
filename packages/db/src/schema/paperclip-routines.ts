@@ -10,6 +10,7 @@ export interface PaperclipRoutineDefinition {
   sourceAgentId: string;
   projectId: string | null;
   projectWorkspaceId: string | null;
+  workspaceBindingId?: string | null;
   goalId: string | null;
   parentIssueId: string | null;
   variables: unknown[];

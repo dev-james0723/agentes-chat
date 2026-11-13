@@ -468,6 +468,8 @@ test("a system-mode runner (root) without workers does no agent work; machine-le
   expect(Object.keys(OP_ROUTES).sort()).toEqual([...MACHINE_OPS].sort());
   expect(MACHINE_OPS.filter((op) => OP_ROUTES[op] === "machine")).toEqual([
     "host_mcp",
+    "paperclip.workspace.probe",
+    "paperclip.workspace.attest",
     "secret",
     "account",
     "access.request",

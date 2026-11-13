@@ -91,6 +91,8 @@ import {
   takeEnrollCode,
   whoCanUse,
 } from "./pairing";
+import { registerOwnerProject } from "./paperclip-register";
+import { removeOwnerBinding } from "./paperclip-registry";
 import { agentWorkspace } from "./paths";
 import { connectVnc, type VncConnection, vncInit } from "./rfb";
 import { installService, installSystemService, removeOwnService, serviceStatus, uninstallService } from "./service";
@@ -148,6 +150,13 @@ Usage:
       Ends standby: the runner connects again at once.
   agentes-runner status
       The connection, the service, and whether the agents' desktops and the terminal can run here.
+  agentes-runner paperclip-project register --confirm-local-owner --owner-id <id> --agent <id>...
+      --source-company <id> --source-project <id> --source-workspace <id>
+      --project-file <path> --snapshot-file <path> --bundle-file <path>
+      --project-sha256 <digest> --snapshot-sha256 <digest>
+      Owner-local prototype: records an already-granted separate project snapshot; does not add grants or start work.
+  agentes-runner paperclip-project remove --confirm-local-owner --binding <id>
+      Revokes this local project binding. Does not remove folders or alter the original project.
   agentes-runner doctor [--wait | --no-wait] [--json]
       What this computer gives agents: its connections, the agent apps, the toolchains and the phones,
       with the fix for whatever needs you. On a terminal it then waits for those fixes (--wait anywhere,
@@ -217,6 +226,16 @@ const VALUE_FLAGS = new Set([
   "rotate",
   "link",
   "minutes",
+  "owner-id",
+  "source-company",
+  "source-project",
+  "source-workspace",
+  "project-file",
+  "snapshot-file",
+  "bundle-file",
+  "project-sha256",
+  "snapshot-sha256",
+  "binding",
 ]);
 const LIST_FLAGS = new Set(["agent", "rotate"]);
 
@@ -1381,6 +1400,43 @@ async function main(argv: string[]): Promise<number> {
     return command || p.flags.has("help") ? 0 : 1;
   }
   switch (command) {
+    case "paperclip-project": {
+      if (
+        (sub !== "register" && sub !== "remove") ||
+        !p.flags.has("confirm-local-owner") ||
+        !process.stdin.isTTY ||
+        !process.stdout.isTTY
+      ) {
+        console.error("Owner-local operation requires register or remove, --confirm-local-owner and a terminal.");
+        return 1;
+      }
+      const need = (key: string) => {
+        const value = flagString(p, key);
+        if (!value) throw new Error(`--${key} is required`);
+        return value;
+      };
+      if (sub === "remove") {
+        removeOwnerBinding(runnerHome(), need("binding"));
+        console.log("Local project binding removed.");
+        return 0;
+      }
+      const cfg = storedOrNull();
+      if (!cfg) throw new Error("A paired runner is required");
+      const out = registerOwnerProject(runnerHome(), cfg, {
+        ownerId: need("owner-id"),
+        agentIds: p.lists.get("agent") ?? [],
+        sourceCompanyId: need("source-company"),
+        sourceProjectId: need("source-project"),
+        sourceWorkspaceId: need("source-workspace"),
+        projectFile: need("project-file"),
+        snapshotFile: need("snapshot-file"),
+        bundleFile: need("bundle-file"),
+        projectDigest: need("project-sha256"),
+        snapshotDigest: need("snapshot-sha256"),
+      });
+      console.log(JSON.stringify(out));
+      return 0;
+    }
     case "pair":
       return pair(p);
     case "start":

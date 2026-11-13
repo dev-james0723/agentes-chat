@@ -107,6 +107,7 @@ import {
   missionTurnPermissions,
   notifyOwnerOnBudget,
   OpencodeBrain,
+  paperclipProjectHub,
   platformCapJudge,
   prepareAgentCode,
   queueBudgetEmail,
@@ -622,7 +623,12 @@ export function buildEngine(o: EngineOptions) {
   // Computer brains (ADR 0032): Claude Code and Codex on the agent's computer, through the hub. Each turn's
   // run tool token (issued by the engine) goes in `brain.turn.mcp.token`, so the runner bridge maps calls to the run.
   const agentScope = agentScopeFromDb(db);
-  const brainLink = hubBrainLink({ hub: machineHub, pubsub: adapters.pubsub });
+  const projectBrainHub = paperclipProjectHub({
+    db,
+    hub: machineHub,
+    enabled: config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
+  });
+  const brainLink = hubBrainLink({ hub: projectBrainHub, pubsub: adapters.pubsub });
   /**
    * A computer turn's permission profile (ADR 0053 §3), the same for Claude Code and Codex: a mission run
    * keeps its own (plan before Start and while a write item is live, work otherwise; ADR 0044); every other
@@ -660,7 +666,7 @@ export function buildEngine(o: EngineOptions) {
   const brains: RunExecutorDeps["brains"] = {
     claude_code: (_agent, run, setup) =>
       createClaudeCodeBrain({
-        hub: machineHub,
+        hub: projectBrainHub,
         pubsub: adapters.pubsub,
         agentScope,
         mcpToken: () => setup.mcpToken(),

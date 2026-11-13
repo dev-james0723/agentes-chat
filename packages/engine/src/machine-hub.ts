@@ -333,7 +333,7 @@ export function requestTimeoutMs(request: MachineRequest) {
   // A clone of a big repository on a slow link: its own deadline plus slack.
   if (request.op === "git.sync") return (Math.max(1, request.timeoutSeconds) + 30) * 1000;
   // A brain turn may wait on a person (a command approval) for up to 30 minutes, more than once.
-  if (request.op === "brain.turn") return 3 * 3600_000;
+  if (request.op === "brain.turn" || request.op === "paperclip.brain.turn") return 3 * 3600_000;
   // A Maestro flow (with its recording) runs to its own deadline, at most 10 minutes; a recording to its length; an
   // install pushes a big build over USB.
   if (request.op === "phone.flow") return (Math.min(Math.max(1, request.timeoutSeconds), 600) + 120) * 1000;
@@ -1228,7 +1228,10 @@ export function createMachineHub(deps: MachineHubDeps) {
       if (conn.closed) return reject(new MachineOfflineError(conn.name, conn.kind));
       const id = crypto.randomUUID();
       const timeoutMs = options.timeoutMs ?? requestTimeoutMs(request);
-      const turn = request.op === "brain.turn" ? (request as Extract<MachineRequest, { op: "brain.turn" }>) : null;
+      const turn =
+        request.op === "brain.turn" || request.op === "paperclip.brain.turn"
+          ? (request as Extract<MachineRequest, { op: "brain.turn" | "paperclip.brain.turn" }>)
+          : null;
       const brain = turn ? { runId: turn.runId, token: turn.mcp.token } : undefined;
       let idle: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => {

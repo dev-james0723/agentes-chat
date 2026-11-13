@@ -5,6 +5,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { createIssueInTransaction } from "./issues";
 import { requirePermission } from "./organizations";
 import { canonical, hash, nativeHash } from "./paperclip-routine-state";
+import { assertMappingWorkspace } from "./paperclip-workspaces";
 import { enqueueRoutineJob } from "./routine-events";
 import { createRoutine, type RoutineDeps, updateRoutine } from "./routines";
 import { assertCanWork } from "./standing";
@@ -42,6 +43,7 @@ const mappingInput = z.strictObject({
   priority: z.enum(["low", "medium", "high", "critical"]).default("medium"),
   projectId: z.uuid().nullable().default(null),
   projectWorkspaceId: z.uuid().nullable().default(null),
+  workspaceBindingId: z.uuid().nullable().default(null),
   goalId: z.uuid().nullable().default(null),
   parentIssueId: z.uuid().nullable().default(null),
   variables: z.array(z.unknown()).max(100).default([]),
@@ -106,8 +108,8 @@ function supported(m: Mapping) {
       "paperclip.unsupported_policy",
     );
   if (
-    d.projectId !== null ||
-    d.projectWorkspaceId !== null ||
+    ((d.projectId !== null || d.projectWorkspaceId !== null || d.workspaceBindingId) &&
+      (!d.projectId || !d.projectWorkspaceId || !d.workspaceBindingId)) ||
     d.goalId !== null ||
     d.parentIssueId !== null ||
     d.envFingerprint !== EMPTY_ENV
@@ -247,6 +249,7 @@ export async function createPaperclipMapping(
       priority,
       projectId,
       projectWorkspaceId,
+      workspaceBindingId,
       goalId,
       parentIssueId,
       variables,
@@ -262,6 +265,7 @@ export async function createPaperclipMapping(
       priority,
       projectId,
       projectWorkspaceId,
+      workspaceBindingId,
       goalId,
       parentIssueId,
       variables,
@@ -410,6 +414,7 @@ export async function preparePaperclipMapping(
       },
     };
     supported({ ...m, definition });
+    await assertMappingWorkspace(tx, { ...m, definition }, true);
     await updateRoutine({ ...deps, db: tx }, actorId, orgId, native.id, {
       prompt,
       target: { type: "dm" },
@@ -490,6 +495,7 @@ export async function setPaperclipMappingEnabled(
     if (m.configHash !== configHash) throw new ConflictError("Mapping changed", "paperclip.stale_mapping");
     if (enabled) {
       supported(m);
+      await assertMappingWorkspace(tx, m, true);
       const [r] = await tx
         .select()
         .from(routines)
@@ -538,6 +544,7 @@ export async function dispatchPaperclipRoutine(
     if (!m.sourceActive || m.sourceArchived)
       throw new ConflictError("Source routine is not active", "paperclip.source_inactive");
     supported(m);
+    await assertMappingWorkspace(tx, m, true);
     const triggerId = input.triggerId ?? null;
     if (triggerId && !m.triggers.some((t) => t.id === triggerId && t.enabled && t.kind === "api"))
       throw new ConflictError("Trigger is not an enabled API trigger", "paperclip.trigger_inactive");

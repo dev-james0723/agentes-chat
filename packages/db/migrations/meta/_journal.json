@@ -1835,6 +1835,13 @@
       "when": 1794745400001,
       "tag": "0263_paperclip_routine_compat",
       "breakpoints": true
+    },
+    {
+      "idx": 264,
+      "version": "7",
+      "when": 1794745400002,
+      "tag": "0264_paperclip_workspace_bindings",
+      "breakpoints": true
     }
   ]
 }

@@ -250,6 +250,7 @@ import {
 import { openRequestNudge, openRequestsOf, WITHDRAW_REQUEST_TOOL } from "./open-requests";
 import { enqueue, PermanentJobError } from "./outbox";
 import { type OutsideMemo, personWords, runReadOutside } from "./outside";
+import { paperclipProjectBrain } from "./paperclip-project-runtime";
 import { assertPersonUnderLimit } from "./person-usage";
 import { createProfiler, type StageTiming } from "./profile";
 import { ASK_USER_TOOL, QUESTION_MAX_CHARS, questionResult } from "./questions";
@@ -433,6 +434,7 @@ const UNCOUNTED_TOOLS = `^(${REACT_TOOL}|${ON_DEMAND_FIND}|${ON_DEMAND_USE})$|_$
  */
 export interface EngineDeps {
   db: Database;
+  paperclipCompatibilityEnabled?: boolean;
   /** Reads a live block's parts (`blockSpecAt`): the agent reads what its blocks show (ADR 0113). */
   blockSpec?: BlockSpecReader;
   gateway: ModelGateway;
@@ -5417,6 +5419,20 @@ async function executeRunInner(
 
 /** Builds the brain of this kind (`resolveBrain` picks it): a registered factory, else the built-in model brain. */
 function createBrain(
+  deps: EngineDeps,
+  agent: Agent,
+  run: AgentRun,
+  kind: BrainKind,
+  token: { current: string },
+  transcript: () => Transcript,
+): Brain {
+  return paperclipProjectBrain(
+    { db: deps.db, enabled: deps.paperclipCompatibilityEnabled },
+    createUnboundBrain(deps, agent, run, kind, token, transcript),
+  );
+}
+
+function createUnboundBrain(
   deps: EngineDeps,
   agent: Agent,
   run: AgentRun,

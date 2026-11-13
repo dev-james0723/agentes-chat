@@ -134,6 +134,7 @@ import {
 } from "./network-state";
 import { type CachedLogo, logoDataUrl, readCachedLogo, removeCachedLogo, syncOrgLogo } from "./org-logo";
 import { type DeviceGrant, devicePair, type FetchFn, LINK_CODE, PairingError, uniqueWorkspace } from "./pairing";
+import { createPaperclipGateway } from "./paperclip-gateway";
 import { agentId8, agentWorkspace } from "./paths";
 import { iphonesWifiFileOf, PhoneManager, type PhoneManagerOptions } from "./phones";
 import { agentSecrets, dropStoredSiteSecrets, secretValue } from "./secrets";
@@ -1492,9 +1493,20 @@ export class RunnerDaemon implements RequestObserver {
       systemMode: config.mode === "system",
       config: config.hostMcp,
     });
+    const paperclip =
+      config.orgId && config.machineId && config.mode !== "system"
+        ? createPaperclipGateway({
+            runnerHome: home,
+            workspaceReal,
+            orgId: config.orgId,
+            machineId: config.machineId,
+            access: () => this.access(),
+          })
+        : undefined;
     const context: HandlerContext = {
       hostMcp,
       workspaceReal,
+      ...(paperclip ? { paperclip } : {}),
       get exec() {
         return daemon.access().tools.commands;
       },
@@ -1592,6 +1604,7 @@ export class RunnerDaemon implements RequestObserver {
       onState: (state) => {
         // Offline: frames have nowhere to go; the server starts the live view again when it is back.
         if (state !== "online") {
+          paperclip?.reset();
           this.observeEgress = false;
           browser.stopStreams();
           views.closeAll();

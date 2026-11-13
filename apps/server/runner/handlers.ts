@@ -104,6 +104,8 @@ export const MAX_LIST_ENTRIES = 5000;
 
 /** Ops that start new work: refused while the owner paused the computer (protocol 9). Reads of status, output and cancel still go. */
 export const NEW_WORK_OPS: ReadonlySet<string> = new Set([
+  "paperclip.workspace.attest",
+  "paperclip.brain.turn",
   "exec",
   "read",
   "write",
@@ -144,6 +146,9 @@ export const NEW_WORK_OPS: ReadonlySet<string> = new Set([
  */
 export const OP_ROUTES: Readonly<Record<MachineOp, "machine" | "agent">> = {
   host_mcp: "machine",
+  "paperclip.workspace.probe": "machine",
+  "paperclip.workspace.attest": "machine",
+  "paperclip.brain.turn": "agent",
   exec: "agent",
   read: "agent",
   write: "agent",
@@ -226,6 +231,17 @@ type AccessAllowOp = Extract<MachineRequest, { op: "access.allow" }>;
 
 export interface HandlerContext {
   hostMcp?: HostMcpManager;
+  /** A locally registered project proof, available only in the paired owner's single-user runner. */
+  paperclip?: {
+    probe(): MachineReplies["paperclip.workspace.probe"];
+    attest(
+      req: Extract<MachineRequest, { op: "paperclip.workspace.attest" }>,
+    ): Promise<MachineReplies["paperclip.workspace.attest"]>;
+    consume(req: Extract<MachineRequest, { op: "paperclip.brain.turn" }>): Promise<void>;
+    recheck(req: Extract<MachineRequest, { op: "paperclip.brain.turn" }>, cwd: string): Promise<void>;
+    finish(req: Extract<MachineRequest, { op: "paperclip.brain.turn" }>): void;
+  };
+  paperclipBeforeLaunch?: (cwd: string) => Promise<void>;
   /** Real path of the workspace folder. */
   workspaceReal: string;
   /** `false`: commands off (`--no-exec`, or `access.tools.commands` off). */
@@ -643,6 +659,8 @@ async function routeRequest(ctx: HandlerContext, req: MachineRequest, scope: Req
     const until = req.paused && typeof req.until === "string" ? req.until : null;
     return { paused: ctx.setPause(req.paused === true, until, by) } satisfies MachineReplies["pause.set"];
   }
+  if (req.op.startsWith("paperclip.") && ctx.systemMode?.())
+    throw new RunnerError("not_allowed", "Project attestation is single-user only");
   // Protocol 49: an agent's (or a profile's) live view socket, this process's in every mode (ADR 0040 §7.1).
   if (req.op === "browser.view.open") return openBrowserView(ctx, req);
   // Protocol 34: a browser profile's session, never an agent's worker or folder (ADR 0110).
@@ -763,6 +781,33 @@ async function routeRequest(ctx: HandlerContext, req: MachineRequest, scope: Req
   }
   const secrets = await agentSecrets(ctx.secretsDir, req.agent);
   switch (req.op) {
+    case "paperclip.workspace.probe":
+      if (!ctx.paperclip || ctx.systemMode?.()) throw new RunnerError("not_allowed", "Project attestation unavailable");
+      return ctx.paperclip.probe();
+    case "paperclip.workspace.attest":
+      if (!ctx.paperclip || ctx.systemMode?.() || !req.agent || req.agent.id !== req.proof.agentId)
+        throw new RunnerError("not_allowed", "Project attestation unavailable");
+      return ctx.paperclip.attest(req);
+    case "paperclip.brain.turn": {
+      if (
+        !ctx.paperclip ||
+        ctx.systemMode?.() ||
+        !req.agent ||
+        req.agent.id !== req.paperclipProof?.agentId ||
+        req.runId !== req.paperclipProof?.runId ||
+        req.permissions?.mode === "chat" ||
+        !["claude_code", "codex"].includes(req.kind)
+      )
+        throw new RunnerError("not_allowed", "Project proof unavailable or unsupported brain");
+      await ctx.paperclip.consume(req);
+      const { paperclipProof: _proof, ...turn } = req;
+      try {
+        const guarded = { ...ctx, paperclipBeforeLaunch: (cwd: string) => ctx.paperclip!.recheck(req, cwd) };
+        return await doBrainTurn(guarded, { ...turn, op: "brain.turn" }, scope, secrets);
+      } finally {
+        ctx.paperclip.finish(req);
+      }
+    }
     case "brain.turn":
       return doBrainTurn(ctx, req, scope, secrets);
     case "brain.route":
@@ -1245,6 +1290,7 @@ async function doBrainTurn(
     folder: ctx.workspaceReal,
     secrets: secrets && !chat ? { env: secrets.env, redact: secrets.redact, hold: secrets.hold } : null,
     signal: scope.signal,
+    ...(ctx.paperclipBeforeLaunch ? { beforeLaunch: ctx.paperclipBeforeLaunch } : {}),
     emit: (event) => scope.emit?.({ type: "brain.event", runId, event }),
     ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
     ...(ctx.grant ? { grant: ctx.grant } : {}),
@@ -1470,7 +1516,8 @@ async function doCodexTurn(
           ...(codex.mcp ? { mcp: codex.mcp } : {}),
           ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
           ...(ctx.accounts || codex.accounts ? { accounts: ctx.accounts ?? codex.accounts } : {}),
-          ...(codex.app ? { app: codex.app } : {}),
+          ...(codex.app && !ctx.paperclipBeforeLaunch ? { app: codex.app } : {}),
+          ...(ctx.paperclipBeforeLaunch ? { beforeLaunch: ctx.paperclipBeforeLaunch } : {}),
           ...(codex.spawn ? { spawn: codex.spawn } : {}),
           ...(ctx.grant ? { grant: ctx.grant } : {}),
         },
@@ -1753,10 +1800,11 @@ export class RequestRunner {
       return Promise.resolve();
     }
     const controller = new AbortController();
-    const locked = req.op === "brain.turn" && req.permissions?.mode === "chat";
-    const person = req.op === "brain.turn" && req.personWaiting === true;
+    const isTurn = req.op === "brain.turn" || req.op === "paperclip.brain.turn";
+    const locked = isTurn && req.permissions?.mode === "chat";
+    const person = isTurn && req.personWaiting === true;
     // A paused computer says so (the handler refuses new work), never that it is full.
-    if (req.op === "brain.turn" && !this.ctx.paused?.() && !this.admit(locked, person)) {
+    if (isTurn && !this.ctx.paused?.() && !this.admit(locked, person)) {
       const close = this.ctx.reclaimBrains;
       if (!close || this.memAvailable() === null) {
         if (this.reserve(id, person)) return this.run(id, req, controller);
@@ -1792,7 +1840,7 @@ export class RequestRunner {
   }
 
   private run(id: string, req: MachineRequest, controller: AbortController): Promise<void> {
-    const turn = req.op === "brain.turn";
+    const turn = req.op === "brain.turn" || req.op === "paperclip.brain.turn";
     if (turn) this.turns++;
     this.inflight.set(id, controller);
     // A browser or desktop command is logged when it ends, with how long it took (`browser.act snapshot 812ms`) and

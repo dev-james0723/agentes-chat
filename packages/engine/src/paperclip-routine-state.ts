@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { and, type Database, type Executor, eq, inArray, schema } from "@agenteschat/db";
 import { UUID } from "./authority";
 import { ValidationError } from "./errors";
+import { assertMappingWorkspace } from "./paperclip-workspaces";
 
 export function canonical(value: unknown, depth = 0): string {
   if (depth > 20) throw new ValidationError("JSON nesting is too deep", "paperclip.json_depth");
@@ -87,6 +88,11 @@ export async function paperclipRunRefusal(
   if (!mapping.enabled || !mapping.sourceActive || mapping.sourceArchived) return "paperclip_mapping_disabled";
   if (mapping.nativeConfigHash !== nativeHash(routine) || mapping.configHash !== run.event.configHash)
     return "paperclip_target_changed";
+  try {
+    await assertMappingWorkspace(db, mapping, lock);
+  } catch {
+    return "paperclip_workspace_changed";
+  }
   if (
     issue.assigneeType !== "agent" ||
     issue.assigneeId !== routine.agentId ||
