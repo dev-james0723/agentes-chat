@@ -210,22 +210,44 @@ test("fixed reviewed wrappers remain supported, but env shebangs and wrapper arg
     await m.close();
   }
 });
-test.skipIf(!Bun.which("python3"))("Python module dispatch and nonisolated scripts refuse before spawning", async () => {
-  const python = Bun.which("python3");
-  if (!python) throw new Error("Python fixture runtime unavailable");
-  const command = await realpath(python);
-  for (const args of [["-m", "unreviewed"], [path.resolve("apps/server/test/fixtures/host-mcp-server.mjs")]]) {
-    const f = await fixture();
-    await f.manager.close();
-    const p = { ...f.p, command, commandSha256: sha(await readFile(command)), args };
-    const raw = JSON.stringify({ version: 1, profiles: [p] });
-    await writeFile(f.file, raw);
-    const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
-    managers.push(m);
-    await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
-      "launch contract",
-    );
-  }
+test.skipIf(!Bun.which("python3"))(
+  "Python module dispatch and nonisolated scripts refuse before spawning",
+  async () => {
+    const python = Bun.which("python3");
+    if (!python) throw new Error("Python fixture runtime unavailable");
+    const command = await realpath(python);
+    for (const args of [["-m", "unreviewed"], [path.resolve("apps/server/test/fixtures/host-mcp-server.mjs")]]) {
+      const f = await fixture();
+      await f.manager.close();
+      const p = { ...f.p, command, commandSha256: sha(await readFile(command)), args };
+      const raw = JSON.stringify({ version: 1, profiles: [p] });
+      await writeFile(f.file, raw);
+      const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+      managers.push(m);
+      await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+        "launch contract",
+      );
+    }
+  },
+);
+test("a renamed interpreter cannot use the generic native launch contract to preload cwd code", async () => {
+  const { link, mkdir } = await import("node:fs/promises");
+  const f = await fixture();
+  await f.manager.close();
+  const home = await realpath(f.options.home);
+  const command = path.join(home, "native-alias");
+  const cwd = path.join(home, "native-cwd");
+  await link(f.p.command, command);
+  await mkdir(cwd);
+  await writeFile(path.join(cwd, "unreviewed.mjs"), "globalThis.unreviewed = true;\n");
+  const p = { ...f.p, command, cwd, args: ["--preload=./unreviewed.mjs", ...f.p.args] };
+  const raw = JSON.stringify({ version: 1, profiles: [p] });
+  await writeFile(f.file, raw);
+  const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+  managers.push(m);
+  await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+    "launch contract",
+  );
 });
 test("completed calls never reexecute after restart; abort and disconnect fence the agent while another session survives", async () => {
   const f = await fixture();

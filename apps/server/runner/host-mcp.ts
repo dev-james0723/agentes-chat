@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import {
   HOST_MCP_LIMITS,
@@ -55,7 +55,7 @@ const inside = (root: string, file: string) => {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 };
 /** A registry pins reviewed installed code, never an interpreter's search in an agent's working directory. */
-function launchArgs(p: Profile, command: Uint8Array): string[] {
+async function launchArgs(p: Profile, command: Uint8Array): Promise<string[]> {
   const pinned = (file: string | undefined): file is string =>
     !!file && abs(file) && p.artifacts.some((a) => a.path === file) && !inside(p.cwd, file);
   if (inside(p.cwd, p.command)) fail("launch contract: command must be outside cwd");
@@ -101,7 +101,10 @@ function launchArgs(p: Profile, command: Uint8Array): string[] {
     !(command[0] === 0x4d && command[1] === 0x5a)
   )
     fail("launch contract: unsupported executable format");
-  // Standalone native MCP executables keep their owner-reviewed arguments (for example the `mcp` subcommand).
+  // A renamed interpreter is still a native executable. No loader flags, paths or cwd files may select its code.
+  if (p.args.some((arg) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(arg)) || (await readdir(p.cwd)).length)
+    fail("launch contract: native application words require an empty cwd; use a fixed reviewed wrapper otherwise");
+  // Standalone MCP binaries retain simple application arguments, for example the `mcp` subcommand.
   return p.args;
 }
 export const profileRevision = (p: unknown) => sha(JSON.stringify(p));
