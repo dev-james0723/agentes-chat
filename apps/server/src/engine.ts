@@ -412,7 +412,7 @@ export function buildEngine(o: EngineOptions) {
         ai: { gateway, machines: machineHub },
         judge: context.judge,
       }),
-      createFindAgentToolSource({ machines: machineHub }),
+      createFindAgentToolSource({ machines: machineHub, judge: context.judge, ai: { gateway, machines: machineHub } }),
       createUsageToolSource(),
       // What people saved for the agent in the Vault, found before it asks them (ADR 0144).
       createVaultToolSource(vault),

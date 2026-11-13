@@ -10,8 +10,10 @@ import { BROWSER_SCOPE, DESKTOP_SCOPE } from "./browser/types";
 import { caches } from "./cache";
 import { capabilityKeys, summarizeScopes } from "./capabilities";
 import { channelAudienceSql } from "./channels";
+import { chooseDelegate } from "./delegation-choice";
 import { agentDesktopUseStatus } from "./desktop/status";
 import { cutText, editDistance } from "./format";
+import type { Judge } from "./judge";
 import type { MachineCaller, MachineStatus } from "./machine-hub";
 import { parseMentionHandles } from "./messages";
 import { requirePermission } from "./organizations";
@@ -312,7 +314,7 @@ const words = (s: string) =>
 /** `find_agent` as a personal workspace's agents read it (ADR 0159). */
 const FIND_AGENT_PERSONAL = {
   [FIND_AGENT_TOOL]:
-    "Find this person's other agents: who knows or can do something (e.g. bills, travel, training), what each one can do, who is responsible for it and whether it is busy now. Leave `query` empty to list them all. To ask one, use ask_agent.",
+    "Find this person's other agents and their live capabilities. For a delegation decision, pass `task`: the configured Jev decision model recommends one authorized, AI-ready candidate and returns a receipt without starting work. Send only a short task summary, never secrets or source code. `query` alone searches names and roles. A recommendation does not replace a person's explicit assignee or approvals; recheck readiness and ownership before delegation.",
 };
 
 /**
@@ -321,27 +323,85 @@ const FIND_AGENT_PERSONAL = {
  * talk to or that take consultations for them, with what they can do (`rosterScopeNames`), who is responsible and
  * whether they are busy. Read-only; asking one is `ask_agent`.
  */
-export function createFindAgentToolSource(deps: { machines?: Pick<MachineCaller, "status"> | null } = {}): ToolSource {
+export function createFindAgentToolSource(
+  deps: { machines?: Pick<MachineCaller, "status"> | null; judge?: Judge; ai?: Omit<AiStatusDeps, "db"> } = {},
+): ToolSource {
   const tool: ToolDefinition = {
     name: FIND_AGENT_TOOL,
     description:
-      "Find the organization's other agents: who knows or can do something (e.g. deploys, finance, design), what each one can do, who is responsible for it and whether it is busy now. Leave `query` empty to list them all. To ask one, use ask_agent.",
+      "Find the organization's other agents and their live capabilities. For a delegation decision, pass `task`: the workspace's Jev decision model recommends one authorized, AI-ready candidate and returns an explicit receipt, without starting work. Send only a short task summary, never secrets or source code. `query` alone searches names and roles; leave it empty to list agents. A recommendation does not replace a person's explicit assignee or approvals. Recheck readiness and ownership before assigning or asking one.",
     scope: "",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", maxLength: 200, description: "What you need, e.g. 'staging deploy' or 'invoices'." },
+        task: {
+          type: "string",
+          minLength: 1,
+          maxLength: 1200,
+          description:
+            "A short, non-secret summary for Jev to recommend the best delegate. Read-only: no assignment or message is sent.",
+        },
       },
       additionalProperties: false,
     },
-    describe: (input) => ({ title: "Find agents", detail: String(input.query ?? "") }),
+    describe: (input) => ({
+      title: typeof input.task === "string" ? "Jev delegation decision" : "Find agents",
+      detail: String(input.task ?? input.query ?? ""),
+    }),
     async execute(input, ctx) {
       const { db } = ctx;
       const person = await personBehindCall(ctx);
       const talks = await speakerFor(db, ctx.orgId, person);
-      const team = (await loadTeam(db, ctx.orgId)).filter(
-        (a) => a.id !== ctx.agentId && canTalkTo(a, person, viaAgent(talks)),
-      );
+      const allTeam = await loadTeam(db, ctx.orgId);
+      const team = allTeam.filter((a) => a.id !== ctx.agentId && canTalkTo(a, person, viaAgent(talks)));
+      if (typeof input.task === "string") {
+        if (!deps.judge || !deps.ai) {
+          return {
+            content: "Jev delegation is unavailable; no recommendation was made. Do not claim Jev selected an agent.",
+            isError: true,
+            data: { delegation: { status: "unavailable", by: "jev" } },
+          };
+        }
+        const callable = teammatesFor(allTeam, ctx.agentId, person, new Set(), talks);
+        const ids = callable.map((a) => a.id);
+        const [scopes, statuses, readiness] = await Promise.all([
+          rosterScopeNames(db, deps.machines, ctx.orgId, ids),
+          loadAgentStatuses(db, ctx.orgId, new Date(), ids),
+          agentAiStates({ db, ...deps.ai }, ctx.orgId, ids),
+        ]);
+        const statusOf = new Map(statuses.map((s) => [s.agentId, s]));
+        const candidates = callable
+          .filter(
+            (a) =>
+              readiness.get(a.id)?.state === "ready" &&
+              !["offline", "out"].includes(statusOf.get(a.id)?.presence ?? "offline"),
+          )
+          .map((a) => ({
+            id: a.id,
+            handle: a.handle,
+            name: a.name,
+            role: a.role,
+            can: summarizeScopes(scopes.filter((s) => s.agentId === a.id).map((s) => s.scope)),
+            presence: statusOf.get(a.id)?.presence ?? "unknown",
+          }));
+        const decision = await chooseDelegate(
+          deps.judge,
+          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
+          input.task,
+          candidates,
+        );
+        return {
+          content:
+            decision.status === "recommended"
+              ? `Jev recommends @${decision.handle} (agent ${decision.agentId}). This starts no work and grants no authority. Recheck task ownership, readiness and approval requirements before delegating.`
+              : `Jev delegation result: ${decision.status}. No agent was selected and no work was started. Do not silently substitute a decision model or claim Jev chose someone.`,
+          ...(decision.status === "unavailable" || decision.status === "invalid" || decision.status === "invalid_input"
+            ? { isError: true }
+            : {}),
+          data: { delegation: decision },
+        };
+      }
       const query = words(String(input.query ?? ""));
       const scored = team
         .map((a) => {

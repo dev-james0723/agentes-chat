@@ -17,6 +17,7 @@ import {
   summarizeScopes,
   teamPrompt,
 } from "../src";
+import type { JudgeRequest } from "../src/judge";
 import { type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 
@@ -179,6 +180,58 @@ test("find_agent searches by what agents do and shows what they can do", async (
   expect(out).toContain("Responsible person:");
   expect(out).not.toContain("@design");
   expect(out).not.toContain("@dev:");
+});
+
+test("find_agent task mode asks Jev with only accessible, unpaused, AI-ready candidates", async () => {
+  const decisions: JudgeRequest[] = [];
+  const results: string[] = [];
+  f = await setup({
+    askAgent: true,
+    judge: (kind, _id, _state, _question, request) => {
+      if (kind !== "agent_delegation") return undefined;
+      decisions.push(request);
+      const candidates = request.state.candidates as { id: string }[];
+      return { choice: candidates[0]?.id, confidence: 0.95 };
+    },
+    reply: (req) => {
+      const last = JSON.stringify(req.messages.at(-1)?.content);
+      if (last.includes("tool_result")) {
+        results.push(last);
+        return { chunks: ["done"] };
+      }
+      return {
+        chunks: [],
+        toolUses: [{ name: "find_agent", input: { task: "Independent review of a synthetic change" } }],
+      };
+    },
+  });
+  const qa = await addAgent("QA", "qa", "Independent reviewer", "Private instructions must not be sent to Jev");
+  const paused = await addAgent("Paused", "paused", "Reviewer");
+  await f.db.update(schema.agents).set({ operatorHoldAt: new Date() }).where(eq(schema.agents.id, paused.id));
+  const hidden = await addAgent("Secret", "secret", "Reviewer");
+  await f.db
+    .update(schema.agents)
+    .set({ audienceMode: "owner", ownerUserId: null, consultable: false })
+    .where(eq(schema.agents.id, hidden.id));
+  const noAi = await addAgent("No AI", "no-ai", "Reviewer");
+  await f.db
+    .update(schema.agents)
+    .set({ brain: "claude_code", machineId: null, brainFallback: false })
+    .where(eq(schema.agents.id, noAi.id));
+  await addAgent("Not callable", "not-callable", "Reviewer");
+  await f.db
+    .update(schema.agents)
+    .set({ autonomyBrakes: { callAgents: "some", callAgentIds: [qa.id, paused.id, noAi.id] } })
+    .where(eq(schema.agents.id, f.agent.id));
+  await post("@dev perform only the synthetic delegation lookup; do not start any work");
+  await drainOutbox(f.db, f.handlers);
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]?.calibrated).toBe(true);
+  expect(decisions[0]?.runId).toBeTruthy();
+  expect(((decisions[0]?.state.candidates ?? []) as { id: string }[]).map((x) => x.id)).toEqual([qa.id]);
+  expect(JSON.stringify(decisions[0]?.state)).not.toContain("Private instructions");
+  expect(results[0]).toContain("Jev recommends @qa");
+  expect(results[0]).toContain("This starts no work");
 });
 
 test("a whole-connection grant is named after its connector, not 'Connector'", async () => {
