@@ -2948,8 +2948,9 @@ async function executeRunInner(
             .catch(() => [])
         : [];
       evidence.means = [...turnMeans(names, teammates, await isPersonalWorkspace(db, run.orgId)), ...own];
-      // No call executed in this run: no tool step to read.
-      evidence.tried = t.executedCalls ? await triedCalls(db, run, t.harnessTried) : (t.harnessTried ?? []);
+      // Native MCP calls can persist tool evidence without a matching brain tool event.
+      evidence.tried =
+        t.executedCalls || plan.kind !== "model" ? await triedCalls(db, run, t.harnessTried) : (t.harnessTried ?? []);
       return evidence;
     };
     return { evidence, gather };

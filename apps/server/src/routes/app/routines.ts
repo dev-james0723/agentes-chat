@@ -39,6 +39,7 @@ import {
   stopRoutineRun,
   takeOverRoutine,
   updateRoutine,
+  ValidationError,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
 import { errorResponse } from "../../http/errors";
@@ -691,6 +692,10 @@ export function routineRoutes(deps: AppDeps) {
             prompt: z.string().min(1).max(10_000),
             target: Target,
             trigger: TriggerInput,
+            paused: z
+              .boolean()
+              .optional()
+              .openapi({ description: "Create a schedule or webhook paused, with no run until resumed." }),
             access: Access.optional().openapi({ description: "Ignored: every routine acts (ADR 0109)." }),
             report: Report.optional().openapi({ description: "Default `when_new`." }),
             ownActions: OwnActions.optional(),
@@ -702,7 +707,14 @@ export function routineRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId } = c.req.valid("param");
       const actor = c.get("user").id;
-      const created = await createRoutine(routines, actor, orgId, c.req.valid("json"));
+      const input = c.req.valid("json");
+      if (input.paused && input.trigger.type !== "schedule" && input.trigger.type !== "webhook") {
+        throw new ValidationError(
+          "Paused creation is supported only for scheduled and webhook routines",
+          "routine.paused_trigger_unsupported",
+        );
+      }
+      const created = await createRoutine(routines, actor, orgId, input);
       return c.json(created, 201);
     },
   );
