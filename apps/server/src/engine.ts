@@ -95,6 +95,7 @@ import {
   GrokBrain,
   getAgentCached,
   hubBrainLink,
+  type InternalDatabaseTarget,
   isAgentesCloud,
   isRightHand,
   type JobDeps,
@@ -143,6 +144,7 @@ export const NO_TERMINAL = "no_terminal";
 export interface EngineOptions {
   db: Database;
   config: Config;
+  internalDatabaseTargets?: readonly InternalDatabaseTarget[];
   adapters: Adapters;
   modelProviders: Record<string, ModelProvider>;
   /** Tests: extra tool sources, in-process MCP, fake HTTP, fake embeddings. */
@@ -494,7 +496,12 @@ export function buildEngine(o: EngineOptions) {
         artifacts,
       }),
       // People's Postgres databases (ADR 0039): read-only queries, when the server has a driver.
-      createDatabaseToolSource({ keyWrappers, databases: adapters.databases, resolveHost: o.resolveHost }),
+      createDatabaseToolSource({
+        keyWrappers,
+        databases: adapters.databases,
+        resolveHost: o.resolveHost,
+        internalTargets: o.internalDatabaseTargets,
+      }),
       createMissionToolSource(missionDeps),
       // Approval from the people who decide (ADR 0126): after the missions source, whose own request_approval wins
       // in a mission's thread.

@@ -101,6 +101,7 @@ export * from "./dashboards";
 export * from "./databases/connections";
 export * from "./databases/guard";
 export * from "./databases/identifiers";
+export * from "./databases/internal-targets";
 export * from "./databases/policies";
 export * from "./databases/tools";
 export * from "./desktop";

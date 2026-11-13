@@ -74,6 +74,7 @@ import {
   memoryBudget,
   meterComposio,
   moveIssueComments,
+  parseInternalDatabaseTargets,
   publicHttpsFetch,
   queueEmbeddingBackfill,
   relayCredentials,
@@ -198,6 +199,11 @@ async function boot(
   release: string,
   errors: ErrorReporter,
 ) {
+  const internalDatabaseTargets = parseInternalDatabaseTargets(
+    config.DATABASE_INTERNAL_TARGETS,
+    edition,
+    config.ALLOW_SIGNUP,
+  );
   log.info("starting agentes.chat", { version: release, edition, config: redactConfig(config) });
   log.info(
     "error reports",
@@ -379,6 +385,7 @@ async function boot(
   const engine = buildEngine({
     db: database.db,
     config,
+    internalDatabaseTargets,
     adapters,
     modelProviders,
     onTiming: (name, ms, attrs) => log.info("latency", { metric: name, ms, ...attrs }),
@@ -510,6 +517,7 @@ async function boot(
       adapters,
       wakeWorkers: workers.wakeAll,
       extras: {
+        internalDatabaseTargets,
         embed: engine.gateway.embed,
         storage: engine.storage,
         artifacts: engine.artifacts,

@@ -151,6 +151,12 @@ export const envVars = {
     example: "postgres://agenteschat:password@db.example.com:5432/agenteschat?sslmode=require",
     secret: true,
   },
+  DATABASE_INTERNAL_TARGETS: {
+    schema: z.string().max(4000).default("[]"),
+    description:
+      "Default-off closed-selfhost database metrics profile: one exact org/host/port/database/reader, pinned private IPs, and explicit isolated_local_plaintext transport. Only the provisioned engineering_ro views are readable. Never a credential or general private-network switch.",
+    section: "Database",
+  },
   DATABASE_POOL_MAX: {
     schema: z.coerce.number().int().min(1).default(20),
     description:

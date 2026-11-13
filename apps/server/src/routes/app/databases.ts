@@ -111,6 +111,7 @@ export function databaseRoutes(deps: AppDeps) {
     keyWrappers: [adapters.keyWrapper, ...adapters.legacyKeyWrappers],
     databases: adapters.databases,
     resolveHost: deps.extras?.resolveHost,
+    internalTargets: deps.extras?.internalDatabaseTargets,
   };
 
   app.openapi(
