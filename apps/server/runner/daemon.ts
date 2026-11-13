@@ -243,7 +243,7 @@ export function configFromGrant(
   const same = prev?.machineId === grant.machineId && prev?.server === input.server;
   return {
     ...(prev?.mode ? { mode: prev.mode } : {}),
-    ...(prev?.hostMcp ? { hostMcp: prev.hostMcp } : {}),
+    ...(same && prev?.orgId && prev.orgId === grant.org.id && prev.hostMcp ? { hostMcp: prev.hostMcp } : {}),
     ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),

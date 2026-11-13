@@ -146,6 +146,22 @@ test("pairing the same machine again keeps its allowed services and pause; anoth
   expect(other.paused).toBeUndefined();
 });
 
+test("host MCP opt-in stays only with the exact server, machine and organization pairing", () => {
+  const hostMcp = { enabled: true as const, registry: "/reviewed/registry.json", sha256: "a".repeat(64) };
+  const prev = { server: "https://app.example.com", machineId: "m", orgId: "o", hostMcp };
+  const input = (server: string, machineId: string, orgId: string) => ({
+    server,
+    grant: { machineId, token: "t", name: "n", org: { id: orgId, name: "O" } } as never,
+    workspace: "/w",
+    tools: { commands: true } as never,
+    desktop: false,
+  });
+  expect(configFromGrant(prev, input(prev.server, "m", "o")).hostMcp).toEqual(hostMcp);
+  expect(configFromGrant(prev, input("https://other.example.com", "m", "o")).hostMcp).toBeUndefined();
+  expect(configFromGrant(prev, input(prev.server, "m2", "o")).hostMcp).toBeUndefined();
+  expect(configFromGrant(prev, input(prev.server, "m", "o2")).hostMcp).toBeUndefined();
+});
+
 test("config: the auth route is only ever the guard's true, and a new pairing keeps it", () => {
   expect(normalizeStored({ networkAuthRoute: true }).networkAuthRoute).toBe(true);
   expect(normalizeStored({ networkAuthRoute: "true" })).toEqual({});
