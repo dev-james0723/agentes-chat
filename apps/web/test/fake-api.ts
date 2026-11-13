@@ -3883,12 +3883,7 @@ export function createFakeApi(state: FakeState = seedState(), options: { seed?: 
     () => machines.all(),
     (orgId, id) => machines.client.remove(orgId, id),
   );
-  const agentIds = async (orgId: string) => (await http.agents.list(orgId)).map((a) => a.id);
-  const customConnectors = createMockCustomConnectors(
-    ctx,
-    (method, ...args) => state.calls.push({ method, args }),
-    async (orgId, serverId) => access.connected(serverId, await agentIds(orgId)),
-  );
+  const customConnectors = createMockCustomConnectors(ctx, (method, ...args) => state.calls.push({ method, args }));
   const access = createFakeAccess(
     (orgId) => http.connectors.list(orgId),
     (method, ...args) => state.calls.push({ method, args }),
@@ -3962,11 +3957,9 @@ export function createFakeApi(state: FakeState = seedState(), options: { seed?: 
           revokedAt: null,
         };
       },
-      // A first connection of a connector is every agent's (a new key for it keeps their grants).
+      // New accounts grant no agent access; reconnecting preserves explicit grants.
       connectWithKey: async (orgId, input) => {
-        const first = !(await http.connectors.list(orgId)).some((c) => c.connector === input.connector);
         const connection = await http.connectors.connectWithKey(orgId, input);
-        if (first) access.connected(connection.id, await agentIds(orgId));
         return connection;
       },
     },

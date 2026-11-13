@@ -181,7 +181,7 @@ export function customConnectorRoutes(deps: AppDeps) {
       security,
       summary: "Connect an https MCP server: connected, OAuth to finish, or an API key is needed",
       description:
-        "A server's account is every agent's, whole (`connector:*`): its tools reach them once classified, and sensitive ones still ask for approval. The same address again is another account (\"Stripe 2\"), every agent's too; the same account again (the provider says) refreshes its sign-in (`outcome: same_account`). With `connectionId`, that account gets the new sign-in in place (`reconnected`); signing in to another account there is a 409 `connector.other_account`, and a sign-in whose account can't be checked a 409 `connector.account_unknown` (try again).",
+        "A new server account creates no agent-specific grants; existing explicit All tools permissions remain effective. Its tools must be classified and per-agent access explicitly granted; sensitive tools still ask for approval. The same address again is another account, also without agent grants. The same account again refreshes its sign-in (`outcome: same_account`). With `connectionId`, the sign-in is replaced in place and existing grants are preserved (`reconnected`); a different account returns 409 `connector.other_account` and an unverified account returns 409 `connector.account_unknown`.",
       request: {
         params: OrgParams,
         body: body(

@@ -249,11 +249,10 @@ export function ConnectorCatalogDialog({
           brandColor: d.brandColor,
           how: authKind(d),
           can: capabilities(t, exists, d.id, d),
-          // As the server does: a first connection is every agent's; then an MCP server takes another account
-          // (no agent yet) and a catalog connector a new sign-in (who uses it stays).
+          // New accounts start without agent access; reconnecting preserves explicit grants.
           after: t(
             !connected.has(d.id)
-              ? "connectors.detail.allText"
+              ? "connectFlow.accessRequired"
               : d.kind === "remote_mcp"
                 ? "connectors.detail.accountsText"
                 : "connectors.detail.replaceText",

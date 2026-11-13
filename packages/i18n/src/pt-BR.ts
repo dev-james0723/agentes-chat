@@ -12718,6 +12718,8 @@ export const ptBR = {
     agentSub: "Por conector e assunto. Por padrão, ações sensíveis pedem aprovação.",
   },
   connectFlow: {
+    accessRequired:
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
     steps: "Passos",
     step: { "0": "Conectar", "1": "O que faz", "2": "Quem pode usar" },
     connectTitle: "Conectar {{name}}",
@@ -12793,6 +12795,10 @@ export const ptBR = {
     /** The end of connecting: a short confirmation. "Ajustar" opens the detail (tools, then who uses it). */
     done: {
       title: "{{name}} conectado",
+      accessRequired:
+        "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      accessPending:
+        "Revise as ferramentas e escolha o acesso dos agentes em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
       everyone: "Todos os agentes podem usar.",
       /** A server by address whose tools no one gave a level yet: "Continuar" saves the ones we suggest. */
       waiting: "Os agentes só recebem as ferramentas quando você continuar, nos níveis que sugerimos.",

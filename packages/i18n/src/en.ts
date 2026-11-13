@@ -12682,6 +12682,8 @@ export const en = {
     agentSub: "By connector and subject. By default, sensitive actions ask for approval.",
   },
   connectFlow: {
+    accessRequired:
+      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
     steps: "Steps",
     step: { "0": "Connect", "1": "What it does", "2": "Who can use it" },
     connectTitle: "Connect {{name}}",
@@ -12758,6 +12760,10 @@ export const en = {
     /** The end of connecting: a short confirmation. "Adjust" opens the detail (tools, then who uses it). */
     done: {
       title: "{{name}} connected",
+      accessRequired:
+        "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+      accessPending:
+        "Review the tools, then choose agent access in Adjust. Existing All tools permissions still apply.",
       everyone: "Every agent can use it.",
       /** A server by address whose tools no one gave a level yet: "Continue" saves the ones we suggest. */
       waiting: "Agents get the tools only when you continue, at the levels we suggest.",

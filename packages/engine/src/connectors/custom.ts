@@ -34,7 +34,6 @@ import {
   connectionHeaders,
   freeLabel,
   freeToolPrefix,
-  grantToEveryAgent,
   noteRefusedSignIn,
   OAUTH_STATE_TTL_MS,
   oauthRedirectUri,
@@ -392,7 +391,7 @@ export async function reconnectTarget(db: Database, orgId: string, connectionId:
  * another account there is refused (`connector.other_account`), the grants were given for that one. Without it a
  * new account comes in, except when the provider says it is one already connected (its sign-in is refreshed,
  * `same_account`) or the server has no sign-in at all (the one connection it has). Every new account
- * is every agent's (`grantToEveryAgent`). Addresses match as the apps match them
+ * has no agent grants until an administrator explicitly chooses access. Addresses match as the apps match them
  * (`serverKey`). A service through Composio (ADR 0107) keeps Composio's account and no secret; the account it
  * replaces goes away at Composio.
  */
@@ -534,10 +533,9 @@ export async function storeCustomConnection(
             authType: input.authType,
             label,
             account: named,
-            everyAgent: true,
+            everyAgent: false,
           },
         });
-        await grantToEveryAgent(tx, input.orgId, input.actorId, row);
         return { twin: null, row };
       });
       if (!done.row) {

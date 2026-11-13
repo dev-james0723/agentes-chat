@@ -133,9 +133,9 @@ describe("agent access", () => {
     });
     expect(tools.find((t) => t.name === "github_pull_request_read")?.state).toBe("inherited");
     expect(tree.builtins.find((b) => b.scope === "drive:write")?.state).toBe("inherited");
-    // The two changes here, and GitHub given to the agent when it was connected.
+    // Only the two explicit changes are audited; connecting grants nothing new.
     const audit = await f.db.select().from(schema.auditLog);
-    expect(audit.filter((a) => a.action === "agent.access_changed")).toHaveLength(3);
+    expect(audit.filter((a) => a.action === "agent.access_changed")).toHaveLength(2);
   });
 
   test("only admins or the owner change access; the matrix shows effective states", async () => {

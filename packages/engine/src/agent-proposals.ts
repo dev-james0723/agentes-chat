@@ -947,11 +947,7 @@ const readScopesOf = (c: Awaited<ReturnType<typeof orgToolCatalog>>[number]) =>
     ? [customScope(c.connectionId, "read")]
     : c.scopes.filter((s) => /[.:]read$/.test(s.scope) && !s.tools.some((t) => t.sensitive)).map((s) => s.scope);
 
-/**
- * The new agent's apps at their levels, in one save through the access API's own rule (giving access: an admin). An
- * app the lines don't name starts at "Ler e escrever", as every agent got it when it was connected
- * (`grantToEveryAgent`); a custom server's account starts with none, as on the new-agent page (`presetLevels`).
- */
+/** Only the app access explicitly named in the approved draft is granted to the new agent. */
 export async function giveApps(
   db: Database,
   userId: string,
@@ -980,13 +976,8 @@ export async function giveApps(
     else for (const scope of readScopesOf(c)) input.scopes.push({ connectionId: c.connectionId, scope });
     given.push(c.connectionId);
   }
-  const opened = catalog.filter((c) => !c.custom && !given.includes(c.connectionId));
-  for (const c of opened) {
-    input.connectors[c.connectionId] = true;
-    given.push(c.connectionId);
-  }
   if (given.length > 0) await setAgentAccess(db, userId, orgId, agentId, input);
-  return { given, opened: opened.map((c) => c.label) };
+  return { given, opened: [] as string[] };
 }
 
 /**

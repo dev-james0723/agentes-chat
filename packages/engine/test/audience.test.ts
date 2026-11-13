@@ -180,7 +180,7 @@ describe("who can talk to the agent", () => {
     expect(team.audienceMode).toBe("everyone");
   });
 
-  test("a personal workspace's new agent starts with every connected app and the calendar; a team's does not", async () => {
+  test("a personal workspace keeps calendar defaults without inheriting connector access", async () => {
     await world();
     const model = { model: "claude-sonnet-5-5" };
     const [app] = await f.db
@@ -200,10 +200,9 @@ describe("who can talk to the agent", () => {
       );
     await updateOrgSettings(f.db, f.owner.id, f.org.id, { mode: "personal" });
     const mine = await createAgent(f.db, f.owner.id, f.org.id, { name: "Casa", handle: "casa" }, model);
-    // ADR 0159 §3a: broad by default; sensitive tools still ask on every call.
-    expect(await grantsOf(mine.id)).toEqual(
-      expect.arrayContaining([`${app?.id} connector:*`, "- calendar:read", "- calendar:write"]),
-    );
+    // Personal calendar access is distinct from external connector access.
+    expect(await grantsOf(mine.id)).toEqual(expect.arrayContaining(["- calendar:read", "- calendar:write"]));
+    expect(await grantsOf(mine.id)).not.toContain(`${app?.id} connector:*`);
     await updateOrgSettings(f.db, f.owner.id, f.org.id, { mode: "team" });
     const team = await createAgent(f.db, f.owner.id, f.org.id, { name: "Time", handle: "time" }, model);
     const teamGrants = await grantsOf(team.id);

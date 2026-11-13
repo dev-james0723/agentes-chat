@@ -79,8 +79,8 @@ import { useToast } from "@/lib/toast";
 import { reviewNote, ToolLevelsView, ToolReview, type ToolReviewState } from "./ToolReview";
 
 /**
- * Connecting a service, in one dialog: connect (OAuth or an API key), then a short confirmation ("done": every agent
- * can use it, so many actions ask) that ends the flow. "Ajustar" there, and the rows of "Conectados", open the two
+ * Connecting a service, in one dialog: connect (OAuth or an API key), then a confirmation that access still needs
+ * to be granted explicitly. "Ajustar" there, and the rows of "Conectados", open the two
  * steps of detail: what it does (each tool reads, writes or always asks for approval; off = never offered) and who can
  * use it (one level per agent).
  */
@@ -477,7 +477,7 @@ function ConnectStep({
                 ? t(unchecked ? "connectFlow.replaceUnchecked" : "connectFlow.replace")
                 : again && unchecked
                   ? t("connectFlow.newAccountUnchecked")
-                  : t("connectFlow.allCanUse")
+                  : t("connectFlow.accessRequired")
         }
       >
         <Button onClick={onClose}>{t("common.cancel")}</Button>
@@ -837,7 +837,7 @@ function WhoStep({ item, onBack, onClose }: { item: ConnectedItem; onBack: () =>
   const current = (agentId: string) => levelIn(access.byAgent.get(agentId), resourceId);
   const [who, setWho] = useState<Record<string, LevelState> | null>(null);
   const loaded = agents.isSuccess && !access.loading && !access.fetching;
-  // Starts once from each agent's level, read fresh: a connection made a moment ago is already every agent's.
+  // Starts from fresh explicit grants; new connections start with no agent access.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, when the fresh trees arrive
   useEffect(() => {
     if (loaded && who === null) setWho(Object.fromEntries(list.map((a) => [a.id, current(a.id)])));

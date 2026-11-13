@@ -199,15 +199,10 @@ export const helloKey = (id: PersonalStarter["id"] | Exclude<RoleId, "custom">) 
 /** The look a draft starts with (before a role is picked). */
 export const BLANK_LOOK = { color: "sky", eyes: "round", accessory: "none" } as const satisfies RoleLook;
 
-/**
- * Each connection's level for a role: the preset's level for its catalog connector, else write, as every agent already
- * has it (`grantToEveryAgent`). A custom server's account starts with none: only its first one is everyone's. In a
- * personal workspace (`broad`) it starts at write too: one person's agents start with everything (ADR 0159 §3a).
- */
-export function presetLevels(role: RoleId, items: { id: string; def: { id: string } | null }[], broad = false) {
+/** Explicit role suggestions remain visible; unlisted connections and custom servers start without access. */
+export function presetLevels(role: RoleId, items: { id: string; def: { id: string } | null }[], _broad = false) {
   const levels: Record<string, Level> = ROLE_DEFAULTS[role].levels;
-  const level = (i: (typeof items)[number]): Level =>
-    i.def ? (levels[i.def.id] ?? "write") : broad ? "write" : "none";
+  const level = (i: (typeof items)[number]): Level => (i.def ? (levels[i.def.id] ?? "none") : "none");
   return Object.fromEntries(items.map((i) => [i.id, level(i)])) as Record<string, Level>;
 }
 
