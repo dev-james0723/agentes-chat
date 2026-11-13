@@ -27,6 +27,7 @@ import {
   type EndpointModel,
   type EndpointNet,
   endpointAddress,
+  invalidateEndpointVerification,
   loadEndpointModels,
   type StoredEndpoint,
 } from "./endpoints";
@@ -70,7 +71,15 @@ const summary = (row: typeof providerCredentials.$inferSelect): CredentialSummar
   label: row.label,
   keyHint: row.keyHint,
   workspaceIdHint: row.workspaceId ? row.workspaceId.slice(-6) : null,
-  ...(row.options?.endpoint ? { endpoint: row.options.endpoint } : {}),
+  ...(row.options?.endpoint
+    ? {
+        endpoint: {
+          style: row.options.endpoint.style,
+          baseURL: row.options.endpoint.baseURL,
+          models: row.options.endpoint.models,
+        },
+      }
+    : {}),
   createdAt: row.createdAt,
   revokedAt: row.revokedAt,
 });
@@ -541,27 +550,36 @@ export async function rotateCredential(
         }),
       );
   const sealed = await sealSecret(keyWrapper, apiKey, aadFor(orgId, credentialId));
-  const [row] = await db
-    .update(providerCredentials)
-    .set({
-      secretCiphertext: sealed.ciphertext,
-      wrappedDataKey: sealed.wrappedDataKey,
-      kekId: sealed.kekId,
-      keyHint: apiKey.slice(-4),
-      ...values,
-      // An endpoint's address and models stay as they are.
-      ...(values.options && current.options.endpoint
-        ? { options: { ...values.options, endpoint: current.options.endpoint } }
-        : {}),
-    })
-    .where(
-      and(
-        eq(providerCredentials.id, credentialId),
-        eq(providerCredentials.orgId, orgId),
-        isNull(providerCredentials.revokedAt),
-      ),
-    )
-    .returning();
+  const row = await db.transaction(async (tx) => {
+    const where = and(
+      eq(providerCredentials.id, credentialId),
+      eq(providerCredentials.orgId, orgId),
+      isNull(providerCredentials.revokedAt),
+    );
+    const [latest] = await tx.select().from(providerCredentials).where(where).for("update");
+    if (!latest) throw new NotFoundError("Credential not found");
+    const [updated] = await tx
+      .update(providerCredentials)
+      .set({
+        secretCiphertext: sealed.ciphertext,
+        wrappedDataKey: sealed.wrappedDataKey,
+        kekId: sealed.kekId,
+        keyHint: apiKey.slice(-4),
+        ...values,
+        // Preserve the latest endpoint models, but the new key/configuration needs its own schema verification.
+        ...(latest.options.endpoint
+          ? {
+              options: {
+                ...(values.options ?? latest.options),
+                endpoint: invalidateEndpointVerification(latest.options.endpoint),
+              },
+            }
+          : {}),
+      })
+      .where(where)
+      .returning();
+    return updated;
+  });
   if (!row) throw new NotFoundError("Credential not found");
   await auditCredential(db, orgId, actorId, "credential.key_changed", row);
   caches.credentials.delete(`${orgId}:${credentialId}`);

@@ -15,6 +15,7 @@ import {
   listEndpoint,
   modelInfoFor,
   pickerModels,
+  rotateCredential,
   summaryModelReady,
   updateAgent,
   updateEndpointModels,
@@ -384,6 +385,182 @@ describe("the test call", () => {
     const saved = (await listCredentials(f.db, f.owner.id, f.org.id)).find((c) => c.id === cred.id);
     expect(saved?.endpoint?.models[0]).toMatchObject({ structuredOutput: false });
     expect(saved?.endpoint?.models[0]).not.toHaveProperty("structuredOutputCheck");
+  });
+
+  test("an older schema pass cannot overwrite a newer failed check on the same configuration", async () => {
+    f = await setup({
+      reply: () => ({ chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }),
+    });
+    const cred = await addEndpoint(f, [{ id: "structured", structuredOutput: true }]);
+    const model = customModelId(cred.id, "structured");
+    await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    await updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model });
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const older = checkEndpoint(
+      f.db,
+      {
+        complete: async (call) => {
+          const result = await f.gateway.complete(call);
+          if (call.outputSchema) {
+            entered();
+            await blocked;
+          }
+          return result;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+    );
+    await started;
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(false);
+    await checkEndpoint(
+      f.db,
+      {
+        complete: async (call) => {
+          const result = await f.gateway.complete(call);
+          return call.outputSchema ? { ...result, text: "{}" } : result;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+    );
+    release();
+    expect((await older)[0]?.structuredOutputCheck).toBe("failed");
+    const saved = (await listCredentials(f.db, f.owner.id, f.org.id)).find((c) => c.id === cred.id);
+    expect(saved?.endpoint?.models[0]?.structuredOutputCheck).toBe("failed");
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    await expect(updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model })).rejects.toThrow("JSON schema");
+  });
+
+  test("an opt-out and re-opt-in cannot accept a check started before either edit", async () => {
+    f = await setup({
+      reply: () => ({ chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }),
+    });
+    const cred = await addEndpoint(f, [{ id: "structured", structuredOutput: true }]);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = checkEndpoint(
+      f.db,
+      {
+        complete: async (call) => {
+          const result = await f.gateway.complete(call);
+          if (call.outputSchema) {
+            entered();
+            await blocked;
+          }
+          return result;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+    );
+    await started;
+    await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [{ id: "structured", structuredOutput: false }]);
+    await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [{ id: "structured", structuredOutput: true }]);
+    release();
+    await pending;
+    expect((await modelInfoFor(f.db, customModelId(cred.id, "structured"), f.org.id))?.structuredOutput).toBe(false);
+    const saved = (await listCredentials(f.db, f.owner.id, f.org.id)).find((c) => c.id === cred.id);
+    expect(saved?.endpoint?.models[0]).not.toHaveProperty("structuredOutputCheck");
+  });
+
+  test("key rotation invalidates a passing schema check and rejects an in-flight pass", async () => {
+    f = await setup({
+      reply: () => ({ chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }),
+    });
+    const cred = await addEndpoint(f, [{ id: "structured", structuredOutput: true }]);
+    const model = customModelId(cred.id, "structured");
+    await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    await updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model });
+    await rotateCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, cred.id, { apiKey: "synthetic-key-rotation-one" });
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(false);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = checkEndpoint(
+      f.db,
+      {
+        complete: async (call) => {
+          const result = await f.gateway.complete(call);
+          if (call.outputSchema) {
+            entered();
+            await blocked;
+          }
+          return result;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+    );
+    await started;
+    await rotateCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, cred.id, { apiKey: "synthetic-key-rotation-two" });
+    release();
+    await pending;
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(true);
+  });
+
+  test("a key rotation waiting on sealing preserves a concurrent model edit and invalidates verification", async () => {
+    f = await setup();
+    const cred = await addEndpoint(f, [{ id: "before", structuredOutput: true }]);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = rotateCredential(
+      f.db,
+      {
+        id: f.keyWrapper.id,
+        unwrap: (...args) => f.keyWrapper.unwrap(...args),
+        wrap: async (...args) => {
+          const sealed = await f.keyWrapper.wrap(...args);
+          entered();
+          await blocked;
+          return sealed;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+      { apiKey: "synthetic-concurrent-rotation", project: "synthetic-project" },
+    );
+    await started;
+    await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [{ id: "after", structuredOutput: true }]);
+    release();
+    await pending;
+    const saved = (await listCredentials(f.db, f.owner.id, f.org.id)).find((c) => c.id === cred.id);
+    expect(saved?.endpoint?.models.map((m) => m.id)).toEqual(["after"]);
+    expect(saved?.endpoint).not.toHaveProperty("verification");
+    expect(await modelInfoFor(f.db, customModelId(cred.id, "before"), f.org.id)).toBeUndefined();
+    expect((await modelInfoFor(f.db, customModelId(cred.id, "after"), f.org.id))?.structuredOutput).toBe(false);
   });
 
   test("one per model with a tool: ok, no tools, or failed in the server's words; each kept and recorded", async () => {

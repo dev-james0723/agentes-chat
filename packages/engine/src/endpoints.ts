@@ -109,29 +109,42 @@ export function cleanEndpointModels(models: EndpointModel[], previous: EndpointM
     const structuredOutput = m.structuredOutput ?? before?.structuredOutput;
     if (structuredOutput !== undefined && typeof structuredOutput !== "boolean")
       throw new ValidationError("Structured output must be on or off", "endpoint.structured_output");
-    // Verification is server-owned, never accepted from an API caller. Opting out clears it.
-    const structuredOutputCheck =
-      structuredOutput === true && before?.structuredOutput === true ? before.structuredOutputCheck : undefined;
+    // Model edits require a new check; never accept or carry a schema verification result into the new configuration.
     return {
       id,
       ...(label ? { label } : {}),
       ...(p ? { prices: p } : {}),
       ...(check ? { check } : {}),
       ...(structuredOutput !== undefined ? { structuredOutput } : {}),
-      ...(structuredOutputCheck ? { structuredOutputCheck } : {}),
     };
   });
 }
 
+/** Key/model configuration changes invalidate every prior or in-flight schema verification. */
+export const invalidateEndpointVerification = (endpoint: StoredEndpoint): StoredEndpoint => ({
+  ...endpoint,
+  verification: { configurationId: crypto.randomUUID() },
+  models: endpoint.models.map(({ structuredOutputCheck: _check, ...m }) => m),
+});
+
+const endpointVerified = (endpoint: StoredEndpoint | undefined) =>
+  Boolean(
+    endpoint?.verification?.configurationId &&
+      endpoint.verification.attemptId &&
+      endpoint.verification.completedAttemptId === endpoint.verification.attemptId,
+  );
+
 /** Schema calls require both an admin opt-in and the server's passing check, never a model-name or URL guess. */
-const infoOf = (endpointName: string, m: EndpointModel): ModelInfo => ({
+const infoOf = (endpointName: string, m: EndpointModel, verified: boolean): ModelInfo => ({
   provider: "custom",
   label: m.label ?? m.id,
   endpoint: endpointName,
   prices: m.prices ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   ...(m.prices ? {} : { unpriced: true as const }),
   serverSideFallback: false,
-  ...(m.structuredOutput === true && m.structuredOutputCheck === "ok" ? {} : { structuredOutput: false as const }),
+  ...(verified && m.structuredOutput === true && m.structuredOutputCheck === "ok"
+    ? {}
+    : { structuredOutput: false as const }),
 });
 
 /**
@@ -159,7 +172,9 @@ export async function loadEndpointModels(db: Executor, orgId: string) {
     orgId,
     Object.fromEntries(
       rows.flatMap((r) =>
-        (r.options.endpoint?.models ?? []).map((m) => [customModelId(r.id, m.id), infoOf(r.label, m)] as const),
+        (r.options.endpoint?.models ?? []).map(
+          (m) => [customModelId(r.id, m.id), infoOf(r.label, m, endpointVerified(r.options.endpoint))] as const,
+        ),
       ),
     ),
   );
@@ -254,9 +269,27 @@ export async function checkEndpoint(
     eq(schema.providerCredentials.provider, "custom"),
     isNull(schema.providerCredentials.revokedAt),
   );
-  const [row] = await db.select().from(schema.providerCredentials).where(where);
-  const endpoint = row?.options.endpoint;
-  if (!row || !endpoint) throw new NotFoundError("Credential not found");
+  const endpoint = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(schema.providerCredentials).where(where).for("update");
+    const current = row?.options.endpoint;
+    if (!row || !current) throw new NotFoundError("Credential not found");
+    const next: StoredEndpoint = {
+      ...current,
+      models: current.models.map(({ structuredOutputCheck: _check, ...m }) => m),
+      verification: {
+        configurationId: current.verification?.configurationId ?? crypto.randomUUID(),
+        attemptId: crypto.randomUUID(),
+      },
+    };
+    await tx
+      .update(schema.providerCredentials)
+      .set({ options: { ...row.options, endpoint: next } })
+      .where(where);
+    return next;
+  });
+  // A recheck is pending, so a previous passing result cannot advertise readiness during it.
+  caches.credentials.delete(`${orgId}:${credentialId}`);
+  caches.credentials.delete(`${orgId}:endpoints`);
   const results = await Promise.all(
     endpoint.models.map(async (m): Promise<EndpointCheck> => {
       let result: EndpointCheck;
@@ -284,11 +317,18 @@ export async function checkEndpoint(
         : result;
     }),
   );
-  await db.transaction(async (tx) => {
-    // A slow check must not restore a model removed or opted out while it was running.
+  const applied = await db.transaction(async (tx) => {
+    // Both configuration and attempt must still match: equal model ids/configurations do not imply equal checks.
     const [current] = await tx.select().from(schema.providerCredentials).where(where).for("update");
     const currentEndpoint = current?.options.endpoint;
     if (!current || !currentEndpoint) throw new NotFoundError("Credential not found");
+    const verification = currentEndpoint.verification;
+    if (
+      !verification ||
+      verification.configurationId !== endpoint.verification?.configurationId ||
+      verification.attemptId !== endpoint.verification?.attemptId
+    )
+      return false;
     const models = currentEndpoint.models.map((m) => {
       const result = results.find((r) => r.model === m.id);
       return {
@@ -301,12 +341,32 @@ export async function checkEndpoint(
     });
     await tx
       .update(schema.providerCredentials)
-      .set({ options: { ...current.options, endpoint: { ...currentEndpoint, models } } })
+      .set({
+        options: {
+          ...current.options,
+          endpoint: {
+            ...currentEndpoint,
+            models,
+            verification: { ...verification, completedAttemptId: verification.attemptId },
+          },
+        },
+      })
       .where(where);
+    return true;
   });
   caches.credentials.delete(`${orgId}:${credentialId}`);
   caches.credentials.delete(`${orgId}:endpoints`);
-  return results;
+  return applied
+    ? results
+    : results.map((result) => ({
+        ...result,
+        ...(result.structuredOutputCheck
+          ? {
+              structuredOutputCheck: "failed" as const,
+              structuredOutputError: "This check was superseded by a configuration change or newer check",
+            }
+          : {}),
+      }));
 }
 
 /** Changes which models an endpoint offers and their prices (admins); checks are run again by the caller. */
@@ -324,20 +384,23 @@ export async function updateEndpointModels(
     eq(schema.providerCredentials.provider, "custom"),
     isNull(schema.providerCredentials.revokedAt),
   );
-  const [row] = await db.select().from(schema.providerCredentials).where(where);
-  const endpoint = row?.options.endpoint;
-  if (!row || !endpoint) throw new NotFoundError("Credential not found");
-  const next = { ...endpoint, models: cleanEndpointModels(models, endpoint.models) };
-  await db
-    .update(schema.providerCredentials)
-    .set({ options: { ...row.options, endpoint: next } })
-    .where(where);
+  const { next, label } = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(schema.providerCredentials).where(where).for("update");
+    const endpoint = row?.options.endpoint;
+    if (!row || !endpoint) throw new NotFoundError("Credential not found");
+    const next = invalidateEndpointVerification({ ...endpoint, models: cleanEndpointModels(models, endpoint.models) });
+    await tx
+      .update(schema.providerCredentials)
+      .set({ options: { ...row.options, endpoint: next } })
+      .where(where);
+    return { next, label: row.label };
+  });
   await recordAudit(db, {
     orgId,
     actor: { type: "person", id: actorId },
     action: "credential.models_changed",
     target: { type: "credential", id: credentialId },
-    details: { provider: "custom", label: row.label, models: next.models.map((m) => m.id) },
+    details: { provider: "custom", label, models: next.models.map((m) => m.id) },
   });
   caches.credentials.delete(`${orgId}:${credentialId}`);
   caches.credentials.delete(`${orgId}:endpoints`);

@@ -31,6 +31,8 @@ import { organizationMembers, organizations } from "./tenancy";
 export interface StoredEndpoint {
   style: "openai" | "anthropic";
   baseURL: string;
+  /** Internal generation binding checks to this credential configuration and its latest check attempt. */
+  verification?: { configurationId: string; attemptId?: string; completedAttemptId?: string };
   models: {
     id: string;
     label?: string;
