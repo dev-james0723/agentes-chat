@@ -15,8 +15,10 @@ import {
   listEndpoint,
   modelInfoFor,
   pickerModels,
+  summaryModelReady,
   updateAgent,
   updateEndpointModels,
+  updateOrgSettings,
 } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
 
@@ -284,6 +286,106 @@ describe("calls", () => {
 });
 
 describe("the test call", () => {
+  test("structured output needs an admin opt-in and a passing schema check before selecting it for summaries", async () => {
+    f = await setup({
+      reply: (request) =>
+        request.outputSchema
+          ? { chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }
+          : { chunks: [], toolUses: [{ name: "report_status", input: { ok: true } }] },
+    });
+    const cred = await addEndpoint(f, [
+      { id: "legacy" },
+      { id: "structured", structuredOutput: true, structuredOutputCheck: "ok" } as EndpointModel,
+    ]);
+    const model = customModelId(cred.id, "structured");
+    expect((await modelInfoFor(f.db, customModelId(cred.id, "legacy"), f.org.id))?.structuredOutput).toBe(false);
+    // Callers cannot manufacture server-side verification by submitting a check result.
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    await expect(updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model })).rejects.toThrow("JSON schema");
+    const checks = await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    expect(checks[1]).toMatchObject({ model: "structured", check: "ok", structuredOutputCheck: "ok" });
+    expect(f.provider.calls.filter((c) => c.request.outputSchema)).toHaveLength(1);
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBeUndefined();
+    expect((await updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model })).summaryModel).toBe(model);
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(true);
+    const changed = await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [
+      { id: "structured", structuredOutput: false } as EndpointModel,
+    ]);
+    expect(changed.models[0]).not.toHaveProperty("structuredOutputCheck");
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(false);
+  });
+
+  test("valid JSON alone, a wrong nested type, extra fields or a provider refusal never verify structured output", async () => {
+    const invalid = [
+      "not JSON",
+      JSON.stringify({ status: "ok" }),
+      JSON.stringify({ status: "ok", details: { supported: "true", modes: ["schema"] } }),
+      JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"], extra: true } }),
+      new ProviderError("schema unsupported", false, 400),
+      JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } }),
+    ];
+    f = await setup({
+      reply: (request) => {
+        if (!request.outputSchema) return { chunks: ["no tools"] };
+        if (request.model.endsWith("5")) return { chunks: [String(invalid[5])], stopReason: "max_tokens" };
+        const output = invalid[Number(request.model.at(-1))];
+        return output instanceof Error ? output : { chunks: [String(output)] };
+      },
+    });
+    const cred = await addEndpoint(
+      f,
+      invalid.map((_, i) => ({ id: `invalid-${i}`, structuredOutput: true }) as EndpointModel),
+    );
+    const checks = await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    expect(checks.every((c) => (c as { structuredOutputCheck?: string }).structuredOutputCheck === "failed")).toBe(
+      true,
+    );
+    for (let i = 0; i < invalid.length; i++) {
+      expect((await modelInfoFor(f.db, customModelId(cred.id, `invalid-${i}`), f.org.id))?.structuredOutput).toBe(
+        false,
+      );
+    }
+  });
+
+  test("a schema check finishing after an opt-out preserves the newer model configuration", async () => {
+    f = await setup({
+      reply: () => ({ chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }),
+    });
+    const cred = await addEndpoint(f, [{ id: "structured", structuredOutput: true }]);
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pending = checkEndpoint(
+      f.db,
+      {
+        complete: async (call) => {
+          const result = await f.gateway.complete(call);
+          if (call.outputSchema) {
+            entered();
+            await blocked;
+          }
+          return result;
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      cred.id,
+    );
+    await started;
+    await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [{ id: "structured", structuredOutput: false }]);
+    release();
+    await pending;
+    const saved = (await listCredentials(f.db, f.owner.id, f.org.id)).find((c) => c.id === cred.id);
+    expect(saved?.endpoint?.models[0]).toMatchObject({ structuredOutput: false });
+    expect(saved?.endpoint?.models[0]).not.toHaveProperty("structuredOutputCheck");
+  });
+
   test("one per model with a tool: ok, no tools, or failed in the server's words; each kept and recorded", async () => {
     f = await setup({
       reply: (request) =>

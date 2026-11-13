@@ -644,6 +644,10 @@ export interface EndpointModel {
   /** Absent: unpriced (its calls cost 0, so no budget limits them). */
   prices?: EndpointPrices;
   check?: EndpointCheckResult;
+  /** Admin opt-in; only a passing server check enables JSON-schema calls. Absent means disabled. */
+  structuredOutput?: boolean;
+  /** Server-owned, ignored on input. */
+  structuredOutputCheck?: "ok" | "failed";
 }
 
 export interface EndpointCheck {
@@ -651,6 +655,8 @@ export interface EndpointCheck {
   check: EndpointCheckResult;
   /** The server's words, when it failed. */
   error?: string;
+  structuredOutputCheck?: "ok" | "failed";
+  structuredOutputError?: string;
 }
 
 /** Who can talk to an agent: everyone, some people, or only its owner. */

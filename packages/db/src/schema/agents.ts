@@ -37,6 +37,10 @@ export interface StoredEndpoint {
     prices?: { input: number; output: number; cacheRead: number; cacheWrite: number };
     /** The last test call: answered and called a tool, answered without calling it, or failed. */
     check?: "ok" | "no_tools" | "failed";
+    /** Admin opt-in to schema-constrained calls; absent or false keeps routing and summaries disabled. */
+    structuredOutput?: boolean;
+    /** Server-owned result of the nested JSON schema test; an opt-in alone never enables the capability. */
+    structuredOutputCheck?: "ok" | "failed";
   }[];
 }
 

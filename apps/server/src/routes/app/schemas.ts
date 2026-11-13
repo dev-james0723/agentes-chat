@@ -195,6 +195,13 @@ export const EndpointModel = z
   .object({
     id: z.string().min(1).max(200).openapi({ description: "The id the endpoint takes." }),
     label: z.string().max(120).optional(),
+    structuredOutput: z.boolean().optional().openapi({
+      description:
+        "Admin opt-in to JSON-schema calls. Disabled by default; requires a passing server check before routing or summaries can use it.",
+    }),
+    structuredOutputCheck: z.enum(["ok", "failed"]).optional().openapi({
+      description: "Server-owned result of the nested JSON schema check; ignored on input.",
+    }),
     prices: EndpointPrices.optional().openapi({
       description: "Absent: unpriced. Its calls are recorded with their tokens and cost 0, so no budget limits them.",
     }),
@@ -214,6 +221,8 @@ export const EndpointCheck = z
     model: z.string(),
     check: z.enum(["ok", "no_tools", "failed"]),
     error: z.string().optional().openapi({ description: "The server's words, when it failed." }),
+    structuredOutputCheck: z.enum(["ok", "failed"]).optional(),
+    structuredOutputError: z.string().optional(),
   })
   .openapi("EndpointCheck");
 

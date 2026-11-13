@@ -17,6 +17,14 @@ import {
 import { keyRuns, modelChoices } from "../src/lib/providers";
 
 describe("the endpoint form", () => {
+  test("editing prices preserves the owner's structured-output choice without submitting a server check", () => {
+    const draft = draftOfEndpoint("Local", {
+      style: "openai",
+      baseURL: "http://localhost:11434/v1",
+      models: [{ id: "qwen3-coder:30b", structuredOutput: true, structuredOutputCheck: "ok" }],
+    });
+    expect(endpointModelsOf(draft)).toEqual([{ id: "qwen3-coder:30b", structuredOutput: true }]);
+  });
   test("a model taken off leaves the others as they were", () => {
     const d = withListedModels(emptyEndpointDraft(), [{ id: "a" }, { id: "b" }]);
     expect(withoutModel(d, "a").models.map((m) => m.id)).toEqual(["b"]);

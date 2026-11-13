@@ -10,6 +10,7 @@ import {
   setCustomModels,
   type ToolSpec,
 } from "@agenteschat/providers";
+import { z } from "zod";
 import { recordAudit } from "./audit";
 import { caches } from "./cache";
 import { NotFoundError, ValidationError } from "./errors";
@@ -27,7 +28,13 @@ import { redactCredentials } from "./tool-detail";
  */
 export type StoredEndpoint = schema.StoredEndpoint;
 export type EndpointModel = StoredEndpoint["models"][number];
-export type EndpointCheck = { model: string; check: NonNullable<EndpointModel["check"]>; error?: string };
+export type EndpointCheck = {
+  model: string;
+  check: NonNullable<EndpointModel["check"]>;
+  error?: string;
+  structuredOutputCheck?: "ok" | "failed";
+  structuredOutputError?: string;
+};
 
 /** How this server reaches endpoints people type. */
 export interface EndpointNet {
@@ -97,12 +104,26 @@ export function cleanEndpointModels(models: EndpointModel[], previous: EndpointM
     const p = m.prices;
     if (p && Object.values(p).some((v) => !Number.isSafeInteger(v) || v < 0))
       throw new ValidationError("Prices can't be negative", "endpoint.prices");
-    const check = previous.find((o) => o.id === id)?.check;
-    return { id, ...(label ? { label } : {}), ...(p ? { prices: p } : {}), ...(check ? { check } : {}) };
+    const before = previous.find((o) => o.id === id);
+    const check = before?.check;
+    const structuredOutput = m.structuredOutput ?? before?.structuredOutput;
+    if (structuredOutput !== undefined && typeof structuredOutput !== "boolean")
+      throw new ValidationError("Structured output must be on or off", "endpoint.structured_output");
+    // Verification is server-owned, never accepted from an API caller. Opting out clears it.
+    const structuredOutputCheck =
+      structuredOutput === true && before?.structuredOutput === true ? before.structuredOutputCheck : undefined;
+    return {
+      id,
+      ...(label ? { label } : {}),
+      ...(p ? { prices: p } : {}),
+      ...(check ? { check } : {}),
+      ...(structuredOutput !== undefined ? { structuredOutput } : {}),
+      ...(structuredOutputCheck ? { structuredOutputCheck } : {}),
+    };
   });
 }
 
-/** An endpoint model as the gateway and the pickers read it: never a pick for routing, the judge or summaries. */
+/** Schema calls require both an admin opt-in and the server's passing check, never a model-name or URL guess. */
 const infoOf = (endpointName: string, m: EndpointModel): ModelInfo => ({
   provider: "custom",
   label: m.label ?? m.id,
@@ -110,7 +131,7 @@ const infoOf = (endpointName: string, m: EndpointModel): ModelInfo => ({
   prices: m.prices ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   ...(m.prices ? {} : { unpriced: true as const }),
   serverSideFallback: false,
-  structuredOutput: false,
+  ...(m.structuredOutput === true && m.structuredOutputCheck === "ok" ? {} : { structuredOutput: false as const }),
 });
 
 /**
@@ -178,11 +199,46 @@ const CHECK_TOOL: ToolSpec = {
   inputSchema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
 };
 const CHECK_TIMEOUT_MS = 60_000;
+const CHECK_OUTPUT = z.strictObject({
+  status: z.literal("ok"),
+  details: z.strictObject({ supported: z.literal(true), modes: z.array(z.literal("schema")).length(1) }),
+});
+const CHECK_OUTPUT_SCHEMA = z.toJSONSchema(CHECK_OUTPUT);
+
+/** A small, strict nested fixture: syntactically valid JSON alone is insufficient. */
+async function checkStructuredOutput(
+  gateway: Pick<ModelGateway, "complete">,
+  orgId: string,
+  credentialId: string,
+  model: string,
+): Promise<Pick<EndpointCheck, "structuredOutputCheck" | "structuredOutputError">> {
+  try {
+    const r = await gateway.complete({
+      orgId,
+      kind: "summary",
+      model: customModelId(credentialId, model),
+      system: "Check schema-constrained output. Return only the JSON object requested.",
+      messages: [{ role: "user", content: 'Return {"status":"ok","details":{"supported":true,"modes":["schema"]}}.' }],
+      outputSchema: CHECK_OUTPUT_SCHEMA,
+      maxTokens: 256,
+      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    });
+    if (r.stopReason !== "end_turn" || !CHECK_OUTPUT.safeParse(JSON.parse(r.text)).success)
+      throw new Error("The endpoint did not return the complete required JSON schema");
+    return { structuredOutputCheck: "ok" };
+  } catch (error) {
+    return {
+      structuredOutputCheck: "failed",
+      structuredOutputError: redactCredentials(error instanceof Error ? error.message : String(error)),
+    };
+  }
+}
 
 /**
  * One small call per model of an endpoint (admins), through the Model Gateway (recorded as a `summary` call with its
  * tokens and cost): `ok` when it called the tool it was asked to, `no_tools` when it answered without, `failed` with
- * the server's words. Each model keeps its last result.
+ * the server's words. Models explicitly opted in to structured output also get a separate strict nested schema
+ * call (256 output tokens, 60 seconds). Only that call's passing result enables schema use. Both calls are metered.
  */
 export async function checkEndpoint(
   db: Database,
@@ -203,6 +259,7 @@ export async function checkEndpoint(
   if (!row || !endpoint) throw new NotFoundError("Credential not found");
   const results = await Promise.all(
     endpoint.models.map(async (m): Promise<EndpointCheck> => {
+      let result: EndpointCheck;
       try {
         const r = await gateway.complete({
           orgId,
@@ -214,17 +271,39 @@ export async function checkEndpoint(
           tools: [CHECK_TOOL],
           signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
         });
-        return { model: m.id, check: r.content.some((b) => b.type === "tool_use") ? "ok" : "no_tools" };
+        result = { model: m.id, check: r.content.some((b) => b.type === "tool_use") ? "ok" : "no_tools" };
       } catch (error) {
-        return { model: m.id, check: "failed", error: error instanceof Error ? error.message : String(error) };
+        result = {
+          model: m.id,
+          check: "failed",
+          error: redactCredentials(error instanceof Error ? error.message : String(error)),
+        };
       }
+      return m.structuredOutput === true
+        ? { ...result, ...(await checkStructuredOutput(gateway, orgId, credentialId, m.id)) }
+        : result;
     }),
   );
-  const models = endpoint.models.map((m) => ({ ...m, check: results.find((r) => r.model === m.id)?.check ?? m.check }));
-  await db
-    .update(schema.providerCredentials)
-    .set({ options: { ...row.options, endpoint: { ...endpoint, models } } })
-    .where(where);
+  await db.transaction(async (tx) => {
+    // A slow check must not restore a model removed or opted out while it was running.
+    const [current] = await tx.select().from(schema.providerCredentials).where(where).for("update");
+    const currentEndpoint = current?.options.endpoint;
+    if (!current || !currentEndpoint) throw new NotFoundError("Credential not found");
+    const models = currentEndpoint.models.map((m) => {
+      const result = results.find((r) => r.model === m.id);
+      return {
+        ...m,
+        ...(result ? { check: result.check } : {}),
+        ...(m.structuredOutput === true && result?.structuredOutputCheck
+          ? { structuredOutputCheck: result.structuredOutputCheck }
+          : {}),
+      };
+    });
+    await tx
+      .update(schema.providerCredentials)
+      .set({ options: { ...current.options, endpoint: { ...currentEndpoint, models } } })
+      .where(where);
+  });
   caches.credentials.delete(`${orgId}:${credentialId}`);
   caches.credentials.delete(`${orgId}:endpoints`);
   return results;

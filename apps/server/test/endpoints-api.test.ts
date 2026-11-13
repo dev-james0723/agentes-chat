@@ -11,6 +11,72 @@ const gatewayList = (async (url: string | URL | Request) =>
     ? new Response(JSON.stringify({ data: [{ id: "llama-4" }, { id: "qwen-3" }] }))
     : new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
+test("an admin's schema opt-in is verified by the server before native summary selection", async () => {
+  let valid = false;
+  t = await createTestServer({
+    reply: (request) =>
+      request.outputSchema
+        ? {
+            chunks: [
+              JSON.stringify(
+                valid ? { status: "ok", details: { supported: true, modes: ["schema"] } } : { status: "ok" },
+              ),
+            ],
+          }
+        : { chunks: [], toolUses: [{ name: "report_status", input: { ok: true } }] },
+  });
+  const owner = browser(t);
+  await signUp(owner, "owner@example.com");
+  const { orgId } = await seedOrg(owner);
+  const api = (path: string, init?: Parameters<typeof owner>[1]) =>
+    owner(`/api/app/organizations/${orgId}${path}`, init);
+  const created = await api("/credentials", {
+    json: {
+      provider: "custom",
+      label: "Local",
+      apiKey: "",
+      endpoint: {
+        style: "openai",
+        baseURL: "http://localhost:11434/v1",
+        models: [{ id: "qwen3-coder:30b", structuredOutput: true, structuredOutputCheck: "ok" }],
+      },
+    },
+  });
+  expect(created.status).toBe(201);
+  const credential = (await created.json()) as {
+    id: string;
+    endpoint: { models: { structuredOutput?: boolean; structuredOutputCheck?: string }[] };
+  };
+  expect(credential.endpoint.models[0]).toMatchObject({ structuredOutput: true });
+  expect(credential.endpoint.models[0]).not.toHaveProperty("structuredOutputCheck");
+  // The create response precedes the checks; read the authoritative saved metadata back.
+  const read = (await (await api("/credentials")).json()) as {
+    credentials: { id: string; endpoint?: { models: { structuredOutputCheck?: string }[] } }[];
+  };
+  expect(read.credentials.find((c) => c.id === credential.id)?.endpoint?.models[0]?.structuredOutputCheck).toBe(
+    "failed",
+  );
+  const model = customModelId(credential.id, "qwen3-coder:30b");
+  const select = () => api("/settings", { method: "PATCH", json: { summaryModel: model } });
+  expect((await select()).status).toBe(400);
+  valid = true;
+  const checked = await api(`/credentials/${credential.id}/models`, {
+    method: "PUT",
+    json: { models: [{ id: "qwen3-coder:30b", structuredOutput: true }] },
+  });
+  expect(checked.status).toBe(200);
+  expect(
+    ((await checked.json()) as { models: { structuredOutputCheck?: string }[] }).models[0]?.structuredOutputCheck,
+  ).toBe("ok");
+  expect((await select()).status).toBe(200);
+  expect(((await (await api("/ai-status")).json()) as { reflection: boolean }).reflection).toBe(true);
+  await api(`/credentials/${credential.id}/models`, {
+    method: "PUT",
+    json: { models: [{ id: "qwen3-coder:30b", structuredOutput: false }] },
+  });
+  expect(((await (await api("/ai-status")).json()) as { reflection: boolean }).reflection).toBe(false);
+});
+
 const resolveHost = async (host: string) => (host === "inside.example" ? ["10.0.0.7"] : ["93.184.216.34"]);
 
 const endpoint = {

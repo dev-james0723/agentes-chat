@@ -1,5 +1,8 @@
 import type { ErrorReporter, PubSub, SearchIndexResolver } from "@agenteschat/adapters";
 import { and, type Database, desc, eq, gte, inArray, isNull, lt, schema } from "@agenteschat/db";
+import { parseCustomModel } from "@agenteschat/providers";
+import { modelInfoFor } from "../credentials";
+import { ValidationError } from "../errors";
 import { cutText, cutTextEnd } from "../format";
 import type { ModelGateway } from "../gateway";
 import { createLlmJudge, type Judge } from "../judge";
@@ -60,7 +63,14 @@ export async function resolveSummaryModel(
     .select({ model: organizationSettings.summaryModel })
     .from(organizationSettings)
     .where(eq(organizationSettings.orgId, orgId));
-  if (row?.model) return row.model;
+  if (row?.model) {
+    if (parseCustomModel(row.model)) {
+      const info = await modelInfoFor(deps.db, row.model, orgId);
+      if (!info || info.structuredOutput === false)
+        throw new ValidationError(`${row.model} has no passing JSON schema check`);
+    }
+    return row.model;
+  }
   return cheapModelForOrg(deps.db, orgId, { anthropic: deps.summaryModel, ...deps.cheapModels });
 }
 
