@@ -2957,7 +2957,7 @@ async function executeRunInner(
     };
     return { evidence, gather };
   };
-  let brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript);
+  let brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
   let triggerText = trigger?.body ?? topTrigger?.body ?? "";
   if (plan.kind !== "model" && !triggerText) {
     triggerText = (await getMessage(db, run.orgId, run.triggerMessageId))?.body ?? "";
@@ -3234,7 +3234,7 @@ async function executeRunInner(
         ...(plan.missionId ? { missionId: plan.missionId } : {}),
         ...(autoEffort ? { effort: autoEffort } : {}),
       };
-      brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript);
+      brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
       onDemandForOtherBrain(t);
       await saveTranscript(db, t);
       await recordRunBrain(db, run.id, "model");
@@ -5425,11 +5425,25 @@ function createBrain(
   kind: BrainKind,
   token: { current: string },
   transcript: () => Transcript,
+  trigger: Message | null | undefined,
 ): Brain {
-  return paperclipProjectBrain(
-    { db: deps.db, enabled: deps.paperclipCompatibilityEnabled },
-    createUnboundBrain(deps, agent, run, kind, token, transcript),
-  );
+  const brain = createUnboundBrain(deps, agent, run, kind, token, transcript);
+  // A firing is background and carries server-written routine markers. Only a known foreground origin skips
+  // the routine join; raw or malformed markers still take the guard, even when compatibility is turned off.
+  const meta = trigger?.meta;
+  if (
+    run.background === false &&
+    run.workId === null &&
+    run.status === "running" &&
+    trigger?.id === run.triggerMessageId &&
+    trigger.orgId === run.orgId &&
+    meta !== null &&
+    typeof meta === "object" &&
+    !Array.isArray(meta) &&
+    !["routineBrief", "routine", "viaRoutine", "background"].some((key) => key in meta)
+  )
+    return brain;
+  return paperclipProjectBrain({ db: deps.db, enabled: deps.paperclipCompatibilityEnabled }, brain);
 }
 
 function createUnboundBrain(
