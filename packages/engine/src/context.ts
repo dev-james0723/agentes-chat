@@ -44,6 +44,7 @@ import { type Message, unreachedNote } from "./messages";
 import { missionBrief } from "./mission-brief";
 import { handoffGuidance, noticeForOthers, noticeText } from "./notices";
 import { openRequestsBlock, openRequestsOf } from "./open-requests";
+import { paperclipTaskReference } from "./paperclip-routine-state";
 import { parkedOnBlock } from "./parked-asks";
 import { reachNote, reachOf } from "./reach";
 import {
@@ -1518,6 +1519,10 @@ async function routineContext(
   const record = last && (last.agentId === null || last.agentId === run.agentId) ? last : null;
   const lastAt = last ? (last.startedAt ?? last.at) : null;
   const event = current?.event && Object.keys(current.event).length > 0 ? current.event : null;
+  const migratedTask =
+    current?.event?.type === "paperclip.received" && run.channelId
+      ? await paperclipTaskReference(db, run.orgId, { agentId: run.agentId, channelId: run.channelId, runId: run.id })
+      : null;
   const name = brief.name || row?.name || "routine";
   const who = creator ?? "its creator";
 
@@ -1525,6 +1530,7 @@ async function routineContext(
     `# This is a routine run\nYour routine «${name}» started this run: background work that nobody watches. Nobody waits for a reply here and nothing you write here is posted; your message reaches people only through hand_off, which posts it in ${place}.`,
     `Its instructions, set up by ${creator ?? "its creator"}:\n${(row?.prompt ?? trigger.body).trim()}`,
     `What it may do: what you can do in any other run. Besides reading, you may change things inside agentes.chat that people can undo (issues, memory, wiki, Drive files) and work on your own branches (agentes/${agent.handle}/…) and their pull requests. ${routineAsks(agent.approvalsLevel, place)} You may also reach other agents and post where ${who} can: tell_agent leaves an agent a note (it wakes and works on it), ask_agent asks one something (the answer reaches you, or ${place} once this run ended), post_message posts in a channel ${who} can post in (an @mention there wakes that agent), and send_dm writes only to ${who}; only agents ${who} can talk to are reached. An @mention in your hand_off message also wakes an agent of ${place} to work on it, as asked by ${who} (one outside it hears nothing: use tell_agent): mention an agent there only when it should act, and not one you already handed it to with tell_agent. The web is yours to read (search, open pages, your browser) like anywhere else.`,
+    migratedTask ?? "",
     listed("approved")
       ? `Approved ahead for this run: a person already approved these exact actions for this time. Do each now with run_approved_action and its id: it goes out without asking. Don't do them any other way, then report how it went.\n${listed("approved")}`
       : "",

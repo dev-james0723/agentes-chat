@@ -220,6 +220,7 @@ export * from "./organizations";
 export * from "./out-of-office";
 export * from "./outbound";
 export * from "./outbox";
+export * from "./paperclip-routines";
 export * from "./parked-asks";
 export * from "./password-link";
 export * from "./pdf";

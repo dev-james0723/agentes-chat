@@ -7811,6 +7811,9 @@
       },
       "deploy": {
         "succeeded": "Deploy selesai"
+      },
+      "paperclip": {
+        "received": "Permintaan Paperclip diterima"
       }
     },
     "when": {

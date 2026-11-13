@@ -7819,6 +7819,9 @@
       },
       "deploy": {
         "succeeded": "部署完成"
+      },
+      "paperclip": {
+        "received": "收到 Paperclip 请求"
       }
     },
     "when": {

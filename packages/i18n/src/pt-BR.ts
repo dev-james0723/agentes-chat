@@ -8341,6 +8341,7 @@ export const ptBR = {
       "sentry.issue_created": "Erro novo no Sentry",
       "github.pr_opened": "PR aberto no GitHub",
       "issue.created": "Tarefa criada no agentes",
+      "paperclip.received": "Pedido do Paperclip recebido",
       "deploy.succeeded": "Deploy concluído",
     },
     when: { event: "Quando: {{event}}" },

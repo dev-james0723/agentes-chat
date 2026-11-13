@@ -3610,7 +3610,8 @@ export interface Issue {
     | { type: "manual" }
     | { type: "message"; channelId: string; messageId: string }
     | { type: "agent"; agentId: string }
-    | { type: "webhook"; provider: string };
+    | { type: "webhook"; provider: string }
+    | { type: "routine"; routineId: string; receiptId: string };
   /** The channel it lives in (from a message, or chosen). */
   channelId: string | null;
   /**
@@ -3730,7 +3731,12 @@ export interface IssueColumn {
   position: number;
 }
 
-export type RoutineEvent = "sentry.issue_created" | "github.pr_opened" | "issue.created" | "deploy.succeeded";
+export type RoutineEvent =
+  | "sentry.issue_created"
+  | "github.pr_opened"
+  | "issue.created"
+  | "deploy.succeeded"
+  | "paperclip.received";
 
 /**
  * The rule as the API sends it: monthly/yearly positions are in `byWeekday`

@@ -7771,6 +7771,9 @@
       },
       "deploy": {
         "succeeded": "배포 완료"
+      },
+      "paperclip": {
+        "received": "Paperclip 요청 수신"
       }
     },
     "when": {

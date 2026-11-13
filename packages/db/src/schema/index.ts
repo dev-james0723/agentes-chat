@@ -17,6 +17,7 @@ export * from "./mail";
 export * from "./missions";
 export * from "./notifications";
 export * from "./operator";
+export * from "./paperclip-routines";
 export * from "./push";
 export * from "./runtime";
 export * from "./sandbox";

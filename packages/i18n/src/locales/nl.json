@@ -8081,6 +8081,9 @@
       },
       "deploy": {
         "succeeded": "Deploy voltooid"
+      },
+      "paperclip": {
+        "received": "Paperclip-verzoek ontvangen"
       }
     },
     "when": {

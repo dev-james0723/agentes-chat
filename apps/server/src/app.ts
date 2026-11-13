@@ -52,6 +52,7 @@ import { managementRoutes } from "./routes/app/management";
 import { memoryRoutes } from "./routes/app/memory";
 import { missionRoutes } from "./routes/app/missions";
 import { notificationRoutes } from "./routes/app/notifications";
+import { paperclipRoutineRoutes } from "./routes/app/paperclip-routines";
 import { personUsageRoutes } from "./routes/app/person-usage";
 import { planUsageRoutes } from "./routes/app/plan-usage";
 import { pushRoutes } from "./routes/app/push";
@@ -212,6 +213,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", missionRoutes(deps));
     api.route("/app", wikiRoutes(deps));
     api.route("/app", routineRoutes(deps));
+    api.route("/app", paperclipRoutineRoutes(deps));
     api.route("/app", calendarRoutes(deps));
     api.route("/app", skillRoutes(deps));
     api.route("/app", agentImportRoutes(deps));

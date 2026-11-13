@@ -8243,6 +8243,9 @@
       },
       "deploy": {
         "succeeded": "Deploy terminado"
+      },
+      "paperclip": {
+        "received": "Solicitud de Paperclip recibida"
       }
     },
     "when": {

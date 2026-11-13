@@ -19400,6 +19400,9 @@
   "routines.event.issue.created": {
     "value": "Task created in agentes"
   },
+  "routines.event.paperclip.received": {
+    "value": "Paperclip request received"
+  },
   "routines.event.deploy.succeeded": {
     "value": "Deploy finished"
   },

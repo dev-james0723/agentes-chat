@@ -8487,6 +8487,9 @@
       },
       "deploy": {
         "succeeded": "Деплой завершён"
+      },
+      "paperclip": {
+        "received": "Получен запрос Paperclip"
       }
     },
     "when": {

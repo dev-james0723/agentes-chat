@@ -4,6 +4,7 @@ import { caches } from "./cache";
 import { sha256 } from "./crypto";
 import { createAgentRuns } from "./dispatch";
 import { insertMessageWithRuns, type Message } from "./messages";
+import { paperclipStartRefusal } from "./paperclip-routine-state";
 import { type RoutineBrief, routineRoomKey } from "./routine-brief";
 
 const { channels, channelMembers, routineRuns } = schema;
@@ -59,13 +60,33 @@ export async function openRoutineRoom(tx: Executor, orgId: string, agentId: stri
  * Null when its row was no longer being started (stopped meanwhile).
  */
 export async function startRoutineRun(
-  deps: { db: Database; pubsub?: PubSub },
+  deps: { db: Database; pubsub?: PubSub; paperclipCompatibilityEnabled?: boolean },
   input: { orgId: string; agentId: string; brief: RoutineBrief; body: string; brain: string },
 ): Promise<{ message: Message; runId: string; roomId: string } | null> {
   const { brief } = input;
   const creator = brief.creatorUserId;
   if (!creator) throw new Error("a routine's brief needs its creator");
   const start = async (tx: Executor) => {
+    const refusal = await paperclipStartRefusal(tx, {
+      orgId: input.orgId,
+      routineId: brief.routineId,
+      routineRunId: brief.routineRunId,
+      body: input.body,
+      enabled: deps.paperclipCompatibilityEnabled,
+    });
+    if (refusal) {
+      await tx
+        .update(routineRuns)
+        .set({ status: "skipped", code: refusal, finishedAt: new Date() })
+        .where(
+          and(
+            eq(routineRuns.orgId, input.orgId),
+            eq(routineRuns.id, brief.routineRunId),
+            eq(routineRuns.status, "starting"),
+          ),
+        );
+      return null;
+    }
     const room = await openRoutineRoom(tx, input.orgId, input.agentId, brief.routineId);
     const { message } = await insertMessageWithRuns(
       tx,

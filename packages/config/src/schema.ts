@@ -314,6 +314,13 @@ export const envVars = {
       "SHA-256 fingerprints of the Android app's signing certificates (`AA:BB:…`), comma-separated: Google Play's app signing key (Play Console › Test and release › App integrity › App signing), and the upload key's for builds installed outside Play.",
     section: "Sign-in",
   },
+  PAPERCLIP_ROUTINE_COMPATIBILITY: {
+    schema: z.enum(["off", "on"]).default("off"),
+    description:
+      "Enable the authenticated Paperclip routine migration API. Mappings and their native routines are imported paused; enable only after source and target parity and a coordinated single-ingress cutover.",
+    section: "Agents",
+    example: "off",
+  },
   AGENT_DEFAULT_MODEL: {
     schema: modelId.default("claude-sonnet-5-5"),
     description:

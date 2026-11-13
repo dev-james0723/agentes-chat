@@ -174,6 +174,7 @@ const TOOL_EVENTS: readonly RoutineEvent[] = ROUTINE_EVENTS.filter(
 
 /** What each event means, for the model and its answers (English). */
 const EVENT_WORDS: Record<RoutineEvent, string> = {
+  "paperclip.received": "An authenticated Paperclip compatibility invocation (only through an enabled mapping)",
   "sentry.issue_created": "a new error comes in from Sentry",
   "github.pr_opened": "a pull request is opened on GitHub",
   "issue.created": "a task is created here",

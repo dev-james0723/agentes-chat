@@ -8335,6 +8335,7 @@ export const en = {
       "sentry.issue_created": "New Sentry error",
       "github.pr_opened": "PR opened on GitHub",
       "issue.created": "Task created in agentes",
+      "paperclip.received": "Paperclip request received",
       "deploy.succeeded": "Deploy finished",
     },
     when: { event: "When: {{event}}" },

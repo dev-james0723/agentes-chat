@@ -7774,6 +7774,9 @@
       },
       "deploy": {
         "succeeded": "デプロイが完了したとき"
+      },
+      "paperclip": {
+        "received": "Paperclip のリクエストを受信"
       }
     },
     "when": {

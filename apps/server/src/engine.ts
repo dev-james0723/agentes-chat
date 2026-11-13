@@ -750,6 +750,7 @@ export function buildEngine(o: EngineOptions) {
       : null,
   };
   const jobDeps: JobDeps = {
+    paperclipCompatibilityEnabled: config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
     feedbackBlobs: adapters.platformBlobs,
     feedbackFetch: o.http,
     accountEmails: adapters.email.delivers ? { publicUrl: config.PUBLIC_URL, support: config.SUPPORT_EMAIL } : null,

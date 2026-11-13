@@ -287,8 +287,19 @@ export async function deferEventRun(
         dedupeKey: taken.dedupeKey,
       },
     );
+    // A saturated timestamp range must roll the deletion back, preserving the event for retry.
+    if (!moved) throw new Error("Could not defer routine event run");
     // The webhook calls it carried point to where it went.
     if (moved) {
+      await tx
+        .update(schema.paperclipRoutineReceipts)
+        .set({ routineRunId: moved.id })
+        .where(
+          and(
+            eq(schema.paperclipRoutineReceipts.orgId, taken.orgId),
+            eq(schema.paperclipRoutineReceipts.routineRunId, taken.id),
+          ),
+        );
       await tx
         .update(routineHookCalls)
         .set({ routineRunId: moved.id })
