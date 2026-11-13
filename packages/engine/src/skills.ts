@@ -512,10 +512,12 @@ async function storeFiles(
   { location, files }: Awaited<ReturnType<typeof planFiles>>,
 ) {
   if (files.length === 0) return;
+  // A rolled-back SQL version can be retried while its failed attempt's blob writes are still in flight.
+  const publication = crypto.randomUUID();
   const rows = await mapInBatches(files, BLOB_BATCH, async ({ path, data, size, mime, status }) => {
     let blobKey: string | null = null;
     if (status !== "ignored") {
-      blobKey = `${location.prefix}skills/${s.id}/v${version}/${path}`;
+      blobKey = `${location.prefix}skills/${s.id}/v${version}/${publication}/${path}`;
       await location.store.put(blobKey, data, { contentType: mime });
     }
     return {

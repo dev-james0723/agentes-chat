@@ -30,6 +30,7 @@ import {
   revokeConnection,
   SKILL_LIMITS,
   type SkillDetail,
+  type SkillFileInput,
   saveSkill,
   setAgentAccess,
   setAgentSkills,
@@ -462,6 +463,142 @@ describe("import", () => {
     expect(
       (await f.db.select().from(schema.auditLog)).filter((event) => event.action === "skill.updated"),
     ).toHaveLength(0);
+  });
+
+  test("a late blob write from a failed publication cannot overwrite a successful retry", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const enc = (text: string) => new TextEncoder().encode(text);
+    const supporting: SkillFileInput[] = [
+      { path: "data/settings.json", data: enc('{"enabled":true}\n') },
+      { path: "assets/pixel.png", data: PNG },
+      { path: "scripts/fixture.sh", data: enc("#!/bin/sh\nexit 0\n") },
+      { path: "assets/unavailable.pdf", data: new Uint8Array(), skippedSize: SKILL_LIMITS.assetBytes + 1 },
+    ];
+    const definition = { ...parseSkillMarkdown(SKILL_MD), source: "upload" as const };
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...definition,
+      files: [{ path: "guide.md", data: enc("ORIG!") }, ...supporting],
+    });
+    await setAgentSkills(f.db, f.owner.id, f.org.id, f.agent.id, [{ skillId: original.id, enabled: true }]);
+    const grants = await f.db.select().from(schema.agentSkills);
+    expect(grants).toHaveLength(1);
+    const scopes = await f.db.select().from(schema.agentScopes);
+    const location = await deps.blobs.forOrg(f.org.id);
+    let entered = () => {},
+      release = () => {},
+      finished = () => {};
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lateDone = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    let lateKey: string | undefined;
+    const store = new Proxy(location.store, {
+      get(target, key) {
+        if (key === "put")
+          return async (...args: Parameters<typeof target.put>) => {
+            if (args[0].endsWith("/guide.md")) {
+              lateKey = args[0];
+              entered();
+              try {
+                await gate;
+                await target.put(...args);
+              } finally {
+                finished();
+              }
+              return;
+            }
+            if (args[0].endsWith("/failure.txt")) {
+              await writing;
+              throw new Error("synthetic sibling write failure");
+            }
+            return target.put(...args);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    try {
+      await expect(
+        saveSkill(
+          {
+            ...deps,
+            blobs: {
+              forOrg: async () => ({ ...location, store }),
+              forConfig: deps.blobs.forConfig.bind(deps.blobs),
+            },
+          },
+          f.owner.id,
+          f.org.id,
+          {
+            ...definition,
+            body: "# Failed attempt",
+            files: [
+              { path: "guide.md", data: enc("STALE") },
+              { path: "failure.txt", data: enc("ERROR") },
+            ],
+          },
+        ),
+      ).rejects.toThrow("synthetic sibling write failure");
+      expect(await getSkill(f.db, f.owner.id, f.org.id, original.id)).toMatchObject({
+        version: 1,
+        body: original.body,
+        files: original.files,
+      });
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("ORIG!");
+      const freshFiles: SkillFileInput[] = [{ path: "guide.md", data: enc("FRESH") }, ...supporting];
+      const retry = await saveSkill(deps, f.owner.id, f.org.id, {
+        ...definition,
+        body: "# Reviewed retry",
+        files: freshFiles,
+      });
+      expect(retry).toMatchObject({ version: 2, body: "# Reviewed retry", pendingUpdate: null });
+      expect(retry.files).toEqual(original.files);
+      const rows = await f.db
+        .select()
+        .from(schema.skillFiles)
+        .where(and(eq(schema.skillFiles.skillId, original.id), eq(schema.skillFiles.version, retry.version)))
+        .orderBy(schema.skillFiles.path);
+      const resourceBytes = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            rows
+              .filter((row) => row.blobKey)
+              .map(async (row) => {
+                const currentStore = await deps.blobs.forConfig(f.org.id, row.storageConfigId);
+                if (!row.blobKey) throw new Error("fixture resource has no blob reference");
+                const object = await currentStore.get(row.blobKey);
+                if (!object) throw new Error("fixture resource missing");
+                return [row.path, Array.from(object.body)];
+              }),
+          ),
+        );
+      const expectedBytes = Object.fromEntries(
+        freshFiles.filter((file) => file.skippedSize === undefined).map((file) => [file.path, Array.from(file.data)]),
+      );
+      expect(await resourceBytes()).toEqual(expectedBytes);
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("FRESH");
+      release();
+      await lateDone;
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("FRESH");
+      expect(await resourceBytes()).toEqual(expectedBytes);
+      expect(await getSkill(f.db, f.owner.id, f.org.id, original.id)).toEqual(retry);
+      expect(rows.find((row) => row.path === "guide.md")?.blobKey).not.toBe(lateKey);
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md", 1)).content).toBe("ORIG!");
+      expect(await f.db.select().from(schema.agentSkills)).toEqual(grants);
+      expect(await f.db.select().from(schema.agentScopes)).toEqual(scopes);
+      await expect(getSkillFile(deps, f.owner.id, f.org.id, original.id, "scripts/fixture.sh")).rejects.toThrow(
+        "script",
+      );
+    } finally {
+      release();
+      if (lateKey) await lateDone;
+    }
   });
 
   test("two files that collapse to one path are refused (no shared blob key, no undercounted size)", async () => {
