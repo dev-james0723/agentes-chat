@@ -21,10 +21,14 @@ import {
   updateEndpointModels,
   updateOrgSettings,
 } from "../src";
+import { caches, enableCaches } from "../src/cache";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
-afterEach(() => f?.close());
+afterEach(() => {
+  enableCaches(false);
+  return f?.close();
+});
 
 /** DNS as a test sees it: `gw.example` is public, `inside.example` resolves to a private address. */
 const resolveHost = async (host: string) =>
@@ -439,6 +443,52 @@ describe("the test call", () => {
     expect(saved?.endpoint?.models[0]?.structuredOutputCheck).toBe("failed");
     expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
     await expect(updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model })).rejects.toThrow("JSON schema");
+  });
+
+  test("with caching enabled, an endpoint read started before opt-out cannot restore cached summary readiness", async () => {
+    f = await setup({
+      reply: () => ({ chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }),
+    });
+    const cred = await addEndpoint(f, [{ id: "structured", structuredOutput: true }]);
+    const model = customModelId(cred.id, "structured");
+    await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    await updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model });
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(true);
+    enableCaches();
+    const cache = caches.credentials;
+    const original = cache.getOrLoad;
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let once = true;
+    cache.getOrLoad = function (key, load) {
+      return original.call(this, key, async () => {
+        const value = await load();
+        if (key === `${f.org.id}:endpoints` && once) {
+          once = false;
+          entered();
+          await blocked;
+        }
+        return value;
+      });
+    };
+    try {
+      const staleRead = modelInfoFor(f.db, model, f.org.id);
+      await started;
+      await updateEndpointModels(f.db, f.owner.id, f.org.id, cred.id, [{ id: "structured", structuredOutput: false }]);
+      release();
+      await staleRead;
+      expect(await summaryModelReady(f.context, f.org.id)).toBe(false);
+      expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).toBe(false);
+    } finally {
+      release();
+      cache.getOrLoad = original;
+    }
   });
 
   test("an opt-out and re-opt-in cannot accept a check started before either edit", async () => {

@@ -23,6 +23,8 @@ export const cachesEnabled = () => enabled;
 
 export class TtlCache<V> {
   private readonly entries = new Map<string, { value: V; expires: number }>();
+  /** Only active reads are tracked: invalidations need no permanent per-key tombstones. */
+  private readonly loading = new Map<string, Set<{ valid: boolean }>>();
   constructor(
     private readonly ttlMs: number,
     private readonly max = 5000,
@@ -39,6 +41,7 @@ export class TtlCache<V> {
   }
 
   set(key: string, value: V) {
+    for (const pending of this.loading.get(key) ?? []) pending.valid = false;
     if (this.entries.size >= this.max) {
       const oldest = this.entries.keys().next().value;
       if (oldest !== undefined) this.entries.delete(oldest);
@@ -67,6 +70,10 @@ export class TtlCache<V> {
 
   /** An invalidation, here only: another process's, which it already told everyone. */
   apply(op: CacheOp, key: string) {
+    // A read started before the change must not refill the cache after its entry was invalidated.
+    for (const [k, pending] of this.loading)
+      if (op === "clear" || (op === "delete" ? k === key : k.startsWith(key)))
+        for (const read of pending) read.valid = false;
     if (op === "clear") this.entries.clear();
     else if (op === "delete") this.entries.delete(key);
     else for (const k of this.entries.keys()) if (k.startsWith(key)) this.entries.delete(k);
@@ -77,9 +84,18 @@ export class TtlCache<V> {
     if (!enabled) return load();
     const hit = this.entries.get(key);
     if (hit && hit.expires >= Date.now()) return hit.value;
-    const value = await load();
-    this.set(key, value);
-    return value;
+    const pending = this.loading.get(key) ?? new Set<{ valid: boolean }>();
+    this.loading.set(key, pending);
+    const read = { valid: true };
+    pending.add(read);
+    try {
+      const value = await load();
+      if (read.valid && enabled) this.set(key, value);
+      return value;
+    } finally {
+      pending.delete(read);
+      if (pending.size === 0) this.loading.delete(key);
+    }
   }
 }
 

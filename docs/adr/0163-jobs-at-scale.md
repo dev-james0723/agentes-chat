@@ -63,6 +63,11 @@ every other workspace's routines wait behind it.
    - Caches: an invalidation of the per-process caches (scopes, members, credentials, settings) made in one process
      is published over the Postgres pub/sub and applied in every other one, which never publishes it again. A process
      whose LISTEN came back after a gap forgets everything it cached: what was sent meanwhile never reached it.
+     Matching in-flight cache fills are invalidated too: a DB read started before a change cannot repopulate an
+     entry afterward. This applies to local deletes, prefixes, clears, remote invalidations and explicit replacements.
+     A read may finish for its original caller, but its invalidated snapshot is not cached; later readers load current
+     data. Only active reads are tracked, released on success or failure; invalidation adds no retry or permanent
+     per-key metadata.
    - The way to scale: when jobs keep waiting, add a worker process (SELF_HOSTING.md, "More at once: worker
      processes"). Each one adds as many jobs at once as the app runs, with its own `DATABASE_POOL_MAX` connections
      and one it listens on.
