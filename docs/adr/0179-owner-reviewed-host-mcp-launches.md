@@ -1,0 +1,16 @@
+# 0179. Owner-reviewed host MCP launches
+
+- Status: Proposed; explicit local opt-in and per-profile activation remain required.
+- Extends: ADR 0025 (connected computers), ADR 0015 (tool approvals).
+
+A host MCP registry is a private owner file whose digest is stored in the runner configuration. Remote requests carry only the organization, machine, profile revision, agent and call identity. They cannot supply commands, working directories or environment values. A new pairing retains the opt-in only for the exact server, machine and nonempty organization identity.
+
+The registry pins the executable and reviewed artifacts by canonical absolute path and SHA-256. The executable must live outside the configured working directory. Direct Node and Bun launches require an absolute pinned entry script outside that directory; interpreter options before the entrypoint are refused. Bun additionally receives fixed options that disable working-directory bunfig, tsconfig, environment loading, macros and automatic installs. Direct Python requires isolated `-I` mode and an absolute pinned entry script outside the working directory. Module names, eval, preloads, package runners and shell command strings are unsupported launch contracts.
+
+Existing fixed owner-reviewed wrappers remain usable with zero arguments and a pinned absolute shebang interpreter. Environment-selected shebangs are refused. The wrapper remains responsible for its reviewed dependency manifest, interpreter-chain checks and fixed child invocation; merely listing a wrapper does not qualify its dependencies. Standalone native MCP executables retain their reviewed application arguments. Executable format checks reject unrecognized script formats. Provider installations and dependency closures remain owner-controlled, and drift requires new review and pins. These checks prevent working-directory resolution from silently choosing different launch code; they are not operating-system isolation against a malicious process with the owner's user identity.
+
+Calls retain the existing durable dispatch claim, bounded transient reply cache, unknown-effect fence and explicit reconciliation. Tool arguments, result bodies and image bytes are never written to the host journal. Phone profiles still refuse while phones are disabled, and host MCP remains unavailable in system mode.
+
+Machine-wire media validation is separate from host image-output validation. Both enforce canonical bounded base64 and MIME signatures. Native MCP results also accept named PDF resources with a PDF signature; a PDF cannot masquerade as an image. Invalid or oversized media is refused at the wire boundary without weakening the existing native PDF path.
+
+No dependency was added. The focused repair reuses the installed MCP SDK and runtime controls. Primary behavior references are [Node's CLI](https://nodejs.org/api/cli.html), [Python isolated mode](https://docs.python.org/3/using/cmdline.html#cmdoption-I), and [Bun configuration](https://bun.com/docs/runtime/bunfig). Authored local tests cover hostile working-directory configuration, relative/dynamic launches, fixed wrappers, pairing changes, unknown delivery and typed image/PDF results. Provider activation and complete protocol-66 workspace integration are separate acceptance gates; a source runner declaring protocol 67 does not clear them.

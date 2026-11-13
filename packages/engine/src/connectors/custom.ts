@@ -776,12 +776,17 @@ export async function connectCustomServer(
   };
   if (apiKey) {
     if (apiKey.length < 8) throw new ValidationError("The key looks too short", "connector.key_too_short");
+    if (presetForServer(serverUrl)?.keyHeader && !/^[\x21-\x7e]+$/.test(apiKey)) {
+      throw new ValidationError("The API key contains invalid characters", "connector.key_invalid");
+    }
     // The vendor's terms forbid asking for a token: on the Cloud it signs in only (ADR 0107).
     if (presetForServer(serverUrl)?.cloudOAuthOnly && isAgentesCloud(deps.publicUrl)) {
       throw new ValidationError("This service connects by signing in", "connector.oauth_only");
     }
     return stored("api_key", { apiKey });
   }
+  // Stitch's documented key header is not MCP OAuth or an ADC credential imported from another client.
+  if (presetForServer(serverUrl)?.keyHeader) return { status: "needs_key" };
   const probe = await probeMcpServer(deps, serverUrl);
   if (probe.kind === "open") return stored("none", null);
   if (probe.kind === "needs_key") return { status: "needs_key" };

@@ -26,7 +26,7 @@ async function fixture(kind = "general") {
     kind,
     command,
     args: [script],
-    cwd: await realpath(process.cwd()),
+    cwd: await realpath(home),
     commandSha256: sha(await readFile(command)),
     artifacts: [{ path: script, sha256: sha(await readFile(script)) }],
     envNames: [],
@@ -147,6 +147,85 @@ test("phonesDisabled and system mode refuse profiles before spawning; changed ar
       action: "catalog",
     }),
   ).rejects.toThrow("artifact");
+});
+test("interpreter launch refuses relative scripts and dynamic code selection before spawning", async () => {
+  for (const args of [
+    ["apps/server/test/fixtures/host-mcp-server.mjs"],
+    ["--preload", path.resolve("apps/server/test/fixtures/host-mcp-server.mjs")],
+    ["--eval", "throw new Error('must not execute')"],
+    ["run", path.resolve("apps/server/test/fixtures/host-mcp-server.mjs")],
+  ]) {
+    const f = await fixture();
+    await f.manager.close();
+    const p = { ...f.p, args };
+    const raw = JSON.stringify({ version: 1, profiles: [p] });
+    await writeFile(f.file, raw);
+    const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+    managers.push(m);
+    await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+      "launch contract",
+    );
+  }
+});
+test("Bun cwd preloads, environment and tsconfig cannot replace the pinned installed entrypoint", async () => {
+  const f = await fixture();
+  await writeFile(path.join(f.p.cwd, "bunfig.toml"), 'preload = ["./unreviewed.mjs"]\n');
+  await writeFile(path.join(f.p.cwd, "unreviewed.mjs"), "throw new Error('cwd preload executed')\n");
+  await writeFile(path.join(f.p.cwd, ".env"), "NODE_OPTIONS=--require=./unreviewed.mjs\n");
+  await writeFile(path.join(f.p.cwd, "tsconfig.json"), '{"compilerOptions":{"paths":{"*": ["./unreviewed.mjs"]}}}');
+  expect((await f.manager.request({ ...f.bound, action: "catalog" })).tools).toHaveLength(70);
+});
+test("fixed reviewed wrappers remain supported, but env shebangs and wrapper arguments refuse", async () => {
+  const f = await fixture();
+  await f.manager.close();
+  const wrapper = path.join(await realpath(f.options.home), "fixed.sh");
+  const cwd = path.join(await realpath(f.options.home), "empty-cwd");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(cwd);
+  const shell = await realpath("/bin/sh");
+  await writeFile(
+    wrapper,
+    `#!${shell}\nexec '${f.p.command}' --no-env-file --no-install --no-macros --config=/dev/null --tsconfig-override=/dev/null '${f.p.args[0]}'\n`,
+    { mode: 0o700 },
+  );
+  const artifacts = [
+    ...f.p.artifacts,
+    { path: shell, sha256: sha(await readFile(shell)) },
+    { path: f.p.command, sha256: f.p.commandSha256 },
+  ];
+  for (const [source, args, allowed] of [
+    [await readFile(wrapper, "utf8"), [], true],
+    [await readFile(wrapper, "utf8"), ["unreviewed"], false],
+    ["#!/usr/bin/env sh\nexit 1\n", [], false],
+  ] as const) {
+    await writeFile(wrapper, source);
+    const p = { ...f.p, command: wrapper, commandSha256: sha(source), artifacts, cwd, args: [...args] };
+    const raw = JSON.stringify({ version: 1, profiles: [p] });
+    await writeFile(f.file, raw);
+    const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+    managers.push(m);
+    const request = m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" });
+    if (allowed) expect((await request).tools).toHaveLength(70);
+    else await expect(request).rejects.toThrow("launch contract");
+    await m.close();
+  }
+});
+test.skipIf(!Bun.which("python3"))("Python module dispatch and nonisolated scripts refuse before spawning", async () => {
+  const python = Bun.which("python3");
+  if (!python) throw new Error("Python fixture runtime unavailable");
+  const command = await realpath(python);
+  for (const args of [["-m", "unreviewed"], [path.resolve("apps/server/test/fixtures/host-mcp-server.mjs")]]) {
+    const f = await fixture();
+    await f.manager.close();
+    const p = { ...f.p, command, commandSha256: sha(await readFile(command)), args };
+    const raw = JSON.stringify({ version: 1, profiles: [p] });
+    await writeFile(f.file, raw);
+    const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+    managers.push(m);
+    await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+      "launch contract",
+    );
+  }
 });
 test("completed calls never reexecute after restart; abort and disconnect fence the agent while another session survives", async () => {
   const f = await fixture();

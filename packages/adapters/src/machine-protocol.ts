@@ -1,5 +1,5 @@
 import type { MergeDone } from "./command-policy";
-import { type HostMcpReply, type HostMcpRequest, isHostMcpRequest } from "./host-mcp-protocol";
+import { type HostMcpReply, type HostMcpRequest, isHostMcpRequest, isMcpResultMedia } from "./host-mcp-protocol";
 /**
  * The wire protocol between our server and the runner on a connected
  * computer (ADR 0025). JSON text frames over one WebSocket the runner opens
@@ -3737,6 +3737,12 @@ export function parseServerFrame(raw: string): ServerFrame | null {
   if ((f.type === "cancel" || f.type === "request") && !isString(f.id)) return null;
   if (f.type === "task.ack" && !isString(f.taskId)) return null;
   if ((f.type === "mcp.result" || f.type === "mcp.tools") && !isString(f.callId)) return null;
+  if (
+    f.type === "mcp.result" &&
+    f.images !== undefined &&
+    (f.ok !== true || !isMcpResultMedia(f.images, MAX_FRAME_BYTES))
+  )
+    return null;
   if (f.type === "mcp.tools" && f.ok === true && !Array.isArray(f.tools)) return null;
   if (f.type === "agents" && !Array.isArray(f.agents)) return null;
   if (f.type === "browser.handoff" && (!isString(f.agentId) || (f.handoff !== null && !isObject(f.handoff)))) {

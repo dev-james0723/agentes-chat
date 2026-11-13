@@ -66,3 +66,24 @@ test("typed media validates image signatures and safely handles a large base64 b
     hostMcpOutput({ content: [{ type: "image", mimeType: "image/png", data: large }] }).images?.[0]?.data.length,
   ).toBe(large.length);
 });
+test("machine wire rejects malformed or confused media while preserving named PDF resources", () => {
+  const frame = (images: unknown) =>
+    parseServerFrame(JSON.stringify({ type: "mcp.result", callId: "one", ok: true, text: "media", images }));
+  const pdf = { mediaType: "application/pdf", name: "fixture.pdf", data: "JVBERi0xLjQ=" };
+  expect(frame([pdf])).not.toBeNull();
+  const nativeLargePdf = pdf.data.slice(0, 8) + "AAAA".repeat((6 * 1024 * 1024) / 4);
+  expect(frame([{ ...pdf, data: nativeLargePdf }])).not.toBeNull();
+  expect(frame([{ mediaType: "image/png", data }])).not.toBeNull();
+  for (const images of [
+    {},
+    [{ mediaType: "image/png", data: "invalid!" }],
+    [{ mediaType: "image/png", data: "AAAA" }],
+    [{ ...pdf, data }],
+    [{ mediaType: "image/png", data: pdf.data }],
+    [{ ...pdf, data: "AAAA" }],
+    [{ ...pdf, extra: "extension" }],
+    [{ ...pdf, name: 1 }],
+    Array.from({ length: 21 }, () => pdf),
+  ])
+    expect(frame(images)).toBeNull();
+});

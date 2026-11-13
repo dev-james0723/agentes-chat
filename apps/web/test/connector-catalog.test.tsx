@@ -415,6 +415,40 @@ const adjust = async () => {
 };
 
 describe("the connect flow: conectar → conectado; Ajustar → o que faz → quem pode usar", () => {
+  test("an API-key-only remote preset offers the password field directly without a fictional OAuth action", async () => {
+    const state = seedState({ connections: [] });
+    const api = createFakeApi(state);
+    const stitch: ConnectorDef = {
+      ...(CATALOG.connectors.find((d) => d.id === "linear") as ConnectorDef),
+      id: "stitch",
+      label: "Stitch",
+      description: "Stitch projects and screens.",
+      serverUrl: "https://stitch.googleapis.com/mcp",
+      auth: ["api_key"],
+      oauthConfigured: false,
+      available: true,
+      soon: false,
+      iconUrl: null,
+      brandColor: null,
+    };
+    api.connectors.catalog = async () => ({ ...CATALOG, connectors: [...CATALOG.connectors, stitch] });
+    expect(authKind(stitch)).toBe("key");
+    const { dialog } = await open(state, api);
+    await pick(dialog, "Stitch");
+    const flow = screen().getAllByRole("dialog").at(-1) as HTMLElement;
+    const field = within(flow).getByLabelText("Chave de API");
+    expect(field.getAttribute("type")).toBe("password");
+    expect(within(flow).queryByRole("button", { name: "Continuar no Stitch" })).toBeNull();
+    await type(field, "synthetic-stitch-key");
+    await click(within(flow).getByRole("button", { name: "Conectar com a chave" }));
+    await settle(4);
+    const calls = state.calls.filter((c) => c.method === "customConnectors.connect");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args[1]).toMatchObject({ serverUrl: stitch.serverUrl, apiKey: "[redacted]", label: "Stitch" });
+    expect(state.calls.filter((c) => /oauth/i.test(c.method))).toEqual([]);
+    expect(JSON.stringify(state.calls)).not.toContain("synthetic-stitch-key");
+  });
+
   test("a one-click server that asks for a key; tools reviewed by subject; a level per agent", async () => {
     const { state, dialog } = await open();
     await pick(dialog, "Linear");

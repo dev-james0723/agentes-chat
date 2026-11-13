@@ -806,7 +806,9 @@ export async function connectionHeaders(deps: ConnectorDeps, c: ConnectorConnect
   const secret = await openConnectionSecret(deps.keyWrappers, c);
   if (!secret) return {};
   if (secret.apiKey) {
-    return { authorization: `${presetForServer(c.serverUrl)?.keyScheme ?? "Bearer"} ${secret.apiKey}` };
+    const preset = presetForServer(c.serverUrl);
+    if (preset?.keyHeader && c.serverUrl === preset.serverUrl) return { [preset.keyHeader]: secret.apiKey };
+    return { authorization: `${preset?.keyScheme ?? "Bearer"} ${secret.apiKey}` };
   }
   const at = deps.now?.() ?? new Date();
   if (!expiring(c, secret, at)) return bearer(secret);

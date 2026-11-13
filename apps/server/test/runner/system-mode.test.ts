@@ -160,6 +160,8 @@ test("host MCP opt-in stays only with the exact server, machine and organization
   expect(configFromGrant(prev, input("https://other.example.com", "m", "o")).hostMcp).toBeUndefined();
   expect(configFromGrant(prev, input(prev.server, "m2", "o")).hostMcp).toBeUndefined();
   expect(configFromGrant(prev, input(prev.server, "m", "o2")).hostMcp).toBeUndefined();
+  expect(configFromGrant({ ...prev, orgId: undefined }, input(prev.server, "m", "o")).hostMcp).toBeUndefined();
+  expect(configFromGrant({ ...prev, orgId: "" }, input(prev.server, "m", "")).hostMcp).toBeUndefined();
 });
 
 test("config: the auth route is only ever the guard's true, and a new pairing keeps it", () => {
@@ -465,6 +467,7 @@ test("a system-mode runner (root) without workers does no agent work; machine-le
   // a stream's or a view's data socket needs the machine token, which no worker holds.
   expect(Object.keys(OP_ROUTES).sort()).toEqual([...MACHINE_OPS].sort());
   expect(MACHINE_OPS.filter((op) => OP_ROUTES[op] === "machine")).toEqual([
+    "host_mcp",
     "secret",
     "account",
     "access.request",

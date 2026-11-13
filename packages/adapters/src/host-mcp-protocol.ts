@@ -96,22 +96,26 @@ export function isHostMcpRequest(v: unknown): v is HostMcpRequest {
   if ((v.action === "profiles" || v.action === "reconcile") && !id(v.actorId)) return false;
   return Object.keys(v).every((k) => keys.includes(k));
 }
-function validImage(mediaType: unknown, data: unknown): data is string {
+function mediaHead(data: unknown, maxBytes = HOST_MCP_LIMITS.resultBytes): string | null {
   if (
-    typeof mediaType !== "string" ||
     typeof data !== "string" ||
     data.length === 0 ||
-    data.length > HOST_MCP_LIMITS.resultBytes ||
+    data.length > maxBytes ||
     data.length % 4 !== 0 ||
     !/^[A-Za-z0-9+/]*={0,2}$/.test(data)
   )
-    return false;
-  let head: string;
+    return null;
   try {
-    head = atob(data.slice(0, 16));
+    // Checking the final quartet also rejects non-canonical padding bits without decoding a large body.
+    if (btoa(atob(data.slice(-4))) !== data.slice(-4)) return null;
+    return atob(data.slice(0, 16));
   } catch {
-    return false;
+    return null;
   }
+}
+function validImage(mediaType: unknown, data: unknown, maxBytes = HOST_MCP_LIMITS.resultBytes): data is string {
+  const head = mediaHead(data, maxBytes);
+  if (head === null) return false;
   return mediaType === "image/png"
     ? head.startsWith("\x89PNG\r\n\x1a\n")
     : mediaType === "image/jpeg"
@@ -119,6 +123,23 @@ function validImage(mediaType: unknown, data: unknown): data is string {
       : mediaType === "image/gif"
         ? head.startsWith("GIF87a") || head.startsWith("GIF89a")
         : mediaType === "image/webp" && head.startsWith("RIFF") && head.slice(8, 12) === "WEBP";
+}
+/** Native tool results also support PDFs as resources; host image blocks never accept a PDF MIME type. */
+export function isMcpResultMedia(v: unknown, maxBytes = HOST_MCP_LIMITS.resultBytes): boolean {
+  return (
+    Array.isArray(v) &&
+    v.length <= 20 &&
+    v.every(
+      (b) =>
+        obj(b) &&
+        Object.keys(b).every((k) => ["mediaType", "data", "name"].includes(k)) &&
+        (b.name === undefined || (typeof b.name === "string" && b.name.length <= 255 && !/\p{Cc}/u.test(b.name))) &&
+        (b.mediaType === "application/pdf"
+          ? mediaHead(b.data, maxBytes)?.startsWith("%PDF-") === true
+          : validImage(b.mediaType, b.data, maxBytes)),
+    ) &&
+    new TextEncoder().encode(JSON.stringify(v)).byteLength <= maxBytes
+  );
 }
 /** Exact bytes, no placeholder blocks. Unsupported/oversized output is a completed-but-rejected output. */
 export function hostMcpOutput(value: unknown): HostMcpOutput {

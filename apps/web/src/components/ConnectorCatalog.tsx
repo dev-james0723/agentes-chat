@@ -49,7 +49,7 @@ export function searchCatalog(list: ConnectorDef[], query: string, shown: (d: Co
 /** How it connects, for the card: one click (OAuth), OAuth or a key, a key only, or through Composio. */
 export function authKind(d: ConnectorDef): "oneClick" | "oauthOrKey" | "key" | "composio" {
   if (d.via === "composio") return "composio";
-  if (d.kind === "remote_mcp") return "oneClick";
+  if (d.kind === "remote_mcp" && d.oauthConfigured && d.auth.includes("oauth")) return "oneClick";
   return d.oauthConfigured && d.auth.includes("oauth") ? "oauthOrKey" : "key";
 }
 

@@ -90,7 +90,7 @@ describe("one-click MCP connectors", () => {
     expect(auth(false)).toMatchObject({ intercom: ["oauth", "api_key"], "intercom-eu": ["oauth", "api_key"] });
   });
 
-  test("every connector in the catalog has a logo the web app serves", () => {
+  test("brand assets exist; the key-only Stitch preset uses the existing monogram fallback", () => {
     const web = resolve(import.meta.dir, "../../../apps/web/public");
     for (const b of Object.values(CONNECTOR_BRANDS)) {
       expect(existsSync(`${web}/${b.own ? "brands" : "connectors"}/${b.file}.svg`)).toBe(true);
@@ -98,7 +98,7 @@ describe("one-click MCP connectors", () => {
     const missing = connectorListing({ oauthApps: {} })
       .filter((e) => !e.iconUrl)
       .map((e) => e.id);
-    expect(missing).toEqual([]);
+    expect(missing).toEqual(["stitch"]);
   });
 
   test("a server without protected-resource metadata: OAuth at its own origin when it registers clients", async () => {

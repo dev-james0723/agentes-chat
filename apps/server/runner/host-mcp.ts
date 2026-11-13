@@ -50,6 +50,60 @@ const abs = (s: unknown): s is string =>
 function fail(s: string): never {
   throw new RunnerError("not_allowed", `Host MCP ${s}`);
 }
+const inside = (root: string, file: string) => {
+  const relative = path.relative(root, file);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+};
+/** A registry pins reviewed installed code, never an interpreter's search in an agent's working directory. */
+function launchArgs(p: Profile, command: Uint8Array): string[] {
+  const pinned = (file: string | undefined): file is string =>
+    !!file && abs(file) && p.artifacts.some((a) => a.path === file) && !inside(p.cwd, file);
+  if (inside(p.cwd, p.command)) fail("launch contract: command must be outside cwd");
+  const name = path
+    .basename(p.command)
+    .toLowerCase()
+    .replace(/\.exe$/, "");
+  if (/^(?:node|nodejs|bun)(?:\d+(?:\.\d+)*)?$/.test(name)) {
+    if (!pinned(p.args[0])) fail("launch contract: absolute pinned entrypoint outside cwd required");
+    // Bun otherwise discovers executable preloads, macros, tsconfig paths and .env in cwd.
+    return name.startsWith("bun")
+      ? [
+          "--no-env-file",
+          "--no-install",
+          "--no-macros",
+          "--config=/dev/null",
+          "--tsconfig-override=/dev/null",
+          ...p.args,
+        ]
+      : p.args;
+  }
+  if (/^(?:python|pypy)(?:\d+(?:\.\d+)*)?$/.test(name)) {
+    if (p.args[0] !== "-I" || !pinned(p.args[1]))
+      fail("launch contract: Python requires -I and an absolute pinned entrypoint outside cwd");
+    return p.args;
+  }
+  const head = Buffer.from(command.subarray(0, 512)).toString("utf8");
+  if (head.startsWith("#!")) {
+    const interpreter = /^#!\s*(\/[^\s]+)\s*\r?\n/.exec(head)?.[1];
+    if (p.args.length || !interpreter || !p.artifacts.some((a) => a.path === interpreter))
+      fail("launch contract: fixed wrapper requires no args and a pinned absolute shebang interpreter");
+    return [];
+  }
+  if (
+    /^(?:[a-z]*sh|env|npm|npx|pnpm|yarn|uv|uvx|deno|ruby|perl|php|java|lua|rscript|pwsh|powershell|dotnet|tsx|ts-node)$/.test(
+      name,
+    )
+  )
+    fail("launch contract: unsupported dynamic launcher; use a fixed reviewed wrapper");
+  const magic = Buffer.from(command.subarray(0, 4)).toString("hex");
+  if (
+    !["7f454c46", "feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca"].includes(magic) &&
+    !(command[0] === 0x4d && command[1] === 0x5a)
+  )
+    fail("launch contract: unsupported executable format");
+  // Standalone native MCP executables keep their owner-reviewed arguments (for example the `mcp` subcommand).
+  return p.args;
+}
 export const profileRevision = (p: unknown) => sha(JSON.stringify(p));
 function profiles(raw: unknown): Profile[] {
   if (
@@ -102,7 +156,9 @@ function profiles(raw: unknown): Profile[] {
         (n) =>
           typeof n === "string" &&
           /^[A-Z_][A-Z0-9_]{0,99}$/.test(n) &&
-          !/^(?:NODE_OPTIONS$|NODE_PATH$|PYTHONPATH$|PYTHONHOME$|LD_|DYLD_|BUN_OPTIONS$)/.test(n),
+          !/^(?:NODE_OPTIONS$|NODE_PATH$|PYTHONPATH$|PYTHONHOME$|LD_|DYLD_|BUN_OPTIONS$|BASH_ENV$|ENV$|ZDOTDIR$|RUBYOPT$|PERL5OPT$|GCONV_PATH$)/.test(
+            n,
+          ),
       ) ||
       !object(p.agents) ||
       !Number.isInteger(p.timeoutMs) ||
@@ -259,23 +315,29 @@ export class HostMcpManager {
     if ((await realpath(p.cwd)) !== p.cwd) fail("cwd identity changed");
     for (const a of [{ path: p.command, sha256: p.commandSha256 }, ...p.artifacts]) {
       const s = await lstat(a.path);
-      if (s.isSymbolicLink() || !s.isFile() || sha(await readFile(a.path)) !== a.sha256)
+      if (
+        s.isSymbolicLink() ||
+        !s.isFile() ||
+        (await realpath(a.path)) !== a.path ||
+        sha(await readFile(a.path)) !== a.sha256
+      )
         fail("artifact identity changed");
     }
+    return launchArgs(p, await readFile(p.command));
   }
   private async session(p: Profile, key: string, generation: number, signal: AbortSignal): Promise<Session> {
     if (signal.aborted || generation !== this.generation) fail("session disconnected before dispatch");
     let hit = this.sessions.get(key);
     if (hit) return hit;
     hit = (async () => {
-      await this.pinned(p);
+      const args = await this.pinned(p);
       if (generation !== this.generation) fail("session disconnected before dispatch");
       const env: Record<string, string> = {};
       for (const n of p.envNames) {
         const value = process.env[n];
         if (value !== undefined) env[n] = value;
       }
-      const transport = new StdioClientTransport({ command: p.command, args: p.args, cwd: p.cwd, env, stderr: "pipe" });
+      const transport = new StdioClientTransport({ command: p.command, args, cwd: p.cwd, env, stderr: "pipe" });
       transport.stderr?.on("data", () => {});
       const client = new Client(
         { name: "agentes-host-mcp", version: "1" },

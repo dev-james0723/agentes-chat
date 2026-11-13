@@ -267,7 +267,6 @@ function ConnectStep({
   const byAddress = fixed !== null || def === null || def.kind === "remote_mcp";
   const askUrl = fixed === null && def === null;
   const viaComposio = item ? item.viaComposio : def?.via === "composio";
-  const canOAuth = byAddress || Boolean(def?.oauthConfigured && def.auth.includes("oauth"));
   // A one-click server the catalog lists without a key (Intercom on the Cloud) offers none, unless it answers that it
   // needs one; a service through Composio signs in there.
   // An account by address follows its catalog entry's rule too, so Reconectar doesn't bring the key back.
@@ -275,6 +274,7 @@ function ConnectStep({
     fixed === null
       ? def
       : (catalog.data?.connectors.find((c) => c.kind === "remote_mcp" && sameServer(c.serverUrl, fixed)) ?? null);
+  const canOAuth = listed ? Boolean(listed.oauthConfigured && listed.auth.includes("oauth")) : byAddress;
   const canKey = !viaComposio && (listed === null || listed.auth.includes("api_key") || needsKey !== null);
   const serverUrl = fixed ?? (def?.kind === "remote_mcp" ? def.serverUrl : url.trim());
   const appOffered =
