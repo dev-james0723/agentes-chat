@@ -406,6 +406,8 @@ const taskWhat = (job: Pick<ControlJob, "summary" | "said">): Record<string, str
   job.said?.executor ? { executor: job.said.executor } : { what: job.summary };
 
 export class RunnerDaemon implements RequestObserver {
+  /** Fixed at startup: config changes cannot enable host auth while phone discovery is still running. */
+  private phonesDisabledAtStart = false;
   private stored: StoredConfig | null = null;
   private config: RunnerConfig | null = null;
   /** The config text last read or written (the watcher skips our own writes). */
@@ -502,6 +504,7 @@ export class RunnerDaemon implements RequestObserver {
   private fixer: XcodeFixer | null = null;
 
   constructor(private readonly opts: DaemonOptions) {
+    this.phonesDisabledAtStart = opts.phones === false;
     this.uidNetworks = new AgentNetworks({}, readNetworkPins(opts.home));
     this.networkDrain = new NetworkDrain(readNetworkTransitions(opts.home));
     this.activity = new ActivityLog(opts.home);
@@ -744,6 +747,7 @@ export class RunnerDaemon implements RequestObserver {
     } catch (err) {
       this.opts.log(`config.json can't be read: ${err instanceof Error ? err.message : String(err)}`);
     }
+    this.phonesDisabledAtStart ||= stored?.phonesDisabled === true;
     this.applyStored(stored, null, true);
     if (this.accountUsers) {
       this.accountUsers.sweep();
@@ -764,7 +768,7 @@ export class RunnerDaemon implements RequestObserver {
     this.timers.push(browsers);
     // Local consent may be revoked while connected. Each turn rechecks the marker independently;
     // this poll also tells the server promptly without restarting the runner.
-    if (this.opts.phones === false) {
+    if (this.phonesDisabledAtStart) {
       let lastHost = JSON.stringify(this.accounts.hostAccountStatus());
       const host = setInterval(() => {
         const current = JSON.stringify(this.accounts.hostAccountStatus());
@@ -1464,7 +1468,7 @@ export class RunnerDaemon implements RequestObserver {
           onChange: (toolchains) => this.send({ type: "toolchains.changed", toolchains }),
         });
     // Phones are reached as the person (adb's key, the Mac's pairing with the iPhone): a system-mode runner has none.
-    if (!this.phones && config.mode !== "system" && this.opts.phones !== false) {
+    if (!this.phones && config.mode !== "system" && !this.phonesDisabledAtStart) {
       this.phones = new PhoneManager({
         log,
         onChange: (phones) => {
@@ -1943,7 +1947,7 @@ export class RunnerDaemon implements RequestObserver {
   /** Host auth is only available to this paired single-user, phone-disabled runner. */
   private hostAcpBinding() {
     const c = this.config;
-    if (!c?.orgId || this.opts.phones !== false) return null;
+    if (!c?.orgId || !this.phonesDisabledAtStart) return null;
     return {
       server: c.server,
       orgId: c.orgId,
