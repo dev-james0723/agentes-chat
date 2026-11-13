@@ -3,9 +3,16 @@ import { and, type Database, eq, inArray, or, schema, sql } from "@agenteschat/d
 import { z } from "zod";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { createIssueInTransaction } from "./issues";
-import { requirePermission } from "./organizations";
+import { requireChangePermission, requirePermission } from "./organizations";
 import { canonical, hash, nativeHash } from "./paperclip-routine-state";
-import { assertMappingWorkspace } from "./paperclip-workspaces";
+import {
+  assertMappingWorkspace,
+  assertWorkspaceBinding,
+  paperclipDynamicWorkspaceDefinitionSchema,
+  paperclipInvocationWorkspaceSchema,
+  resolveInvocationWorkspace,
+  workspaceSelectionOf,
+} from "./paperclip-workspaces";
 import { enqueueRoutineJob } from "./routine-events";
 import { createRoutine, type RoutineDeps, updateRoutine } from "./routines";
 import { assertCanWork } from "./standing";
@@ -61,12 +68,21 @@ const invocationInput = z.strictObject({
   idempotencyKey: z.string().min(1).max(255).optional(),
   payload: z.record(z.string(), z.unknown()).nullable().optional(),
   variables: z.record(z.string(), z.unknown()).optional(),
+  workspace: paperclipInvocationWorkspaceSchema.optional(),
 });
 export const paperclipInvocationSchema = invocationInput;
 export type PaperclipInvocation = z.input<typeof invocationInput>;
 export const paperclipPrepareSchema = z.strictObject({
   expectedConfigHash: z.string().regex(/^[a-f0-9]{64}$/),
   expectedNativeConfigHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export const paperclipDynamicWorkspaceScopeSchema = z.strictObject({
+  expectedConfigHash: z.string().regex(/^[a-f0-9]{64}$/),
+  bindingIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(100)
+    .refine((a) => new Set(a).size === a.length),
 });
 
 function parsed<T>(schemaValue: z.ZodType<T>, value: unknown): T {
@@ -108,6 +124,13 @@ export function assertPaperclipMappingSupported(m: Mapping) {
       "paperclip.unsupported_policy",
     );
   if (
+    (d.workspaceScope != null &&
+      (!paperclipDynamicWorkspaceDefinitionSchema.safeParse(d.workspaceScope).success ||
+        !Array.isArray(d.workspaceScope.bindings) ||
+        !d.workspaceScope.bindings.length ||
+        d.projectId !== null ||
+        d.projectWorkspaceId !== null ||
+        d.workspaceBindingId)) ||
     ((d.projectId !== null || d.projectWorkspaceId !== null || d.workspaceBindingId) &&
       (!d.projectId || !d.projectWorkspaceId || !d.workspaceBindingId)) ||
     d.goalId !== null ||
@@ -473,6 +496,110 @@ export async function listPaperclipMappings(deps: PaperclipRoutineDeps, actorId:
     .from(mappings)
     .where(and(eq(mappings.orgId, orgId), eq(mappings.createdByUserId, actorId)));
 }
+
+/** Owner-reviewed CAS scope configuration. It starts no work and cannot grant a folder or native model route. */
+export async function setPaperclipDynamicWorkspaceScope(
+  deps: PaperclipRoutineDeps,
+  actorId: string,
+  orgId: string,
+  id: string,
+  value: z.input<typeof paperclipDynamicWorkspaceScopeSchema>,
+): Promise<Mapping> {
+  requireFeature(deps);
+  const input = parsed(paperclipDynamicWorkspaceScopeSchema, value);
+  return deps.db.transaction(async (tx) => {
+    const member = await requireChangePermission(tx as Database, actorId, orgId, "manage_routines");
+    if (member.role !== "owner") throw new ForbiddenError("Only the workspace owner may review dynamic scope");
+    const initial = await load(tx, orgId, id);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`${orgId}:${initial.sourceCompanyId}:${initial.sourceRoutineId}`}, 0))`,
+    );
+    const [m] = await tx
+      .select()
+      .from(mappings)
+      .where(and(eq(mappings.orgId, orgId), eq(mappings.id, id)))
+      .for("update");
+    const currentMember = await requireChangePermission(tx as Database, actorId, orgId, "manage_routines");
+    if (currentMember.role !== "owner") throw new ForbiddenError("Only the workspace owner may review dynamic scope");
+    if (!m || m.createdByUserId !== actorId) throw new ForbiddenError("Mapping creator does not match the owner");
+    if (m.enabled || m.configHash !== input.expectedConfigHash)
+      throw new ConflictError("Mapping is enabled or changed", "paperclip.stale_mapping");
+    if (m.definition.projectId !== null || m.definition.projectWorkspaceId !== null || m.definition.workspaceBindingId)
+      throw new ValidationError("A fixed workspace mapping cannot become a dynamic mapping");
+    const [native] = await tx
+      .select()
+      .from(routines)
+      .where(and(eq(routines.orgId, orgId), eq(routines.id, m.routineId)))
+      .for("update");
+    if (
+      !native ||
+      native.deletedAt ||
+      native.active ||
+      native.nextRunAt !== null ||
+      native.createdByUserId !== actorId ||
+      native.agentId !== m.agentId ||
+      nativeHash(native) !== m.nativeConfigHash
+    )
+      throw new ConflictError("Scope review requires the unchanged paused native routine", "paperclip.target_changed");
+    const [open] = await tx
+      .select({ id: routineRuns.id })
+      .from(routineRuns)
+      .leftJoin(schema.agentRuns, eq(schema.agentRuns.id, routineRuns.agentRunId))
+      .where(
+        and(
+          eq(routineRuns.orgId, orgId),
+          eq(routineRuns.routineId, native.id),
+          or(
+            inArray(routineRuns.status, ["queued", "starting", "started"]),
+            inArray(schema.agentRuns.status, ["queued", "running", "waiting_input", "waiting_approval"]),
+          ),
+        ),
+      )
+      .limit(1);
+    if (open) throw new ConflictError("Reconcile current native work before changing scope", "paperclip.native_busy");
+    const pins = [];
+    for (const bindingId of [...input.bindingIds].sort()) {
+      const [candidate] = await tx
+        .select()
+        .from(schema.paperclipWorkspaceBindings)
+        .where(
+          and(eq(schema.paperclipWorkspaceBindings.orgId, orgId), eq(schema.paperclipWorkspaceBindings.id, bindingId)),
+        )
+        .for("share");
+      if (!candidate)
+        throw new ValidationError("Reviewed workspace binding is unavailable", "paperclip.workspace_changed");
+      const b = await assertWorkspaceBinding(
+        tx,
+        {
+          orgId,
+          bindingId,
+          ownerId: actorId,
+          sourceCompanyId: m.sourceCompanyId,
+          projectId: candidate.sourceProjectId,
+          workspaceId: candidate.sourceWorkspaceId,
+          agentId: m.agentId,
+        },
+        true,
+      );
+      pins.push(workspaceSelectionOf(b, m.agentId));
+    }
+    const definition = { ...m.definition, workspaceScope: { mode: "dynamic" as const, bindings: pins } };
+    const configHash = hash({ previous: m.configHash, operation: "dynamic-workspace-scope-v1", definition });
+    const [next] = await tx
+      .update(mappings)
+      .set({
+        definition,
+        configHash,
+        enabled: false,
+        hookIngress: m.hookIngress ? { ...m.hookIngress, enabled: false } : null,
+      })
+      .where(eq(mappings.id, m.id))
+      .returning();
+    if (!next) throw new Error("Scope configuration missing");
+    return next;
+  });
+}
+
 export async function setPaperclipMappingEnabled(
   deps: PaperclipRoutineDeps,
   actorId: string,
@@ -495,15 +622,16 @@ export async function setPaperclipMappingEnabled(
     if (m.configHash !== configHash) throw new ConflictError("Mapping changed", "paperclip.stale_mapping");
     if (enabled) {
       assertPaperclipMappingSupported(m);
-      await assertMappingWorkspace(tx, m, true);
       const [r] = await tx
         .select()
         .from(routines)
-        .where(and(eq(routines.orgId, orgId), eq(routines.id, m.routineId)));
+        .where(and(eq(routines.orgId, orgId), eq(routines.id, m.routineId)))
+        .for("share");
       if (!r || r.deletedAt || !r.active || nativeHash(r) !== m.nativeConfigHash)
         throw new ConflictError("Native routine is paused or changed", "paperclip.target_changed");
       if (!m.sourceActive || m.sourceArchived)
         throw new ConflictError("Source routine is not active", "paperclip.source_inactive");
+      await assertMappingWorkspace(tx, m, true);
     }
     const [next] = await tx.update(mappings).set({ enabled }).where(eq(mappings.id, id)).returning();
     if (!next) throw new Error("Mapping update missing");
@@ -544,7 +672,6 @@ export async function dispatchPaperclipRoutine(
     if (!m.sourceActive || m.sourceArchived)
       throw new ConflictError("Source routine is not active", "paperclip.source_inactive");
     assertPaperclipMappingSupported(m);
-    await assertMappingWorkspace(tx, m, true);
     const triggerId = input.triggerId ?? null;
     if (triggerId && !m.triggers.some((t) => t.id === triggerId && t.enabled && t.kind === "api"))
       throw new ConflictError("Trigger is not an enabled API trigger", "paperclip.trigger_inactive");
@@ -555,6 +682,7 @@ export async function dispatchPaperclipRoutine(
       .for("update");
     if (!native || native.deletedAt || !native.active || nativeHash(native) !== m.nativeConfigHash)
       throw new ConflictError("Native routine is paused or changed", "paperclip.target_changed");
+    const workspaceSelection = await resolveInvocationWorkspace(tx, m, input.workspace, true);
     const d = m.definition;
     const resolved = resolve(m, input);
     const scopeHash = input.idempotencyKey === undefined ? null : hash([input.source, triggerId, input.idempotencyKey]);
@@ -565,12 +693,19 @@ export async function dispatchPaperclipRoutine(
         .where(
           and(eq(receipts.orgId, orgId), eq(receipts.mappingId, m.id), eq(receipts.idempotencyScopeHash, scopeHash)),
         );
-      if (seen) return seen;
+      if (seen) {
+        if (d.workspaceScope != null && !seen.workspaceSelection)
+          throw new ConflictError("Accepted workspace receipt is unavailable", "paperclip.workspace_changed");
+        await assertMappingWorkspace(tx, m, true, seen.workspaceSelection);
+        return seen;
+      }
     }
     const fingerprint = hash({
       payload: resolved.triggerPayload,
-      projectId: d.projectId,
-      projectWorkspaceId: d.projectWorkspaceId,
+      projectId: workspaceSelection?.sourceProjectId ?? d.projectId,
+      projectWorkspaceId: workspaceSelection?.sourceWorkspaceId ?? d.projectWorkspaceId,
+      workspaceSelection,
+      workspaceScopeConfigHash: d.workspaceScope ? m.configHash : null,
       assigneeAgentId: d.sourceAgentId,
       routineRevisionId: m.sourceRevisionId,
       routineEnvFingerprint: d.envFingerprint,
@@ -605,6 +740,7 @@ export async function dispatchPaperclipRoutine(
           sourceTriggerId: triggerId,
           idempotencyScopeHash: scopeHash,
           dispatchFingerprint: fingerprint,
+          workspaceSelection,
           status: m.policy === "skip_if_active" ? "skipped" : "coalesced",
           issueId: live.issueId,
           routineRunId: live.routineRunId,
@@ -664,6 +800,7 @@ export async function dispatchPaperclipRoutine(
         sourceTriggerId: triggerId,
         idempotencyScopeHash: scopeHash,
         dispatchFingerprint: fingerprint,
+        workspaceSelection,
         status: "queued",
         issueId: issue.id,
         routineRunId: runId,

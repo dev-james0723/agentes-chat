@@ -10,7 +10,42 @@ const { paperclipWorkspaceBindings: bindings, agents, machines } = schema;
 export type WorkspaceBinding = typeof bindings.$inferSelect;
 type Agent = typeof agents.$inferSelect;
 type Pin = WorkspaceBinding["agents"][number];
+type PaperclipWorkspaceSelection = NonNullable<typeof schema.paperclipRoutineReceipts.$inferSelect.workspaceSelection>;
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const selectionSchema = z.strictObject({
+  bindingId: z.uuid(),
+  orgId: z.uuid(),
+  ownerId: z.string().min(1),
+  machineId: z.uuid(),
+  generation: z.uuid(),
+  sourceCompanyId: z.uuid(),
+  sourceProjectId: z.uuid(),
+  sourceWorkspaceId: z.uuid(),
+  projectDigest: digest,
+  snapshotDigest: digest,
+  bindingDigest: digest,
+  agent: z.strictObject({
+    id: z.uuid(),
+    ownerId: z.string().min(1),
+    brain: z.enum(["claude_code", "codex"]),
+    model: z.string().min(1),
+    accountId: z.uuid().nullable(),
+  }),
+});
+export const paperclipDynamicWorkspaceDefinitionSchema = z.strictObject({
+  mode: z.literal("dynamic"),
+  bindings: z
+    .array(selectionSchema)
+    .min(1)
+    .max(100)
+    .refine((a) => new Set(a.map((b) => b.bindingId)).size === a.length),
+});
+export const paperclipInvocationWorkspaceSchema = z.strictObject({
+  bindingId: z.uuid(),
+  projectId: z.uuid(),
+  projectWorkspaceId: z.uuid(),
+});
+type InvocationWorkspace = z.infer<typeof paperclipInvocationWorkspaceSchema>;
 export const paperclipWorkspaceRegistrationSchema = z.strictObject({
   id: z.uuid(),
   machineId: z.uuid(),
@@ -90,8 +125,7 @@ export async function assertWorkspaceBinding(
     .where(and(eq(bindings.orgId, input.orgId), eq(bindings.id, input.bindingId)));
   const [b] = await (lock ? query.for("share") : query);
   if (
-    !b ||
-    !b.enabled ||
+    !b?.enabled ||
     !input.ownerId ||
     b.ownerId !== input.ownerId ||
     b.sourceCompanyId !== input.sourceCompanyId ||
@@ -126,11 +160,37 @@ export async function assertMappingWorkspace(
   db: Executor,
   m: typeof schema.paperclipRoutineMappings.$inferSelect,
   lock = false,
+  selected?: PaperclipWorkspaceSelection | null,
 ) {
   const d = m.definition;
-  if (d.projectId === null && d.projectWorkspaceId === null && !d.workspaceBindingId) return null;
+  if (d.workspaceScope != null) {
+    if (
+      !paperclipDynamicWorkspaceDefinitionSchema.safeParse(d.workspaceScope).success ||
+      d.projectId !== null ||
+      d.projectWorkspaceId !== null ||
+      d.workspaceBindingId ||
+      !Array.isArray(d.workspaceScope.bindings) ||
+      !d.workspaceScope.bindings.length ||
+      d.workspaceScope.bindings.length > 100 ||
+      new Set(d.workspaceScope.bindings.map((b) => b.bindingId)).size !== d.workspaceScope.bindings.length
+    )
+      return unavailable();
+    if (selected) {
+      const pin = d.workspaceScope.bindings.find((b) => b.bindingId === selected.bindingId);
+      if (!pin || !sameWorkspaceSelection(pin, selected)) return unavailable();
+      return assertSelectedWorkspace(db, m, selected, lock);
+    }
+    // Preparation and activation validate the complete allowlist, never infer a default target.
+    for (const pin of [...d.workspaceScope.bindings].sort((a, b) => a.bindingId.localeCompare(b.bindingId)))
+      await assertSelectedWorkspace(db, m, pin, lock);
+    return null;
+  }
+  if (d.projectId === null && d.projectWorkspaceId === null && !d.workspaceBindingId) {
+    if (selected) return unavailable();
+    return null;
+  }
   if (!d.workspaceBindingId || !d.projectId || !d.projectWorkspaceId) return unavailable();
-  return assertWorkspaceBinding(
+  const b = await assertWorkspaceBinding(
     db,
     {
       orgId: m.orgId,
@@ -143,6 +203,103 @@ export async function assertMappingWorkspace(
     },
     lock,
   );
+  if (selected && !sameWorkspaceSelection(workspaceSelectionOf(b, m.agentId), selected)) return unavailable();
+  return b;
+}
+
+/** No host path enters either the reviewed allowlist or the accepted invocation's receipt. */
+export function workspaceSelectionOf(b: WorkspaceBinding, agentId: string): PaperclipWorkspaceSelection {
+  const pin = b.agents.find((p) => p.id === agentId);
+  if (!pin) return unavailable();
+  return {
+    bindingId: b.id,
+    orgId: b.orgId,
+    ownerId: b.ownerId,
+    machineId: b.machineId,
+    generation: b.generation,
+    sourceCompanyId: b.sourceCompanyId,
+    sourceProjectId: b.sourceProjectId,
+    sourceWorkspaceId: b.sourceWorkspaceId,
+    projectDigest: b.projectDigest,
+    snapshotDigest: b.snapshotDigest,
+    bindingDigest: b.bindingDigest,
+    agent: { ...pin },
+  };
+}
+
+/** Field comparison also works after PostgreSQL jsonb reorders object keys. */
+export function sameWorkspaceSelection(a: PaperclipWorkspaceSelection, b: PaperclipWorkspaceSelection) {
+  return (
+    [
+      "bindingId",
+      "orgId",
+      "ownerId",
+      "machineId",
+      "generation",
+      "sourceCompanyId",
+      "sourceProjectId",
+      "sourceWorkspaceId",
+      "projectDigest",
+      "snapshotDigest",
+      "bindingDigest",
+    ].every((key) => a[key as keyof PaperclipWorkspaceSelection] === b[key as keyof PaperclipWorkspaceSelection]) &&
+    a.agent &&
+    b.agent &&
+    ["id", "ownerId", "brain", "model", "accountId"].every(
+      (key) => a.agent[key as keyof Pin] === b.agent[key as keyof Pin],
+    )
+  );
+}
+
+async function assertSelectedWorkspace(
+  db: Executor,
+  m: typeof schema.paperclipRoutineMappings.$inferSelect,
+  selected: PaperclipWorkspaceSelection,
+  lock: boolean,
+) {
+  if (
+    !selectionSchema.safeParse(selected).success ||
+    selected.orgId !== m.orgId ||
+    selected.ownerId !== m.createdByUserId ||
+    selected.sourceCompanyId !== m.sourceCompanyId ||
+    selected.agent.id !== m.agentId
+  )
+    return unavailable();
+  const b = await assertWorkspaceBinding(
+    db,
+    {
+      orgId: m.orgId,
+      bindingId: selected.bindingId,
+      ownerId: m.createdByUserId,
+      sourceCompanyId: m.sourceCompanyId,
+      projectId: selected.sourceProjectId,
+      workspaceId: selected.sourceWorkspaceId,
+      agentId: m.agentId,
+    },
+    lock,
+  );
+  if (!sameWorkspaceSelection(workspaceSelectionOf(b, m.agentId), selected)) return unavailable();
+  return b;
+}
+
+/** A caller chooses only an allowlisted opaque identity; the server supplies every authority pin. */
+export async function resolveInvocationWorkspace(
+  db: Executor,
+  m: typeof schema.paperclipRoutineMappings.$inferSelect,
+  input: InvocationWorkspace | undefined,
+  lock = false,
+): Promise<PaperclipWorkspaceSelection | null> {
+  if (m.definition.workspaceScope != null) {
+    if (!input || m.definition.workspaceScope.mode !== "dynamic") return unavailable();
+    const pin = m.definition.workspaceScope.bindings.find((b) => b.bindingId === input.bindingId);
+    if (!pin || pin.sourceProjectId !== input.projectId || pin.sourceWorkspaceId !== input.projectWorkspaceId)
+      return unavailable();
+    await assertMappingWorkspace(db, m, lock, pin);
+    return pin;
+  }
+  if (input) return unavailable();
+  const b = await assertMappingWorkspace(db, m, lock);
+  return b ? workspaceSelectionOf(b, m.agentId) : null;
 }
 /** An immutable server registration succeeds only after every requested agent proves its owner-local record. */
 export async function registerPaperclipWorkspace(
@@ -159,8 +316,7 @@ export async function registerPaperclipWorkspace(
   if (!deps.hub) return unavailable();
   const status = await deps.hub.status(input.machineId);
   if (
-    !status ||
-    !status.online ||
+    !status?.online ||
     status.paused ||
     !status.execAllowed ||
     status.orgId !== orgId ||

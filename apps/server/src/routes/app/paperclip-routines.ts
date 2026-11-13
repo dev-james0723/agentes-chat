@@ -5,11 +5,13 @@ import {
   inspectPaperclipAdoption,
   listPaperclipMappings,
   managePaperclipHook,
+  paperclipDynamicWorkspaceScopeSchema,
   paperclipHookIngressSchema,
   paperclipInvocationSchema,
   paperclipMappingSchema,
   paperclipPrepareSchema,
   preparePaperclipMapping,
+  setPaperclipDynamicWorkspaceScope,
   setPaperclipHookIngress,
   setPaperclipMappingEnabled,
 } from "@agenteschat/engine";
@@ -135,6 +137,24 @@ export function paperclipRoutineRoutes(deps: AppDeps) {
           input.expectedConfigHash,
           input.enabled,
         ),
+        200,
+      );
+    },
+  );
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/organizations/{orgId}/paperclip-routines/{mappingId}/workspace-scope",
+      tags,
+      security,
+      summary: "Owner-only compare-and-set review of dynamic workspace binding IDs; stays disabled",
+      request: { params: MappingParams, body: body(paperclipDynamicWorkspaceScopeSchema) },
+      responses: { 200: json(Row), ...errors },
+    }),
+    async (c) => {
+      const { orgId, mappingId } = c.req.valid("param");
+      return c.json(
+        await setPaperclipDynamicWorkspaceScope(compatibility, c.get("user").id, orgId, mappingId, c.req.valid("json")),
         200,
       );
     },

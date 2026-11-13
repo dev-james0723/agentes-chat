@@ -8,7 +8,14 @@ import { paperclipRunRefusal } from "./paperclip-routine-state";
 import { runOwnerBoundProjectTurn } from "./paperclip-workspace-client";
 import { assertMappingWorkspace } from "./paperclip-workspaces";
 
-const { agentRuns, routineRuns, routines, paperclipRoutineMappings: mappings, agents } = schema;
+const {
+  agentRuns,
+  routineRuns,
+  routines,
+  paperclipRoutineMappings: mappings,
+  paperclipRoutineReceipts: receipts,
+  agents,
+} = schema;
 type Deps = { db: Database; enabled?: boolean };
 const fail = (): never => {
   throw new ValidationError("Project execution authority is unavailable or changed", "paperclip.workspace_changed");
@@ -28,7 +35,13 @@ export async function paperclipProjectRun(deps: Deps, orgId: string, runId: stri
     if (row.firing.event?.type === "paperclip.received") return fail();
     return null;
   }
-  if (!m.definition.projectId && !m.definition.projectWorkspaceId && !m.definition.workspaceBindingId) return null;
+  if (
+    !m.definition.workspaceScope &&
+    !m.definition.projectId &&
+    !m.definition.projectWorkspaceId &&
+    !m.definition.workspaceBindingId
+  )
+    return null;
   if (
     deps.enabled !== true ||
     !row.run.background ||
@@ -40,7 +53,20 @@ export async function paperclipProjectRun(deps: Deps, orgId: string, runId: stri
     (await paperclipRunRefusal(deps.db, row.firing, row.routine, deps.enabled))
   )
     return fail();
-  const binding = await assertMappingWorkspace(deps.db, m);
+  const [receipt] = await deps.db
+    .select()
+    .from(receipts)
+    .where(
+      and(
+        eq(receipts.orgId, orgId),
+        eq(receipts.mappingId, m.id),
+        eq(receipts.routineRunId, row.firing.id),
+        eq(receipts.id, String(row.firing.event?.receiptId)),
+        eq(receipts.status, "queued"),
+      ),
+    );
+  if (!receipt || (m.definition.workspaceScope != null && !receipt.workspaceSelection)) return fail();
+  const binding = await assertMappingWorkspace(deps.db, m, false, receipt.workspaceSelection);
   const [agent] = await deps.db
     .select()
     .from(agents)

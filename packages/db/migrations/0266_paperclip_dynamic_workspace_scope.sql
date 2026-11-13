@@ -1,0 +1,1 @@
+ALTER TABLE "paperclip_routine_receipts" ADD COLUMN "workspace_selection" jsonb;

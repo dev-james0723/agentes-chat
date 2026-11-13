@@ -11,6 +11,7 @@ import {
   findPaperclipInvocation,
   type PaperclipRoutineDeps,
 } from "./paperclip-routines";
+import { paperclipInvocationWorkspaceSchema } from "./paperclip-workspaces";
 import {
   ensureRoutineHook,
   HOOK_LIMIT_PER_ROUTINE,
@@ -45,6 +46,7 @@ const invocationSchema = z.strictObject({
   idempotencyKey: keySchema,
   variables: z.record(z.string(), z.unknown()).optional(),
   payload: z.record(z.string(), z.unknown()).nullable().optional(),
+  workspace: paperclipInvocationWorkspaceSchema.optional(),
 });
 const lookupSchema = z.strictObject({ idempotencyKey: keySchema });
 function parsed<T>(s: z.ZodType<T>, value: unknown): T {
@@ -173,6 +175,15 @@ function view(m: Mapping, r: Receipt) {
     status: r.status,
     routineRunId: r.routineRunId,
     issueId: r.issueId,
+    workspace: r.workspaceSelection
+      ? {
+          bindingId: r.workspaceSelection.bindingId,
+          projectId: r.workspaceSelection.sourceProjectId,
+          projectWorkspaceId: r.workspaceSelection.sourceWorkspaceId,
+          generation: r.workspaceSelection.generation,
+          bindingDigest: r.workspaceSelection.bindingDigest,
+        }
+      : null,
   };
 }
 type Refusal = Exclude<HookAnswer, { status: 202 }>;

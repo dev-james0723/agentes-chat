@@ -1,7 +1,24 @@
 import { boolean, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { users } from "./auth";
+import type { PaperclipWorkspaceAgentPin } from "./paperclip-workspaces";
 import { organizations } from "./tenancy";
 import { issues, routines } from "./work";
+
+/** Immutable authority snapshot of a registered binding; invocation bodies never supply these pins. */
+export interface PaperclipWorkspaceSelection {
+  bindingId: string;
+  orgId: string;
+  ownerId: string;
+  machineId: string;
+  generation: string;
+  sourceCompanyId: string;
+  sourceProjectId: string;
+  sourceWorkspaceId: string;
+  projectDigest: string;
+  snapshotDigest: string;
+  bindingDigest: string;
+  agent: PaperclipWorkspaceAgentPin;
+}
 
 export interface PaperclipRoutineDefinition {
   title: string;
@@ -11,6 +28,8 @@ export interface PaperclipRoutineDefinition {
   projectId: string | null;
   projectWorkspaceId: string | null;
   workspaceBindingId?: string | null;
+  /** Absent on existing mappings. Only the owner CAS path may create the reviewed dynamic allowlist. */
+  workspaceScope?: { mode: "dynamic"; bindings: PaperclipWorkspaceSelection[] } | null;
   goalId: string | null;
   parentIssueId: string | null;
   variables: unknown[];
@@ -80,6 +99,8 @@ export const paperclipRoutineReceipts = pgTable(
     /** Hash of source-kind, nullable trigger and key. NULL means no idempotency key was supplied. */
     idempotencyScopeHash: text(),
     dispatchFingerprint: text().notNull(),
+    /** Immutable accepted workspace choice, distinct from untrusted payload/event data. */
+    workspaceSelection: jsonb().$type<PaperclipWorkspaceSelection>(),
     status: text().$type<"queued" | "coalesced" | "skipped">().notNull(),
     issueId: uuid().references(() => issues.id, { onDelete: "set null" }),
     /** Not a FK: native event deferral replaces its row and updates this pointer atomically. */

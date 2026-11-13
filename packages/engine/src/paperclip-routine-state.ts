@@ -89,7 +89,9 @@ export async function paperclipRunRefusal(
   if (mapping.nativeConfigHash !== nativeHash(routine) || mapping.configHash !== run.event.configHash)
     return "paperclip_target_changed";
   try {
-    await assertMappingWorkspace(db, mapping, lock);
+    if (mapping.definition.workspaceScope != null && !binding.receipt.workspaceSelection)
+      return "paperclip_workspace_changed";
+    await assertMappingWorkspace(db, mapping, lock, binding.receipt.workspaceSelection);
   } catch {
     return "paperclip_workspace_changed";
   }
