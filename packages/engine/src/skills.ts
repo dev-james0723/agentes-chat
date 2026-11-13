@@ -533,6 +533,27 @@ async function storeFiles(
   await deps.db.insert(skillFiles).values(rows);
 }
 
+async function auditSkillSave(
+  db: Database,
+  actorId: string,
+  row: SkillRow,
+  action: "skill.updated" | "skill.restored" | "skill.installed",
+) {
+  await recordAudit(db, {
+    orgId: row.orgId,
+    actor: { type: "person", id: actorId },
+    action,
+    target: { type: "skill", id: row.id },
+    details: {
+      name: row.name,
+      version: row.version,
+      source: row.source,
+      sourceUrl: row.sourceUrl,
+      ...(row.sourceVia ? { sourceVia: row.sourceVia } : {}),
+    },
+  });
+}
+
 /**
  * Installs or updates a skill from parsed content (admins, `manage_agents`).
  * The same name again is a new version of that skill; every change is audited.
@@ -556,77 +577,74 @@ export async function saveSkill(
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
   validateSkill(input);
   const files = await planFiles(deps, orgId, input.files ?? []);
-  const [existing] = await deps.db
-    .select()
-    .from(skills)
-    .where(and(eq(skills.orgId, orgId), eq(skills.slug, input.name)));
-  let row: SkillRow;
-  if (existing && input.createOnly) throw new ConflictError("Skill name is already taken", "skill.name_taken");
-  if (existing) {
-    // Same name: a new version of that skill. A deleted one comes back with its agents' assignments, except from a link
-    // (a pick of one too): it may hold anything under that name, so it comes back on for none of its old agents.
-    const [updated] = await deps.db
-      .update(skills)
-      .set({
-        description: input.description,
-        body: input.body,
-        metadata: input.metadata,
-        source: input.source,
-        sourceUrl: input.sourceUrl ?? existing.sourceUrl,
-        // A link read again says how it was read; an edit or an upload keeps what updating reads through.
-        sourceVia: input.source === "url" ? (input.sourceVia ?? null) : existing.sourceVia,
-        ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
-        // Incremented in SQL (not from the value read above) so two concurrent saves take distinct versions.
-        version: sql`${skills.version} + 1`,
-        ...(input.defaultForNewAgents !== undefined ? { defaultForNewAgents: input.defaultForNewAgents } : {}),
-        deletedAt: null,
-        editedSinceSource: false,
-        linkBase: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(skills.id, existing.id))
-      .returning();
-    if (!updated) throw new Error("skill update returned nothing");
-    row = updated;
-    if (existing.deletedAt && input.source === "url")
-      await deps.db.update(agentSkills).set({ enabled: false }).where(eq(agentSkills.skillId, existing.id));
-  } else {
-    const [created] = await deps.db
-      .insert(skills)
-      .values({
-        orgId,
-        slug: input.name,
-        name: input.name,
-        description: input.description,
-        body: input.body,
-        metadata: input.metadata,
-        source: input.source,
-        sourceUrl: input.sourceUrl ?? null,
-        sourceVia: input.sourceVia ?? null,
-        sourceHash: input.sourceHash ?? null,
-        defaultForNewAgents: input.defaultForNewAgents ?? false,
-        createdByUserId: actorId,
-      })
-      .onConflictDoNothing({ target: [skills.orgId, skills.slug] })
-      .returning();
-    if (!created) throw new ConflictError("Skill name is already taken", "skill.name_taken");
-    row = created;
-  }
-  await storeFiles(deps, row, row.version, files);
-  await recordAudit(deps.db, {
-    orgId,
-    actor: { type: "person", id: actorId },
-    action: existing && !existing.deletedAt ? "skill.updated" : existing ? "skill.restored" : "skill.installed",
-    target: { type: "skill", id: row.id },
-    details: {
-      name: row.name,
-      version: row.version,
-      source: row.source,
-      sourceUrl: row.sourceUrl,
-      ...(row.sourceVia ? { sourceVia: row.sourceVia } : {}),
-    },
+  // Publish the version only with all its file rows; a concurrent text edit must not copy a half-written import.
+  return deps.db.transaction(async (tx) => {
+    const db = tx as unknown as Database;
+    const [existing] = await db
+      .select()
+      .from(skills)
+      .where(and(eq(skills.orgId, orgId), eq(skills.slug, input.name)));
+    let row: SkillRow;
+    if (existing && input.createOnly) throw new ConflictError("Skill name is already taken", "skill.name_taken");
+    if (existing) {
+      // Same name: a new version of that skill. A deleted one comes back with its agents' assignments, except from a link
+      // (a pick of one too): it may hold anything under that name, so it comes back on for none of its old agents.
+      const [updated] = await db
+        .update(skills)
+        .set({
+          description: input.description,
+          body: input.body,
+          metadata: input.metadata,
+          source: input.source,
+          sourceUrl: input.sourceUrl ?? existing.sourceUrl,
+          // A link read again says how it was read; an edit or an upload keeps what updating reads through.
+          sourceVia: input.source === "url" ? (input.sourceVia ?? null) : existing.sourceVia,
+          ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+          // Incremented in SQL (not from the value read above) so two concurrent saves take distinct versions.
+          version: sql`${skills.version} + 1`,
+          ...(input.defaultForNewAgents !== undefined ? { defaultForNewAgents: input.defaultForNewAgents } : {}),
+          deletedAt: null,
+          editedSinceSource: false,
+          linkBase: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(skills.id, existing.id))
+        .returning();
+      if (!updated) throw new Error("skill update returned nothing");
+      row = updated;
+      if (existing.deletedAt && input.source === "url")
+        await db.update(agentSkills).set({ enabled: false }).where(eq(agentSkills.skillId, existing.id));
+    } else {
+      const [created] = await db
+        .insert(skills)
+        .values({
+          orgId,
+          slug: input.name,
+          name: input.name,
+          description: input.description,
+          body: input.body,
+          metadata: input.metadata,
+          source: input.source,
+          sourceUrl: input.sourceUrl ?? null,
+          sourceVia: input.sourceVia ?? null,
+          sourceHash: input.sourceHash ?? null,
+          defaultForNewAgents: input.defaultForNewAgents ?? false,
+          createdByUserId: actorId,
+        })
+        .onConflictDoNothing({ target: [skills.orgId, skills.slug] })
+        .returning();
+      if (!created) throw new ConflictError("Skill name is already taken", "skill.name_taken");
+      row = created;
+    }
+    await storeFiles({ ...deps, db }, row, row.version, files);
+    await auditSkillSave(
+      db,
+      actorId,
+      row,
+      existing && !existing.deletedAt ? "skill.updated" : existing ? "skill.restored" : "skill.installed",
+    );
+    return skillDetail(db, row);
   });
-  return skillDetail(deps.db, row);
 }
 
 /** Import from a zip of the skill folder (`SKILL.md` + files). */
@@ -1369,23 +1387,41 @@ export async function updateSkill(
   id: string,
   input: { description?: string; body?: string; defaultForNewAgents?: boolean },
 ) {
-  const s = await loadSkill(deps.db, orgId, id);
-  if (input.description === undefined && input.body === undefined && input.defaultForNewAgents !== undefined) {
-    await requirePermission(deps.db, actorId, orgId, "manage_agents");
-    await deps.db
+  await requirePermission(deps.db, actorId, orgId, "manage_agents");
+  return deps.db.transaction(async (tx) => {
+    const db = tx as unknown as Database;
+    const [s] = await db
+      .select()
+      .from(skills)
+      .where(and(eq(skills.id, id), eq(skills.orgId, orgId), isNull(skills.deletedAt)))
+      .for("update");
+    if (!s) throw new NotFoundError("Skill not found");
+    if (input.description === undefined && input.body === undefined && input.defaultForNewAgents !== undefined) {
+      const [row] = await db
+        .update(skills)
+        .set({ defaultForNewAgents: input.defaultForNewAgents, updatedAt: new Date() })
+        .where(eq(skills.id, s.id))
+        .returning();
+      if (!row) throw new NotFoundError("Skill not found");
+      return skillDetail(db, row);
+    }
+    const text = { description: input.description ?? s.description, body: input.body ?? s.body };
+    validateSkill({ name: s.name, ...text });
+    // Unchanged files remain data: retain exact metadata/blob references, including scripts and unavailable files.
+    const version = await writeSkillVersion(db, s, text);
+    const [row] = await db
       .update(skills)
-      .set({ defaultForNewAgents: input.defaultForNewAgents, updatedAt: new Date() })
-      .where(eq(skills.id, s.id));
-    return getSkill(deps.db, actorId, orgId, id);
-  }
-  return saveSkill(deps, actorId, orgId, {
-    name: s.name,
-    description: input.description ?? s.description,
-    body: input.body ?? s.body,
-    metadata: s.metadata,
-    source: "manual",
-    sourceUrl: s.sourceUrl,
-    defaultForNewAgents: input.defaultForNewAgents,
+      .set({
+        source: "manual",
+        ...(input.defaultForNewAgents !== undefined ? { defaultForNewAgents: input.defaultForNewAgents } : {}),
+        editedSinceSource: false,
+        linkBase: null,
+      })
+      .where(eq(skills.id, version.id))
+      .returning();
+    if (!row) throw new NotFoundError("Skill not found");
+    await auditSkillSave(db, actorId, row, "skill.updated");
+    return skillDetail(db, row);
   });
 }
 
@@ -1420,16 +1456,19 @@ export async function writeSkillVersion(
   text: { body: string; description?: string; metadata?: Record<string, unknown> },
   filesOf = s.version,
 ): Promise<SkillRow> {
-  const [row] = await db
-    .update(skills)
-    .set({ ...text, version: sql`${skills.version} + 1`, updatedAt: new Date() })
-    .where(eq(skills.id, s.id))
-    .returning();
-  if (!row) throw new NotFoundError("Skill not found");
-  await db.execute(sql`insert into skill_files (org_id, skill_id, version, path, size, mime, status, storage_config_id, blob_key)
+  return db.transaction(async (tx) => {
+    const versionDb = tx as unknown as Database;
+    const [row] = await versionDb
+      .update(skills)
+      .set({ ...text, version: sql`${skills.version} + 1`, updatedAt: new Date() })
+      .where(eq(skills.id, s.id))
+      .returning();
+    if (!row) throw new NotFoundError("Skill not found");
+    await versionDb.execute(sql`insert into skill_files (org_id, skill_id, version, path, size, mime, status, storage_config_id, blob_key)
     select org_id, skill_id, ${row.version}, path, size, mime, status, storage_config_id, blob_key
     from skill_files where skill_id = ${s.id}::uuid and version = ${filesOf}`);
-  return row;
+    return row;
+  });
 }
 
 /**
@@ -1450,14 +1489,17 @@ export async function writeSkillChange(
     ...(await skillFilesOf(deps.db, s)).filter((f) => !changed.has(f.path)),
     ...planned.files.map((f) => ({ path: f.path, size: f.size })),
   ]);
-  const row = await writeSkillVersion(deps.db, s, { body: change.body });
-  await deps.db
-    .delete(skillFiles)
-    .where(
-      and(eq(skillFiles.skillId, s.id), eq(skillFiles.version, row.version), inArray(skillFiles.path, [...changed])),
-    );
-  await storeFiles(skillDeps, row, row.version, planned);
-  return row;
+  return deps.db.transaction(async (tx) => {
+    const db = tx as unknown as Database;
+    const row = await writeSkillVersion(db, s, { body: change.body });
+    await db
+      .delete(skillFiles)
+      .where(
+        and(eq(skillFiles.skillId, s.id), eq(skillFiles.version, row.version), inArray(skillFiles.path, [...changed])),
+      );
+    await storeFiles({ ...skillDeps, db }, row, row.version, planned);
+    return row;
+  });
 }
 
 /**
