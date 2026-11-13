@@ -10,6 +10,7 @@ import { canonicalJson } from "./tools/json-schema";
 
 const VERSION = "wp3-a/1";
 const MAX_CANDIDATES = 12;
+const SEMANTIC_DEADLINE_MS = 1500;
 const MAX_PROFILE_PAGES = 8;
 const PROFILE_TTL_MS = 5 * 60_000;
 type Context = Pick<
@@ -193,6 +194,26 @@ function egress(e: Egress | undefined, c: Context, now: number) {
   );
 }
 
+/** A local settlement deadline, not cancellation of provider/accounting IO. The losing promise stays observed. */
+async function settleDecision(call: () => ReturnType<Judge["ask"]>) {
+  const started = performance.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(call)
+        .then((answers) => ({ kind: "answered" as const, answers })),
+      new Promise<{ kind: "deadline" }>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "deadline" }), SEMANTIC_DEADLINE_MS);
+      }),
+    ]);
+    // A delayed event loop must not make a late answer beat an overdue timer into publication.
+    return performance.now() - started >= SEMANTIC_DEADLINE_MS ? { kind: "deadline" as const } : result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Source-only planning adapter. Not exported as a tool or wired into a lifecycle hook. It installs/loads nothing,
  * reserves no capacity/use, persists nothing and creates no producer. All output still requires the existing
@@ -338,16 +359,21 @@ export async function createContextualSkillPlan(
       },
     };
     decisionCalls = 1;
-    const answers = await deps.judge.ask({
-      orgId: c.orgId,
-      agentId: c.agentId,
-      runId: c.runId,
-      kind: "contextual_skill_fit",
-      calibrated: true,
-      timeoutMs: 1500,
-      state,
-      questions,
-    });
+    const judge = deps.judge;
+    const settlement = await settleDecision(() =>
+      judge.ask({
+        orgId: c.orgId,
+        agentId: c.agentId,
+        runId: c.runId,
+        kind: "contextual_skill_fit",
+        calibrated: true,
+        timeoutMs: SEMANTIC_DEADLINE_MS,
+        state,
+        questions,
+      }),
+    );
+    if (settlement.kind === "deadline") return finish("semantic_deadline", "jev");
+    const answers = settlement.answers;
     const judgment = judgmentReceiptOf(answers);
     if (!judgment || judgment.resolvedModel !== calibration.resolvedModel)
       return finish("model_unqualified", "jev", [], judgment);

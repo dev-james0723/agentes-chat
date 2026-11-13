@@ -541,3 +541,135 @@ test("semantic recommendation expiry respects the earliest policy, egress and ca
   f.deps.semantic.calibration.expiresAt = NOW + 20;
   expect((await createContextualSkillPlan(f.input, f.deps)).expiresAt).toBe(NOW + 10);
 });
+
+async function settlePlanLocally(pending: ReturnType<typeof createContextualSkillPlan>) {
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  const result = await Promise.race([
+    pending,
+    new Promise<null>((resolve) => {
+      guard = setTimeout(() => resolve(null), 1750);
+    }),
+  ]);
+  clearTimeout(guard);
+  expect(result).not.toBeNull();
+  if (!result) throw Error("planner did not settle within the local deadline guard");
+  return result;
+}
+
+test("a Judge ignoring timeout still settles the plan locally with one consumed call", async () => {
+  const f = fixture();
+  semantics(f);
+  let calls = 0;
+  f.deps.judge = {
+    name: "nonsettling",
+    ask: () => {
+      calls++;
+      return new Promise(() => {});
+    },
+  };
+  const plan = await settlePlanLocally(createContextualSkillPlan(f.input, f.deps));
+  expect(plan).toMatchObject({ status: "abstain", reason: "semantic_deadline", decisionCalls: 1, recommendations: [] });
+  expect(calls).toBe(1);
+});
+
+test("shared Judge accounting may finish late without promoting the timed-out plan", async () => {
+  const f = fixture();
+  semantics(f);
+  let release: () => void = () => {};
+  const accounting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let fetches = 0,
+    records = 0,
+    completed = 0;
+  const shared = createJevJudge({
+    key: "synthetic",
+    gateway: {
+      recordExternalUsage: async () => {
+        records++;
+        await accounting;
+        return "synthetic-usage";
+      },
+    },
+    fetch: (async () => {
+      fetches++;
+      return Response.json({
+        model: "jev-1.14.0",
+        answers: {
+          fit: {
+            choice: "skill-1",
+            confidence: 0.92,
+            probabilities: { "skill-1": 0.92, none: 0.04, insufficient_evidence: 0.04 },
+          },
+        },
+        usage: { input_tokens: 10, output_tokens: 0 },
+      });
+    }) as unknown as typeof fetch,
+  });
+  f.deps.judge = {
+    name: shared.name,
+    ask: async (request) => {
+      const answer = await shared.ask(request);
+      completed++;
+      return answer;
+    },
+  };
+  try {
+    const plan = await settlePlanLocally(createContextualSkillPlan(f.input, f.deps));
+    expect(plan).toMatchObject({
+      status: "abstain",
+      reason: "semantic_deadline",
+      decisionCalls: 1,
+      recommendations: [],
+    });
+    const frozen = JSON.stringify(plan);
+    expect(completed).toBe(0);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(completed).toBe(1);
+    expect(JSON.stringify(plan)).toBe(frozen);
+    expect(fetches).toBe(1);
+    expect(records).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+test("a late Judge rejection is observed without a retry or result publication", async () => {
+  const f = fixture();
+  semantics(f);
+  let reject: (reason: Error) => void = () => {};
+  let calls = 0;
+  const late = new Promise<never>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.deps.judge = {
+    name: "late-rejection",
+    ask: () => {
+      calls++;
+      return late;
+    },
+  };
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const plan = await settlePlanLocally(createContextualSkillPlan(f.input, f.deps));
+    const frozen = JSON.stringify(plan);
+    reject(Error("late synthetic failure"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(plan).toMatchObject({
+      status: "abstain",
+      reason: "semantic_deadline",
+      decisionCalls: 1,
+      recommendations: [],
+    });
+    expect(JSON.stringify(plan)).toBe(frozen);
+    expect(unhandled).toEqual([]);
+    expect(calls).toBe(1);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
