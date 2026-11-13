@@ -4,10 +4,13 @@ import {
   findPaperclipInvocation,
   inspectPaperclipAdoption,
   listPaperclipMappings,
+  managePaperclipHook,
+  paperclipHookIngressSchema,
   paperclipInvocationSchema,
   paperclipMappingSchema,
   paperclipPrepareSchema,
   preparePaperclipMapping,
+  setPaperclipHookIngress,
   setPaperclipMappingEnabled,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -21,6 +24,7 @@ import {
   OrgParams,
   requireSession,
   routineConnectorDeps,
+  routineHookDeps,
   security,
 } from "./context";
 
@@ -131,6 +135,55 @@ export function paperclipRoutineRoutes(deps: AppDeps) {
           input.expectedConfigHash,
           input.enabled,
         ),
+        200,
+      );
+    },
+  );
+  for (const endpoint of [
+    { method: "get", suffix: "", action: "view" },
+    { method: "post", suffix: "/address", action: "rotate_address" },
+    { method: "post", suffix: "/secret", action: "rotate_secret" },
+    { method: "delete", suffix: "/secret", action: "remove_secret" },
+  ] as const) {
+    app.openapi(
+      createRoute({
+        method: endpoint.method,
+        path: `/organizations/{orgId}/paperclip-routines/{mappingId}/hook${endpoint.suffix}`,
+        tags,
+        security,
+        summary: "Manage only this mapping's existing native hook credential; no generic dispatch or test action",
+        request: { params: MappingParams },
+        responses: { 200: json(Row), ...errors },
+      }),
+      async (c) => {
+        const { orgId, mappingId } = c.req.valid("param");
+        return c.json(
+          await managePaperclipHook(
+            { ...routineHookDeps(deps), ...compatibility },
+            c.get("user").id,
+            orgId,
+            mappingId,
+            endpoint.action,
+          ),
+          200,
+        );
+      },
+    );
+  }
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/organizations/{orgId}/paperclip-routines/{mappingId}/hook-ingress",
+      tags,
+      security,
+      summary: "Explicitly bind or revoke unattended authority for this native hook; starts no work",
+      request: { params: MappingParams, body: body(paperclipHookIngressSchema) },
+      responses: { 200: json(Row), ...errors },
+    }),
+    async (c) => {
+      const { orgId, mappingId } = c.req.valid("param");
+      return c.json(
+        await setPaperclipHookIngress(compatibility, c.get("user").id, orgId, mappingId, c.req.valid("json")),
         200,
       );
     },

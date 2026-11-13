@@ -54,6 +54,8 @@ export const paperclipRoutineMappings = pgTable(
       .notNull()
       .references(() => routines.id, { onDelete: "cascade" }),
     enabled: boolean().notNull().default(false),
+    /** Separate unattended authority: absent on every existing mapping until an owner explicitly opts in. */
+    hookIngress: jsonb().$type<{ enabled: boolean; triggerId: string; configHash: string }>(),
     createdByUserId: text().references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },

@@ -1842,6 +1842,13 @@
       "when": 1794745400002,
       "tag": "0264_paperclip_workspace_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 265,
+      "version": "7",
+      "when": 1794745400003,
+      "tag": "0265_paperclip_hook_ingress",
+      "breakpoints": true
     }
   ]
 }

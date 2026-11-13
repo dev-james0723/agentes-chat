@@ -222,6 +222,7 @@ export * from "./organizations";
 export * from "./out-of-office";
 export * from "./outbound";
 export * from "./outbox";
+export * from "./paperclip-hook-ingress";
 export * from "./paperclip-project-runtime";
 export * from "./paperclip-routines";
 export * from "./paperclip-workspaces";

@@ -89,7 +89,7 @@ const textVariable = z.strictObject({
   defaultValue: z.unknown().default(null),
 });
 const PLACEHOLDER = /\{\{\s*([A-Za-z](?:\\_|[A-Za-z0-9_])*)\s*\}\}/g;
-function supported(m: Mapping) {
+export function assertPaperclipMappingSupported(m: Mapping) {
   const d = m.definition;
   if (d.executionContract !== "issue_reference_v1")
     throw new ValidationError(
@@ -140,7 +140,7 @@ function textValue(v: unknown): string {
   return JSON.stringify(v);
 }
 function resolve(m: Mapping, input: z.output<typeof invocationInput>) {
-  const defs = supported(m);
+  const defs = assertPaperclipMappingSupported(m);
   const payload = input.payload ?? null;
   const provided = { ...(isRecord(payload?.variables) ? payload.variables : {}), ...(input.variables ?? {}) };
   delete provided.variables;
@@ -413,7 +413,7 @@ export async function preparePaperclipMapping(
         preparedAt: new Date().toISOString(),
       },
     };
-    supported({ ...m, definition });
+    assertPaperclipMappingSupported({ ...m, definition });
     await assertMappingWorkspace(tx, { ...m, definition }, true);
     await updateRoutine({ ...deps, db: tx }, actorId, orgId, native.id, {
       prompt,
@@ -494,7 +494,7 @@ export async function setPaperclipMappingEnabled(
       throw new ForbiddenError("Only the mapping creator may enable its authority", "paperclip.not_owner");
     if (m.configHash !== configHash) throw new ConflictError("Mapping changed", "paperclip.stale_mapping");
     if (enabled) {
-      supported(m);
+      assertPaperclipMappingSupported(m);
       await assertMappingWorkspace(tx, m, true);
       const [r] = await tx
         .select()
@@ -543,7 +543,7 @@ export async function dispatchPaperclipRoutine(
       throw new ConflictError("Mapping changed", "paperclip.stale_mapping");
     if (!m.sourceActive || m.sourceArchived)
       throw new ConflictError("Source routine is not active", "paperclip.source_inactive");
-    supported(m);
+    assertPaperclipMappingSupported(m);
     await assertMappingWorkspace(tx, m, true);
     const triggerId = input.triggerId ?? null;
     if (triggerId && !m.triggers.some((t) => t.id === triggerId && t.enabled && t.kind === "api"))

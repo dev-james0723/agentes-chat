@@ -8,6 +8,7 @@ import {
   handleComposioWebhook,
   handleWebhook,
   NotFoundError,
+  receivePaperclipRoutineHook,
   receiveRoutineHook,
   setWebhookSecret,
   ValidationError,
@@ -23,9 +24,11 @@ import {
   body,
   createAppRouter,
   errors,
+  hookConfig,
   json,
   OrgParams,
   requireSession,
+  routineConnectorDeps,
   routineHookDeps,
   security,
 } from "./app/context";
@@ -87,6 +90,46 @@ export function registerWebhookReceiver(api: OpenAPIHono, deps: AppDeps) {
  */
 export function registerRoutineHooks(api: OpenAPIHono, deps: AppDeps) {
   const hookDeps = routineHookDeps(deps);
+  for (const operation of ["invocations", "lookup"] as const) {
+    api.all(`/hooks/:token/paperclip/${operation}`, async (c) => {
+      const ip = requestLimitIp(c.req.raw.headers, deps.config.TRUSTED_PROXIES);
+      if (!(await deps.adapters.rateLimiter.consume(`routine-hook-ip:${ip}`, HOOK_LIMIT_PER_IP)).allowed) {
+        c.header("retry-after", "60");
+        return apiError(c, 429, "rate_limited", HOOK_REFUSALS.rate_limited);
+      }
+      const answer = await receivePaperclipRoutineHook(
+        {
+          ...hookDeps,
+          pubsub: deps.adapters.pubsub,
+          hooks: hookConfig(deps.config),
+          context: deps.extras?.context,
+          mail: deps.adapters.mail,
+          connectors: routineConnectorDeps(deps),
+          enabled: deps.config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
+        },
+        operation,
+        {
+          token: c.req.param("token"),
+          headers: c.req.raw.headers,
+          method: c.req.method,
+          read: (max) => readWebhookBytes(c.req.raw, max),
+        },
+      );
+      if (answer.status === 405) {
+        c.header("allow", answer.allow.join(", "));
+        return apiError(c, 405, "method_not_allowed", "This ingress requires POST enabled on the native hook");
+      }
+      if (answer.status !== 200 && answer.status !== 202) {
+        if (answer.status === 429) c.header("retry-after", "60");
+        return apiError(c, answer.status, answer.code, HOOK_REFUSALS[answer.code]);
+      }
+      if (answer.status === 202) {
+        deps.wakeWorkers?.();
+        return c.json(answer.receipt, 202);
+      }
+      return c.json({ backend: "agents_chat", receipt: answer.receipt }, 200);
+    });
+  }
   api.on(["GET", "POST", "PUT", "PATCH", "DELETE"], "/hooks/:token", async (c) => {
     const ip = requestLimitIp(c.req.raw.headers, deps.config.TRUSTED_PROXIES);
     if (!(await deps.adapters.rateLimiter.consume(`routine-hook-ip:${ip}`, HOOK_LIMIT_PER_IP)).allowed) {
