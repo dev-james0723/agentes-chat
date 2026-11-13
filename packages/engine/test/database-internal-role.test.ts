@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { createFakeDatabaseDriver, type DatabaseTarget } from "@agenteschat/adapters";
+import { createFakeDatabaseDriver, DatabaseError, type DatabaseTarget } from "@agenteschat/adapters";
 import { PGlite } from "@electric-sql/pglite";
 import {
   createDatabaseConnection,
@@ -123,6 +123,44 @@ test("privilege drift and missing approved views fail role attestation", async (
     "reset role; revoke select on accounts from ac_engineering_reader; revoke select on engineering_ro.run_status_counts from ac_engineering_reader; set role ac_engineering_reader",
   );
   await expect(attestInternalDatabaseReader(client, profile)).rejects.toThrow("read-only view profile");
+});
+test("internal metrics attestation and column inspection work with scalar-only driver bindings", async () => {
+  const f = await setup();
+  fixture = f;
+  const { profile } = await prepared(f.org.id);
+  const bound: unknown[][] = [];
+  const databases = createFakeDatabaseDriver({
+    db: pg,
+    answer: (_statement, params) => {
+      if (params.some(Array.isArray)) throw new DatabaseError("Array parameter cannot be serialized", "query", "22P02");
+      bound.push(params);
+      return null;
+    },
+  });
+  const result = await createDatabaseConnection(
+    {
+      db: f.db,
+      keyWrappers: [createLocalKeyWrapper(SECRET)],
+      databases,
+      internalTargets: [profile],
+      resolveHost: async () => ["172.18.0.2"],
+    },
+    f.owner.id,
+    f.org.id,
+    {
+      label: "Scalar metrics",
+      host: "postgres",
+      port: 5432,
+      database: profile.database,
+      username: profile.username,
+      password: "synthetic",
+      sslmode: "disable",
+    },
+  );
+  expect(result.ok).toBe(true);
+  const introspection = bound.filter((params) => params.includes(INTERNAL_DATABASE_VIEWS[0]));
+  expect(introspection).toHaveLength(3);
+  expect(introspection.every((params) => params.every((value) => !Array.isArray(value)))).toBe(true);
 });
 
 test("real gateway connects only the pinned target and enforces views even with a broad agent policy", async () => {

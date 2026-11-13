@@ -430,9 +430,12 @@ async function testSettings(deps: DatabaseDeps, s: Settings, orgId: string): Pro
 
 async function sensitiveColumns(run: DatabaseRun, internalViews?: readonly string[]) {
   const statement = internalViews
-    ? COLUMNS_SQL.replace("\norder by", "\n  and n.nspname || '.' || c.relname = any($1::text[])\norder by")
+    ? COLUMNS_SQL.replace(
+        "\norder by",
+        `\n  and n.nspname || '.' || c.relname = any(ARRAY[${internalViews.map((_, i) => `$${i + 1}`).join(",")}]::text[])\norder by`,
+      )
     : COLUMNS_SQL;
-  const rows = (await run(statement, internalViews ? [[...internalViews]] : undefined)).rows;
+  const rows = (await run(statement, internalViews ? [...internalViews] : undefined)).rows;
   return rows
     .filter((r) => SENSITIVE_COLUMN.test(String(r[2] ?? "")))
     .map((r) => identPath([String(r[0]), String(r[1]), String(r[2])]))

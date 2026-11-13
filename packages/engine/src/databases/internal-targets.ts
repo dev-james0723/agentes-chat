@@ -144,7 +144,7 @@ export async function internalDatabaseAddress(
 }
 
 /** Checks actual privileges, not a reassuring role name. This runs only as the new dedicated reader. */
-export const INTERNAL_READER_SQL = `select current_user::text = $1::text and current_database()::text = $3::text
+export const INTERNAL_READER_SQL = `select current_user::text = $1::text and current_database()::text = $5::text
  and exists (select 1 from pg_roles where rolname = current_user
    and not rolsuper and not rolcreatedb and not rolcreaterole and not rolreplication and not rolbypassrls and not rolinherit)
  and not exists (select 1 from pg_auth_members m join pg_roles r on r.oid = m.member where r.rolname = current_user)
@@ -155,10 +155,10 @@ export const INTERNAL_READER_SQL = `select current_user::text = $1::text and cur
    and (has_table_privilege(c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
      or has_any_column_privilege(c.oid, 'INSERT,UPDATE,REFERENCES')
      or ((has_table_privilege(c.oid, 'SELECT') or has_any_column_privilege(c.oid, 'SELECT'))
-       and (c.relkind <> 'v' or not (n.nspname || '.' || c.relname = any($2::text[]))))))
+       and (c.relkind <> 'v' or not (n.nspname || '.' || c.relname = any(ARRAY[$2,$3,$4]::text[]))))))
  and (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
-   where c.relkind = 'v' and n.nspname || '.' || c.relname = any($2::text[]) and has_table_privilege(c.oid, 'SELECT'))
-   = cardinality($2::text[]) as permitted`;
+   where c.relkind = 'v' and n.nspname || '.' || c.relname = any(ARRAY[$2,$3,$4]::text[]) and has_table_privilege(c.oid, 'SELECT'))
+   = cardinality(ARRAY[$2,$3,$4]::text[]) as permitted`;
 
 /** Fixed semantic definitions, compared as PostgreSQL parse trees, with the configured org embedded. */
 function expectedViewDefinitions(orgId: string): Record<string, string> {
@@ -206,7 +206,7 @@ const INTERNAL_VIEW_DEFINITIONS_SQL = `select n.nspname || '.' || c.relname,pg_g
  coalesce(c.reloptions @> array['security_barrier=true'],false),
  not r.rolcanlogin and not r.rolsuper and not r.rolcreatedb and not r.rolcreaterole and not r.rolreplication and not r.rolbypassrls
  from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_roles r on r.oid=c.relowner
- where c.relkind='v' and n.nspname || '.' || c.relname = any($1::text[]) order by 1`;
+ where c.relkind='v' and n.nspname || '.' || c.relname = any(ARRAY[$1,$2,$3]::text[]) order by 1`;
 
 export async function attestInternalDatabaseReader(
   client: DatabaseClient,
@@ -214,11 +214,11 @@ export async function attestInternalDatabaseReader(
 ): Promise<void> {
   const ok = await client.readOnly({ statementTimeoutMs: 10_000, searchPath: "pg_catalog" }, async (run) => {
     if (
-      (await run(INTERNAL_READER_SQL, [profile.username, [...INTERNAL_DATABASE_VIEWS], profile.database]))
+      (await run(INTERNAL_READER_SQL, [profile.username, ...INTERNAL_DATABASE_VIEWS, profile.database]))
         .rows[0]?.[0] !== true
     )
       return false;
-    const definitions = (await run(INTERNAL_VIEW_DEFINITIONS_SQL, [[...INTERNAL_DATABASE_VIEWS]])).rows;
+    const definitions = (await run(INTERNAL_VIEW_DEFINITIONS_SQL, [...INTERNAL_DATABASE_VIEWS])).rows;
     if (definitions.length !== INTERNAL_DATABASE_VIEWS.length) return false;
     const expected = expectedViewDefinitions(profile.orgId);
     for (const row of definitions) {
