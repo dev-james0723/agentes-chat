@@ -111,6 +111,7 @@ import { cachedExecutors, EXECUTORS_TTL_MS, type ExecutorRun } from "./executors
 import { systemGitCache } from "./git";
 import type { HandlerContext, RequestObserver, RequestOutcome } from "./handlers";
 import { Holds } from "./holds";
+import { hostAcpVerified, readHostAcpOptIn, removeHostAcpOptIn } from "./host-acp-optin";
 import { IphoneSetup, type IphoneSetupOptions } from "./iphone-setup";
 import { currentProcess, isCompiled, selfCommand } from "./launch";
 import { tailLines } from "./logfile";
@@ -241,6 +242,7 @@ export function configFromGrant(
   const same = prev?.machineId === grant.machineId && prev?.server === input.server;
   return {
     ...(prev?.mode ? { mode: prev.mode } : {}),
+    ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
     ...(prev?.networkMark ? { networkMark: prev.networkMark } : {}),
@@ -531,6 +533,18 @@ export class RunnerDaemon implements RequestObserver {
     this.accountUsers = accountUsers;
     this.accounts = new AccountManager({
       root: lent?.root ?? path.join(opts.home, "accounts"),
+      hostAccount: () => {
+        const opted = this.hostAcpOptIn();
+        if (!opted) return null;
+        // Opt-in alone is not login: the local owner must run a real no-tools prompt probe.
+        const verified = hostAcpVerified(opted) && !!this.executors().antigravity;
+        return { id: opted.id, kind: "antigravity", provider: "host-macos", loggedIn: verified, shared: true };
+      },
+      removeHostAccount: (id) => {
+        const binding = this.hostAcpBinding();
+        const opted = binding && readHostAcpOptIn(opts.home, binding);
+        return !!(binding && opted?.id === id && removeHostAcpOptIn(opts.home, binding));
+      },
       ...(lent ? { lending: { chown: lent.chown } } : {}),
       ...(lent?.authEgress ? { authEgress: lent.authEgress } : {}),
       ...(accountUsers
@@ -748,6 +762,22 @@ export class RunnerDaemon implements RequestObserver {
     const browsers = setInterval(() => this.browsersChanged(), BROWSER_STATE_POLL_MS);
     browsers.unref?.();
     this.timers.push(browsers);
+    // Local consent may be revoked while connected. Each turn rechecks the marker independently;
+    // this poll also tells the server promptly without restarting the runner.
+    if (this.opts.phones === false) {
+      let lastHost = JSON.stringify(this.accounts.hostAccountStatus());
+      const host = setInterval(() => {
+        const current = JSON.stringify(this.accounts.hostAccountStatus());
+        if (current !== lastHost) {
+          lastHost = current;
+          this.executorsChanged();
+          this.accounts.invalidate();
+          void this.accounts.refresh(true).catch(() => undefined);
+        }
+      }, 5000);
+      host.unref?.();
+      this.timers.push(host);
+    }
     // A CLI installed while the runner stays up: with no app asking for the status, nothing else looks again.
     const clis = setInterval(() => this.executors(), EXECUTORS_TTL_MS);
     clis.unref?.();
@@ -1910,6 +1940,25 @@ export class RunnerDaemon implements RequestObserver {
     };
   }
 
+  /** Host auth is only available to this paired single-user, phone-disabled runner. */
+  private hostAcpBinding() {
+    const c = this.config;
+    if (!c?.orgId || this.opts.phones !== false) return null;
+    return {
+      server: c.server,
+      orgId: c.orgId,
+      machineId: c.machineId,
+      mode: c.mode ?? "user",
+      platform: process.platform,
+      phones: false,
+    } as const;
+  }
+
+  private hostAcpOptIn() {
+    const binding = this.hostAcpBinding();
+    return binding ? readHostAcpOptIn(this.opts.home, binding) : null;
+  }
+
   /** The computer's own sign-ins' usage, when anything is known (`hello`, `accounts.changed`). */
   private ownUsage(): Pick<RunnerInfo, "ownUsage"> {
     const own = this.accounts.ownUsage();
@@ -1922,14 +1971,18 @@ export class RunnerDaemon implements RequestObserver {
     const found = this.executors();
     if (!this.executorsKnown()) return undefined;
     // Claude Code installed or logged in since the last look: the app shows it.
-    const seen = JSON.stringify(found);
+    const visible =
+      this.hostAcpOptIn() && found.antigravity
+        ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }
+        : found;
+    const seen = JSON.stringify(visible);
     if (seen !== this.lastExecutors) {
       this.lastExecutors = seen;
       this.queueStatus();
     }
     // Not filtered by the tools turned on: those reach the server on every change (`access.changed`),
     // while `hello` only goes out on connect, so a tool turned on later looked "not installed".
-    return found;
+    return visible;
   }
 
   /**
@@ -1939,7 +1992,11 @@ export class RunnerDaemon implements RequestObserver {
   private executorsChanged() {
     this.queueStatus();
     if (!this.executorsKnown()) return;
-    const executors = this.executors();
+    const found = this.executors();
+    const executors =
+      this.hostAcpOptIn() && found.antigravity
+        ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }
+        : found;
     const seen = JSON.stringify(executors);
     if (seen !== this.lastExecutors && this.send({ type: "executors.changed", executors })) this.lastExecutors = seen;
   }

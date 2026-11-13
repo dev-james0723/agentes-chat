@@ -5,6 +5,8 @@ import {
   CODEX_WINDOWS_PROTOCOL,
   CURSOR_PROTOCOL,
   GROK_PROTOCOL,
+  HOST_ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROVIDER,
   isBrainEffort,
   OPENCODE_PROTOCOL,
   type PlanUsage,
@@ -586,6 +588,33 @@ export async function planIsOwners(
   const owner = agent.ownerUserId;
   if (!owner) return false;
   const { machineAccounts, machines, organizationMembers: members } = schema;
+  if (account) {
+    const [bound] = await db
+      .select({
+        provider: machineAccounts.provider,
+        createdBy: machineAccounts.createdBy,
+        machineId: machineAccounts.machineId,
+      })
+      .from(machineAccounts)
+      .where(and(eq(machineAccounts.orgId, agent.orgId), eq(machineAccounts.id, account.id)));
+    if (bound?.provider === HOST_ANTIGRAVITY_PROVIDER) {
+      if (bound.createdBy !== owner || bound.machineId !== machineId) return false;
+      const [machine] = await db
+        .select()
+        .from(machines)
+        .innerJoin(members, and(eq(members.orgId, machines.orgId), eq(members.userId, machines.pairedByUserId)))
+        .where(and(eq(machines.orgId, agent.orgId), eq(machines.id, machineId), eq(machines.pairedByUserId, owner)));
+      const m = machine?.machines;
+      return (
+        !!m &&
+        m.os === "darwin" &&
+        m.protocol >= HOST_ANTIGRAVITY_PROTOCOL &&
+        m.executors?.mode !== "system" &&
+        m.executors?.antigravity?.hostAuth === true &&
+        !m.deletedAt
+      );
+    }
+  }
   const rows = account
     ? await db
         .select({ id: machineAccounts.id })

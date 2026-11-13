@@ -27,6 +27,8 @@ export interface RunnerConfig {
   workspace: string;
   /** Commands on (kept equal to `access.tools.commands` once `access` exists). */
   exec: boolean;
+  /** This runner must not discover or access phones. Applied at startup. */
+  phonesDisabled?: true;
   /** Background tasks at once on this computer (default 3). */
   maxConcurrentTasks?: number;
   /** A background task is stopped after this many seconds (default 4 h). */
@@ -204,6 +206,7 @@ export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
     ...(text(raw.token, 4000) ? { token: text(raw.token, 4000) } : {}),
     ...(text(raw.workspace, 4000) ? { workspace: text(raw.workspace, 4000) } : {}),
     ...(typeof raw.exec === "boolean" ? { exec: raw.exec } : {}),
+    ...(raw.phonesDisabled === true ? { phonesDisabled: true as const } : {}),
     ...(positive(raw.maxConcurrentTasks) ? { maxConcurrentTasks: positive(raw.maxConcurrentTasks) } : {}),
     ...(positive(raw.taskMaxSeconds) ? { taskMaxSeconds: positive(raw.taskMaxSeconds) } : {}),
     ...(positive(raw.brainIdleMinutes) ? { brainIdleMinutes: positive(raw.brainIdleMinutes) } : {}),

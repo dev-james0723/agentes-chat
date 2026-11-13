@@ -523,7 +523,7 @@ async function brainAccounts(
   return {
     accounts: accounts.filter(
       (a) =>
-        (a.ownerId !== null && a.serves === "everyone") ||
+        (a.provider !== "host-macos" && a.ownerId !== null && a.serves === "everyone") ||
         (agent.ownerUserId !== null && a.ownerId === agent.ownerUserId) ||
         a.id === agent.brainAccountId,
     ),
@@ -791,6 +791,12 @@ async function setPersonalBrain(
     throw new ValidationError("Choose an account of this brain", "account.invalid", { brain: brain ?? null });
   }
   const lent = account.createdBy !== userId;
+  if (account.provider === "host-macos" && lent) {
+    throw new ForbiddenError(
+      "The Mac's locally opted-in account can only serve its owner's agents",
+      "account.not_owner",
+    );
+  }
   if (account.createdBy === null || (lent && account.serves !== "everyone")) {
     throw new ForbiddenError("This plan thinks only for the person who connected it", "account.not_owner");
   }
@@ -1356,6 +1362,12 @@ async function nextBrainAccount(
     });
   }
   const lent = row.createdBy !== owner;
+  if (row.provider === "host-macos" && lent) {
+    throw new ForbiddenError(
+      "The Mac's locally opted-in account can only serve its owner's agents",
+      "account.not_owner",
+    );
+  }
   if (!chooses || owner === null || row.createdBy === null || (lent && row.serves !== "everyone")) {
     throw new ForbiddenError("This plan thinks only for its owner's agents", "account.not_owner");
   }
@@ -1505,6 +1517,9 @@ export async function setAccountServes(
   if (!row || !LISTED_ACCOUNT_STATUSES.includes(row.status)) throw new NotFoundError("Account not found");
   if (row.createdBy !== userId) {
     throw new ForbiddenError("Only the person who connected this plan chooses who it serves", "account.not_owner");
+  }
+  if (row.provider === "host-macos" && serves !== "owner") {
+    throw new ForbiddenError("The Mac's locally opted-in account serves only its owner", "account.not_owner");
   }
   const logins = (await sameLogins(deps.db, row)).map((l) => l.id);
   const changed = await deps.db.transaction(async (tx) => {

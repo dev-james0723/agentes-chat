@@ -7,7 +7,10 @@ import type { MergeDone } from "./command-policy";
  */
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
-export const MACHINE_PROTOCOL_VERSION = 63;
+export const MACHINE_PROTOCOL_VERSION = 64;
+/** A locally opted-in, owner-bound macOS Antigravity host account. */
+export const HOST_ANTIGRAVITY_PROTOCOL = 64;
+export const HOST_ANTIGRAVITY_PROVIDER = "host-macos";
 export const MIN_RUNNER_PROTOCOL = 1;
 /** From this protocol on, requests carry `agent` and each agent works in its own folder. */
 export const AGENT_FOLDERS_PROTOCOL = 2;
@@ -1859,6 +1862,8 @@ export interface RunnerExecutorInfo {
    * Protocol 43, `grok`: the models `grok models` lists. Protocol 44, `antigravity`: the models `agy models` lists.
    */
   models?: CursorModelInfo[];
+  /** The local user explicitly opted this single-user Mac into host authentication (protocol 56). */
+  hostAuth?: true;
 }
 
 /** A model Cursor's CLI (`agent models`) or OpenCode's (`opencode models`) lists. */
@@ -3219,6 +3224,7 @@ export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerIn
     const plan = word(e.plan);
     out[name] = {
       version: e.version.replace(/\s+/g, " ").trim().slice(0, 80),
+      ...(name === "antigravity" && e.hostAuth === true ? { hostAuth: true as const } : {}),
       ...(typeof e.loggedIn === "boolean" ? { loggedIn: e.loggedIn } : {}),
       ...(authMethod ? { authMethod } : {}),
       ...(plan ? { plan } : {}),

@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { ANTIGRAVITY_PROTOCOL, LOCKED_BRAIN_PROTOCOL, SHARED_GEMINI_PROTOCOL } from "@agenteschat/adapters";
+import {
+  ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROTOCOL,
+  LOCKED_BRAIN_PROTOCOL,
+  SHARED_GEMINI_PROTOCOL,
+} from "@agenteschat/adapters";
 import {
   ANTIGRAVITY_MODELS,
   GEMINI_ENTERPRISE_PROVIDER,
@@ -76,6 +81,56 @@ const brain = (l: ComputerBrainLink, permissions?: BrainTurnRequest["permissions
     mcp: async () => ({ token: "tok" }),
     ...(permissions ? { permissions: async () => permissions } : {}),
   });
+
+test("host ACP sends the engine-visible conversation again for every fresh session; other Gemini accounts resume normally", async () => {
+  const l = link({ protocol: HOST_ANTIGRAVITY_PROTOCOL, events: [{ type: "done", text: "hello" }] });
+  const host = { ...ACCOUNT, provider: "host-macos" };
+  const initial = turn({ account: host, messages: [{ role: "user", content: "hi" }], trigger: "hi" });
+  await collect(brain(l).run(initial, io()));
+  const followup = turn({
+    account: host,
+    session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+    messages: [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "what did I say?" },
+    ],
+    trigger: "what did I say?",
+  });
+  await collect(brain(l).run(followup, io()));
+  expect(l.sent[0]?.prompt).toBe("hi");
+  expect(l.sent[1]?.prompt).toBe(
+    "The conversation so far:\n\nUser: hi\n\nYou: hello\n\nNow answer this:\n\nwhat did I say?",
+  );
+  expect(l.sent[1]?.session.resume).toBe(false);
+  await collect(brain(l).run({ ...followup, account: ACCOUNT }, io()));
+  expect(l.sent[2]?.prompt).toBe("what did I say?");
+  expect(l.sent[2]?.session.resume).toBe(true);
+});
+
+test("host replay preserves the supplied context and its token limit without a new silent cut", async () => {
+  const l = link({ protocol: HOST_ANTIGRAVITY_PROTOCOL, events: [{ type: "done", text: "ok" }] });
+  const history = `START-${"x".repeat(200_000)}-END`;
+  await collect(
+    brain(l).run(
+      turn({
+        account: { ...ACCOUNT, provider: "host-macos" },
+        session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+        contextTokens: 8192,
+        messages: [
+          { role: "user", content: history },
+          { role: "assistant", content: "remembered" },
+          { role: "user", content: "continue" },
+        ],
+        trigger: "continue",
+      }),
+      io(),
+    ),
+  );
+  expect(l.sent[0]?.prompt).toContain(history);
+  expect(l.sent[0]?.prompt).toContain("You: remembered");
+  expect(l.sent[0]?.contextTokens).toBe(8192);
+});
 
 test("a Gemini turn goes to the runner as kind antigravity with its account; its usage passes through as the person's plan", async () => {
   const l = link({

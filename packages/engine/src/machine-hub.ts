@@ -705,13 +705,23 @@ export function createMachineHub(deps: MachineHubDeps) {
         frame.terminal ||
         frame.desktopUse ||
         frame.claudeLoginMethods ||
-        frame.toolchains
+        frame.toolchains ||
+        machine.executors?.antigravity?.hostAuth
           ? {
               executors: {
                 // A runner that hasn't looked yet leaves the CLIs out: the last ones stored stand.
                 ...(frame.executors
                   ? { ...frame.executors, detectedAt: now.toISOString() }
-                  : storedExecutors(machine.executors)),
+                  : (() => {
+                      const stored = storedExecutors(machine.executors);
+                      // Local opt-in must be freshly reported by this connection, not inherited
+                      // from the preceding runner's cached detection.
+                      if (stored.antigravity?.hostAuth) {
+                        const { hostAuth: _hostAuth, ...rest } = stored.antigravity;
+                        stored.antigravity = rest;
+                      }
+                      return stored;
+                    })()),
                 ...(frame.browser ? { browser: frame.browser } : {}),
                 ...(frame.desktop ? { desktop: frame.desktop } : {}),
                 ...(frame.terminal ? { terminal: frame.terminal } : {}),

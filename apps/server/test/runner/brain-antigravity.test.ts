@@ -303,6 +303,18 @@ async function run(ctx: AntigravityBrainContext, req: AntigravityBrainTurnReques
   return events;
 }
 
+test.skipIf(!posix)(
+  "an expired local host account cannot fall back to a managed account with the same id",
+  async () => {
+    const root = tempDir("brain-agy-host-expired-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    signIn(accountDir);
+    const events = await run({ ...ctx, hostAccountStatus: () => ({ id: ACCOUNT, loggedIn: false }) }, turn());
+    expect(events).toMatchObject([{ type: "error", code: "not_logged_in" }]);
+  },
+);
+
 const logOf = (file: string) =>
   readFileSync(file, "utf8")
     .trim()

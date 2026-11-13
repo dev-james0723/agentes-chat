@@ -23,6 +23,7 @@ import { cursorPrompt } from "./brain-cursor";
 import { RunnerError } from "./errors";
 import { killTree } from "./exec";
 import { AGY_BIN, resolveCommand } from "./executors";
+import { runHostAcpTurn } from "./host-acp-runtime";
 import { CODEX_MCP_ENV, CODEX_MCP_SERVER, redactDeep } from "./mcp";
 import { resolveForAgent } from "./paths";
 import { resetFromWords } from "./plan-usage";
@@ -474,6 +475,8 @@ export interface AntigravityBrainContext {
   accounts?: AccountFolders;
   /** In a worker, a sign-in root keeps for all agents (protocol 58): the copy this turn gets (`AccountManager.grant`). */
   grant?: AccountGrant;
+  /** The locally verified opt-in, never a value from the remote turn request. */
+  hostAccountStatus?: () => { id: string; loggedIn: boolean } | null;
   spawn?: Spawn;
   platform?: NodeJS.Platform;
 }
@@ -508,6 +511,50 @@ export async function handleAntigravityBrainTurn(
     return;
   }
   if (!isAccountId(accountId)) throw new RunnerError("bad_request", "Invalid account id");
+  const host = ctx.hostAccountStatus?.();
+  if (host?.id === accountId) {
+    if (!host.loggedIn) {
+      scope.emit({ type: "error", code: "not_logged_in", message: ACCOUNT_SIGNED_OUT, retryable: false });
+      return;
+    }
+    if (req.session.resume || !ctx.mcp || !req.model) {
+      scope.emit({
+        type: "error",
+        code: "unsupported",
+        message: "Host ACP requires a fresh session, an app bridge and an explicit model.",
+        retryable: false,
+      });
+      return;
+    }
+    const chat = req.permissions?.mode === "chat";
+    const folder = chat ? chatFolder(ctx.runnerHome, String(req.agent.id)) : ctx.folder;
+    let cwd = folder;
+    if (!chat && typeof req.cwd === "string" && req.cwd.trim() !== "") {
+      const resolved = await resolveForAgent(folder, ctx.grants, req.cwd);
+      if (!resolved.exists) throw new RunnerError("not_found", `The folder ${req.cwd} doesn't exist`);
+      cwd = resolved.abs;
+    }
+    const secrets = chat ? null : await agentSecrets(ctx.secretsDir, req.agent);
+    await runHostAcpTurn({
+      cwd,
+      runnerHome: ctx.runnerHome,
+      runId: req.runId,
+      sessionId: req.session.id,
+      model: req.model,
+      prompt: [req.system, req.prompt].filter((x): x is string => typeof x === "string" && x.length > 0).join("\n\n"),
+      mcp: { ...ctx.mcp, token: req.mcp.token },
+      signal: scope.signal,
+      emit: scope.emit,
+      isAuthorized: () => {
+        const current = ctx.hostAccountStatus?.();
+        return current?.id === accountId && current.loggedIn;
+      },
+      bin: resolveCommand(ctx.bin ?? AGY_BIN),
+      ...(secrets ? { redact: secrets.redact } : {}),
+      ...(ctx.spawn ? { spawn: ctx.spawn } : {}),
+    });
+    return;
+  }
   let signIn: Awaited<ReturnType<typeof accountSignIn>>;
   try {
     signIn = await accountSignIn(ctx.accounts, "antigravity", accountId, ctx.grant);

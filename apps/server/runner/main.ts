@@ -65,6 +65,14 @@ import { DesktopSessions, type DesktopSessionsOptions, runnerUser, systemDesktop
 import { localSources, runDoctor } from "./doctor";
 import { RUNNER_VERSION } from "./errors";
 import { defaultHostState, HostComputer, readTokenFile, runnerChild } from "./host";
+import {
+  clearHostAcpVerified,
+  createHostAcpOptIn,
+  markHostAcpVerified,
+  readHostAcpOptIn,
+  removeHostAcpOptIn,
+} from "./host-acp-optin";
+import { verifyLocalHostAcp } from "./host-acp-verify";
 import { writeJson } from "./json-file";
 import { hasBunTerminal, runningCompiled, thisRunner } from "./launch";
 import { acquireLock, lockedMessage, pidAlive, readLock } from "./lock";
@@ -144,6 +152,11 @@ Usage:
       What this computer gives agents: its connections, the agent apps, the toolchains and the phones,
       with the fix for whatever needs you. On a terminal it then waits for those fixes (--wait anywhere,
       --no-wait never). Exits 0 when nothing needs you, 1 otherwise.
+  agentes-runner host-acp <enable | verify | disable | status> [--accept-host-account]
+      Local user-mode Mac only: opt in to the currently paired owner's host Antigravity CLI account.
+      Enabling requires an interactive terminal and --accept-host-account; no sign-in is changed.
+      Verify runs one isolated no-tools READY prompt through the existing host login.
+      The daemon additionally requires phones disabled; opt-in alone does not verify account login.
   agentes-runner computer
       What this computer has, what is free now, and which agents use the most of it (they share it).
       Agents run it before something heavy.
@@ -433,7 +446,13 @@ async function start(): Promise<number> {
     console.error(lockedMessage(home, lock.holder));
     return serviceSafe(4);
   }
-  const daemon = new RunnerDaemon({ home, mode: "start", log, print: (line) => console.log(line) });
+  const daemon = new RunnerDaemon({
+    home,
+    mode: "start",
+    log,
+    print: (line) => console.log(line),
+    ...(config.phonesDisabled === true ? { phones: false as const } : {}),
+  });
   const stop = () => void daemon.stop();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -1381,6 +1400,70 @@ async function main(argv: string[]): Promise<number> {
         json,
         write: (text) => process.stdout.write(text),
       });
+    }
+    case "host-acp": {
+      const config = readConfig(runnerHome());
+      if (!config?.orgId) {
+        console.error("Pair this runner to an organization first.");
+        return 1;
+      }
+      const binding = {
+        server: config.server,
+        orgId: config.orgId,
+        machineId: config.machineId,
+        mode: config.mode ?? "user",
+        platform: process.platform,
+        phones: false,
+      } as const;
+      if (sub === "status") {
+        console.log(
+          readHostAcpOptIn(runnerHome(), binding)
+            ? "Host ACP locally opted in; account and runner eligibility still need verification."
+            : "Host ACP is not enabled for this pairing.",
+        );
+        return 0;
+      }
+      if (sub !== "enable" && sub !== "verify" && sub !== "disable") {
+        console.error("Usage: agentes-runner host-acp <enable|verify|disable|status>");
+        return 1;
+      }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        console.error("Use a local interactive terminal for this action.");
+        return 1;
+      }
+      if (sub === "enable") {
+        if (!p.flags.has("accept-host-account")) {
+          console.error("Pass --accept-host-account to opt in to using this Mac user's existing Antigravity account.");
+          return 1;
+        }
+        createHostAcpOptIn(runnerHome(), binding);
+        updateConfig((c) => ({ ...c, phonesDisabled: true }), runnerHome());
+        console.log(
+          "Local opt-in recorded. Phone discovery stays disabled after the next runner start. Restart the runner to apply this setting. Account login is not yet verified.",
+        );
+      } else if (sub === "verify") {
+        const opted = readHostAcpOptIn(runnerHome(), binding);
+        if (!opted || config.phonesDisabled !== true) {
+          console.error("Enable host ACP for this pairing first.");
+          return 1;
+        }
+        clearHostAcpVerified(runnerHome(), binding, opted.id);
+        if (!(await verifyLocalHostAcp(runnerHome()))) {
+          console.error("The isolated host account probe did not succeed.");
+          return 1;
+        }
+        markHostAcpVerified(runnerHome(), binding, opted.id);
+        console.log(
+          "Host account answered an isolated no-tools probe. Model selection received an ACP acknowledgement; model usage is not independently confirmed.",
+        );
+      } else {
+        console.log(
+          removeHostAcpOptIn(runnerHome(), binding)
+            ? "Local opt-in removed; the OS sign-in was not changed."
+            : "No matching local opt-in.",
+        );
+      }
+      return 0;
     }
     case "computer":
       console.log(await computerNow());

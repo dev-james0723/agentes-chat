@@ -9,6 +9,7 @@ import {
   CODEX_WINDOWS_PROTOCOL,
   CURSOR_PROTOCOL,
   GROK_PROTOCOL,
+  HOST_ANTIGRAVITY_PROVIDER,
   LOCKED_BRAIN_PROTOCOL,
   OPENCODE_PROTOCOL,
   type PubSub,
@@ -404,14 +405,18 @@ export class CodexBrain implements Brain {
     ]);
     // A kept-alive Codex lists our tools once, as its thread opens: the runner starts it again when a name is new.
     const toolNames = turn.tools.map((t) => t.name).sort();
+    // A host ACP process starts a new upstream session on every turn. Replay exactly the
+    // conversation the engine supplied under its existing context policy; claiming a
+    // resumed upstream session would otherwise silently omit the earlier messages.
+    const hostAcp = this.kind === "antigravity" && turn.account?.provider === HOST_ANTIGRAVITY_PROVIDER;
     const request: BrainTurnRequest & { agent?: AgentScope } = {
       runId: turn.runId,
       kind: this.kind,
-      session: { id: session.id, resume: session.resume },
+      session: { id: session.id, resume: hostAcp ? false : session.resume },
       cwd: code?.cwd || session.cwd,
       ...(turn.model ? { model: turn.model } : {}),
       system: systemWithConversation(turn, code?.prompt),
-      prompt: computerPrompt(turn, code?.start),
+      prompt: computerPrompt(hostAcp ? { ...turn, session: { ...session, resume: false } } : turn, code?.start),
       mcp: { ...mcp, tools: toolNames.join(" ") },
       ...(agent ? { agent } : {}),
       ...accountFields(status.protocol, turn),

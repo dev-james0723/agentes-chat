@@ -1387,6 +1387,8 @@ async function doCodexTurn(
           folder,
           exec: toolOn(ctx, "antigravity"),
           runnerHome: codex.runnerHome,
+          // Only the local AccountManager knows whether its owner enabled host authentication.
+          ...(ctx.accounts ? { hostAccountStatus: () => ctx.accounts?.hostAccountStatus() ?? null } : {}),
           ...(ctx.secretsDir && !chat ? { secretsDir: ctx.secretsDir } : {}),
           ...(codex.mcp ? { mcp: codex.mcp } : {}),
           ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
