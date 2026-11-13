@@ -334,6 +334,9 @@ export function skillRoutes(deps: AppDeps) {
               }),
             }),
             z.object({
+              createOnly: z.boolean().optional().openapi({
+                description: "Refuse an existing skill name, including a deleted one.",
+              }),
               zipBase64: z
                 .string()
                 // Base64 of a zip holding all a skill keeps (text and scripts, plus its images and other files).
@@ -382,7 +385,7 @@ export function skillRoutes(deps: AppDeps) {
       } catch {
         throw new ValidationError("zipBase64 is not valid base64");
       }
-      return c.json(await importSkillZip(skills(), actor, orgId, zip), 201);
+      return c.json(await importSkillZip(skills(), actor, orgId, zip, { createOnly: input.createOnly }), 201);
     },
   );
 

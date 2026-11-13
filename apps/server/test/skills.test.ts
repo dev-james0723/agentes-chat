@@ -10,6 +10,31 @@ afterEach(async () => {
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: Use for ${name}.\n---\n# ${name}`;
 
+test("ZIP createOnly is parsed and cannot overwrite an existing skill", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const path = `/api/app/organizations/${orgId}/skills/import`;
+  const first = await b(path, {
+    json: {
+      zipBase64: Buffer.from(zip([["SKILL.md", skill("create-only-route")]])).toString("base64"),
+      createOnly: true,
+    },
+  });
+  expect(first.status).toBe(201);
+  const created = (await first.json()) as { id: string; version: number; body: string };
+  expect(created.version).toBe(1);
+  const changed = `${skill("create-only-route")}\nThis must not overwrite the original.`;
+  const duplicate = await b(path, {
+    json: { zipBase64: Buffer.from(zip([["SKILL.md", changed]])).toString("base64"), createOnly: true },
+  });
+  expect(duplicate.status).toBe(409);
+  const current = await b(`/api/app/organizations/${orgId}/skills/${created.id}`);
+  expect(current.status).toBe(200);
+  expect(await current.json()).toMatchObject({ id: created.id, version: 1, body: created.body });
+});
+
 /**
  * Fake GitHub: acme/skills' archive (two skills, deflated as codeload sends them) through codeload's redirect.
  * `limited`: every answer is GitHub limiting us.

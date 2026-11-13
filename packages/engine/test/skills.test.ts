@@ -227,6 +227,25 @@ Body.`);
 });
 
 describe("import", () => {
+  test("create-only imports refuse existing, archived and concurrent names without changing them", async () => {
+    f = await setup();
+    const bundle = zip({ "SKILL.md": SKILL_MD, "scripts/helper.py": "print('fixture')" });
+    const first = await importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true });
+    await expect(importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true })).rejects.toThrow();
+    const unchanged = await getSkill(f.db, f.owner.id, f.org.id, first.id);
+    expect(unchanged.version).toBe(1);
+    await deleteSkill(f.db, f.owner.id, f.org.id, first.id);
+    await expect(importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true })).rejects.toThrow();
+    const other = zip({ "SKILL.md": SKILL_MD.replaceAll("relatorio-semanal", "collision-race") });
+    const concurrent = await Promise.allSettled([
+      importSkillZip(skillDeps(), f.owner.id, f.org.id, other, { createOnly: true }),
+      importSkillZip(skillDeps(), f.owner.id, f.org.id, other, { createOnly: true }),
+    ]);
+    expect(concurrent.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((x) => x.status === "rejected")).toHaveLength(1);
+    const skills = await listSkills(f.db, f.owner.id, f.org.id);
+    expect(skills.find((x) => x.name === "collision-race")?.version).toBe(1);
+  });
   test("a zip of the folder: SKILL.md, text files and images stored, scripts kept as scripts", async () => {
     f = await setup();
     const skill = await importSkillZip(

@@ -4,7 +4,14 @@ import { getAgent } from "./agents";
 import { recordAudit } from "./audit";
 import { mapInBatches } from "./batches";
 import { activeConnections, type ConnectorDeps } from "./connectors/connections";
-import { type ErrorParams, ForbiddenError, NotFoundError, TooManyError, ValidationError } from "./errors";
+import {
+  ConflictError,
+  type ErrorParams,
+  ForbiddenError,
+  NotFoundError,
+  TooManyError,
+  ValidationError,
+} from "./errors";
 import { publishAgentsChanged } from "./events";
 import { formatBytes } from "./format";
 import { connectionToken } from "./git/branches";
@@ -542,6 +549,8 @@ export async function saveSkill(
     sourceHash?: string;
     files?: SkillFileInput[];
     defaultForNewAgents?: boolean;
+    /** Refuse an existing name, including a soft-deleted one. */
+    createOnly?: boolean;
   },
 ): Promise<SkillDetail> {
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
@@ -552,6 +561,7 @@ export async function saveSkill(
     .from(skills)
     .where(and(eq(skills.orgId, orgId), eq(skills.slug, input.name)));
   let row: SkillRow;
+  if (existing && input.createOnly) throw new ConflictError("Skill name is already taken", "skill.name_taken");
   if (existing) {
     // Same name: a new version of that skill. A deleted one comes back with its agents' assignments, except from a link
     // (a pick of one too): it may hold anything under that name, so it comes back on for none of its old agents.
@@ -597,8 +607,9 @@ export async function saveSkill(
         defaultForNewAgents: input.defaultForNewAgents ?? false,
         createdByUserId: actorId,
       })
+      .onConflictDoNothing({ target: [skills.orgId, skills.slug] })
       .returning();
-    if (!created) throw new Error("skill insert returned nothing");
+    if (!created) throw new ConflictError("Skill name is already taken", "skill.name_taken");
     row = created;
   }
   await storeFiles(deps, row, row.version, files);
@@ -619,7 +630,13 @@ export async function saveSkill(
 }
 
 /** Import from a zip of the skill folder (`SKILL.md` + files). */
-export async function importSkillZip(deps: SkillDeps, actorId: string, orgId: string, zip: Uint8Array) {
+export async function importSkillZip(
+  deps: SkillDeps,
+  actorId: string,
+  orgId: string,
+  zip: Uint8Array,
+  options?: { createOnly?: boolean },
+) {
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
   const entries = listZip(zip).filter((e) => !e.symlink);
   return saveSkill(deps, actorId, orgId, {
@@ -629,6 +646,7 @@ export async function importSkillZip(deps: SkillDeps, actorId: string, orgId: st
       entries.map((e) => [e.path, e]),
     ),
     source: "upload",
+    createOnly: options?.createOnly,
   });
 }
 
