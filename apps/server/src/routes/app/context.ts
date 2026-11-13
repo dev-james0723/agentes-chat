@@ -72,6 +72,7 @@ export const routineConnectorDeps = (deps: AppDeps): ConnectorTriggerDeps => {
 export function allowedOrigins(config: Config): Set<string> {
   return new Set([
     new URL(config.PUBLIC_URL).origin,
+    ...(config.LOCAL_HTTP_LOGIN ? [`http://localhost:${config.PORT}`] : []),
     ...(config.NODE_ENV === "development" ? ["http://localhost:5173"] : []),
   ]);
 }

@@ -71,6 +71,12 @@ export const envVars = {
     section: "Server",
     example: "https://chat.example.com",
   },
+  LOCAL_HTTP_LOGIN: {
+    schema: z.stringbool().default(false),
+    description:
+      "Allow browser sign-in and app requests at http://localhost:PORT alongside PUBLIC_URL. Requires the backend port to be reachable only on loopback, and every external reverse proxy to overwrite X-Forwarded-Host or X-Forwarded-Proto on every request, including WebSocket upgrades; verify those guarantees for the deployed proxy version. A controlled machine alone is not enough.",
+    section: "Server",
+  },
   LANDING_URL: {
     schema: z.url().optional(),
     description:
