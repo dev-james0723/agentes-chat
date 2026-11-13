@@ -343,7 +343,7 @@ export function createConnectorToolSource(
    */
   async function customToolsOf(connection: ConnectorConnection): Promise<ToolDefinition[]> {
     // A sign-in that stopped working (a Composio account too) has no tools until it is reconnected.
-    if (connection.status === "needs_reconnect") return [];
+    if (connection.status === "needs_reconnect" || connection.authType === "machine_mcp") return [];
     let classified = await classifiedTools(deps.db, connection.id);
     if (classified.length === 0) return [];
     const before = reclassified;

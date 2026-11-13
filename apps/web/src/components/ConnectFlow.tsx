@@ -738,6 +738,23 @@ function ToolsStep({
     );
   }
 
+  if (server.authType === "machine_mcp") {
+    return (
+      <>
+        <DialogBody className="cflow__body">
+          <p className="muted cflow__text">{t("toolReview.lead", { count: tools.length, name })}</p>
+          <ToolLevelsView tools={tools} />
+        </DialogBody>
+        <DialogFooter bar>
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" onClick={() => next()}>
+            {t("connectFlow.next")}
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
   const saveAll = async () => {
     const wanted = label.trim();
     let named = server.label;

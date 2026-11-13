@@ -51,6 +51,7 @@ import {
   createGitHubAppSettings,
   createGitToolSource,
   createHandOffToolSource,
+  createHostMcpToolSource,
   createIssueToolSource,
   createJevJudge,
   createJevKey,
@@ -480,6 +481,7 @@ export function buildEngine(o: EngineOptions) {
       }),
       createWikiToolSource({ pubsub: adapters.pubsub, search: context }),
       createContextToolSource(context),
+      createHostMcpToolSource({ db, hub: machineHub }),
       createConnectorToolSource({
         ...connectorDeps,
         artifacts,

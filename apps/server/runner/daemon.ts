@@ -112,6 +112,7 @@ import { systemGitCache } from "./git";
 import type { HandlerContext, RequestObserver, RequestOutcome } from "./handlers";
 import { Holds } from "./holds";
 import { hostAcpVerified, readHostAcpOptIn, removeHostAcpOptIn } from "./host-acp-optin";
+import { HostMcpManager } from "./host-mcp";
 import { IphoneSetup, type IphoneSetupOptions } from "./iphone-setup";
 import { currentProcess, isCompiled, selfCommand } from "./launch";
 import { tailLines } from "./logfile";
@@ -242,6 +243,7 @@ export function configFromGrant(
   const same = prev?.machineId === grant.machineId && prev?.server === input.server;
   return {
     ...(prev?.mode ? { mode: prev.mode } : {}),
+    ...(prev?.hostMcp ? { hostMcp: prev.hostMcp } : {}),
     ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
@@ -330,6 +332,7 @@ interface Session {
   accountBrains: AccountBrains | null;
   codexApp: CodexAppServers;
   mcp: McpBridge;
+  hostMcp: HostMcpManager;
   browser: BrowserManager;
   /** Desktop and terminal streams (ADR 0058): they end with the session. */
   streams: DataSockets;
@@ -1481,7 +1484,16 @@ export class RunnerDaemon implements RequestObserver {
       });
       this.phones.start();
     }
+    const hostMcp = new HostMcpManager({
+      home,
+      machineId: config.machineId,
+      orgId: config.orgId,
+      phonesDisabled: config.phonesDisabled,
+      systemMode: config.mode === "system",
+      config: config.hostMcp,
+    });
     const context: HandlerContext = {
+      hostMcp,
       workspaceReal,
       get exec() {
         return daemon.access().tools.commands;
@@ -1632,6 +1644,7 @@ export class RunnerDaemon implements RequestObserver {
       accountBrains,
       codexApp,
       mcp,
+      hostMcp,
       browser,
       streams,
       desktopUse,
@@ -1865,6 +1878,7 @@ export class RunnerDaemon implements RequestObserver {
     this.egressGeneration++;
     this.egress.reset();
     s.connection.stop();
+    await s.hostMcp.close();
     s.streams.closeAll();
     s.desktopUse.stopAll();
     await s.supervisor?.close();

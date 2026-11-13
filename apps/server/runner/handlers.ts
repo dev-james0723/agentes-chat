@@ -40,6 +40,7 @@ import { RunnerError, toMachineError } from "./errors";
 import { runCommand } from "./exec";
 import { type CacheFill, type CloneSlots, gitSync } from "./git";
 import { isGitInternalPath, touchesGitInternals } from "./git-guard";
+import type { HostMcpManager } from "./host-mcp";
 import { type McpTaskInfo, redactDeep } from "./mcp";
 import { missionWorktree } from "./mission-worktree";
 import { agentWorkspace, hiddenIn, isInside, resolveForAgent } from "./paths";
@@ -142,6 +143,7 @@ export const NEW_WORK_OPS: ReadonlySet<string> = new Set([
  * doesn't compile until someone decides where it runs.
  */
 export const OP_ROUTES: Readonly<Record<MachineOp, "machine" | "agent">> = {
+  host_mcp: "machine",
   exec: "agent",
   read: "agent",
   write: "agent",
@@ -223,6 +225,7 @@ type AccessReduceOp = Extract<MachineRequest, { op: "access.reduce" }>;
 type AccessAllowOp = Extract<MachineRequest, { op: "access.allow" }>;
 
 export interface HandlerContext {
+  hostMcp?: HostMcpManager;
   /** Real path of the workspace folder. */
   workspaceReal: string;
   /** `false`: commands off (`--no-exec`, or `access.tools.commands` off). */
@@ -620,7 +623,20 @@ async function scrubbed(ctx: HandlerContext, req: MachineRequest, err: unknown):
 
 async function routeRequest(ctx: HandlerContext, req: MachineRequest, scope: RequestScope): Promise<unknown> {
   // Protocol 9: paused by the owner. What already runs finishes; status, output and cancel still answer.
-  if ((NEW_WORK_OPS.has(req.op) || workStream(req)) && ctx.paused?.()) throw new RunnerError("paused", PAUSED);
+  if (
+    (NEW_WORK_OPS.has(req.op) ||
+      (req.op === "host_mcp" && ["catalog", "call"].includes(req.request.action)) ||
+      workStream(req)) &&
+    ctx.paused?.()
+  )
+    throw new RunnerError("paused", PAUSED);
+  if (req.op === "host_mcp") {
+    if (ctx.systemMode?.()) throw new RunnerError("not_allowed", "Host MCP is unsupported in system mode");
+    if (!ctx.hostMcp) throw new RunnerError("not_allowed", "Host MCP is disabled");
+    if (req.profile || (req.request.action !== "profiles" && req.agent?.id !== req.request.agentId))
+      throw new RunnerError("not_allowed", "Host MCP agent binding mismatch");
+    return ctx.hostMcp.request(req.request, scope.signal);
+  }
   if (req.op === "pause.set") {
     if (!ctx.setPause) throw new RunnerError("unsupported", "This runner can't be paused from the apps.");
     const by = requireString(req.by, "by");

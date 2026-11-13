@@ -354,6 +354,8 @@ type RpcReply = { ok: true; data: unknown } | { ok: false; error: { code: string
  */
 export function isNewWork(request: MachineRequest) {
   switch (request.op) {
+    case "host_mcp":
+      return request.request.action === "catalog" || request.request.action === "call";
     case "task.status":
     case "task.cancel":
     case "task.output":
@@ -1070,12 +1072,27 @@ export function createMachineHub(deps: MachineHubDeps) {
                   : {}),
               }
             : out;
+
+      const firstReply = kept;
+      const durable: McpOutcome =
+        kept.ok && kept.images?.length && kept.runState === "suspended"
+          ? { ok: true, text: kept.text, runState: "suspended", imageOmitted: true }
+          : kept.ok && kept.images?.length
+            ? {
+                ok: false,
+                error: {
+                  code: "bridge.completed_media_unavailable",
+                  message:
+                    "This action completed. Its transient media result is unavailable after reconnect; do not repeat the action to recover it.",
+                },
+              }
+            : kept;
       await db
         .update(machineMcpCalls)
-        .set({ result: kept })
+        .set({ result: durable })
         .where(key)
         .catch(() => undefined);
-      return kept;
+      return firstReply;
     }
     for (const until = Date.now() + mcpRepeatWaitMs; ; ) {
       const [row] = await db.select({ result: machineMcpCalls.result }).from(machineMcpCalls).where(key);

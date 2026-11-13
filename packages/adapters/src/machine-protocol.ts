@@ -1,4 +1,5 @@
 import type { MergeDone } from "./command-policy";
+import { type HostMcpReply, type HostMcpRequest, isHostMcpRequest } from "./host-mcp-protocol";
 /**
  * The wire protocol between our server and the runner on a connected
  * computer (ADR 0025). JSON text frames over one WebSocket the runner opens
@@ -7,7 +8,7 @@ import type { MergeDone } from "./command-policy";
  */
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
-export const MACHINE_PROTOCOL_VERSION = 65;
+export const MACHINE_PROTOCOL_VERSION = 67;
 /** MCP list capability and tool-result state for a run suspended by the gateway. */
 export const MCP_RUN_STATE_PROTOCOL = 65;
 /** A locally opted-in, owner-bound macOS Antigravity host account. */
@@ -2372,6 +2373,7 @@ export type MachineRequest = (
       /** Protocol 45: Vault keys for this command only (ADR 0144). */
       vault?: ExecVault;
     }
+  | { op: "host_mcp"; request: HostMcpRequest }
   | { op: "read"; path: string; maxBytes: number }
   | { op: "write"; path: string; base64: string }
   | { op: "list"; path: string; depth: number }
@@ -2575,6 +2577,7 @@ export interface BrowserBatchCommand {
 export type MachineOp = MachineRequest["op"];
 
 export const MACHINE_OPS: readonly MachineOp[] = [
+  "host_mcp",
   "exec",
   "read",
   "write",
@@ -2638,6 +2641,7 @@ export const MACHINE_OPS: readonly MachineOp[] = [
 
 /** What each op answers with `ok: true`. */
 export interface MachineReplies {
+  host_mcp: HostMcpReply;
   exec: {
     exitCode: number;
     stdout: string;
@@ -3728,6 +3732,7 @@ export function parseServerFrame(raw: string): ServerFrame | null {
   if (f.type === "request") {
     if (!isString(f.id) || !isString(f.op)) return null;
     if (!MACHINE_OPS.includes(f.op as MachineOp)) return null;
+    if (f.op === "host_mcp" && !isHostMcpRequest(f.request)) return null;
   }
   if ((f.type === "cancel" || f.type === "request") && !isString(f.id)) return null;
   if (f.type === "task.ack" && !isString(f.taskId)) return null;

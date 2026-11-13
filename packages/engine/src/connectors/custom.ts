@@ -170,7 +170,7 @@ export interface CustomServerView {
   label: string;
   /** The account as the provider names it ("Acme"), when it says; null otherwise. */
   accountLabel: string | null;
-  authType: "oauth" | "api_key";
+  authType: "oauth" | "api_key" | "machine_mcp";
   /** The server's own icon, served by us (`/api/app/connector-icons/…`); null = a monogram. */
   iconUrl: string | null;
   /** A service through Composio (ADR 0107): its page signs in, and its address means nothing to people. */
@@ -257,7 +257,7 @@ function view(c: ConnectorConnection, tools: ToolRow[], whole = true): CustomSer
     serverUrl: whole ? c.serverUrl : serverUrlShown(c.serverUrl),
     label: c.label,
     accountLabel: c.accountLabel,
-    authType: c.authType === "oauth" ? "oauth" : "api_key",
+    authType: c.authType === "machine_mcp" ? "machine_mcp" : c.authType === "oauth" ? "oauth" : "api_key",
     iconUrl: c.icon,
     ...(composioToolkitOf(c.serverUrl) ? { via: "composio" as const } : {}),
     status: c.status === "needs_reconnect" ? "needs_reconnect" : "active",
@@ -871,6 +871,8 @@ export async function beginMcpOAuth(
 export async function refreshCustomServer(deps: CustomDeps, actorId: string, orgId: string, id: string) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   // A server that can't be read comes back with `toolsError`, for the apps to say why and offer to try again.
   await syncCustomTools(deps, c).catch((error) => {
     if (!(error instanceof ToolsUnreadable)) throw error;
@@ -901,6 +903,8 @@ export async function saveCustomTools(
 ) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   const known = new Map((await toolRows(deps.db, [c.id])).map((t) => [t.name, t]));
   for (const t of input.tools) {
     if (!DECISIONS.includes(t.access)) throw new ValidationError(`Invalid access for ${t.name}`);
@@ -961,6 +965,8 @@ export async function classifiedTools(db: Database, connectionId: string) {
 export async function acceptCustomSuggestion(deps: CustomDeps, actorId: string, orgId: string, id: string) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   const rows = await toolRows(deps.db, [c.id]);
   const tools = rows.map((t): ToolDecisionInput => {
     let access = (

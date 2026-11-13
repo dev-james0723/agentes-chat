@@ -70,6 +70,7 @@ export * from "./connectors/classify";
 export * from "./connectors/composio";
 export * from "./connectors/connections";
 export * from "./connectors/custom";
+export * from "./connectors/host-mcp";
 export * from "./connectors/listing";
 export * from "./connectors/mcp";
 export * from "./connectors/oauth-mcp";

@@ -2694,7 +2694,7 @@ export interface CustomServer {
   label: string;
   /** The account as the provider names it ("Acme"), when it says. */
   accountLabel?: string | null;
-  authType: "oauth" | "api_key";
+  authType: "oauth" | "api_key" | "machine_mcp";
   /** The server's own icon, kept and served by the backend (`/api/app/connector-icons/…`); null = a monogram. */
   iconUrl?: string | null;
   /** A service through Composio (ADR 0107): its address means nothing to people. */
