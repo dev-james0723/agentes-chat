@@ -249,6 +249,62 @@ test("a renamed interpreter cannot use the generic native launch contract to pre
     "launch contract",
   );
 });
+test("a renamed Bun cannot discover a parent package script from an empty native cwd", async () => {
+  const { link, mkdir } = await import("node:fs/promises");
+  const f = await fixture();
+  await f.manager.close();
+  const home = await realpath(f.options.home);
+  const command = path.join(home, "standalone-alias");
+  const cwd = path.join(home, "empty-native-cwd");
+  await link(f.p.command, command);
+  await mkdir(cwd);
+  await writeFile(
+    path.join(home, "package.json"),
+    JSON.stringify({ scripts: { mcp: `'${f.p.command}' '${f.p.args[0]}'` } }),
+  );
+  const p = { ...f.p, command, cwd, args: ["mcp"] };
+  const raw = JSON.stringify({ version: 1, profiles: [p] });
+  await writeFile(f.file, raw);
+  const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+  managers.push(m);
+  await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+    "launch contract",
+  );
+});
+test("profile environment cannot select a PATH, home config or runtime preload", async () => {
+  for (const name of ["PATH", "HOME", "XDG_CONFIG_HOME", "NODE_PATH", "PYTHONSTARTUP", "BUN_INSTALL", "BASH_ENV"]) {
+    const f = await fixture();
+    await f.manager.close();
+    const p = { ...f.p, envNames: [name] };
+    const raw = JSON.stringify({ version: 1, profiles: [p] });
+    await writeFile(f.file, raw);
+    const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+    managers.push(m);
+    await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+      "registry profile invalid",
+    );
+  }
+});
+test.skipIf(!Bun.which("true"))("standalone classification is accepted only as owner registry policy", async () => {
+  const { mkdir } = await import("node:fs/promises");
+  const f = await fixture();
+  await f.manager.close();
+  const command = await realpath(Bun.which("true")!);
+  const cwd = path.join(await realpath(f.options.home), "empty-standalone-cwd");
+  await mkdir(cwd);
+  const p = { ...f.p, command, commandSha256: sha(await readFile(command)), cwd, args: [], launch: "standalone" };
+  const raw = JSON.stringify({ version: 1, profiles: [p] });
+  await writeFile(f.file, raw);
+  const m = new HostMcpManager({ ...f.options, config: { ...f.options.config, sha256: sha(raw) } });
+  managers.push(m);
+  await expect(
+    m.request({ ...f.bound, revision: profileRevision(p), action: "catalog", launch: "standalone" }),
+  ).rejects.toThrow("bad request");
+  // This harmless native program exits rather than speaking MCP: launch admission is separate from provider qualification.
+  await expect(m.request({ ...f.bound, revision: profileRevision(p), action: "catalog" })).rejects.toThrow(
+    "server initialization failed",
+  );
+});
 test("completed calls never reexecute after restart; abort and disconnect fence the agent while another session survives", async () => {
   const f = await fixture();
   const call = { ...f.bound, action: "call" as const, runId: "run", callId: "done", tool: "tool_0", args: {} };

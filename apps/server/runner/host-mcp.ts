@@ -23,6 +23,7 @@ type Profile = {
   label: string;
   enabled: boolean;
   kind: "general" | "phone";
+  launch?: "standalone";
   command: string;
   args: string[];
   cwd: string;
@@ -102,8 +103,12 @@ async function launchArgs(p: Profile, command: Uint8Array): Promise<string[]> {
   )
     fail("launch contract: unsupported executable format");
   // A renamed interpreter is still a native executable. No loader flags, paths or cwd files may select its code.
-  if (p.args.some((arg) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(arg)) || (await readdir(p.cwd)).length)
-    fail("launch contract: native application words require an empty cwd; use a fixed reviewed wrapper otherwise");
+  if (
+    p.launch !== "standalone" ||
+    p.args.some((arg) => !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(arg)) ||
+    (await readdir(p.cwd)).length
+  )
+    fail("launch contract: explicit standalone review, simple application words and an empty cwd required");
   // Standalone MCP binaries retain simple application arguments, for example the `mcp` subcommand.
   return p.args;
 }
@@ -129,6 +134,7 @@ function profiles(raw: unknown): Profile[] {
             "label",
             "enabled",
             "kind",
+            "launch",
             "command",
             "args",
             "cwd",
@@ -145,6 +151,7 @@ function profiles(raw: unknown): Profile[] {
       p.label.length > 100 ||
       typeof p.enabled !== "boolean" ||
       !["general", "phone"].includes(String(p.kind)) ||
+      (p.launch !== undefined && p.launch !== "standalone") ||
       !abs(p.command) ||
       !abs(p.cwd) ||
       !hash(p.commandSha256) ||
@@ -159,7 +166,7 @@ function profiles(raw: unknown): Profile[] {
         (n) =>
           typeof n === "string" &&
           /^[A-Z_][A-Z0-9_]{0,99}$/.test(n) &&
-          !/^(?:NODE_OPTIONS$|NODE_PATH$|PYTHONPATH$|PYTHONHOME$|LD_|DYLD_|BUN_OPTIONS$|BASH_ENV$|ENV$|ZDOTDIR$|RUBYOPT$|PERL5OPT$|GCONV_PATH$)/.test(
+          !/^(?:PATH$|HOME$|XDG_CONFIG_HOME$|NODE_OPTIONS$|NODE_PATH$|PYTHON|LD_|DYLD_|BUN_|BASH_ENV$|ENV$|ZDOTDIR$|RUBYOPT$|RUBYLIB$|PERL5OPT$|PERL5LIB$|GCONV_PATH$|JAVA_TOOL_OPTIONS$|JDK_JAVA_OPTIONS$)/.test(
             n,
           ),
       ) ||
