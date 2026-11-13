@@ -70,6 +70,7 @@ import {
   createReleaseAsksToolSource,
   createSandboxToolSource,
   createScheduleToolSource,
+  createSelfProfileToolSource,
   createSessionScreening,
   createSetStatusToolSource,
   createSetupToolSource,
@@ -418,6 +419,7 @@ export function buildEngine(o: EngineOptions) {
       }),
       createFindAgentToolSource({ machines: machineHub, judge: context.judge, ai: { gateway, machines: machineHub } }),
       createUsageToolSource(),
+      createSelfProfileToolSource({ listTools: (ctx) => tools.list(ctx), ai: { gateway, machines: machineHub } }),
       // What people saved for the agent in the Vault, found before it asks them (ADR 0144).
       createVaultToolSource(vault),
       // What the agent says it is doing, next to its name (ADR 0084).
