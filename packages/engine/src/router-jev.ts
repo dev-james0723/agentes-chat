@@ -205,8 +205,7 @@ export function createJevRouterStrategy(options: {
           outputTokens: validTokens(body.usage?.output_tokens) ? body.usage.output_tokens : 0,
         })
         .catch(() => {});
-      validateJudgeAnswers(questions, body.answers);
-      const answers = body.answers ?? {};
+      const answers = validateJudgeAnswers(questions, body.answers);
       const best = answers.best_agent?.probabilities ?? {};
       const to = answers.addressee?.probabilities ?? {};
       const scored = withAddressee(

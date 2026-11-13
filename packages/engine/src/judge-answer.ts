@@ -48,5 +48,5 @@ export function validateJudgeAnswers(
       }
     }
   }
-  return answers as Record<string, JudgeAnswer>;
+  return Object.fromEntries(Object.keys(questions).map((id) => [id, answers[id]])) as Record<string, JudgeAnswer>;
 }

@@ -2,7 +2,15 @@ import { expect, test } from "bun:test";
 import { changesPermissions, checkPermissionText } from "../src/context/items";
 import { chooseDelegate } from "../src/delegation-choice";
 import { callJev } from "../src/jev-key";
-import { createJevJudge, createLlmJudge, type JudgeQuestion, judgmentReceiptOf, withJudgeFallback } from "../src/judge";
+import {
+  createJevJudge,
+  createLlmJudge,
+  type JudgeQuestion,
+  judgeCallOf,
+  judgmentReceiptOf,
+  withJudgeFallback,
+} from "../src/judge";
+import { validateJudgeAnswers } from "../src/judge-answer";
 import { createJevRouterStrategy, routeChain } from "../src/router-jev";
 
 const noul: JudgeQuestion = { type: "noul", instructions: "Synthetic check", criteria: { true: "yes", false: "no" } };
@@ -18,6 +26,76 @@ const request = (question: JudgeQuestion = noul) => ({
   kind: "integrity_test",
   state: {},
   questions: { answer: question },
+});
+
+test("validation projects only requested answer IDs, including when extras are malformed", () => {
+  const requested = { noul: 0.9 };
+  expect(validateJudgeAnswers({ answer: noul }, { answer: requested, extra: { noul: 1 } })).toEqual({
+    answer: requested,
+  });
+  expect(validateJudgeAnswers({ answer: noul }, { answer: requested, extra: null })).toEqual({ answer: requested });
+});
+
+test("unrequested router answers cannot suppress, fan out, pick an addressee or react", async () => {
+  for (const extra of [
+    {
+      already_answered: { noul: 1 },
+      for_everyone: { noul: 1 },
+      best_agent: { choice: "dev", confidence: 1 },
+      addressee: { probabilities: { dev: 1 } },
+      social: { choice: "🌙", confidence: 1 },
+    },
+    {
+      already_answered: { noul: "yes" },
+      for_everyone: null,
+      best_agent: [],
+      addressee: null,
+      social: { choice: "foreign", confidence: 9 },
+    },
+  ]) {
+    const strategy = createJevRouterStrategy({
+      key: "synthetic",
+      recordUsage: async () => {},
+      fetch: (async () =>
+        Response.json({
+          model: "jev-1.14.0",
+          answers: { needs_agent: { noul: 0.9 }, agent_0: { noul: 0.9 }, ...extra },
+          usage: { input_tokens: 1, output_tokens: 0 },
+        })) as unknown as typeof fetch,
+    });
+    const result = await strategy.decide({
+      orgId: "o",
+      channel: { id: "c", name: "fixture", topic: "" },
+      message: { id: "m", author: "agent", body: "synthetic" },
+      thread: [],
+      authorUserId: null,
+      candidates: [{ agentId: "a", handle: "dev", name: "Dev", role: "", about: "" }],
+    });
+    expect(result.agents).toEqual([{ agentId: "a", score: 0.9 }]);
+    for (const key of ["alreadyAnswered", "forEveryone", "best", "addressee", "social"] as const)
+      expect(result[key]).toBeUndefined();
+  }
+});
+
+test("all LLM typed-validation failures preserve the actual model/provider tags", async () => {
+  for (const [question, value] of [
+    [noul, {}],
+    [choice, { answer: "foreign" }],
+    [score, {}],
+    [score, { answer: 0.5 }],
+    [score, { answer: 3 }],
+  ] as [JudgeQuestion, unknown][]) {
+    const judge = createLlmJudge({
+      resolveModel: async () => "claude-haiku-5-5",
+      gateway: { complete: async () => ({ text: JSON.stringify(value) }) } as never,
+    });
+    const error = await judge.ask(request(question)).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(judgeCallOf(error)).toEqual({ judge_model: "claude-haiku-5-5", judge_provider: "anthropic" });
+  }
 });
 
 function jev(answer: unknown, usage: unknown = { input_tokens: 10, output_tokens: 0 }) {

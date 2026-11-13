@@ -338,19 +338,23 @@ export function createLlmJudge(deps: {
           provider,
         );
       }
-      const out: Record<string, JudgeAnswer> = {};
-      for (const [id, q] of Object.entries(request.questions)) {
-        if (q.type === "choice") {
-          const choice = typeof parsed[id] === "string" ? (parsed[id] as string) : undefined;
-          out[id] = { choice, probabilities: choice ? { [choice]: 1 } : {} };
-        } else if (q.type === "score") {
-          const score = parsed[id];
-          if (typeof score !== "number" || !Number.isInteger(score))
-            throw new InvalidJudgeAnswerError("judge: invalid answer (score)");
-          out[id] = { score, probabilities: { [String(score)]: 1 } };
-        } else out[id] = { noul: parsed[id] as number };
+      try {
+        const out: Record<string, JudgeAnswer> = {};
+        for (const [id, q] of Object.entries(request.questions)) {
+          if (q.type === "choice") {
+            const choice = typeof parsed[id] === "string" ? (parsed[id] as string) : undefined;
+            out[id] = { choice, probabilities: choice ? { [choice]: 1 } : {} };
+          } else if (q.type === "score") {
+            const score = parsed[id];
+            if (typeof score !== "number" || !Number.isInteger(score))
+              throw new InvalidJudgeAnswerError("judge: invalid answer (score)");
+            out[id] = { score, probabilities: { [String(score)]: 1 } };
+          } else out[id] = { noul: parsed[id] as number };
+        }
+        return validateJudgeAnswers(request.questions, out);
+      } catch (error) {
+        throw withJudgeCall(error, model, provider);
       }
-      return validateJudgeAnswers(request.questions, out);
     },
   };
 }
