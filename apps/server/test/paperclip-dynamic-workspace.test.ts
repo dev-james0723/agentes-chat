@@ -124,7 +124,18 @@ test("HTTP owner review and native hook bind only an explicitly selected reviewe
   expect((await call("invocations", { ...invoke, workspace: undefined })).status).toBe(400);
   const accepted = await call("invocations", invoke);
   expect(accepted.status).toBe(202);
-  const receipt = (await accepted.json()) as { receiptId: string; workspace: { bindingId: string; projectId: string } };
+  const receipt = (await accepted.json()) as {
+    configHash: string | null;
+    acceptedConfigHash: string | null;
+    currentConfigHash: string;
+    admissionConfigStatus: string;
+    receiptId: string;
+    workspace: { bindingId: string; projectId: string };
+  };
+  expect(receipt.acceptedConfigHash).toBe(scoped.configHash);
+  expect(receipt.configHash).toBe(scoped.configHash);
+  expect(receipt.currentConfigHash).toBe(scoped.configHash);
+  expect(receipt.admissionConfigStatus).toBe("recorded");
   expect(receipt.workspace).toMatchObject({ bindingId, projectId });
   expect(JSON.stringify(receipt)).not.toContain("/fixture/");
   expect((await call("invocations", invoke)).status).toBe(202);
@@ -142,4 +153,66 @@ test("HTTP owner review and native hook bind only an explicitly selected reviewe
   const lookup = await call("lookup", { idempotencyKey: invoke.idempotencyKey });
   expect(lookup.status).toBe(200);
   expect(await lookup.json()).toMatchObject({ backend: "agents_chat", receipt });
+  // Terminal fixture history, followed by a new owner review and hook opt-in, must retain H1/A.
+  await owner(`${base}/routines/${m.routineId}`, { method: "PATCH", json: { active: false } });
+  await t.db.update(schema.routineRuns).set({ status: "reported", finishedAt: new Date() });
+  await t.db.update(schema.issues).set({ status: "done" });
+  const [oldBinding] = await t.db
+    .select()
+    .from(schema.paperclipWorkspaceBindings)
+    .where(eq(schema.paperclipWorkspaceBindings.id, bindingId));
+  const newBindingId = uid();
+  await t.db.insert(schema.paperclipWorkspaceBindings).values({
+    ...present(oldBinding),
+    id: newBindingId,
+    generation: uid(),
+    sourceProjectId: uid(),
+    sourceWorkspaceId: uid(),
+    bindingDigest: "d".repeat(64),
+  });
+  const reconfigured = await owner(scopePath, {
+    method: "PUT",
+    json: { expectedConfigHash: scoped.configHash, bindingIds: [newBindingId] },
+  });
+  expect(reconfigured.status).toBe(200);
+  const current = (await reconfigured.json()) as { configHash: string };
+  expect(current.configHash).not.toBe(scoped.configHash);
+  expect(
+    (
+      await owner(`${path}/${m.id}/hook-ingress`, {
+        method: "PUT",
+        json: { expectedConfigHash: current.configHash, triggerId, enabled: true },
+      })
+    ).status,
+  ).toBe(200);
+  await t.db
+    .update(schema.paperclipWorkspaceBindings)
+    .set({ enabled: false })
+    .where(eq(schema.paperclipWorkspaceBindings.id, bindingId));
+  const historical = await call("lookup", { idempotencyKey: invoke.idempotencyKey });
+  expect(historical.status).toBe(200);
+  const history = (await historical.json()) as { receipt: typeof receipt };
+  expect(history.receipt.workspace).toEqual(receipt.workspace);
+  expect(history.receipt.configHash).toBe(receipt.configHash);
+  expect(history.receipt.acceptedConfigHash).toBe(scoped.configHash);
+  expect(history.receipt.currentConfigHash).toBe(current.configHash);
+  expect(history.receipt.admissionConfigStatus).toBe("recorded");
+  await t.db
+    .update(schema.paperclipRoutineReceipts)
+    .set({ acceptedConfigHash: null })
+    .where(eq(schema.paperclipRoutineReceipts.id, receipt.receiptId));
+  const beforeLegacyLookup = await t.db.select().from(schema.paperclipRoutineReceipts);
+  const legacy = await call("lookup", { idempotencyKey: invoke.idempotencyKey });
+  expect(legacy.status).toBe(200);
+  expect(await legacy.json()).toMatchObject({
+    receipt: {
+      receiptId: receipt.receiptId,
+      workspace: receipt.workspace,
+      configHash: null,
+      acceptedConfigHash: null,
+      currentConfigHash: current.configHash,
+      admissionConfigStatus: "unknown_legacy",
+    },
+  });
+  expect(await t.db.select().from(schema.paperclipRoutineReceipts)).toEqual(beforeLegacyLookup);
 });

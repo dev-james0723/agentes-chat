@@ -225,6 +225,8 @@ for (const policy of ["coalesce_if_active", "skip_if_active"] as const) {
     expect(same.issueId).toBe(first.issueId);
     expect(same.status).toBe(policy === "coalesce_if_active" ? "coalesced" : "skipped");
     expect(same.workspaceSelection).toEqual(first.workspaceSelection);
+    expect(first.acceptedConfigHash).toBe(m.configHash);
+    expect(same.acceptedConfigHash).toBe(m.configHash);
     expect(await f.db.select().from(schema.routineRuns)).toHaveLength(2);
   });
 }
@@ -304,7 +306,7 @@ test("fixed mappings preserve nullable legacy receipts and reject per-invocation
   expect(receipt.workspaceSelection?.bindingId).toBe(b.id);
   await f.db
     .update(schema.paperclipRoutineReceipts)
-    .set({ workspaceSelection: null })
+    .set({ workspaceSelection: null, acceptedConfigHash: null })
     .where(eq(schema.paperclipRoutineReceipts.id, receipt.id));
   await executeRoutineRun({ ...routineDeps(f), paperclipCompatibilityEnabled: true }, present(receipt.routineRunId));
   const [firing] = await f.db
@@ -577,4 +579,96 @@ test("revocation between early validation and the final native start transaction
         .where(eq(schema.routineRuns.id, present(receipt.routineRunId)))
     )[0],
   ).toMatchObject({ status: "skipped", code: "paperclip_workspace_changed" });
+});
+
+test("native deferral preserves the accepted hash and scope when it moves a receipt's firing pointer", async () => {
+  const x = await fixture(),
+    m = await x.activate();
+  const first = await x.invoke(m, 0, "first"),
+    second = await x.invoke(m, 1, "deferred");
+  await executeRoutineRun({ ...routineDeps(f), paperclipCompatibilityEnabled: true }, present(first.routineRunId));
+  await executeRoutineRun({ ...routineDeps(f), paperclipCompatibilityEnabled: true }, present(second.routineRunId));
+  const [moved] = await f.db
+    .select()
+    .from(schema.paperclipRoutineReceipts)
+    .where(eq(schema.paperclipRoutineReceipts.id, second.id));
+  expect(present(moved).routineRunId).not.toBe(second.routineRunId);
+  expect(present(moved).acceptedConfigHash).toBe(m.configHash);
+  expect(present(moved).workspaceSelection).toEqual(second.workspaceSelection);
+  const found = await findPaperclipInvocation(x.deps, f.owner.id, f.org.id, m.id, {
+    source: "api",
+    triggerId: x.triggerId,
+    idempotencyKey: "deferred",
+  });
+  expect(found).toEqual(present(moved));
+});
+
+test("read-only lookup keeps legacy unknown admission hashes null while global dispatch is disabled", async () => {
+  const x = await fixture(),
+    m = await x.activate(),
+    receipt = await x.invoke(m, 0, "legacy-lookup");
+  await f.db
+    .update(schema.paperclipRoutineReceipts)
+    .set({ acceptedConfigHash: null })
+    .where(eq(schema.paperclipRoutineReceipts.id, receipt.id));
+  const before = await f.db.select().from(schema.paperclipRoutineReceipts);
+  const found = await findPaperclipInvocation({ ...x.deps, enabled: false }, f.owner.id, f.org.id, m.id, {
+    source: "api",
+    triggerId: x.triggerId,
+    idempotencyKey: "legacy-lookup",
+  });
+  expect(found?.acceptedConfigHash).toBeNull();
+  expect(found?.workspaceSelection).toEqual(receipt.workspaceSelection);
+  expect(await f.db.select().from(schema.paperclipRoutineReceipts)).toEqual(before);
+});
+
+test("admitted keyed replay returns legacy unknown hashes without backfilling or dispatching new work", async () => {
+  const x = await fixture(),
+    m = await x.activate(),
+    receipt = await x.invoke(m, 0, "legacy-replay");
+  await f.db
+    .update(schema.paperclipRoutineReceipts)
+    .set({ acceptedConfigHash: null })
+    .where(eq(schema.paperclipRoutineReceipts.id, receipt.id));
+  const before = await f.db.select().from(schema.paperclipRoutineReceipts);
+  const replay = await x.invoke(m, 1, "legacy-replay");
+  expect(replay.acceptedConfigHash).toBeNull();
+  expect(replay.workspaceSelection).toEqual(receipt.workspaceSelection);
+  expect(await f.db.select().from(schema.paperclipRoutineReceipts)).toEqual(before);
+  expect(await f.db.select().from(schema.routineRuns)).toHaveLength(1);
+});
+
+test("new admissions after owner scope re-review record H2 and cannot coalesce with the H1 history", async () => {
+  const x = await fixture("coalesce_if_active"),
+    m = await x.activate(),
+    old = await x.invoke(m, 0, "h1");
+  await setPaperclipMappingEnabled(x.deps, f.owner.id, f.org.id, m.id, m.configHash, false);
+  await f.db.update(schema.routines).set({ active: false, nextRunAt: null }).where(eq(schema.routines.id, m.routineId));
+  await f.db.update(schema.routineRuns).set({ status: "reported", finishedAt: new Date() });
+  const next = await setPaperclipDynamicWorkspaceScope(x.deps, f.owner.id, f.org.id, m.id, {
+    expectedConfigHash: m.configHash,
+    bindingIds: [present(x.bindings[0]).id],
+  });
+  await setRoutineActive(routineDeps(f), f.owner.id, f.org.id, m.routineId, true);
+  await setPaperclipMappingEnabled(x.deps, f.owner.id, f.org.id, m.id, next.configHash, true);
+  const current = await x.invoke(next, 0, "h2");
+  expect(current.acceptedConfigHash).toBe(next.configHash);
+  expect(current.status).toBe("queued");
+  expect(current.issueId).not.toBe(old.issueId);
+  const historical = await findPaperclipInvocation(x.deps, f.owner.id, f.org.id, m.id, {
+    source: "api",
+    triggerId: x.triggerId,
+    idempotencyKey: "h1",
+  });
+  expect(historical?.acceptedConfigHash).toBe(m.configHash);
+  expect(historical?.acceptedConfigHash).not.toBe(next.configHash);
+});
+
+test("callers cannot forge accepted or current admission hash fields", async () => {
+  const x = await fixture(),
+    m = await x.activate();
+  for (const key of ["acceptedConfigHash", "currentConfigHash", "configHash"])
+    await expect(x.invoke(m, 0, "forged", { [key]: "f".repeat(64) })).rejects.toThrow("invalid");
+  expect(await f.db.select().from(schema.paperclipRoutineReceipts)).toHaveLength(0);
+  expect(await f.db.select().from(schema.issues)).toHaveLength(0);
 });

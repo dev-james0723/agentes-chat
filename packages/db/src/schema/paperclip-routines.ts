@@ -101,6 +101,8 @@ export const paperclipRoutineReceipts = pgTable(
     dispatchFingerprint: text().notNull(),
     /** Immutable accepted workspace choice, distinct from untrusted payload/event data. */
     workspaceSelection: jsonb().$type<PaperclipWorkspaceSelection>(),
+    /** Accepted admission history, never relabeled from the mapping's later current configuration. NULL is unknown legacy history. */
+    acceptedConfigHash: text(),
     status: text().$type<"queued" | "coalesced" | "skipped">().notNull(),
     issueId: uuid().references(() => issues.id, { onDelete: "set null" }),
     /** Not a FK: native event deferral replaces its row and updates this pointer atomically. */

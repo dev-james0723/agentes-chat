@@ -165,13 +165,17 @@ export async function managePaperclipHook(
 }
 
 function view(m: Mapping, r: Receipt) {
+  const acceptedConfigHash = r.acceptedConfigHash ?? null;
   return {
     backend: "agents_chat" as const,
     receiptId: r.id,
     mappingId: m.id,
     sourceRoutineId: m.sourceRoutineId,
     sourceRevisionId: m.sourceRevisionId,
-    configHash: m.configHash,
+    configHash: acceptedConfigHash,
+    acceptedConfigHash,
+    currentConfigHash: m.configHash,
+    admissionConfigStatus: acceptedConfigHash === null ? "unknown_legacy" : "recorded",
     status: r.status,
     routineRunId: r.routineRunId,
     issueId: r.issueId,

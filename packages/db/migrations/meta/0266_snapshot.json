@@ -1,5 +1,5 @@
 {
-  "id": "a6b9077c-f9c2-4808-8504-0046dcc78ccf",
+  "id": "3a5e3a9b-8e17-4656-9499-6fd55a9b6f36",
   "prevId": "0b36c4ae-9200-4c20-a4c1-5ec7ac85b805",
   "version": "7",
   "dialect": "postgresql",
@@ -14350,6 +14350,12 @@
         "workspace_selection": {
           "name": "workspace_selection",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accepted_config_hash": {
+          "name": "accepted_config_hash",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
