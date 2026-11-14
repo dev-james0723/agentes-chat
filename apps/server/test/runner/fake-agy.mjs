@@ -169,9 +169,19 @@ if (args[0] === "-p") {
     },
   });
   step({ step_index: 0, state: "DONE", step_type: "user_input" });
+  if (prompt.includes("THROTTLE")) {
+    process.stderr.write(
+      `AGY_ERROR: ${JSON.stringify({ status: "RESOURCE_EXHAUSTED", code: 429, message: "request failed" })}\n`,
+    );
+    out({
+      event: "result",
+      result: { conversation_id: conversation, status: "ERROR", response: "", error: "request failed" },
+    });
+    process.exit(3);
+  }
   if (prompt.includes("LIMIT")) {
     process.stderr.write(
-      `AGY_ERROR: ${JSON.stringify({ status: "RESOURCE_EXHAUSTED", code: 429, retryable: true, message: "Quota exceeded for Gemini 4 Argon. Resets in 2h 5m." })}\n`,
+      `AGY_ERROR: ${JSON.stringify({ status: "RESOURCE_EXHAUSTED", code: 429, retryable: true, message: "Weekly usage limit reached. Resets in 2h 5m." })}\n`,
     );
     out({ event: "result", result: { conversation_id: conversation, status: "ERROR", response: "", error: "quota" } });
     process.exit(3);

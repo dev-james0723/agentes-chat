@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { eq, schema } from "@agenteschat/db";
-import { postPersonMessage } from "../src";
+import { eq, rowsOf, schema, sql } from "@agenteschat/db";
+import { postPersonMessage, transitionRun } from "../src";
 import {
   absorbBrowserCall,
   absorbToolData,
@@ -103,3 +103,139 @@ describe("where the agent browsed, for the card after the run", () => {
     expect(t.browser?.every((s) => s.tool === "browser_click")).toBe(true);
   });
 });
+
+test("a stale transcript save cannot erase a persisted checkpoint or an uncertainty marker", async () => {
+  f = await setup();
+  const fx = f;
+  const trigger = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
+    body: "test",
+  });
+  const [run] = await fx.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: fx.org.id,
+      agentId: fx.agent.id,
+      channelId: fx.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: trigger.id,
+      trigger: "mention",
+      hop: 1,
+      status: "running",
+      transcript: { system: [], messages: [] },
+    })
+    .returning();
+  if (!run) throw new Error("no run");
+  const stale = { system: [], messages: [], postedCount: 4 };
+  const checkpoint = { schema: "quota-cut-checkpoint/1", dispatch: "hold" };
+  const effect = { runId: run.id, turn: 1, tools: ["Bash"] };
+  await fx.db
+    .update(schema.agentRuns)
+    .set({
+      status: "waiting_input",
+      transcript: { system: [], messages: [], continuityCheckpoint: checkpoint, effectUncertain: effect },
+    })
+    .where(eq(schema.agentRuns.id, run.id));
+  // Simulates a worker that read its copy before the checkpoint transaction committed.
+  await fx.db
+    .update(schema.agentRuns)
+    .set({ transcript: storedTranscript(stale) })
+    .where(eq(schema.agentRuns.id, run.id));
+  const [after] = await fx.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+  expect(after?.transcript).toMatchObject({ continuityCheckpoint: checkpoint, effectUncertain: effect });
+  // A stale writer cannot replace a hold with a forged release or clear an effect marker.
+  await fx.db
+    .update(schema.agentRuns)
+    .set({
+      transcript: storedTranscript({ ...stale, continuityCheckpoint: { dispatch: "released" }, effectUncertain: null }),
+    })
+    .where(eq(schema.agentRuns.id, run.id));
+  const [conflict] = await fx.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+  expect(conflict?.transcript).toMatchObject({ continuityCheckpoint: checkpoint, effectUncertain: effect });
+  // A generic transition accepting an older plain-object transcript must preserve the same markers too.
+  await fx.db.update(schema.agentRuns).set({ status: "running" }).where(eq(schema.agentRuns.id, run.id));
+  const moved = await transitionRun(fx.db, run.id, "running", "waiting_input", { transcript: { messages: [] } });
+  expect(moved?.transcript).toMatchObject({ continuityCheckpoint: checkpoint, effectUncertain: effect });
+  await fx.db.update(schema.agentRuns).set({ status: "running" }).where(eq(schema.agentRuns.id, run.id));
+  const movedWithSql = await transitionRun(fx.db, run.id, "running", "waiting_input", {
+    transcript: sql`'{"messages":[]}'::jsonb`,
+  });
+  expect(movedWithSql?.transcript).toMatchObject({ continuityCheckpoint: checkpoint, effectUncertain: effect });
+});
+
+test.skipIf(!process.env.TEST_DATABASE_URL)(
+  "a blocked stale PostgreSQL writer cannot erase a newly committed checkpoint",
+  async () => {
+    f = await setup();
+    const fx = f;
+    const trigger = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
+      body: "synthetic",
+    });
+    const [run] = await fx.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: fx.org.id,
+        agentId: fx.agent.id,
+        channelId: fx.general.id,
+        threadRootId: trigger.id,
+        triggerMessageId: trigger.id,
+        trigger: "mention",
+        hop: 1,
+        status: "running",
+        transcript: { system: [], messages: [] },
+      })
+      .returning();
+    if (!run) throw new Error("no run");
+    const stale = { system: [], messages: [], postedCount: 3 };
+    const checkpoint = { schema: "quota-cut-checkpoint/1", dispatch: "hold" };
+    const effect = { runId: run.id, turn: 1, tools: ["Bash"] };
+    let signalLocked!: () => void;
+    let release!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const allowCommit = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const checkpointTx = fx.db.transaction(async (tx) => {
+      await tx
+        .update(schema.agentRuns)
+        .set({
+          status: "waiting_input",
+          transcript: { system: [], messages: [], continuityCheckpoint: checkpoint, effectUncertain: effect },
+        })
+        .where(eq(schema.agentRuns.id, run.id));
+      signalLocked();
+      await allowCommit;
+    });
+    await locked;
+    const appName = `stale_${crypto.randomUUID().slice(0, 8)}`;
+    const staleTx = fx.db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('application_name', ${appName}, true)`);
+      await tx
+        .update(schema.agentRuns)
+        .set({ transcript: storedTranscript(stale) })
+        .where(eq(schema.agentRuns.id, run.id));
+    });
+    let observedWait = false;
+    try {
+      for (let i = 0; i < 150; i++) {
+        const rows = rowsOf<{ waiting: boolean }>(
+          await fx.db.execute(
+            sql`select exists(select 1 from pg_stat_activity where datname = current_database() and application_name = ${appName} and wait_event_type = 'Lock') as waiting`,
+          ),
+        );
+        if (rows[0]?.waiting) {
+          observedWait = true;
+          break;
+        }
+        await Bun.sleep(20);
+      }
+    } finally {
+      release();
+    }
+    await Promise.all([checkpointTx, staleTx]);
+    expect(observedWait).toBe(true);
+    const [after] = await fx.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    expect(after?.transcript).toMatchObject({ continuityCheckpoint: checkpoint, effectUncertain: effect });
+  },
+);

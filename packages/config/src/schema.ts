@@ -412,6 +412,16 @@ export const envVars = {
     description: "How many recent channel (or thread) messages are included in an agent's context.",
     section: "Agents",
   },
+  QUOTA_RESERVE_PERCENT: {
+    schema: z.coerce.number().int().min(1).max(100).default(90),
+    description: "Account-wide usage percentage at which a fresh observation signals low capacity for routing.",
+    section: "Agents",
+  },
+  QUOTA_RESERVE_MAX_AGE_MS: {
+    schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
+    description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",
+    section: "Agents",
+  },
   AGENT_MAX_HOPS: {
     schema: z.coerce.number().int().min(1).max(500).default(100),
     description:

@@ -802,6 +802,8 @@ export function buildEngine(o: EngineOptions) {
     gifs: adapters.gifs ?? null,
     log: o.log,
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
+    quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
+    quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
     // A run started on a person's message reads what they add in the next seconds with it (ADR 0112).
     quietMs: o.routerQuietMs ?? ROUTER_QUIET_MS,
     // It ends early when the person isn't typing, and Claude's API reads the prompt into its cache meanwhile.

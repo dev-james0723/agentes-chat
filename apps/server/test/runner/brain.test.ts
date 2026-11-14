@@ -125,6 +125,103 @@ test("protocol 8: brain.turn requests and brain frames parse; bad events are dro
   expect(done({ initMs: 5 })).toEqual({ type: "brain.event", runId: RUN(1), event: { type: "done", text: "ok" } });
 });
 
+test("hello: Claude organization observation is whitelisted without email or tokens", async () => {
+  const claudeOrgId = "11111111-2222-4333-8444-555555555555";
+  const auth = () => ({
+    status: 0,
+    stdout: line({
+      loggedIn: true,
+      authMethod: "claude.ai",
+      subscriptionType: "max",
+      orgId: claudeOrgId,
+      email: "private@example.test",
+      token: "secret-fixture",
+    }),
+  });
+  expect(await claudeAuth(auth, () => undefined)).toEqual({
+    loggedIn: true,
+    authMethod: "claude.ai",
+    plan: "max",
+    claudeOrgId,
+  });
+  expect(
+    parseExecutors({
+      claude: {
+        version: "2.1",
+        loggedIn: true,
+        authMethod: "claude.ai",
+        claudeOrgId,
+        email: "private@example.test",
+        token: "secret-fixture",
+      },
+    }),
+  ).toEqual({ claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai", claudeOrgId } });
+  expect(
+    parseRunnerFrame(
+      line({
+        type: "executors.changed",
+        executors: {
+          claude: {
+            version: "2.1",
+            loggedIn: true,
+            authMethod: "claude.ai",
+            claudeOrgId,
+            email: "private@example.test",
+            token: "secret-fixture",
+          },
+        },
+      }),
+    ),
+  ).toEqual({
+    type: "executors.changed",
+    executors: {
+      claude: {
+        version: "2.1",
+        loggedIn: true,
+        authMethod: "claude.ai",
+        claudeOrgId,
+      },
+    },
+  });
+  expect(
+    parseExecutors({
+      claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai", claudeOrgId: "private@example.test" },
+      codex: { version: "2.1", claudeOrgId },
+    }),
+  ).toEqual({ claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai" }, codex: { version: "2.1" } });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: false, authMethod: "claude.ai", orgId: claudeOrgId }),
+    })),
+  ).toEqual({ loggedIn: false, authMethod: "claude.ai" });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: true, authMethod: "api_key", orgId: claudeOrgId }),
+    })),
+  ).toEqual({ loggedIn: true, authMethod: "api_key" });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: true, authMethod: "claude.ai", orgId: "private@example.test" }),
+    })),
+  ).toEqual({ loggedIn: true, authMethod: "claude.ai" });
+  expect(parseExecutors({ claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai", claudeOrgId } })).toEqual(
+    { claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai" } },
+  );
+});
+
+test("failed Claude auth status cannot claim an active login", async () => {
+  expect(
+    await claudeAuth(() => ({
+      status: 1,
+      stdout: line({ loggedIn: true, authMethod: "claude.ai", orgId: "11111111-2222-4333-8444-555555555555" }),
+    })),
+  ).toEqual({});
+  expect(await claudeAuth(() => ({ status: 1, stdout: line({ loggedIn: false }) }))).toEqual({ loggedIn: false });
+});
+
 test("hello: Claude Code's login state travels (never anything else from auth status)", async () => {
   expect(
     parseExecutors({ claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai", plan: "max", email: "a@b" } }),
@@ -334,7 +431,6 @@ test("parser: today's limit wordings are plan limits, the server's throttle is n
     "You've hit your weekly limit · resets Mon 10am",
     "You've hit your Opus limit",
     "You've hit your Sonnet limit",
-    "You've reached your monthly spend limit",
   ]) {
     const r = end(text);
     expect(r.final).toMatchObject({ code: "plan_limit" });
@@ -344,6 +440,69 @@ test("parser: today's limit wordings are plan limits, the server's throttle is n
   const throttle = end("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited");
   expect(throttle.final).toMatchObject({ code: "claude_failed" });
   expect(throttle.rateLimit).toBeUndefined();
+});
+
+test("parser: generic throttling does not assert a depleted plan or synthesize a quota rejection", () => {
+  for (const result of [
+    "API Error: 429 Too Many Requests",
+    "API Error: 429 rate limit reached",
+    "API Error: 429 You've hit your rate limit",
+    "API Error: 429 You've hit your concurrency limit",
+    "API Error: 429 You've hit your limit",
+    "request failed",
+  ]) {
+    const p = new ClaudeStreamParser();
+    p.beginTurn();
+    p.push(line({ type: "system", subtype: "api_retry", error: "rate_limit", error_status: 429 }));
+    const r = p.push(line({ type: "result", is_error: true, result }));
+    expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+    expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+    expect(r.rateLimit).toBeUndefined();
+  }
+});
+
+test("parser: negated or unchecked usage limits are not evidence of exhaustion", () => {
+  for (const result of [
+    "API Error: 429 Your usage limit has not been reached; temporary rate limit",
+    "API Error: 429 request failed before usage limit could be checked",
+    "API Error: 429 You have not reached your usage limit",
+    "API Error: 429 no usage limit was reached",
+  ]) {
+    const p = new ClaudeStreamParser();
+    p.beginTurn();
+    const r = p.push(line({ type: "result", is_error: true, result }));
+    expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+    expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+    expect(r.rateLimit).toBeUndefined();
+  }
+});
+
+test("parser: a paid spend cap does not become a depleted subscription", () => {
+  const p = new ClaudeStreamParser();
+  p.beginTurn();
+  const r = p.push(
+    line({ type: "result", is_error: true, result: "API Error: 429 You've reached your monthly spend limit" }),
+  );
+  expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+  expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+  expect(r.rateLimit).toBeUndefined();
+});
+
+test("parser: an assistant rate-limit frame after a CLI tool stays fail-closed", () => {
+  const p = new ClaudeStreamParser();
+  p.beginTurn();
+  p.push(line({ type: "assistant", message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: {} }] } }));
+  p.push(
+    line({
+      type: "assistant",
+      error: "rate_limit",
+      message: { content: [{ type: "text", text: "Too many requests" }] },
+    }),
+  );
+  const r = p.push(line({ type: "result", is_error: true, result: "API Error: 429 Too Many Requests" }));
+  expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+  expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+  expect(r.rateLimit).toBeUndefined();
 });
 
 test("parser: OpenCode Go's 429 after Claude Code's retries is a plan limit that keeps the provider's words", () => {

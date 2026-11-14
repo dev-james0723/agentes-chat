@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { channelTopic, MACHINE_PROTOCOL_VERSION, orgTopic, type PlanUsage } from "@agenteschat/adapters";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, rowsOf, schema, sql } from "@agenteschat/db";
 import { autoPlanModel, CODING_PLANS, learnPlanModels } from "@agenteschat/providers/plans";
 import {
   addChannelMember,
+  addRunStep,
   archiveAgent,
   type Brain,
   type BrainEvent,
@@ -21,6 +22,7 @@ import {
   createJobHandlers,
   createRoutine,
   drainOutbox,
+  getRun,
   type Judge,
   LINE_SAFETY_MS,
   listMessages,
@@ -30,6 +32,7 @@ import {
   type MachineStatus,
   nextMonthStart,
   noticeCategoryOf,
+  openDm,
   overruledHere,
   postPersonMessage,
   REPARK_STEADY_MS,
@@ -49,6 +52,7 @@ import {
   wakeNextInLine,
   wakePlanWaits,
 } from "../src";
+import { enqueue } from "../src/outbox";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 
@@ -2113,4 +2117,981 @@ describe("a model its plan's live list dropped", () => {
     expect(seen.map((turn) => turn.model)).toEqual(["hy3"]);
     expect(await dropped(f)).toEqual([]);
   });
+});
+
+test("a quota-cut turn records a scoped checkpoint and waits for effect reconciliation without freezing independent work", async () => {
+  f = await setup({ reply: () => ({ chunks: ["API"] }) });
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          {
+            type: "tool_call",
+            id: "cut-1",
+            name: "Bash",
+            input: { command: "synthetic-secret-marker" },
+            executed: { content: "unknown outcome", isError: true },
+          },
+          { type: "limit", resetsAt: new Date(now + 60_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "You've hit your session limit", worked: true },
+        ]
+      : [{ type: "done", text: "independent done" }],
+  );
+  const handlers = handlersWith(f, brain);
+  await post(f, "@dev synthetic-secret-marker");
+  await drainOutbox(f.db, handlers, { now: later(1000) });
+  const [cut] = await runs(f);
+  expect(cut?.status).toBe("waiting_input");
+  const cp = (cut?.transcript as { continuityCheckpoint?: Record<string, unknown> })?.continuityCheckpoint;
+  expect(cp).toMatchObject({
+    schema: "quota-cut-checkpoint/1",
+    runId: cut?.id,
+    agentId: f.agent.id,
+    effects: "unknown",
+    nextSafeAction: "reconcile_effects_and_qualify_route",
+    dispatch: "hold",
+  });
+  expect(JSON.stringify(cp)).not.toContain("synthetic-secret-marker");
+  expect(await resumeJob(f, cut?.id ?? "")).toBeDefined();
+  const waitKey = (cut?.transcript as { waitingForBrain?: { waitKey?: string } } | undefined)?.waitingForBrain?.waitKey;
+  if (!waitKey) throw new Error("no wait key");
+  const another = { id: crypto.randomUUID(), orgId: f.org.id, background: false, createdAt: new Date() };
+  expect((await usageWaitPlace(f.db, another, waitKey, Date.now())).head).toBe(true);
+  const ada = await createAgent(
+    f.db,
+    f.owner.id,
+    f.org.id,
+    { name: "Ada", handle: "ada" },
+    { model: "claude-sonnet-5-5" },
+  );
+  await addChannelMember(f.db, f.owner.id, f.org.id, f.general.id, { agentId: ada.id });
+  await post(f, "@ada do independent work");
+  await drainOutbox(f.db, handlers, { now: later(1000) });
+  expect(seen).toHaveLength(1);
+  expect((await runs(f)).some((r) => r.agentId === ada.id && r.status === "done")).toBe(true);
+  const after = new Date(now + RESUME_AFTER_MS + RESUME_GAP_MS + 120_000);
+  await drainOutbox(f.db, handlers, { now: after });
+  clearPlanLimits(); // new scheduler state; the persisted checkpoint is independent of this process cache
+  const restartedHandlers = handlersWith(f, brain);
+  await recoverStaleRuns({ db: f.db, pubsub: f.pubsub }, { now: after });
+  await drainOutbox(f.db, restartedHandlers, { now: after });
+  expect(seen).toHaveLength(1);
+  const held = (await runs(f)).find((r) => r.id === cut?.id);
+  expect(held?.status).toBe("waiting_input");
+  expect((held?.transcript as { continuityCheckpoint?: unknown } | undefined)?.continuityCheckpoint).toEqual(cp);
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, held?.id ?? "");
+  expect((await runs(f)).find((r) => r.id === cut?.id)?.status).toBe("canceled");
+});
+
+test("a native tool started without a result remains held even if the runner says it had not worked", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const { brain, seen } = scripted(() => [
+    { type: "tool_started", id: "native-1", name: "Bash" },
+    { type: "limit", resetsAt: later(3600_000).toISOString() },
+    { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+  ]);
+  await post(f, "@dev check");
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold", effects: "unknown" } });
+  expect(seen).toHaveLength(1);
+});
+
+test("checkpoint and wait job roll back together if timer enqueue fails", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const { brain } = scripted(() => [
+    { type: "tool_call", id: "err-1", name: "Bash", input: {}, executed: { content: "uncertain", isError: true } },
+    { type: "limit", resetsAt: later(3600_000).toISOString() },
+    { type: "error", code: "plan_limit", message: "limit reached", worked: true },
+  ]);
+  await post(f, "@dev check");
+  await f.db.execute(
+    sql.raw(`create function refuse_wait_job() returns trigger language plpgsql as $$
+    begin if new.kind = 'agent_run.execute' and new.payload ? 'wait' then raise exception 'synthetic timer failure'; end if; return new; end $$`),
+  );
+  await f.db.execute(
+    sql.raw(`create trigger refuse_wait_job before insert on outbox for each row execute function refuse_wait_job()`),
+  );
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  expect(run?.status).not.toBe("waiting_input");
+  expect((run?.transcript as { continuityCheckpoint?: unknown } | null)?.continuityCheckpoint).toBeUndefined();
+  const steps = await f.db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run?.id ?? ""));
+  expect(steps.some((step) => step.data.reason === "usage_wait")).toBe(false);
+  expect(await resumeJob(f, run?.id ?? "")).toBeUndefined();
+});
+
+test("checkpoint step stays in the original DM audience", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const admin = await addMember(f.db, f.org.id, "admin", "auditor");
+  const dm = await openDm(f.db, f.owner.id, f.org.id, { agentId: f.agent.id });
+  const { brain } = scripted(() => [
+    {
+      type: "tool_call",
+      id: "err-1",
+      name: "Bash",
+      input: { command: "synthetic-secret-marker" },
+      executed: { content: "uncertain", isError: true },
+    },
+    { type: "limit", resetsAt: later(3600_000).toISOString() },
+    { type: "error", code: "plan_limit", message: "limit reached", worked: true },
+  ]);
+  await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, dm.id, {
+    body: "synthetic-secret-marker",
+  });
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  if (!run) throw new Error("no run");
+  const own = await getRun(f.db, f.owner.id, f.org.id, run.id);
+  const step = own.steps.find((s) => s.data.continuityCheckpoint);
+  expect(step?.data.continuityCheckpoint).toBeDefined();
+  expect(JSON.stringify(step?.data.continuityCheckpoint)).not.toContain("synthetic-secret-marker");
+  const other = await getRun(f.db, admin.id, f.org.id, run.id);
+  expect(other.steps).toEqual([]);
+});
+
+test("a durable gateway intent without a result produces a hold and preserves only scoped references", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      await addRunStep(f.db, { id: turn.runId, orgId: turn.orgId }, "tool_call", {
+        toolUseId: "g-1",
+        name: "github_merge_pr",
+        input: { token: "synthetic-secret-marker" },
+      });
+      yield { type: "limit", resetsAt: later(3600_000).toISOString() };
+      yield { type: "error", code: "plan_limit", message: "limit reached", worked: false };
+    },
+  };
+  await post(f, "@dev request synthetic-secret-marker");
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  expect(run?.status).toBe("waiting_input");
+  const checkpoint = (run?.transcript as { continuityCheckpoint?: Record<string, unknown> })?.continuityCheckpoint;
+  expect(checkpoint).toMatchObject({
+    effects: "unknown",
+    dispatch: "hold",
+    nextSafeAction: "reconcile_effects_and_qualify_route",
+  });
+  expect(JSON.stringify(checkpoint)).not.toContain("synthetic-secret-marker");
+});
+
+test("a checkpoint never copies a goal reference from another conversation", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const other = await createChannel(f.db, f.owner.id, f.org.id, { name: "other", visibility: "private" });
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      const [run] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, turn.runId));
+      if (!run) throw new Error("no run");
+      // Simulate a source moving to a different audience before the checkpoint is created.
+      await f.db
+        .update(schema.messages)
+        .set({ channelId: other.id })
+        .where(eq(schema.messages.id, run.triggerMessageId));
+      yield { type: "tool_started", id: "native-1", name: "Bash" };
+      yield { type: "limit", resetsAt: later(3600_000).toISOString() };
+      yield { type: "error", code: "plan_limit", message: "limit reached", worked: false };
+    },
+  };
+  await post(f, "@dev sensitive goal");
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toMatchObject({ continuityCheckpoint: { goal: { state: "unknown" }, dispatch: "hold" } });
+});
+
+test("conflicting durable and runner tool inputs remain unknown despite success reports", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      const run = { id: turn.runId, orgId: turn.orgId };
+      await addRunStep(f.db, run, "tool_call", { toolUseId: "x", name: "write", input: { target: "one" } });
+      await addRunStep(f.db, run, "tool_result", { toolUseId: "x", name: "write", isError: false });
+      yield { type: "tool_call", id: "x", name: "write", input: { target: "two" }, executed: { content: "ok" } };
+      yield { type: "limit", resetsAt: later(3600_000).toISOString() };
+      yield { type: "error", code: "plan_limit", message: "limit reached", worked: true };
+    },
+  };
+  await post(f, "@dev check");
+  await drainOutbox(f.db, handlersWith(f, brain));
+  const [run] = await runs(f);
+  expect(run?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold", effects: "unknown" } });
+});
+
+test("a held model-region cut says reconciliation first, not that changing model unblocks it", async () => {
+  f = await setup();
+  await goAgent(f, "deepseek-v4.1-flash", { windows: [], source: "probe", at: new Date().toISOString() });
+  const { brain } = scripted(() => [
+    { type: "tool_started", id: "native-1", name: "Bash" },
+    {
+      type: "error",
+      code: "plan_limit",
+      message: "API Error: 429 Model deepseek-v4.1-flash is not allowed in this workspace's region",
+      worked: false,
+    },
+  ]);
+  await post(f, "@dev check");
+  await drainOutbox(f.db, accountHandlers(f, brain));
+  const [run] = await runs(f);
+  expect(waitOf(run)).toMatchObject({ scope: "region" });
+  expect(run?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const note = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === run?.id);
+  expect(note?.body).toContain("reconciliation");
+  expect(note?.body).not.toContain("Global region");
+});
+
+test("a same-code repark after wake replaces the old auto-resume promise with one reconciliation warning", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [initial] = await runs(f);
+  expect(initial?.status).toBe("waiting_input");
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const [held] = await runs(f);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const waitNotes = messages.filter((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === held?.id);
+  expect(waitNotes).toHaveLength(1);
+  expect(waitNotes[0]?.body).toContain("reconciliation");
+  expect(waitNotes[0]?.meta.bodyCode).toBeUndefined();
+});
+
+test("canceling a held owner of a shared usage note leaves the joined run and timer intact", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const extra = await post(f, "another request");
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [b.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(otherNote?.body).toContain("limit");
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
+});
+
+test("a held joined run detaches before the shared note owner is canceled", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const extra = await post(f, "another request");
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [b.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runId: b.id, runIds: [a.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  expect(otherNote?.body).toContain("limit");
+  expect((otherNote?.meta.usageWait as { runIds?: string[] } | undefined)?.runIds).not.toContain(a.id);
+  const heldTimer = await resumeJob(f, a.id);
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, b.id);
+  expect((await runs(f)).find((r) => r.id === a.id)?.status).toBe("waiting_input");
+  expect((await resumeJob(f, a.id))?.id).toBe(heldTimer?.id);
+});
+
+test("a stale joined id cannot become the shared note holder", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const extra = await post(f, "another request");
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  const staleTrigger = await post(f, "stale request");
+  const [stale] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: staleTrigger.id,
+      trigger: "mention",
+      hop: 1,
+      status: "done",
+    })
+    .returning();
+  if (!stale) throw new Error("missing stale run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [stale.id, b.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(otherNote?.body).toContain("limit");
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
+});
+
+test("an all-stale shared note does not create an active stale holder", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const extra = await post(f, "another request");
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  const staleTrigger = await post(f, "stale request");
+  const [stale] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: staleTrigger.id,
+      trigger: "mention",
+      hop: 1,
+      status: "done",
+    })
+    .returning();
+  if (!stale) throw new Error("missing stale run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [stale.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(messages.some((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === stale.id)).toBe(false);
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
+});
+
+test("old cross-thread shared notes cannot cancel another run", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const extra = await post(f, "another request");
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [b.id] } } })
+    .where(eq(schema.messages.id, shared.id));
+  await f.db.insert(schema.messages).values({
+    orgId: f.org.id,
+    channelId: f.general.id,
+    threadId: trigger.id,
+    authorType: "agent",
+    authorAgentId: f.agent.id,
+    body: "older wait",
+    meta: { usageWait: { code: "budget_wait", runId: a.id, forUserId: f.owner.id, runIds: [b.id], ended: true } },
+  });
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+  const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(otherNote?.body).toContain("limit");
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
+});
+
+test.skipIf(!process.env.TEST_DATABASE_URL)(
+  "a concurrent joined-run status change is serialized before holder selection",
+  async () => {
+    f = await setup();
+    await computerAgent(f, { brainFallback: false });
+    const now = Date.now();
+    setSystemTime(new Date(now));
+    const resetsAt = later(150).toISOString();
+    const { brain, seen } = scripted((n) =>
+      n === 0
+        ? [
+            { type: "limit", resetsAt },
+            { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+          ]
+        : [
+            { type: "tool_started", id: "uncertain", name: "Bash" },
+            { type: "limit", resetsAt: later(3600_000).toISOString() },
+            { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+          ],
+    );
+    const handlers = handlersWith(f, brain);
+    const trigger = await post(f, "@dev check");
+    await drainOutbox(f.db, handlers, { now: later(5_000) });
+    const [a] = await runs(f);
+    if (!a) throw new Error("missing first run");
+    const extra = await post(f, "another request");
+    const [b] = await f.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        channelId: f.general.id,
+        threadRootId: trigger.id,
+        triggerMessageId: extra.id,
+        trigger: "mention",
+        hop: 1,
+        status: "waiting_input",
+        transcript: {
+          waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+        } as never,
+      })
+      .returning();
+    if (!b) throw new Error("missing joined run");
+    // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+    const shared = (await notes(f, "plan_limit_wait"))[0];
+    if (!shared) throw new Error("missing shared note");
+    await f.db
+      .update(schema.messages)
+      .set({ meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), runIds: [b.id] } } })
+      .where(eq(schema.messages.id, shared.id));
+    const timerAt = later(24 * 3600_000);
+    await enqueue(f.db, {
+      orgId: f.org.id,
+      kind: "agent_run.execute",
+      payload: { runId: b.id, wait: "b-wait" },
+      dedupeKey: `shared-note-test:${b.id}`,
+      runAt: timerAt,
+    });
+    let signalLocked!: () => void;
+    let release!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    const allowCommit = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const updateStatus = f.db.transaction(async (tx) => {
+      await tx.update(schema.agentRuns).set({ status: "canceled" }).where(eq(schema.agentRuns.id, b.id));
+      signalLocked();
+      await allowCommit;
+    });
+    await locked;
+    setSystemTime(new Date(now + 200));
+    const pumping = drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+    let sawLock = false;
+    try {
+      for (let i = 0; i < 150; i++) {
+        const rows = rowsOf<{ waiting: boolean }>(
+          await f.db.execute(
+            sql`select exists(select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock') as waiting`,
+          ),
+        );
+        if (rows[0]?.waiting) {
+          sawLock = true;
+          break;
+        }
+        await Bun.sleep(20);
+      }
+    } finally {
+      release();
+    }
+    await Promise.all([updateStatus, pumping]);
+    expect(sawLock).toBe(true);
+    expect(seen).toHaveLength(2);
+    const held = (await runs(f)).find((r) => r.id === a.id);
+    expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+    const messages = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
+    const heldNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === a.id);
+    const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+    expect(heldNote?.body).toContain("reconciliation");
+    await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+    expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("canceled");
+    expect(otherNote).toBeUndefined();
+  },
+);
+
+test("a direct agent-origin null requester keeps its shared note after the held owner is canceled", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const [originA, originB] = await f.db
+    .insert(schema.messages)
+    .values([
+      {
+        orgId: f.org.id,
+        channelId: f.general.id,
+        authorType: "agent",
+        authorAgentId: f.agent.id,
+        body: "agent origin one",
+        meta: {},
+      },
+      {
+        orgId: f.org.id,
+        channelId: f.general.id,
+        authorType: "agent",
+        authorAgentId: f.agent.id,
+        body: "agent origin two",
+        meta: {},
+      },
+    ])
+    .returning();
+  if (!originA || !originB) throw new Error("missing origins");
+  await f.db.update(schema.agentRuns).set({ triggerMessageId: originA.id }).where(eq(schema.agentRuns.id, a.id));
+  const extra = originB;
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({
+      meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), forUserId: null, runIds: [b.id] } },
+    })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await f.db.select().from(schema.messages).where(eq(schema.messages.channelId, f.general.id));
+  const heldNote = messages.find(
+    (m) =>
+      (m.meta.usageWait as { runId?: string; ended?: boolean } | undefined)?.runId === a.id &&
+      !(m.meta.usageWait as { ended?: boolean } | undefined)?.ended,
+  );
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(otherNote?.body).toContain("limit");
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
+});
+
+test("a null requester does not transfer a note to a person-rooted run", async () => {
+  f = await setup();
+  await computerAgent(f, { brainFallback: false });
+  const now = Date.now();
+  setSystemTime(new Date(now));
+  const resetsAt = later(150).toISOString();
+  const { brain, seen } = scripted((n) =>
+    n === 0
+      ? [
+          { type: "limit", resetsAt },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ]
+      : [
+          { type: "tool_started", id: "uncertain", name: "Bash" },
+          { type: "limit", resetsAt: later(3600_000).toISOString() },
+          { type: "error", code: "plan_limit", message: "limit reached", worked: false },
+        ],
+  );
+  const handlers = handlersWith(f, brain);
+  const trigger = await post(f, "@dev check");
+  await drainOutbox(f.db, handlers, { now: later(5_000) });
+  const [a] = await runs(f);
+  if (!a) throw new Error("missing first run");
+  const personOrigin = await post(f, "person origin");
+  const [originA, originB] = await f.db
+    .insert(schema.messages)
+    .values([
+      {
+        orgId: f.org.id,
+        channelId: f.general.id,
+        authorType: "agent",
+        authorAgentId: f.agent.id,
+        body: "agent origin one",
+        meta: {},
+      },
+      {
+        orgId: f.org.id,
+        channelId: f.general.id,
+        authorType: "agent",
+        authorAgentId: f.agent.id,
+        body: "agent origin two",
+        meta: {},
+      },
+    ])
+    .returning();
+  if (!originA || !originB) throw new Error("missing origins");
+  await f.db.update(schema.agentRuns).set({ triggerMessageId: originA.id }).where(eq(schema.agentRuns.id, a.id));
+  const extra = personOrigin;
+  const [b] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger.id,
+      triggerMessageId: extra.id,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: { code: "plan_limit", machineId: "", kind: "claude_code", waitId: "b-wait" },
+      } as never,
+    })
+    .returning();
+  if (!b) throw new Error("missing joined run");
+  // Seed the existing shared-note representation; cancellation and the repark use real engine flows below.
+  const shared = (await notes(f, "plan_limit_wait"))[0];
+  if (!shared) throw new Error("missing shared note");
+  await f.db
+    .update(schema.messages)
+    .set({
+      meta: { ...shared.meta, usageWait: { ...(shared.meta.usageWait as object), forUserId: null, runIds: [b.id] } },
+    })
+    .where(eq(schema.messages.id, shared.id));
+  const timerAt = later(24 * 3600_000);
+  await enqueue(f.db, {
+    orgId: f.org.id,
+    kind: "agent_run.execute",
+    payload: { runId: b.id, wait: "b-wait" },
+    dedupeKey: `shared-note-test:${b.id}`,
+    runAt: timerAt,
+  });
+  setSystemTime(new Date(now + 200));
+  await drainOutbox(f.db, handlers, { now: later(RESUME_AFTER_MS + RESUME_GAP_MS) });
+  expect(seen).toHaveLength(2);
+  const held = (await runs(f)).find((r) => r.id === a.id);
+  expect(held?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold" } });
+  const messages = await f.db.select().from(schema.messages).where(eq(schema.messages.channelId, f.general.id));
+  const heldNote = messages.find(
+    (m) =>
+      (m.meta.usageWait as { runId?: string; ended?: boolean } | undefined)?.runId === a.id &&
+      !(m.meta.usageWait as { ended?: boolean } | undefined)?.ended,
+  );
+  const otherNote = messages.find((m) => (m.meta.usageWait as { runId?: string } | undefined)?.runId === b.id);
+  expect(heldNote?.body).toContain("reconciliation");
+  await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, a.id);
+  expect((await runs(f)).find((r) => r.id === b.id)?.status).toBe("waiting_input");
+  expect(otherNote).toBeUndefined();
+  expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
 });

@@ -4,6 +4,7 @@ import { announceAgentStatus } from "./agent-status";
 import { publishApproval } from "./approvals";
 import { recordAudit } from "./audit";
 import { personOfMessage } from "./authority";
+import { fenceBridgeEpochOnStop } from "./bridge-effect-epoch";
 import { lineMachineOf, publishQueueChanged } from "./computer-queue";
 import { INBOX_JOB } from "./dispatch";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
@@ -294,6 +295,7 @@ export async function stopRun(
     const done = await db.transaction(async (tx) => {
       const moved = await transitionRun(tx, run.id, status, "canceled", { error });
       if (!moved) return null;
+      await fenceBridgeEpochOnStop(tx, run.id);
       // The "stop" itself needs no answer: it never gets a run of its own.
       if (options.stopMessageId) {
         await tx

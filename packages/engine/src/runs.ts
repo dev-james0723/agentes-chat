@@ -4,6 +4,7 @@ import { BRAIN_NAMES, type ComputerBrainKind, planName } from "./brains/types";
 import { cutText, pgSafeJson } from "./format";
 import { recordRunFinished } from "./operator-events";
 import { standingErrorDetail } from "./standing";
+import { keepRunMarkers } from "./sticky-transcript";
 import { cliErrorWords, redactCredentials } from "./tool-detail";
 
 const { agentRuns, agentRunSteps } = schema;
@@ -436,10 +437,15 @@ export async function transitionRun(
     waitingMachineId?: string | null;
     /** A failure: the brain's code and the provider's cause (`run.finished`; not stored on the run). */
     failure?: { code: string; cause?: string | null };
+    /** Do not claim a run with a persisted unknown-effect hold. */
+    requireNoUnknownEffect?: boolean;
   } = {},
+  claim?: { waitId: string },
 ): Promise<AgentRun | null> {
   if (!canTransition(from, to)) throw new InvalidRunTransitionError(from, to);
-  const { failure, ...set } = patch;
+  if (claim && (from !== "waiting_input" || to !== "running"))
+    throw new Error("A wait claim only applies to resuming a waiting input run");
+  const { failure, transcript, requireNoUnknownEffect, ...set } = patch;
   const now = new Date();
   const [row] = await db
     .update(agentRuns)
@@ -456,8 +462,30 @@ export async function transitionRun(
       // Only a run waiting for its computer keeps the machine it waits for.
       waitingMachineId: null,
       ...set,
+      ...(transcript !== undefined ? { transcript: keepRunMarkers(transcript) } : {}),
     })
-    .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, from)))
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.status, from),
+        requireNoUnknownEffect
+          ? sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`
+          : undefined,
+        requireNoUnknownEffect
+          ? sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`
+          : undefined,
+        requireNoUnknownEffect
+          ? sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`
+          : undefined,
+        // A timer must still own the exact wait, and no waiting run may resume while its checkpoint is held.
+        claim
+          ? sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${claim.waitId}`
+          : undefined,
+        from === "waiting_input" && to === "running"
+          ? sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`
+          : undefined,
+      ),
+    )
     .returning();
   if (row && isTerminal(to)) {
     await recordRunFinished(

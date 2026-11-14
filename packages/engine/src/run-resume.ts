@@ -10,6 +10,7 @@ import { enqueue } from "./outbox";
 import { missStaleRoutineRun } from "./routine-firing";
 import { holdsMessages } from "./run-hold";
 import { type AgentRun, replyThreadOf } from "./runs";
+import { keepRunMarkers } from "./sticky-transcript";
 import { runStretchOf } from "./stretch";
 
 const { agentRuns, messages } = schema;
@@ -98,7 +99,7 @@ export async function resumeRunWithResult(
     if (input.consulted) t.consulted = [...(t.consulted ?? []), input.consulted];
     await tx
       .update(agentRuns)
-      .set({ transcript: pgSafeJson(t) as Record<string, unknown>, updatedAt: new Date() })
+      .set({ transcript: keepRunMarkers(pgSafeJson(t) as Record<string, unknown>), updatedAt: new Date() })
       .where(eq(agentRuns.id, row.id));
     await enqueue(tx, {
       orgId: row.orgId,

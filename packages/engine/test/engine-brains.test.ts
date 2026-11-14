@@ -6,7 +6,7 @@ import {
   MACHINE_PROTOCOL_VERSION,
   orgTopic,
 } from "@agenteschat/adapters";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import { systemText } from "@agenteschat/providers";
 import {
   activeRunsIn,
@@ -76,6 +76,7 @@ import {
   taskManager,
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
+import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import { afterSteered } from "../src/steering";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
@@ -635,7 +636,13 @@ test("a gated call through the bridge leaves the run waiting; the decision resum
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "usage", input: 10, output: 2, source: "plan" };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
@@ -682,7 +689,7 @@ test("a gated call through the bridge leaves the run waiting; the decision resum
  * A connector call that asks a person every time, answering like a remote workbench that gave only a preview.
  * `external`: an MCP server's answer, which reaches the model inside `<external_data>`.
  */
-function workbench(options: { content?: string; external?: boolean } = {}) {
+function workbench(options: { content?: string; external?: boolean; error?: boolean } = {}) {
   const ran: Record<string, unknown>[] = [];
   const source: ToolSource = {
     name: "fake-workbench",
@@ -701,7 +708,10 @@ function workbench(options: { content?: string; external?: boolean } = {}) {
         },
         async execute(input) {
           ran.push(input);
-          return { content: options.content ?? "Response schema: {jobs: [...]} Data Preview: (2 rows hidden)" };
+          return {
+            content: options.content ?? "Response schema: {jobs: [...]} Data Preview: (2 rows hidden)",
+            ...(options.error ? { isError: true } : {}),
+          };
         },
       },
     ],
@@ -728,7 +738,13 @@ test("approved, it ran, and the brain ended its turn without a word: one more tu
         { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
         { id: "wb-1", name: "ci_workbench", input: { run: 42, why: WORKBENCH_WHY } },
       );
-      yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-wb-1",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: promised };
       return;
     }
@@ -788,7 +804,13 @@ test("told once after a decision: a second silent turn ends the run, never a loo
         { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
         { id: "wb-1", name: "ci_workbench", input: { run: 7, why: WORKBENCH_WHY } },
       );
-      yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-wb-1",
+        name: "ci_workbench",
+        input: { run: 7, why: WORKBENCH_WHY },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       return yield { type: "done", text: "Asked for the CI numbers." };
     }
     yield { type: "done", text: "" };
@@ -829,7 +851,13 @@ test("decided while the turn that asked still runs: the run goes on once that tu
     });
     await drainOutbox(f.db, handlers);
     turnsWhileFirstRan = seen.length;
-    yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-wb-1",
+      name: "ci_workbench",
+      input: { run: 42, why: WORKBENCH_WHY },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     yield { type: "done", text: "When you approve, I'll give you the numbers." };
   });
   const handlers = createJobHandlers({
@@ -919,7 +947,16 @@ test("a question asked through the bridge: the text written before it comes firs
         },
       },
     );
-    yield { type: "tool_call", id: "ask-1", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-1",
+      name: "ask_user",
+      input: {
+        why: "I need a person's answer before I go on: this decides what I change next.",
+        question: "Quais datas eu coloco?",
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     // After the call the brain repeats itself (what the person saw in production).
     await Bun.sleep(400);
     yield { type: "text_delta", text: "\n\nQuais datas eu coloco: você me passa a ida e a volta?" };
@@ -1009,7 +1046,17 @@ test("a question asked after the brain dropped a draft for a call: only the text
         },
       },
     );
-    yield { type: "tool_call", id: "ask-1", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-1",
+      name: "ask_user",
+      input: {
+        why: "I sent the wrong file before; the person picks the right one.",
+        question: "Which video do I send to Acme?",
+        choices: ["europe_trip.mp4", "lisbon_v3.mp4"],
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     // Claude Code's result is its last model call's text.
     yield { type: "done", text: answer };
   });
@@ -1091,7 +1138,16 @@ test("sent on after its turn, a computer brain that opens again with the same li
         },
       },
     );
-    yield { type: "tool_call", id: "ask-2", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-2",
+      name: "ask_user",
+      input: {
+        why: "I need a person's answer before I go on: only they have it.",
+        question: "Qual é o endereço da API?",
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     yield { type: "done", text: opening };
   });
   const handlers = createJobHandlers({
@@ -2135,7 +2191,13 @@ test("a computer turn cut by a crash while it answered a decision is sent again 
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
     }
@@ -2836,54 +2898,555 @@ test("a computer brain that fails after a bridged tool ran: no fallback, what it
   expect(last?.meta.brainFallback).toBeUndefined();
 });
 
-test("a computer brain that fails after a bridged pause: the run keeps waiting with its pending call, then resumes", async () => {
-  const gh = fakeGithub();
-  f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["Respondi pela API."] }) });
-  await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
-  const machineId = await computerAgent(f);
-  const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
-    if (n === 0) {
-      const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
-      const result = await executeToolForRun(f.jobDeps, id, {
-        id: "call-1",
-        name: "github_merge_pr",
-        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+type PortableCheckpointForTest = {
+  portable: {
+    events: { kind: string }[];
+    messages: { id: string }[];
+    memories: { id: string }[];
+    transcript: { messageCount: number };
+    gaps: string[];
+  };
+};
+
+test.each(["executor_crashed", "plan_limit"] as const)(
+  "an errored bridged call followed by %s is not replayed",
+  async (code) => {
+    let attempts = 0;
+    let fallbackCalls = 0;
+    const sideEffect: ToolSource = {
+      name: "uncertain",
+      tools: async () => [
+        {
+          name: "uncertain_write",
+          description: "A write whose result may be uncertain",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => {
+            attempts++;
+            return { content: "delivery unknown", isError: true };
+          },
+        },
+      ],
+    };
+    f = await setup({
+      toolSources: [sideEffect],
+      reply: () => {
+        fallbackCalls++;
+        return { chunks: ["fallback"] };
+      },
+    });
+    const [memory] = await f.db
+      .insert(schema.contextItems)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        kind: "note",
+        scopeType: "agent",
+        scopeId: f.agent.id,
+        content: "SYNTH_SECRET_DO_NOT_COPY",
+        pinned: true,
+      })
+      .returning();
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+      await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id: "uncertain-1", name: "uncertain_write", input: {} },
+      );
+      // The runner never reported an executed event before it failed.
+      yield { type: "error", code, message: "connection lost", retryable: true, worked: false };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev perform the write");
+    await drainOutbox(f.db, handlers);
+    expect(attempts).toBe(1);
+    expect(seen.length).toBe(1);
+    expect(fallbackCalls).toBe(0);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    const last = (await timeline(f)).at(-1);
+    if (code === "plan_limit") {
+      // A known quota cut is durably held for reconciliation, rather than ending or replaying the turn.
+      expect(run?.status).toBe("waiting_input");
+      expect(run?.transcript).toMatchObject({
+        continuityCheckpoint: { dispatch: "hold", effects: "unknown", portable: { complete: false, dispatch: "hold" } },
       });
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
-      yield { type: "error", code: "executor_crashed", message: "Claude Code exited", retryable: true };
-      return;
+      const checkpoint = run?.transcript?.continuityCheckpoint as PortableCheckpointForTest | undefined;
+      expect(checkpoint?.portable?.events.some((e: { kind: string }) => e.kind === "tool_call")).toBe(true);
+      expect(checkpoint?.portable?.events.some((e: { kind: string }) => e.kind === "tool_result")).toBe(true);
+      expect(checkpoint?.portable?.messages.some((m: { id: string }) => m.id === run?.triggerMessageId)).toBe(true);
+      expect(checkpoint?.portable?.memories.some((m: { id: string }) => m.id === memory?.id)).toBe(true);
+      expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_SECRET_DO_NOT_COPY");
+      expect(last?.body).toContain("needs reconciliation");
+    } else {
+      expect(run?.status).toBe("failed");
+      expect(run?.error).toContain("outcome unknown");
+      expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["uncertain_write"], outcomeUnknown: true });
+      expect(last?.body).toContain("outcome unknown");
     }
-    yield { type: "done", text: "Merge feito." };
+  },
+);
+
+test("a recorded bridged call with no result is not resumed after its computer drops", async () => {
+  let fallbackCalls = 0;
+  f = await setup({
+    reply: () => {
+      fallbackCalls++;
+      return { chunks: ["fallback"] };
+    },
+  });
+  await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    await addRunStep(f.db, { id: turn.runId, orgId: turn.orgId }, "tool_call", {
+      toolUseId: "pending-1",
+      name: "write_file",
+      input: { path: "out.txt" },
+    });
+    yield { type: "error", code: "machine_offline", message: "connection lost", retryable: true };
   });
   const handlers = createJobHandlers({
     ...f.jobDeps,
     brains: { claude_code: () => brain },
     machines: { status: async (id) => statusOf(id) },
   });
-  await post(f, "@dev faz o merge do PR 42");
+  await post(f, "@dev update the file");
   await drainOutbox(f.db, handlers);
-
-  let [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.status).toBe("waiting_approval");
-  expect(run?.error).toBeNull();
-  const transcript = run?.transcript as { pending?: { calls: { toolUseId: string; bridged?: boolean }[] } };
-  expect(transcript.pending?.calls).toMatchObject([{ toolUseId: "call-1", bridged: true }]);
-  const usage = await f.db
-    .select()
-    .from(schema.usageRecords)
-    .where(eq(schema.usageRecords.runId, run?.id ?? ""));
-  expect(usage.some((u) => u.provider === "anthropic")).toBe(false);
-
-  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
-  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval?.id ?? "", {
-    decision: "approve",
-  });
-  await drainOutbox(f.db, handlers);
-  [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.status).toBe("done");
-  expect(seen.length).toBe(2);
-  expect(gh.executed).toEqual([{ tool: "github_merge_pr", input: { repo: "acme/app", pr: 42 } }]);
+  expect(seen.length).toBe(1);
+  expect(fallbackCalls).toBe(0);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("failed");
+  const last = (await timeline(f)).at(-1);
+  expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["write_file"], outcomeUnknown: true });
+  expect(last?.body).toContain("reconcile before retrying");
 });
+
+test.each(["reported error", "mismatched name"] as const)(
+  "conflicting %s remains an unknown tool outcome",
+  async (conflict) => {
+    const source: ToolSource = {
+      name: "conflicting",
+      tools: async () => [
+        {
+          name: "conflicting_write",
+          description: "Test write",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => ({ content: "ok" }),
+        },
+      ],
+    };
+    f = await setup({ toolSources: [source], reply: () => ({ chunks: ["fallback"] }) });
+    const machineId = await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id: "conflict-1", name: "conflicting_write", input: {} },
+      );
+      yield {
+        type: "tool_call",
+        id: "conflict-1",
+        name: conflict === "mismatched name" ? "different_write" : "conflicting_write",
+        input: {},
+        executed: { content: "connection lost", isError: conflict === "reported error" },
+      };
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev perform the write");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
+test.each(["error then success", "duplicate intent"] as const)(
+  "durable %s is not cleared by a later success",
+  async (kind) => {
+    f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const run = { id: turn.runId, orgId: turn.orgId };
+      const call = { toolUseId: "repeated-1", name: "write_file", input: { path: "out.txt" } };
+      await addRunStep(f.db, run, "tool_call", call);
+      if (kind === "duplicate intent") await addRunStep(f.db, run, "tool_call", call);
+      else await addRunStep(f.db, run, "tool_result", { toolUseId: "repeated-1", name: "write_file", isError: true });
+      await addRunStep(f.db, run, "tool_result", { toolUseId: "repeated-1", name: "write_file", isError: false });
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev update the file");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
+test("a synthetic resumed background transcript with held text cannot turn an unknown effect into done", async () => {
+  f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+  await computerAgent(f);
+  const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+    const run = { id: turn.runId, orgId: turn.orgId };
+    await addRunStep(f.db, run, "tool_call", { toolUseId: "held-1", name: "write_file", input: {} });
+    await addRunStep(f.db, run, "tool_result", { toolUseId: "held-1", name: "write_file", isError: true });
+    yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const message = await post(f, "@dev update the file");
+  const [run] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.triggerMessageId, message.id));
+  if (!run) throw new Error("Expected the background run to exist");
+  await f.db
+    .update(schema.agentRuns)
+    .set({
+      background: true,
+      transcript: {
+        system: [],
+        messages: [{ role: "user", content: "update the file" }],
+        postedUpTo: 1,
+        postedCount: 0,
+        held: "An earlier held response",
+      },
+    })
+    .where(eq(schema.agentRuns.id, run.id));
+  await drainOutbox(f.db, handlers);
+  const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+  expect(after?.status).toBe("failed");
+  expect(after?.error).toContain("tool outcome unknown; reconcile before retrying");
+  expect((after?.transcript as { messages?: unknown[] })?.messages?.length).toBeGreaterThan(1);
+});
+
+test.each(["duplicate reported", "different input", "malformed intent"] as const)(
+  "%s is not treated as a certain tool outcome",
+  async (kind) => {
+    f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const run = { id: turn.runId, orgId: turn.orgId };
+      if (kind === "malformed intent") {
+        await addRunStep(f.db, run, "tool_call", { toolUseId: "evidence-1", input: { path: "a" } });
+      } else {
+        if (kind === "different input") {
+          await addRunStep(f.db, run, "tool_call", {
+            toolUseId: "evidence-1",
+            name: "write_file",
+            input: { path: "a" },
+          });
+          await addRunStep(f.db, run, "tool_result", { toolUseId: "evidence-1", name: "write_file", isError: false });
+        }
+        const call = {
+          type: "tool_call" as const,
+          id: "evidence-1",
+          name: "write_file",
+          input: { path: "b" },
+          executed: { content: "ok", isError: false },
+        };
+        yield call;
+        if (kind === "duplicate reported") yield call;
+      }
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev update the file");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
+test.each(["during", "after", "id_collision"] as const)(
+  "an unknown earlier effect and approval %s the turn must not resume before reconciliation",
+  async (when) => {
+    let firstAttempts = 0;
+    const unknown: ToolSource = {
+      name: "uncertain",
+      tools: async () => [
+        {
+          name: "uncertain_write",
+          description: "Synthetic uncertain effect",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => {
+            firstAttempts++;
+            return { content: "delivery unknown", isError: true };
+          },
+        },
+      ],
+    };
+    const gh = fakeGithub();
+    f = await setup({ toolSources: [unknown, gh.source], reply: () => ({ chunks: ["fallback"] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+      if (n > 0) {
+        yield { type: "done", text: "done" };
+        return;
+      }
+      const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+      await executeToolForRun(f.jobDeps, id, {
+        id: when === "id_collision" ? "approval-1" : "uncertain-1",
+        name: "uncertain_write",
+        input: {},
+      });
+      await executeToolForRun(f.jobDeps, id, {
+        id: "approval-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+      });
+      if (when === "during") {
+        const [pending] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+        if (!pending) throw new Error("expected pending approval");
+        await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, pending.id, {
+          decision: "approve",
+        });
+      }
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev run the work");
+    await drainOutbox(f.db, handlers);
+    const [before] = await f.db.select().from(schema.agentRuns);
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, {
+      status: when === "during" ? "decided" : "pending",
+    });
+    expect(firstAttempts).toBe(1);
+    expect(before?.status).toBe("waiting_approval");
+    expect(approval).toBeDefined();
+    if (!approval) throw new Error("expected approval");
+    expect((await timeline(f)).at(-1)?.body).toContain("outcome is unknown");
+    if (when !== "during")
+      await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+    await drainOutbox(f.db, handlers);
+    const [after] = await f.db.select().from(schema.agentRuns);
+    const [decided] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "decided" });
+    expect(decided?.id).toBe(approval.id);
+    expect(decided?.status).toBe("approved");
+    expect(after?.status).toBe("waiting_approval");
+    if (!after) throw new Error("expected run");
+    expect(after.transcript).toMatchObject({ effectUncertain: { runId: after.id, tools: ["uncertain_write"] } });
+    await enqueue(f.db, {
+      orgId: f.org.id,
+      kind: "agent_run.execute",
+      payload: { runId: after.id },
+      dedupeKey: `fixture-restart:${after.id}`,
+      maxAttempts: 4,
+    });
+    const restartedHandlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await drainOutbox(f.db, restartedHandlers);
+    expect(gh.executed).toEqual([]);
+    expect(seen.length).toBe(1);
+  },
+);
+
+test("an evidence read failure keeps the approval held through retry", async () => {
+  const gh = fakeGithub();
+  f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["fallback"] }) });
+  await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+  const machineId = await computerAgent(f);
+  let injected = false;
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    yield { type: "tool_started", id: "native-1", name: "uncertain_write" };
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "approval-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+      },
+    );
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: sql`jsonb_set(coalesce(${schema.agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', 'null'::jsonb, true)`,
+      })
+      .where(eq(schema.agentRuns.id, turn.runId));
+    const original = f.db.select.bind(f.db);
+    Reflect.set(f.db, "select", (...args: unknown[]) => {
+      const selected = args[0] as { kind?: unknown; data?: unknown } | undefined;
+      if (!injected && selected?.kind === schema.agentRunSteps.kind && selected.data === schema.agentRunSteps.data) {
+        injected = true;
+        Reflect.set(f.db, "select", original);
+        throw new Error("synthetic evidence query failure");
+      }
+      return Reflect.apply(original, f.db, args);
+    });
+    yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev merge the PR");
+  await drainOutbox(f.db, handlers);
+  expect(injected).toBe(true);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+  await drainOutbox(f.db, handlers);
+  expect(gh.executed).toEqual([]);
+  expect(run?.transcript).toHaveProperty("effectUncertain");
+  expect(seen).toHaveLength(1);
+});
+
+test.each(["different", "sparse", "getter"] as const)(
+  "a pending call with %s gateway and runner inputs remains unknown",
+  async (kind) => {
+    const gh = fakeGithub();
+    const merge = gh.tools.find((tool) => tool.name === "github_merge_pr");
+    if (!merge) throw new Error("missing fake merge tool");
+    merge.inputSchema = {
+      type: "object",
+      properties: { repo: { type: "string" }, pr: { type: "integer" }, extra: { type: "array" } },
+      required: ["repo", "pr"],
+      additionalProperties: false,
+    };
+    f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["fallback"] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const input = {
+        repo: "acme/app",
+        pr: 42,
+        why: "CI passed on the PR and it was reviewed: merging ships the fix.",
+        extra: [1, null],
+      };
+      const sparse: unknown[] = Array(2);
+      sparse[0] = 1;
+      Object.assign(sparse, { extra: "x" });
+      const reported =
+        kind === "different"
+          ? { repo: "other/app", pr: 99 }
+          : { ...input, extra: kind === "sparse" ? sparse : [1, null] };
+      if (kind === "getter") Object.defineProperty(reported, "extra", { enumerable: true, get: () => [1, null] });
+      const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+      const result = await executeToolForRun(f.jobDeps, id, {
+        id: "call-1",
+        name: "github_merge_pr",
+        input,
+      });
+      yield {
+        type: "tool_call",
+        id: "call-1",
+        name: "github_merge_pr",
+        input: reported,
+        executed: result,
+      };
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev merge the PR");
+    await drainOutbox(f.db, handlers);
+    const [before] = await f.db.select().from(schema.agentRuns);
+    expect(before?.transcript).toMatchObject({ effectUncertain: { tools: ["github_merge_pr"] } });
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+    if (!approval) throw new Error("expected pending approval");
+    await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+    await drainOutbox(f.db, handlers);
+    expect(gh.executed).toEqual([]);
+  },
+);
+
+test.each(["absent", "json null"] as const)(
+  "a computer brain that fails after a bridged pause with %s marker then resumes",
+  async (marker) => {
+    const gh = fakeGithub();
+    f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["Respondi pela API."] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+      if (n === 0) {
+        const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+        const input = {
+          repo: "acme/app",
+          pr: 42,
+          why: "CI passed on the PR and it was reviewed: merging ships the fix.",
+        };
+        const result = await executeToolForRun(f.jobDeps, id, {
+          id: "call-1",
+          name: "github_merge_pr",
+          input,
+        });
+        yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input, executed: result };
+        yield { type: "error", code: "executor_crashed", message: "Claude Code exited", retryable: true };
+        return;
+      }
+      yield { type: "done", text: "Merge feito." };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev faz o merge do PR 42");
+    await drainOutbox(f.db, handlers);
+
+    let [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("waiting_approval");
+    expect(run?.error).toBeNull();
+    const transcript = run?.transcript as { pending?: { calls: { toolUseId: string; bridged?: boolean }[] } };
+    expect(transcript.pending?.calls).toMatchObject([{ toolUseId: "call-1", bridged: true }]);
+    const usage = await f.db
+      .select()
+      .from(schema.usageRecords)
+      .where(eq(schema.usageRecords.runId, run?.id ?? ""));
+    expect(usage.some((u) => u.provider === "anthropic")).toBe(false);
+
+    if (marker === "json null")
+      await f.db
+        .update(schema.agentRuns)
+        .set({
+          transcript: sql`jsonb_set(coalesce(${schema.agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', 'null'::jsonb, true)`,
+        })
+        .where(eq(schema.agentRuns.id, run?.id ?? ""));
+
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+    await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval?.id ?? "", {
+      decision: "approve",
+    });
+    await drainOutbox(f.db, handlers);
+    [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("done");
+    expect(seen.length).toBe(2);
+    expect(gh.executed).toEqual([{ tool: "github_merge_pr", input: { repo: "acme/app", pr: 42 } }]);
+  },
+);
 
 /** Its pending `agent_run.execute` jobs due now: their backoff and waits are over. */
 const runJobsDue = (fx: Fixture) =>
@@ -3977,7 +4540,13 @@ test("held in line as it resumes after a decision: the turn that runs later read
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
     }
@@ -4571,4 +5140,1194 @@ test("a refusal of the computer's own waits for that computer: never the provide
   const after = await runById(f, reads.run.id);
   expect(after?.status).toBe("done");
   expect(after?.waitingMachineId).toBeNull();
+});
+
+test("a verified pre-start Codex quota handoff continues the same run on a fresh synthetic Claude session", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) => ({
+          targetKind: "claude_code",
+          machineId: r.machineId,
+          model: "claude-fable-5-2",
+          sourcePool: "synthetic-codex",
+          targetPool: "synthetic-claude",
+          noPaidExtraUsage: true as const,
+          noCredentialsInContext: true as const,
+          evidence: "synthetic-only",
+          observedAt: Date.now(),
+          validUntil: Date.now() + 60_000,
+        }),
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(1);
+  expect(run?.status).toBe("done");
+  expect(targetTurns[0]?.runId).toBe(run?.id);
+  expect(targetTurns[0]?.agentId).toBe(f.agent.id);
+  expect(targetTurns[0]?.session?.resume).toBe(false);
+  const sent = JSON.stringify(targetTurns[0]);
+  expect(sent).toContain("retain this synthetic goal");
+  expect(sent).toContain("SYNTH_PRIOR_MESSAGE");
+  expect(sent).toContain("SYNTH_PROGRESS");
+  expect(sent).toContain("SYNTH_AGENT_INSTRUCTIONS");
+  expect(sent).toContain("SYNTH_SKILL_NAME");
+  expect(targetTurns[0]?.tools.map((tool) => tool.name)).toContain("load_skill");
+  expect(sent).toContain("SYNTH_MEMORY_SENTINEL");
+  const handoff = (run?.transcript as { quotaCliHandoff?: { sourceSessionId: string; targetSessionId: string } })
+    ?.quotaCliHandoff;
+  expect(handoff?.sourceSessionId).not.toBe(handoff?.targetSessionId);
+  expect(targetTurns[0]?.session?.id).toBe(handoff?.targetSessionId);
+  expect(run?.transcript).toMatchObject({
+    quotaCliHandoff: { disposition: "CONTINUE", sourceKind: "codex", targetKind: "claude_code" },
+  });
+});
+
+test("reserve forecast does not fail the right hand or run its continuation selector", async () => {
+  f = await setup();
+  const machineId = await computerAgent(f, { builtin: "right_hand", brain: "codex", brainExtraUsage: false });
+  const [account] = await f.db
+    .insert(schema.machineAccounts)
+    .values({
+      id: Bun.randomUUIDv7(),
+      orgId: f.org.id,
+      machineId,
+      kind: "codex",
+      label: "synthetic",
+      status: "active",
+      createdBy: f.owner.id,
+      shared: true,
+      usage: { source: "probe", at: new Date().toISOString(), windows: [{ kind: "seven_day", usedPercent: 94 }] },
+    })
+    .returning();
+  await f.db.update(schema.agents).set({ brainAccountId: account?.id }).where(eq(schema.agents.id, f.agent.id));
+  let turns = 0,
+    qualifications = 0;
+  const source: Brain = {
+    kind: "codex",
+    async *run() {
+      turns++;
+      yield { type: "done", text: "ok" };
+    },
+  };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source },
+    machines: {
+      status: async (id) =>
+        statusOf(id, {
+          protocol: MACHINE_PROTOCOL_VERSION,
+          executors: { codex: { version: "0.163.0" }, detectedAt: new Date().toISOString() },
+        }),
+    },
+    quotaCliContinuation: {
+      qualify: async () => {
+        qualifications++;
+        return null;
+      },
+    },
+  });
+  await post(f, "@dev right hand synthetic");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(turns).toBe(1);
+  expect(qualifications).toBe(0);
+  expect(run?.status).toBe("done");
+  expect(run?.error).toBeNull();
+});
+
+test("resolveBrain without a machines adapter does not load stored plan usage", async () => {
+  f = await setup();
+  const machineId = await computerAgent(f, { brain: "codex" });
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94 }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const question = await post(f, "@dev synthetic");
+  await drainOutbox(f.db, f.handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+  if (!run || !agent) throw new Error("missing fixture");
+  const plan = await resolveBrain({ db: f.db }, agent, run, question.id);
+  expect(plan.usage).toBeUndefined();
+  expect(plan.quotaReserve?.state).toBe("unknown");
+});
+
+test.each([true, false])(
+  "reserve fallback does not hand a previous Codex session to another harness; usage recorded: %s",
+  async (recordUsage) => {
+    f = await setup();
+    const machineId = await computerAgent(f, { brain: "codex", brainExtraUsage: false });
+    const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+    if (!machine) throw new Error("missing machine");
+    const usage = (percent: number) => ({
+      source: "probe" as const,
+      at: new Date().toISOString(),
+      windows: [{ kind: "seven_day" as const, usedPercent: percent }],
+    });
+    await f.db
+      .update(schema.machines)
+      .set({ executors: { ...machine.executors, ownUsage: { codex: usage(10), claude_code: usage(10) } } })
+      .where(eq(schema.machines.id, machineId));
+    const sourceTurns: BrainTurn[] = [],
+      targetTurns: BrainTurn[] = [];
+    const source: Brain = {
+      kind: "codex",
+      async *run(t) {
+        sourceTurns.push(t);
+        if (recordUsage) yield { type: "usage", input: 10, output: 1, source: "plan" };
+        yield { type: "done", text: "ok" };
+      },
+    };
+    const target: Brain = {
+      kind: "claude_code",
+      async *run(t) {
+        targetTurns.push(t);
+        yield { type: "done", text: "wrong" };
+      },
+    };
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { codex: () => source, claude_code: () => target },
+      machines: {
+        status: async (id) =>
+          statusOf(id, {
+            protocol: MACHINE_PROTOCOL_VERSION,
+            pairedByUserId: f.owner.id,
+            executors: {
+              codex: { version: "0.163.0" },
+              claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+              detectedAt: new Date().toISOString(),
+            },
+          }),
+      },
+      quotaCliContinuation: {
+        qualify: async (r) => ({
+          targetKind: "claude_code",
+          machineId: r.machineId,
+          model: "claude-fable-5-2",
+          sourcePool: "codex",
+          targetPool: "claude",
+          noPaidExtraUsage: true,
+          noCredentialsInContext: true,
+          evidence: "synthetic",
+          observedAt: Date.now(),
+          validUntil: Date.now() + 60000,
+        }),
+      },
+    });
+    const first = await post(f, "@dev synthetic first");
+    await drainOutbox(f.db, handlers);
+    await f.db
+      .update(schema.machines)
+      .set({ executors: { ...machine.executors, ownUsage: { codex: usage(94), claude_code: usage(10) } } })
+      .where(eq(schema.machines.id, machineId));
+    await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, f.general.id, {
+      body: "@dev synthetic second",
+      threadId: first.id,
+    });
+    await drainOutbox(f.db, handlers);
+    expect(sourceTurns).toHaveLength(1);
+    expect(targetTurns).toHaveLength(0);
+    const rows = await f.db.select().from(schema.agentRuns);
+    const waiting = rows.find((row) => row.status === "waiting_input");
+    expect(waiting?.transcript).toMatchObject({ waitingForBrain: { code: "usage_pause", source: "plan" } });
+    expect(waiting?.transcript).toHaveProperty("messages");
+    const jobs = await f.db
+      .select()
+      .from(schema.outbox)
+      .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+    expect(jobs.some((job) => job.payload.runId === waiting?.id && typeof job.payload.wait === "string")).toBe(true);
+  },
+);
+
+test("a parked reserve run reselects an alternate after its wait", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  let eligible = false;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) =>
+          eligible
+            ? {
+                targetKind: "claude_code",
+                machineId: r.machineId,
+                model: "claude-fable-5-2",
+                sourcePool: "synthetic-codex",
+                targetPool: "synthetic-claude",
+                noPaidExtraUsage: true as const,
+                noCredentialsInContext: true as const,
+                evidence: "synthetic-only",
+                observedAt: Date.now(),
+                validUntil: Date.now() + 60_000,
+              }
+            : null,
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await drainOutbox(f.db, handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.status).toBe("waiting_input");
+  expect(sourceTurns).toHaveLength(0);
+  eligible = true;
+  await f.db
+    .update(schema.outbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.id).toBe(parked?.id);
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(1);
+  expect(run?.status).toBe("done");
+  expect(targetTurns[0]?.runId).toBe(run?.id);
+  expect(targetTurns[0]?.agentId).toBe(f.agent.id);
+  expect(targetTurns[0]?.session?.resume).toBe(false);
+  const sent = JSON.stringify(targetTurns[0]);
+  expect(sent).toContain("retain this synthetic goal");
+  expect(sent).toContain("SYNTH_PRIOR_MESSAGE");
+  expect(sent).toContain("SYNTH_PROGRESS");
+  expect(sent).toContain("SYNTH_AGENT_INSTRUCTIONS");
+  expect(sent).toContain("SYNTH_SKILL_NAME");
+  expect(targetTurns[0]?.tools.map((tool) => tool.name)).toContain("load_skill");
+  expect(sent).toContain("SYNTH_MEMORY_SENTINEL");
+  const handoff = (run?.transcript as { quotaCliHandoff?: { sourceSessionId: string; targetSessionId: string } })
+    ?.quotaCliHandoff;
+  expect(handoff?.sourceSessionId).not.toBe(handoff?.targetSessionId);
+  expect(targetTurns[0]?.session?.id).toBe(handoff?.targetSessionId);
+  expect(run?.transcript).toMatchObject({
+    quotaCliHandoff: { disposition: "CONTINUE", sourceKind: "codex", targetKind: "claude_code" },
+  });
+});
+
+test("a parked reserve run stays queued on unknown stale source telemetry", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const eligible = false;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) =>
+          eligible
+            ? {
+                targetKind: "claude_code",
+                machineId: r.machineId,
+                model: "claude-fable-5-2",
+                sourcePool: "synthetic-codex",
+                targetPool: "synthetic-claude",
+                noPaidExtraUsage: true as const,
+                noCredentialsInContext: true as const,
+                evidence: "synthetic-only",
+                observedAt: Date.now(),
+                validUntil: Date.now() + 60_000,
+              }
+            : null,
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await drainOutbox(f.db, handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.status).toBe("waiting_input");
+  expect(sourceTurns).toHaveLength(0);
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date(Date.now() - 3_600_000).toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94 }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13 }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  await f.db
+    .update(schema.outbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.id).toBe(parked?.id);
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(0);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toMatchObject({
+    quotaReservePending: { usedPercent: 94 },
+    waitingForBrain: { code: "usage_pause" },
+  });
+  const jobs = await f.db
+    .select()
+    .from(schema.outbox)
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
+});
+
+test("a failed reserve state write rolls back its scheduled wake", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const eligible = false;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) =>
+          eligible
+            ? {
+                targetKind: "claude_code",
+                machineId: r.machineId,
+                model: "claude-fable-5-2",
+                sourcePool: "synthetic-codex",
+                targetPool: "synthetic-claude",
+                noPaidExtraUsage: true as const,
+                noCredentialsInContext: true as const,
+                evidence: "synthetic-only",
+                observedAt: Date.now(),
+                validUntil: Date.now() + 60_000,
+              }
+            : null,
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await f.db.execute(
+    sql`create function fail_reserve_wait() returns trigger language plpgsql as $$ begin if new.status = 'waiting_input' then raise exception 'synthetic wait-write failure'; end if; return new; end $$`,
+  );
+  await f.db.execute(
+    sql`create trigger synthetic_fail_reserve_wait before update on agent_runs for each row execute function fail_reserve_wait()`,
+  );
+  await drainOutbox(f.db, handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.status).not.toBe("waiting_input");
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(0);
+  const jobs = await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"));
+  expect(jobs.some((job) => job.dedupeKey?.includes(":usage:"))).toBe(false);
+});
+
+test("a parked reserve run stays queued when the next worker has no qualifier", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const eligible = false;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) =>
+          eligible
+            ? {
+                targetKind: "claude_code",
+                machineId: r.machineId,
+                model: "claude-fable-5-2",
+                sourcePool: "synthetic-codex",
+                targetPool: "synthetic-claude",
+                noPaidExtraUsage: true as const,
+                noCredentialsInContext: true as const,
+                evidence: "synthetic-only",
+                observedAt: Date.now(),
+                validUntil: Date.now() + 60_000,
+              }
+            : null,
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await drainOutbox(f.db, handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.status).toBe("waiting_input");
+  expect(sourceTurns).toHaveLength(0);
+  const disabledHandlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+  });
+  await f.db
+    .update(schema.outbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  await drainOutbox(f.db, disabledHandlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.id).toBe(parked?.id);
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(0);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toMatchObject({
+    quotaReservePending: { usedPercent: 94 },
+    waitingForBrain: { code: "usage_pause" },
+  });
+  const jobs = await f.db
+    .select()
+    .from(schema.outbox)
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
+});
+
+test("a parked reserve run never uses legacy fallback when the source is offline", async () => {
+  f = await setup({ skillTools: true });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    ownerUserId: f.owner.id,
+    brainExtraUsage: false,
+    instructions: "SYNTH_AGENT_INSTRUCTIONS",
+  });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const [skill] = await f.db
+    .insert(schema.skills)
+    .values({
+      orgId: f.org.id,
+      slug: "synthetic-skill",
+      name: "SYNTH_SKILL_NAME",
+      description: "SYNTH_SKILL_DESCRIPTION",
+      body: "SYNTH_SKILL_BODY",
+      source: "manual",
+    })
+    .returning();
+  if (!skill) throw new Error("missing skill");
+  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
+  await f.db.insert(schema.contextItems).values({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "note",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    content: "SYNTH_MEMORY_SENTINEL",
+    pinned: true,
+  });
+  const sourceTurns: BrainTurn[] = [],
+    targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      yield { type: "done", text: "wrong" };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      yield { type: "done", text: "synthetic Claude continued" };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const eligible = false;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => status(id) },
+    ...{
+      quotaCliContinuation: {
+        qualify: async (r: { machineId: string }) =>
+          eligible
+            ? {
+                targetKind: "claude_code",
+                machineId: r.machineId,
+                model: "claude-fable-5-2",
+                sourcePool: "synthetic-codex",
+                targetPool: "synthetic-claude",
+                noPaidExtraUsage: true as const,
+                noCredentialsInContext: true as const,
+                evidence: "synthetic-only",
+                observedAt: Date.now(),
+                validUntil: Date.now() + 60_000,
+              }
+            : null,
+      },
+    },
+  });
+  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
+  await post(f, "@dev retain this synthetic goal");
+  await drainOutbox(f.db, handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.status).toBe("waiting_input");
+  expect(sourceTurns).toHaveLength(0);
+  const disabledHandlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines: { status: async (id) => ({ ...status(id), online: false }) },
+    quotaCliContinuation: { qualify: async () => null },
+  });
+  await f.db
+    .update(schema.outbox)
+    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  await drainOutbox(f.db, disabledHandlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.id).toBe(parked?.id);
+  expect(sourceTurns).toHaveLength(0);
+  expect(targetTurns).toHaveLength(0);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toMatchObject({
+    quotaReservePending: { usedPercent: 94 },
+    waitingForBrain: { code: "usage_pause" },
+  });
+  const jobs = await f.db
+    .select()
+    .from(schema.outbox)
+    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
+});
+
+test.each(["error", "done"] as const)(
+  "an admitted bridge effect before its tool step blocks %s completion",
+  async (ending) => {
+    let fallback = 0;
+    f = await setup({
+      reply: () => {
+        fallback++;
+        return { chunks: ["fallback"] };
+      },
+    });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const [token] = await f.db
+        .select()
+        .from(schema.runToolTokens)
+        .where(and(eq(schema.runToolTokens.runId, turn.runId), eq(schema.runToolTokens.effectEpochState, "open")));
+      if (!token || !(await admitBridgeEffect(f.db, turn.runId, token.id, "pre-step")))
+        throw new Error("failed to admit fixture effect");
+      if (ending === "error")
+        yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+      else yield { type: "done", text: "done" };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev run the work");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).not.toBe("done");
+    expect(run?.transcript).toHaveProperty("effectUncertain");
+    expect(fallback).toBe(0);
+  },
+);
+
+test("an approved effect with an uncertain result stops before another model turn", async () => {
+  const bench = workbench({ content: "connection lost after effect", error: true });
+  f = await setup({ toolSources: [bench.source] });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "ci:run" }]);
+  const machineId = await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+    if (n > 0) {
+      yield { type: "done", text: "done" };
+      return;
+    }
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "relay-1",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+      },
+    );
+    yield { type: "done", text: "waiting" };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev run CI");
+  await drainOutbox(f.db, handlers);
+  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(bench.ran).toHaveLength(1);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toHaveProperty("effectUncertain");
+  expect(seen).toHaveLength(1);
+});
+
+test("a claimed approval without a durable result is never replayed on resume", async () => {
+  const bench = workbench();
+  f = await setup({ toolSources: [bench.source] });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "ci:run" }]);
+  const machineId = await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "relay-crash",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+      },
+    );
+    yield { type: "done", text: "waiting" };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev run CI");
+  await drainOutbox(f.db, handlers);
+  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+  await f.db
+    .update(schema.approvals)
+    .set({ executedAt: new Date(), result: null })
+    .where(eq(schema.approvals.id, approval.id));
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("waiting_approval");
+  expect(bench.ran).toHaveLength(0);
+  expect(seen).toHaveLength(1);
+});
+
+test("a quota cut after multiple turns preserves scoped portable source references and keeps effects held", async () => {
+  let attempts = 0;
+  const source: ToolSource = {
+    name: "synthetic-checkpoint",
+    tools: async () => [
+      {
+        name: "checkpoint_write",
+        description: "Synthetic write",
+        scope: "",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        execute: async () => {
+          attempts++;
+          return attempts === 1 ? { content: "SYNTH_TOOL_SECRET" } : { content: "SYNTH_UNKNOWN_SECRET", isError: true };
+        },
+      },
+    ],
+  };
+  f = await setup({
+    toolSources: [source],
+    judge: (kind, _id, state) =>
+      kind === "follow_through" ? (String(state.reply).includes("vou") ? "continue" : "done") : undefined,
+  });
+  const other = await createChannel(f.db, f.owner.id, f.org.id, { name: "private-evidence" });
+  const hiddenMessage = await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, other.id, {
+    body: "PRIVATE_OTHER_CHANNEL",
+  });
+  const [hiddenMemory] = await f.db
+    .insert(schema.contextItems)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      kind: "note",
+      scopeType: "agent",
+      scopeId: f.agent.id,
+      content: "PRIVATE_MEMORY",
+      channelIds: [other.id],
+    })
+    .returning();
+  const machineId = await computerAgent(f);
+  let turns = 0;
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      turns++;
+      if (turns === 1) {
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: [hiddenMemory?.id] });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: Array(5000).fill(hiddenMemory?.id) });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "tool_result", { toolUseId: "large-result", payload: "x".repeat(2_000_000) });
+      }
+      const id = `checkpoint-${turns}`;
+      const result = await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id, name: "checkpoint_write", input: {} },
+      );
+      if (turns === 1) {
+        yield { type: "tool_call", id, name: "checkpoint_write", input: {}, executed: result };
+        yield { type: "done", text: "Feito; vou continuar." };
+      } else yield { type: "error", code: "plan_limit", message: "synthetic quota", retryable: true, worked: false };
+    },
+  };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const goal = await post(f, "@dev synthetic prior progress and goal");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(turns).toBe(2);
+  expect(attempts).toBe(2);
+  expect(run?.status).toBe("waiting_input");
+  const checkpoint = run?.transcript?.continuityCheckpoint as PortableCheckpointForTest | undefined;
+  if (!checkpoint) throw new Error("missing checkpoint");
+  expect(checkpoint).toMatchObject({
+    runId: run?.id,
+    agentId: f.agent.id,
+    goal: { state: "reference", messageId: goal.id },
+    effects: "unknown",
+    dispatch: "hold",
+    portable: { complete: false, dispatch: "hold" },
+  });
+  expect(
+    checkpoint.portable.events.filter((e: { kind: string }) => e.kind === "tool_call").length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(
+    checkpoint.portable.events.filter((e: { kind: string }) => e.kind === "tool_result").length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(checkpoint.portable.transcript.messageCount).toBeGreaterThan(1);
+  expect(checkpoint.portable.gaps).toContain("memory_refs_oversized");
+  expect(checkpoint.portable.messages.some((item: { id: string }) => item.id === hiddenMessage.id)).toBe(false);
+  expect(checkpoint.portable.memories.some((item: { id: string }) => item.id === hiddenMemory?.id)).toBe(false);
+  expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_TOOL_SECRET");
+  expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_UNKNOWN_SECRET");
 });

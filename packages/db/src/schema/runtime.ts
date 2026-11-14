@@ -1241,9 +1241,19 @@ export const runToolTokens = pgTable(
     taskId: uuid().references(() => machineTasks.id, { onDelete: "cascade" }),
     /** SHA-256 (hex) of `agr_…`. */
     tokenHash: text().notNull().unique(),
+    /** A run-turn bridge's serialized admission gate. Null marks an unsupported legacy token. */
+    effectEpochState: text(),
+    /** Durable call states only; never inputs or credentials. */
+    effectCalls: jsonb().notNull().default({}),
     expiresAt: timestamp({ withTimezone: true }).notNull(),
     revokedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.runId), index().on(t.taskId)],
+  (t) => [
+    index().on(t.runId),
+    index().on(t.taskId),
+    uniqueIndex("run_tool_tokens_one_open_effect_epoch")
+      .on(t.runId)
+      .where(sql`${t.effectEpochState} in ('open', 'closed_unknown')`),
+  ],
 );

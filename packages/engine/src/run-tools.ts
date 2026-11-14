@@ -34,6 +34,7 @@ import { routineBriefOf } from "./routine-brief";
 import type { BridgeIdentity } from "./run-tool-tokens";
 import { type AgentRun, replyThreadOf } from "./runs";
 import { publishSecret, type SecretRequestRow, secretLabelOf, secretRequestView, syncSecretMessage } from "./secrets";
+import { keepRunMarkers } from "./sticky-transcript";
 import { artifactToolDetail, promptAnswer, promptPoll, toolCode, toolCommand, toolDetail } from "./tool-detail";
 import { directoryRole, HARNESS_PREFIX, ON_DEMAND_USE, resolveDirectoryTool } from "./tools/directory";
 import { type Approval, type InvokeResult, isSensitive, type ToolGateway } from "./tools/gateway";
@@ -364,7 +365,7 @@ async function recordBridgeEffects(
     mergeToolEffects(kept, effects);
     await tx
       .update(agentRuns)
-      .set({ transcript: { ...t, [BRIDGE_EFFECTS]: kept }, updatedAt: new Date() })
+      .set({ transcript: keepRunMarkers({ ...t, [BRIDGE_EFFECTS]: kept }), updatedAt: new Date() })
       .where(eq(agentRuns.id, run.id));
   });
   if (update) await publishChannelEvent(deps.pubsub, { type: "memory.updated", ...where, update });
@@ -387,8 +388,11 @@ export function storedTranscript(t: object): SQL {
   const initial = isFreshPublicationCapture(publicationCapture)
     ? sql`case when not (${current} ? 'system') then jsonb_build_object('publicationCapture',${pgSafeStringify(publicationCapture)}::jsonb) else '{}'::jsonb end`
     : sql`'{}'::jsonb`;
-  return sql`(${pgSafeStringify(rest)}::jsonb || ${keep(BRIDGE_EFFECTS)} || ${keep("metadata")} ||
-    case when ${current} ? 'publicationCapture' then ${keep("publicationCapture")} else ${initial} end)`;
+  // Quota hold markers (continuityCheckpoint, effectUncertain) are sticky against stale writers.
+  return keepRunMarkers(
+    sql`(${pgSafeStringify(rest)}::jsonb || ${keep(BRIDGE_EFFECTS)} || ${keep("metadata")} ||
+    case when ${current} ? 'publicationCapture' then ${keep("publicationCapture")} else ${initial} end)`,
+  );
 }
 
 /** Takes (and clears) the side effects the bridge kept for this run (`recordBridgeEffects`). */
@@ -403,7 +407,10 @@ export async function takeBridgeEffects(db: Database, runId: string): Promise<To
     const kept = t?.[BRIDGE_EFFECTS] as ToolSideEffects | undefined;
     if (!t || !kept) return null;
     const { [BRIDGE_EFFECTS]: _taken, ...rest } = t;
-    await tx.update(agentRuns).set({ transcript: rest, updatedAt: new Date() }).where(eq(agentRuns.id, runId));
+    await tx
+      .update(agentRuns)
+      .set({ transcript: keepRunMarkers(rest), updatedAt: new Date() })
+      .where(eq(agentRuns.id, runId));
     return kept;
   });
 }
@@ -1156,11 +1163,11 @@ export async function suspendRunForTool(
         // Without a transcript (never executed by the engine) there is nothing to resume from: state only.
         ...(transcript
           ? {
-              transcript: {
+              transcript: keepRunMarkers({
                 ...transcript,
                 postedCount: (transcript.postedCount ?? 0) + pause.messages.length,
                 pending: { calls: [...(transcript.pending?.calls ?? []), pendingCall] },
-              },
+              }),
             }
           : {}),
       })

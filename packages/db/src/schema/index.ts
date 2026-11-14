@@ -22,6 +22,7 @@ export * from "./paperclip-workspaces";
 export * from "./push";
 export * from "./runtime";
 export * from "./sandbox";
+export * from "./shared-budget";
 export * from "./skills";
 export * from "./storage";
 export * from "./team-actions";

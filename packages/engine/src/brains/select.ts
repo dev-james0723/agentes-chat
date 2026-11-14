@@ -497,6 +497,59 @@ export const NO_AI_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /** What the engine runs a turn with. */
+/** A recent shared account-window reading, never an assertion that a subscription is exhausted. */
+export interface QuotaReserve {
+  state: "low" | "normal" | "unknown";
+  thresholdPercent: number;
+  pool: { machineId: string | null; kind: BrainKind; accountId: string | null };
+  observedAt?: string;
+  usedPercent?: number;
+  resetsAt?: string;
+}
+
+export function quotaReserveOf(
+  usage: PlanUsage | null | undefined,
+  pool: QuotaReserve["pool"],
+  options: { now?: number; thresholdPercent?: number; maxAgeMs?: number } = {},
+): QuotaReserve {
+  const thresholdPercent = options.thresholdPercent ?? 90;
+  const maxAgeMs = options.maxAgeMs ?? 15 * 60_000;
+  const unknown: QuotaReserve = { state: "unknown", thresholdPercent, pool };
+  const now = options.now ?? Date.now();
+  if (
+    !pool.machineId ||
+    !Number.isFinite(thresholdPercent) ||
+    thresholdPercent <= 0 ||
+    thresholdPercent > 100 ||
+    !Number.isFinite(maxAgeMs) ||
+    maxAgeMs <= 0 ||
+    !usage ||
+    !Array.isArray(usage.windows) ||
+    (usage.source !== "probe" && usage.source !== "turn")
+  )
+    return unknown;
+  const at = Date.parse(usage.at);
+  if (!Number.isFinite(at) || at > now || now - at > maxAgeMs) return unknown;
+  const windows = usage.windows.filter(
+    (w) =>
+      ["five_hour", "seven_day", "monthly"].includes(w.kind) &&
+      Number.isFinite(w.usedPercent) &&
+      w.usedPercent >= 0 &&
+      w.usedPercent <= 100 &&
+      (!w.resetsAt || (Number.isFinite(Date.parse(w.resetsAt)) && Date.parse(w.resetsAt) > now)),
+  );
+  if (!windows.length) return unknown;
+  const top = windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+  return {
+    state: top.usedPercent >= thresholdPercent ? "low" : "normal",
+    thresholdPercent,
+    pool,
+    observedAt: usage.at,
+    usedPercent: top.usedPercent,
+    ...(top.resetsAt ? { resetsAt: top.resetsAt } : {}),
+  };
+}
+
 export interface BrainPlan {
   kind: BrainKind;
   /** The brain's model (`opus`, `sonnet`, a Codex model); undefined = the brain's default (model brain: the agent's). */
@@ -511,6 +564,8 @@ export interface BrainPlan {
   effort?: BrainEffort;
   /** What the runner last said about the plan it thinks with (`storedPlanUsage`). */
   usage?: PlanUsage;
+  /** Current shared account capacity for admission; unknown is never treated as zero. */
+  quotaReserve?: QuotaReserve;
   /** A mission's main session goes on although the agent's `promptKey` changed since its last run there. */
   settingsChanged?: boolean;
 }
@@ -791,7 +846,13 @@ export async function resolveBrain(
    * `fresh`: a new computer session whatever the conversation had (routine runs). `promptKey`: the run's
    * (`Transcript.promptKey`); the conversation's session is picked up only when it started with the same.
    */
-  options: { fresh?: boolean; now?: Date; promptKey?: string } = {},
+  options: {
+    fresh?: boolean;
+    now?: Date;
+    promptKey?: string;
+    quotaReservePercent?: number;
+    quotaReserveMaxAgeMs?: number;
+  } = {},
 ): Promise<BrainPlan> {
   const mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
   // The right hand: the AI of the person whose DM this is, else the workspace's; on a plan, its computer and owner.
@@ -866,6 +927,15 @@ export async function resolveBrain(
     ...(account ? { account } : {}),
     ...(effort ? { effort } : {}),
     ...(usage ? { usage } : {}),
+    quotaReserve: quotaReserveOf(
+      usage,
+      { machineId, kind, accountId: account?.id ?? null },
+      {
+        now: options.now?.getTime(),
+        thresholdPercent: options.quotaReservePercent,
+        maxAgeMs: options.quotaReserveMaxAgeMs,
+      },
+    ),
     ...(settingsChanged ? { settingsChanged } : {}),
   };
 }

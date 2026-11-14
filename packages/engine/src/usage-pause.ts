@@ -102,6 +102,7 @@ async function lineRows(db: Executor, orgId: string, key: string): Promise<LineR
       and(
         eq(agentRuns.orgId, orgId),
         eq(agentRuns.status, "waiting_input"),
+        sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
         sql`${agentRuns.transcript}->'waitingForBrain'->>'waitKey' = ${key}`,
       ),
     )
@@ -221,6 +222,7 @@ export async function wakePlanWaits(
       eq(agentRuns.orgId, orgId),
       eq(agentRuns.status, "waiting_input"),
       code,
+      sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
       sql`${agentRuns.transcript}->'waitingForBrain'->>'waitKey' = ${key}`,
       sql`(not (${agentRuns.transcript}->'waitingForBrain' ? 'steady')
         or coalesce((${agentRuns.transcript}->'usageWait'->>'parkedAt')::bigint, 0) < ${now - REPARK_STEADY_MS})`,

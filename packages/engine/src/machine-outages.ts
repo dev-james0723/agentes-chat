@@ -23,6 +23,8 @@ import { can, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
 import { missStaleRoutineRun } from "./routine-firing";
 
+import { keepRunMarkers } from "./sticky-transcript";
+
 const { machines, agents, agentRuns, routineRuns } = schema;
 
 /*
@@ -397,7 +399,7 @@ async function repointWaitingRun(db: Database, runId: string, fromId: string, to
     };
     await tx
       .update(agentRuns)
-      .set({ transcript: t, waitingMachineId: toId, updatedAt: new Date() })
+      .set({ transcript: keepRunMarkers(t), waitingMachineId: toId, updatedAt: new Date() })
       .where(eq(agentRuns.id, runId));
     await enqueue(tx, {
       orgId: row.orgId,

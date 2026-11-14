@@ -4,9 +4,11 @@ import {
   activeRunsIn,
   addRunStep,
   canTransition,
+  executeRun,
   InvalidRunTransitionError,
   RUN_TRANSITIONS,
   type RunStatus,
+  storedTranscript,
   transitionRun,
 } from "../src";
 import { type Fixture, setup } from "./fixtures";
@@ -89,6 +91,147 @@ describe("transitionRun", () => {
   test("compare-and-set: a stale `from` changes nothing", async () => {
     await transitionRun(f.db, runId, "queued", "running");
     expect(await transitionRun(f.db, runId, "queued", "running")).toBeNull();
+  });
+
+  test("a resume claim atomically refuses a persisted unknown-effect marker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_approval", {
+      transcript: { effectUncertain: { runId, turn: 1, tools: ["write_file"] } },
+    });
+    const claimed = await transitionRun(f.db, runId, "waiting_approval", "running", { requireNoUnknownEffect: true });
+    expect(claimed).toBeNull();
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(row?.status).toBe("waiting_approval");
+    expect(row?.transcript).toMatchObject({ effectUncertain: { runId } });
+    await f.db
+      .update(schema.agentRuns)
+      .set({ transcript: storedTranscript({ system: [], messages: [] }) })
+      .where(eq(schema.agentRuns.id, runId));
+    const [afterStaleSave] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(afterStaleSave?.transcript).toMatchObject({ effectUncertain: { runId } });
+  });
+
+  test("a matching timer still cannot claim a run with an unknown-effect marker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "wait-Y" }, effectUncertain: { runId, turn: 1, tools: ["write_file"] } },
+    });
+    const claimed = await transitionRun(
+      f.db,
+      runId,
+      "waiting_input",
+      "running",
+      { requireNoUnknownEffect: true },
+      { waitId: "wait-Y" },
+    );
+    expect(claimed).toBeNull();
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(row?.status).toBe("waiting_input");
+    expect(row?.transcript).toMatchObject({ waitingForBrain: { waitId: "wait-Y" }, effectUncertain: { runId } });
+  });
+
+  test("a stale wait claim cannot consume a newer wait on the same run", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "wait-X" } },
+    });
+    // An old timer read X, but another worker claimed X and parked the run again on Y.
+    await transitionRun(f.db, runId, "waiting_input", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "wait-Y" } },
+    });
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "wait-X" })).toBeNull();
+    const [stillWaiting] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(stillWaiting?.status).toBe("waiting_input");
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "wait-Y" })).toMatchObject({
+      status: "running",
+    });
+  });
+
+  test("concurrent claims for one wait admit only one worker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "same-wait" } },
+    });
+    const claims = await Promise.all([
+      transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "same-wait" }),
+      transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "same-wait" }),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.filter((claim) => claim === null)).toHaveLength(1);
+  });
+
+  test("a wait claim matches the outage waitId and preserves brain-wait precedence", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { outage: { waitId: "outage-Y" } },
+    });
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "outage-X" })).toBeNull();
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "outage-Y" })).toMatchObject({
+      status: "running",
+    });
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "brain-Y" }, outage: { waitId: "outage-Y" } },
+    });
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "outage-Y" })).toBeNull();
+    expect(await transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "brain-Y" })).toMatchObject({
+      status: "running",
+    });
+  });
+
+  test("executor cannot claim a replacement wait after reading the older timer", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { code: "plan_limit", waitId: "wait-X" } },
+    });
+    let raced = false;
+    // Inject the interleaving at the database boundary: the initial SELECT returns X, then another worker has parked Y.
+    // Only this selection is intercepted; all actual writes and the claim use the real fixture database.
+    const db = new Proxy(f.db, {
+      get(target, key) {
+        if (key !== "select") {
+          const value = Reflect.get(target, key, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+        return (...args: unknown[]) => {
+          const select = Reflect.apply(target.select, target, args) as {
+            from: (...a: unknown[]) => { where: (...w: unknown[]) => Promise<unknown> };
+          };
+          const fields = args[0] as Record<string, unknown> | undefined;
+          if (!fields || !("waitId" in fields) || !("busyRetries" in fields)) return select;
+          const from = select.from.bind(select);
+          select.from = (...a: unknown[]) => {
+            const builder = from(...a);
+            const where = builder.where.bind(builder);
+            builder.where = async (...w: unknown[]) => {
+              const rows = await where(...w);
+              raced = true;
+              await f.db
+                .update(schema.agentRuns)
+                .set({
+                  transcript: { waitingForBrain: { code: "plan_limit", waitId: "wait-Y" } },
+                })
+                .where(eq(schema.agentRuns.id, runId));
+              return rows;
+            };
+            return builder;
+          };
+          return select;
+        };
+      },
+    });
+    let thrown: unknown;
+    try {
+      await executeRun({ ...f.jobDeps, db }, runId, { finalAttempt: false, wait: "wait-X" });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(raced).toBe(true);
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(row?.status).toBe("waiting_input");
+    expect(row?.transcript).toEqual({ waitingForBrain: { code: "plan_limit", waitId: "wait-Y" } });
+    expect(thrown).toBeUndefined();
+    expect(f.provider.calls).toHaveLength(0);
   });
 
   test("illegal transitions throw before touching the database", async () => {

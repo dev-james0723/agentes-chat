@@ -20,7 +20,8 @@ import {
 } from "@agenteschat/providers";
 import { recordAudit } from "./audit";
 import { caches } from "./cache";
-import { openSecret, sealSecret } from "./crypto";
+import { openSecret, sealSecret, sha256 } from "./crypto";
+import { canonicalJson } from "./tools/json-schema";
 import {
   cleanEndpointModels,
   ENDPOINT_NO_KEY,
@@ -470,11 +471,27 @@ export async function usableCredentialRow(db: Executor, orgId: string, credentia
   })) as typeof providerCredentials.$inferSelect | null;
 }
 
+/** Fingerprint of the exact sealed row and non-secret dispatch scope, never the plaintext key. */
+export function credentialVersion(row: typeof providerCredentials.$inferSelect): string {
+  return sha256(
+    canonicalJson({
+      id: row.id,
+      orgId: row.orgId,
+      provider: row.provider,
+      secretCiphertext: row.secretCiphertext,
+      wrappedDataKey: row.wrappedDataKey,
+      kekId: row.kekId,
+      workspaceId: row.workspaceId,
+      options: row.options,
+    }),
+  );
+}
+
 /**
  * Decrypts a credential for a model call. Backend-only: the Model Gateway is
  * its only caller. Org-scoped: a credential id from another org is not found.
  */
-export async function decryptCredential(
+export async function decryptCredentialWithVersion(
   db: Database,
   keyWrappers: KeyWrapper[],
   orgId: string,
@@ -482,6 +499,7 @@ export async function decryptCredential(
 ): Promise<{
   provider: ProviderId;
   apiKey: string;
+  credentialVersion: string;
   workspaceId?: string;
   options?: { organization?: string; project?: string; endpoint?: StoredEndpoint };
 } | null> {
@@ -495,9 +513,18 @@ export async function decryptCredential(
   return {
     provider: row.provider as ProviderId,
     apiKey,
+    credentialVersion: credentialVersion(row),
     ...(row.workspaceId ? { workspaceId: row.workspaceId } : {}),
     options: row.options ?? {},
   };
+}
+
+/** Existing credential API returns no version metadata; the gateway uses the versioned form for admission. */
+export async function decryptCredential(db: Database, keyWrappers: KeyWrapper[], orgId: string, id: string) {
+  const result = await decryptCredentialWithVersion(db, keyWrappers, orgId, id);
+  if (!result) return null;
+  const { credentialVersion: _, ...credential } = result;
+  return credential;
 }
 
 /**

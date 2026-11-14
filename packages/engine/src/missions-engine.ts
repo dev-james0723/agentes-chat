@@ -2,6 +2,7 @@ import type { PubSub } from "@agenteschat/adapters";
 import { and, desc, type Executor, eq, gte, inArray, rowsOf, schema, sql } from "@agenteschat/db";
 import { publishApproval } from "./approvals";
 import type { BrainKind, BrainSession, BrainTurn, ToolResult } from "./brains/types";
+import { fenceBridgeEpochOnStop } from "./bridge-effect-epoch";
 import { abortLocalRun, RUN_CANCEL_TOPIC } from "./cancel";
 import { publishChannelEvent, publishMessageCreated } from "./events";
 import type { RunIdentity } from "./executor";
@@ -673,6 +674,7 @@ async function cancelThreadRuns(
         error: `canceled_by:${input.actorId ?? "mission"}`,
       });
       if (!row) return null;
+      await fenceBridgeEpochOnStop(tx, run.id);
       const now = new Date();
       const closed = await tx
         .update(approvals)
