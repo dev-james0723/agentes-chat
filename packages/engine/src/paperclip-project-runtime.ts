@@ -79,12 +79,24 @@ export function paperclipProjectBrain(deps: Deps, brain: Brain): Brain {
   return {
     kind: brain.kind,
     async *run(turn, io) {
+      let ctx: Awaited<ReturnType<typeof paperclipProjectRun>>;
       try {
-        const ctx = await paperclipProjectRun(deps, turn.orgId, turn.runId);
-        if (!ctx) {
-          yield* brain.run(turn, io);
-          return;
-        }
+        ctx = await paperclipProjectRun(deps, turn.orgId, turn.runId);
+      } catch (e) {
+        yield {
+          type: "error",
+          code: "paperclip_workspace_changed",
+          message: e instanceof Error ? e.message : "Project workspace unavailable",
+          retryable: false,
+        };
+        return;
+      }
+      // A resolved nonproject run keeps its brain's error identity and the executor's retry policy (ADR 0187).
+      if (!ctx) {
+        yield* brain.run(turn, io);
+        return;
+      }
+      try {
         if (
           brain.kind !== ctx.agent.brain ||
           !["claude_code", "codex"].includes(brain.kind) ||
