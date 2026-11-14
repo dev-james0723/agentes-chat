@@ -2898,6 +2898,16 @@ test("a computer brain that fails after a bridged tool ran: no fallback, what it
   expect(last?.meta.brainFallback).toBeUndefined();
 });
 
+type PortableCheckpointForTest = {
+  portable: {
+    events: { kind: string }[];
+    messages: { id: string }[];
+    memories: { id: string }[];
+    transcript: { messageCount: number };
+    gaps: string[];
+  };
+};
+
 test.each(["executor_crashed", "plan_limit"] as const)(
   "an errored bridged call followed by %s is not replayed",
   async (code) => {
@@ -2925,6 +2935,18 @@ test.each(["executor_crashed", "plan_limit"] as const)(
         return { chunks: ["fallback"] };
       },
     });
+    const [memory] = await f.db
+      .insert(schema.contextItems)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        kind: "note",
+        scopeType: "agent",
+        scopeId: f.agent.id,
+        content: "SYNTH_SECRET_DO_NOT_COPY",
+        pinned: true,
+      })
+      .returning();
     const machineId = await computerAgent(f);
     const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
       await executeToolForRun(
@@ -2950,7 +2972,15 @@ test.each(["executor_crashed", "plan_limit"] as const)(
     if (code === "plan_limit") {
       // A known quota cut is durably held for reconciliation, rather than ending or replaying the turn.
       expect(run?.status).toBe("waiting_input");
-      expect(run?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold", effects: "unknown" } });
+      expect(run?.transcript).toMatchObject({
+        continuityCheckpoint: { dispatch: "hold", effects: "unknown", portable: { complete: false, dispatch: "hold" } },
+      });
+      const checkpoint = run?.transcript?.continuityCheckpoint as PortableCheckpointForTest | undefined;
+      expect(checkpoint?.portable?.events.some((e: { kind: string }) => e.kind === "tool_call")).toBe(true);
+      expect(checkpoint?.portable?.events.some((e: { kind: string }) => e.kind === "tool_result")).toBe(true);
+      expect(checkpoint?.portable?.messages.some((m: { id: string }) => m.id === run?.triggerMessageId)).toBe(true);
+      expect(checkpoint?.portable?.memories.some((m: { id: string }) => m.id === memory?.id)).toBe(true);
+      expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_SECRET_DO_NOT_COPY");
       expect(last?.body).toContain("needs reconciliation");
     } else {
       expect(run?.status).toBe("failed");
@@ -6204,4 +6234,100 @@ test("a claimed approval without a durable result is never replayed on resume", 
   expect(run?.status).toBe("waiting_approval");
   expect(bench.ran).toHaveLength(0);
   expect(seen).toHaveLength(1);
+});
+
+test("a quota cut after multiple turns preserves scoped portable source references and keeps effects held", async () => {
+  let attempts = 0;
+  const source: ToolSource = {
+    name: "synthetic-checkpoint",
+    tools: async () => [
+      {
+        name: "checkpoint_write",
+        description: "Synthetic write",
+        scope: "",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        execute: async () => {
+          attempts++;
+          return attempts === 1 ? { content: "SYNTH_TOOL_SECRET" } : { content: "SYNTH_UNKNOWN_SECRET", isError: true };
+        },
+      },
+    ],
+  };
+  f = await setup({
+    toolSources: [source],
+    judge: (kind, _id, state) =>
+      kind === "follow_through" ? (String(state.reply).includes("vou") ? "continue" : "done") : undefined,
+  });
+  const other = await createChannel(f.db, f.owner.id, f.org.id, { name: "private-evidence" });
+  const hiddenMessage = await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, other.id, {
+    body: "PRIVATE_OTHER_CHANNEL",
+  });
+  const [hiddenMemory] = await f.db
+    .insert(schema.contextItems)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      kind: "note",
+      scopeType: "agent",
+      scopeId: f.agent.id,
+      content: "PRIVATE_MEMORY",
+      channelIds: [other.id],
+    })
+    .returning();
+  const machineId = await computerAgent(f);
+  let turns = 0;
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      turns++;
+      if (turns === 1) {
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: [hiddenMemory?.id] });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: Array(5000).fill(hiddenMemory?.id) });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "tool_result", { toolUseId: "large-result", payload: "x".repeat(2_000_000) });
+      }
+      const id = `checkpoint-${turns}`;
+      const result = await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id, name: "checkpoint_write", input: {} },
+      );
+      if (turns === 1) {
+        yield { type: "tool_call", id, name: "checkpoint_write", input: {}, executed: result };
+        yield { type: "done", text: "Feito; vou continuar." };
+      } else yield { type: "error", code: "plan_limit", message: "synthetic quota", retryable: true, worked: false };
+    },
+  };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const goal = await post(f, "@dev synthetic prior progress and goal");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(turns).toBe(2);
+  expect(attempts).toBe(2);
+  expect(run?.status).toBe("waiting_input");
+  const checkpoint = run?.transcript?.continuityCheckpoint as PortableCheckpointForTest | undefined;
+  if (!checkpoint) throw new Error("missing checkpoint");
+  expect(checkpoint).toMatchObject({
+    runId: run?.id,
+    agentId: f.agent.id,
+    goal: { state: "reference", messageId: goal.id },
+    effects: "unknown",
+    dispatch: "hold",
+    portable: { complete: false, dispatch: "hold" },
+  });
+  expect(
+    checkpoint.portable.events.filter((e: { kind: string }) => e.kind === "tool_call").length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(
+    checkpoint.portable.events.filter((e: { kind: string }) => e.kind === "tool_result").length,
+  ).toBeGreaterThanOrEqual(2);
+  expect(checkpoint.portable.transcript.messageCount).toBeGreaterThan(1);
+  expect(checkpoint.portable.gaps).toContain("memory_refs_oversized");
+  expect(checkpoint.portable.messages.some((item: { id: string }) => item.id === hiddenMessage.id)).toBe(false);
+  expect(checkpoint.portable.memories.some((item: { id: string }) => item.id === hiddenMemory?.id)).toBe(false);
+  expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_TOOL_SECRET");
+  expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_UNKNOWN_SECRET");
 });

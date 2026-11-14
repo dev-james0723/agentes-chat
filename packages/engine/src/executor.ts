@@ -692,6 +692,20 @@ export interface Transcript {
     fileVersions: "unknown";
     dependencies: "unknown";
     effects: "unknown";
+    /** Bounded source references, not copied content or proof of eligibility. */
+    portable?: {
+      schema: "portable-run-references/1";
+      complete: false;
+      dispatch: "hold";
+      events: { id: string; seq: number; kind: string }[];
+      eventsTruncated: boolean;
+      messages: { id: string; createdAt: string }[];
+      messagesTruncated: boolean;
+      memories: { id: string; version: number }[];
+      skills: { id: string; version: number }[];
+      transcript: { runId: string; messageCount: number; complete: false };
+      gaps: string[];
+    };
     source: { throughSeq: number; capturedAt: string; complete: false };
     nextSafeAction: "reconcile_effects_and_qualify_route";
     dispatch: "hold";
@@ -4426,7 +4440,7 @@ async function executeRunInner(
         const [last] = await tx
           .select({ seq: sql<number>`coalesce(max(${agentRunSteps.seq}), 0)::int` })
           .from(agentRunSteps)
-          .where(eq(agentRunSteps.runId, run.id));
+          .where(and(eq(agentRunSteps.orgId, run.orgId), eq(agentRunSteps.runId, run.id)));
         // A run can be routed from another conversation; never export its message reference across audiences.
         const [goal] = await tx
           .select({ id: messages.id })
@@ -4438,6 +4452,97 @@ async function executeRunInner(
               eq(messages.channelId, run.channelId),
             ),
           );
+        // Store scoped references, not raw transcript, tool payloads or credentials. A reader must reauthorize every
+        // referenced source at use time; this bounded, read-committed snapshot never proves all history is present.
+        const sourceEvents = await tx
+          .select({
+            id: agentRunSteps.id,
+            seq: agentRunSteps.seq,
+            kind: agentRunSteps.kind,
+            memoryItems: sql<unknown>`case when ${agentRunSteps.kind} = 'context' and jsonb_typeof(${agentRunSteps.data}->'memoryItems') = 'array'
+              then case when jsonb_array_length(${agentRunSteps.data}->'memoryItems') <= 128 and pg_column_size(${agentRunSteps.data}->'memoryItems') <= 8192
+                then ${agentRunSteps.data}->'memoryItems' else '[]'::jsonb end
+              else '[]'::jsonb end`,
+            memoryOversized: sql<boolean>`case when ${agentRunSteps.kind} = 'context' and jsonb_typeof(${agentRunSteps.data}->'memoryItems') = 'array'
+              then jsonb_array_length(${agentRunSteps.data}->'memoryItems') > 128 or pg_column_size(${agentRunSteps.data}->'memoryItems') > 8192
+              else false end`,
+          })
+          .from(agentRunSteps)
+          .where(
+            and(
+              eq(agentRunSteps.orgId, run.orgId),
+              eq(agentRunSteps.runId, run.id),
+              sql`${agentRunSteps.seq} <= ${last?.seq ?? 0}`,
+            ),
+          )
+          .orderBy(desc(agentRunSteps.seq))
+          .limit(257);
+        const sourceMessages = await tx
+          .select({ id: messages.id, createdAt: messages.createdAt })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+              isNull(messages.deletedAt),
+              or(eq(messages.id, run.threadRootId), eq(messages.threadId, run.threadRootId)),
+            ),
+          )
+          .orderBy(desc(messages.createdAt), desc(messages.id))
+          .limit(129);
+        const memoryIds = [
+          ...new Set(
+            sourceEvents
+              .slice(0, 256)
+              .flatMap((step) =>
+                step.kind === "context" && Array.isArray(step.memoryItems)
+                  ? step.memoryItems.filter(
+                      (id): id is string =>
+                        typeof id === "string" &&
+                        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+                    )
+                  : [],
+              ),
+          ),
+        ].slice(0, 128);
+        const memoryRows = memoryIds.length
+          ? await tx
+              .select({
+                id: schema.contextItems.id,
+                version: schema.contextItems.version,
+                channelIds: schema.contextItems.channelIds,
+                scopeType: schema.contextItems.scopeType,
+              })
+              .from(schema.contextItems)
+              .where(
+                and(
+                  eq(schema.contextItems.orgId, run.orgId),
+                  inArray(schema.contextItems.id, memoryIds),
+                  eq(schema.contextItems.status, "active"),
+                  eq(schema.contextItems.agentId, run.agentId),
+                ),
+              )
+          : [];
+        const memoryRefs = memoryRows
+          .filter((row) => row.scopeType !== "person" && row.channelIds.every((id) => id === run.channelId))
+          .map(({ id, version }) => ({ id, version }));
+        const skillRows = tools.some((tool) => tool.name === "load_skill")
+          ? await tx
+              .select({ id: schema.skills.id, version: schema.skills.version })
+              .from(schema.agentSkills)
+              .innerJoin(schema.skills, eq(schema.skills.id, schema.agentSkills.skillId))
+              .where(
+                and(
+                  eq(schema.agentSkills.orgId, run.orgId),
+                  eq(schema.agentSkills.agentId, run.agentId),
+                  eq(schema.agentSkills.enabled, true),
+                  eq(schema.skills.orgId, run.orgId),
+                  isNull(schema.skills.deletedAt),
+                ),
+              )
+              .orderBy(desc(schema.skills.id))
+              .limit(129)
+          : [];
         t.continuityCheckpoint = {
           schema: "quota-cut-checkpoint/1",
           orgId: run.orgId,
@@ -4455,6 +4560,37 @@ async function executeRunInner(
           fileVersions: "unknown",
           dependencies: "unknown",
           effects: "unknown",
+          portable: {
+            schema: "portable-run-references/1",
+            complete: false,
+            dispatch: "hold",
+            events: sourceEvents
+              .slice(0, 256)
+              .reverse()
+              .map(({ id, seq, kind }) => ({ id, seq, kind })),
+            eventsTruncated: sourceEvents.length > 256,
+            messages: sourceMessages
+              .slice(0, 128)
+              .reverse()
+              .map(({ id, createdAt }) => ({ id, createdAt: createdAt.toISOString() })),
+            messagesTruncated: sourceMessages.length > 128,
+            memories: memoryRefs,
+            skills: skillRows.slice(0, 128),
+            transcript: { runId: run.id, messageCount: t.messages.length, complete: false },
+            gaps: [
+              "reauthorize_sources",
+              "shared_and_person_memories_excluded",
+              ...(sourceEvents.slice(0, 256).some((step) => step.memoryOversized) ? ["memory_refs_oversized"] : []),
+              "non_atomic_read_snapshot",
+              "history_completeness",
+              "effects_and_execution_owner",
+              "task_and_worktree",
+              "file_versions",
+              "acceptance_and_pending_steps",
+              ...(skillRows.length > 128 ? ["skills_truncated"] : []),
+              ...(memoryIds.length === 128 ? ["memories_may_be_truncated"] : []),
+            ],
+          },
           source: { throughSeq: last?.seq ?? 0, capturedAt: new Date(now).toISOString(), complete: false },
           nextSafeAction: "reconcile_effects_and_qualify_route",
           dispatch: "hold",
