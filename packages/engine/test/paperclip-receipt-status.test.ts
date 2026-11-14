@@ -90,6 +90,17 @@ async function start(r: Receipt) {
   );
   return { firing, workerId: present(firing.agentRunId) };
 }
+function noExecutionIds(observed: Awaited<ReturnType<typeof paperclipReceiptExecutionStatus>>) {
+  expect(observed).toMatchObject({
+    issueId: null,
+    routineRunId: null,
+    executionReceiptId: null,
+    routineStatus: null,
+    agentStatus: null,
+    issueStatus: null,
+    evidenceQualified: false,
+  });
+}
 
 test("queued, waiting, failed and finished native states are read-only observations with no qualified result", async () => {
   const x = await fixture(),
@@ -113,6 +124,8 @@ test("queued, waiting, failed and finished native states are read-only observati
     const observed = await x.read(r);
     expect(observed).toMatchObject({
       observation: "linked",
+      issueId: r.issueId,
+      routineRunId: r.routineRunId,
       executionReceiptId: r.id,
       routineStatus: "started",
       agentStatus: status,
@@ -148,6 +161,7 @@ test("coalesced receipts follow only their original queued execution and retain 
   expect(b.status).toBe("coalesced");
   expect(await x.read(b)).toMatchObject({
     receiptId: b.id,
+    issueId: a.issueId,
     executionReceiptId: a.id,
     sharedExecution: true,
     routineRunId: a.routineRunId,
@@ -187,6 +201,7 @@ test("skipped admissions never present the active worker's completion as their e
     issueStatus: null,
     evidenceQualified: false,
   });
+  noExecutionIds(await x.read(skipped));
 });
 
 test("deferral status follows the atomically replaced receipt pointer without selecting a recent unrelated run", async () => {
@@ -293,6 +308,101 @@ test("wrong agent runs or non-background turns cannot become receipt execution o
   expect(await x.read(r)).toMatchObject({ observation: "held", agentStatus: null });
 });
 
+test("held same-tenant cross-mapping and sibling-run pointers expose none of the unrelated execution IDs", async () => {
+  const x = await fixture(),
+    m = await x.activate(),
+    own = await x.invoke(m, "own");
+  const other = await createPaperclipMapping(x.deps, f.owner.id, f.org.id, {
+    sourceCompanyId: uid(),
+    sourceRoutineId: uid(),
+    sourceRevisionId: "other-revision",
+    sourceActive: true,
+    activityGatePolicy: "always",
+    activityGateScope: "company",
+    catchUpPolicy: "skip_missed",
+    triggers: [{ id: x.trigger, kind: "api", enabled: true }],
+    policy: "always_enqueue",
+    agentId: f.agent.id,
+    sourceAgentId: uid(),
+    title: "Other private mapping",
+    description: "Other private work",
+  });
+  const otherEnabled = await x.activate(other),
+    otherReceipt = await x.invoke(otherEnabled, "other");
+  await f.db
+    .update(schema.paperclipRoutineReceipts)
+    .set({ issueId: otherReceipt.issueId })
+    .where(eq(schema.paperclipRoutineReceipts.id, own.id));
+  let before = await persistedRows();
+  const mismatchedIssue = await x.read(own);
+  noExecutionIds(mismatchedIssue);
+  expect(mismatchedIssue).toMatchObject({
+    observation: "held",
+    reason: "execution_link_changed",
+    receiptId: own.id,
+    mappingId: m.id,
+    acceptedConfigHash: m.configHash,
+  });
+  expect(JSON.stringify(mismatchedIssue)).not.toContain(present(otherReceipt.issueId));
+  expect(await persistedRows()).toEqual(before);
+  const sibling = await x.invoke(m, "sibling", { payload: { task: 2 } });
+  await f.db
+    .update(schema.paperclipRoutineReceipts)
+    .set({ issueId: own.issueId, routineRunId: sibling.routineRunId })
+    .where(eq(schema.paperclipRoutineReceipts.id, own.id));
+  before = await persistedRows();
+  const mismatchedRun = await x.read(own);
+  noExecutionIds(mismatchedRun);
+  expect(JSON.stringify(mismatchedRun)).not.toContain(present(sibling.routineRunId));
+  expect(JSON.stringify(mismatchedRun)).not.toContain(sibling.id);
+  expect(await persistedRows()).toEqual(before);
+});
+
+for (const missing of ["issue", "firing", "worker"] as const) {
+  test(`a missing ${missing} withholds even the otherwise valid execution identifiers`, async () => {
+    const x = await fixture(),
+      m = await x.activate(),
+      r = await x.invoke(m, "missing");
+    if (missing === "issue") await f.db.delete(schema.issues).where(eq(schema.issues.id, present(r.issueId)));
+    if (missing === "firing")
+      await f.db.delete(schema.routineRuns).where(eq(schema.routineRuns.id, present(r.routineRunId)));
+    if (missing === "worker") {
+      const { workerId } = await start(r);
+      await f.db.delete(schema.agentRuns).where(eq(schema.agentRuns.id, workerId));
+    }
+    const before = await persistedRows(),
+      observed = await x.read(r);
+    noExecutionIds(observed);
+    expect(observed).toMatchObject({
+      observation: "held",
+      reason: "execution_link_changed",
+      receiptId: r.id,
+      configHash: m.configHash,
+    });
+    expect(await persistedRows()).toEqual(before);
+  });
+}
+
+test("a missing canonical admission cannot disclose its coalesced execution pointers", async () => {
+  const x = await fixture("coalesce_if_active"),
+    m = await x.activate(),
+    original = await x.invoke(m, "canonical"),
+    coalesced = await x.invoke(m, "coalesced");
+  await f.db.delete(schema.paperclipRoutineReceipts).where(eq(schema.paperclipRoutineReceipts.id, original.id));
+  const before = await persistedRows(),
+    observed = await x.read(coalesced);
+  noExecutionIds(observed);
+  expect(observed).toMatchObject({
+    observation: "held",
+    reason: "execution_link_changed",
+    receiptId: coalesced.id,
+    sharedExecution: true,
+  });
+  expect(JSON.stringify(observed)).not.toContain(present(original.issueId));
+  expect(JSON.stringify(observed)).not.toContain(present(original.routineRunId));
+  expect(await persistedRows()).toEqual(before);
+});
+
 test("malformed stored scope and status values are withheld rather than returned as raw metadata", async () => {
   const x = await fixture(),
     m = await x.activate(),
@@ -336,6 +446,7 @@ test("legacy unknown admission and later configuration changes never relabel acc
     routineStatus: null,
     evidenceQualified: false,
   });
+  noExecutionIds(await x.read(r));
   await f.db
     .update(schema.paperclipRoutineReceipts)
     .set({ acceptedConfigHash: null })
@@ -349,6 +460,7 @@ test("legacy unknown admission and later configuration changes never relabel acc
     observation: "unknown_legacy",
     routineStatus: null,
   });
+  noExecutionIds(await x.read(r));
   expect(await persistedRows()).toEqual(before);
 });
 

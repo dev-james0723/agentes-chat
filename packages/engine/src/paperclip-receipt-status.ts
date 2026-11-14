@@ -134,15 +134,15 @@ export async function paperclipReceiptExecutionStatus(
     admissionConfigStatus: accepted ? ("recorded" as const) : ("unknown_legacy" as const),
     admissionStatus: ["queued", "coalesced", "skipped"].includes(r.status) ? r.status : null,
     dispatchFingerprint: digest(r.dispatchFingerprint),
-    // Missing/cross-org joins never expose the unrelated pointer's identifier.
-    issueId: row.issue?.id ?? null,
-    routineRunId: row.firing?.id ?? null,
+    // A tenant-local join is insufficient: publish execution IDs only after the complete relation checks.
+    issueId: null as string | null,
+    routineRunId: null as string | null,
     executionReceiptId: null as string | null,
     sharedExecution: r.status === "coalesced",
     observation: "held" as "linked" | "held" | "unknown_legacy" | "not_started",
     reason: null as string | null,
     scopeQualification: "unknown" as "qualified" | "not_required" | "unknown" | "changed",
-    workspace: workspaceView(selection),
+    workspace: null as ReturnType<typeof workspaceView>,
     routineStatus: null as RoutineStatus | null,
     agentStatus: null as AgentStatus | null,
     issueStatus: null as IssueStatus | null,
@@ -158,6 +158,7 @@ export async function paperclipReceiptExecutionStatus(
     if (project && !selection) return held("accepted_workspace_unknown");
     await assertMappingWorkspace(db, mapping, true, selection);
     result.scopeQualification = selection ? "qualified" : "not_required";
+    result.workspace = workspaceView(selection);
   } catch {
     return { ...held("workspace_changed"), scopeQualification: "changed" as const };
   }
@@ -195,6 +196,8 @@ export async function paperclipReceiptExecutionStatus(
   return {
     ...result,
     observation: "linked" as const,
+    issueId: issue.id,
+    routineRunId: firing.id,
     executionReceiptId: queued.id,
     routineStatus: firing.status as RoutineStatus,
     agentStatus: worker?.status ?? null,
