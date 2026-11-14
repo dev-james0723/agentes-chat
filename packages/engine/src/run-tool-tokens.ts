@@ -52,7 +52,7 @@ export async function issueRunToolToken(
   if (!input.runId && !input.taskId) throw new Error("A run tool token needs a run or a task");
   const token = `${RUN_TOOL_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
   const now = input.now ?? new Date();
-  await db.insert(runToolTokens).values({
+  const values = {
     ...(input.tokenId ? { id: input.tokenId } : {}),
     orgId: input.orgId,
     agentId: input.agentId,
@@ -64,7 +64,20 @@ export async function issueRunToolToken(
     expiresAt: new Date(
       now.getTime() + (input.ttlMs ?? (input.taskId ? TASK_TOOL_TOKEN_TTL_MS : RUN_TOOL_TOKEN_TTL_MS)),
     ),
-  });
+  };
+  if (input.taskId) await db.insert(runToolTokens).values(values);
+  else
+    await db.transaction(async (tx) => {
+      // A stop and a new turn token serialize on the run row; a stopped run cannot acquire a fresh epoch.
+      const [run] = await tx
+        .select({ status: agentRuns.status, orgId: agentRuns.orgId, agentId: agentRuns.agentId })
+        .from(agentRuns)
+        .where(eq(agentRuns.id, input.runId as string))
+        .for("update");
+      if (run?.status !== "running" || run.orgId !== input.orgId || run.agentId !== input.agentId)
+        throw new Error("run is not running or has a different owner; bridge epoch not issued");
+      await tx.insert(runToolTokens).values(values);
+    });
   return token;
 }
 

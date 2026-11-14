@@ -5,6 +5,7 @@ import {
   answerQuestion,
   type Brain,
   type BrainTurn,
+  cancelRun,
   createJobHandlers,
   createMission,
   createMissionRunToolSource,
@@ -377,6 +378,44 @@ describe("runner MCP bridge (ADR 0032)", () => {
     const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
     if (admitted) expect(row?.transcript).toHaveProperty("effectUncertain");
     else expect(await admitBridgeEffect(f.db, run.id, check.identity.bridgeEpochId, "racing-call")).toBe(false);
+  });
+
+  test("a racing cancellation fences the bridge and retains any already-admitted effect as unknown", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    const epochId = check.identity.bridgeEpochId;
+    const [stopped, admitted] = await Promise.all([
+      cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, run.id, { tell: false }),
+      admitBridgeEffect(f.db, run.id, epochId, "racing-stop"),
+    ]);
+    expect(stopped.status).toBe("canceled");
+    expect(await admitBridgeEffect(f.db, run.id, epochId, "after-stop")).toBe(false);
+    if (admitted) await finishBridgeEffect(f.db, epochId, "racing-stop", false);
+    const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    const [epoch] = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.id, epochId));
+    expect(after?.transcript).toHaveProperty("effectUncertain");
+    expect(epoch?.effectEpochState).toBe("closed_unknown");
+  });
+
+  test("a racing cancellation cannot leave a fresh open bridge epoch", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const [stopped, issued] = await Promise.allSettled([
+      cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, run.id, { tell: false }),
+      issueRunToolToken(f.db, { orgId: f.org.id, agentId: f.agent.id, machineId: paired.machineId, runId: run.id }),
+    ]);
+    expect(stopped.status).toBe("fulfilled");
+    const rows = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.runId, run.id));
+    expect(rows.some((row) => row.effectEpochState === "open")).toBe(false);
+    if (issued.status === "fulfilled") expect(rows[0]?.effectEpochState).toBe("closed_unknown");
   });
 
   test("older runners retain the native bridge's truncation and do not advertise typed state", async () => {

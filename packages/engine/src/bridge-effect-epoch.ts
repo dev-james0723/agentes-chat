@@ -10,24 +10,51 @@ export async function admitBridgeEffect(
   callId: string,
 ): Promise<boolean> {
   if (!callId || callId.length > 256) return false;
-  const [admitted] = await db
+  return db.transaction(async (tx) => {
+    // Run first, then epoch: cancellation takes the same order. Holding the run lock makes admission observe a
+    // committed stop; an effect admitted before the stop remains in flight and must be reconciled.
+    const [run] = await tx
+      .select({ status: agentRuns.status })
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId))
+      .for("update");
+    if (run?.status !== "running") return false;
+    const [admitted] = await tx
+      .update(runToolTokens)
+      .set({
+        effectCalls: sql`jsonb_set(${runToolTokens.effectCalls}, ARRAY[${callId}]::text[], '{"state":"in_flight"}'::jsonb, true)`,
+      })
+      .where(
+        and(
+          eq(runToolTokens.id, epochId),
+          eq(runToolTokens.runId, runId),
+          eq(runToolTokens.effectEpochState, "open"),
+          isNull(runToolTokens.revokedAt),
+          sql`${runToolTokens.expiresAt} > now()`,
+          sql`not (${runToolTokens.effectCalls} ? ${callId})`,
+        ),
+      )
+      .returning({ id: runToolTokens.id });
+    return !!admitted;
+  });
+}
+
+/** Called while the run row is locked by cancellation. It never pretends an admitted or native effect was stopped. */
+export async function fenceBridgeEpochOnStop(tx: Executor, runId: string): Promise<void> {
+  const stopped = await tx
     .update(runToolTokens)
-    .set({
-      effectCalls: sql`jsonb_set(${runToolTokens.effectCalls}, ARRAY[${callId}]::text[], '{"state":"in_flight"}'::jsonb, true)`,
-    })
-    .where(
-      and(
-        eq(runToolTokens.id, epochId),
-        eq(runToolTokens.runId, runId),
-        eq(runToolTokens.effectEpochState, "open"),
-        isNull(runToolTokens.revokedAt),
-        sql`${runToolTokens.expiresAt} > now()`,
-        sql`not (${runToolTokens.effectCalls} ? ${callId})`,
-        sql`exists (select 1 from ${agentRuns} where ${agentRuns.id} = ${runId} and ${agentRuns.status} = 'running')`,
-      ),
-    )
+    .set({ effectEpochState: "closed_unknown" })
+    .where(and(eq(runToolTokens.runId, runId), eq(runToolTokens.effectEpochState, "open")))
     .returning({ id: runToolTokens.id });
-  return !!admitted;
+  if (!stopped.length) return;
+  const marker = { runId, turn: 0, tools: ["interrupted computer turn"] };
+  await tx
+    .update(agentRuns)
+    .set({
+      transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', coalesce(nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb), ${JSON.stringify(marker)}::jsonb), true)`,
+      updatedAt: new Date(),
+    })
+    .where(eq(agentRuns.id, runId));
 }
 
 /** Receipt follows the tool's completion; exceptions leave the durable call in flight. */
