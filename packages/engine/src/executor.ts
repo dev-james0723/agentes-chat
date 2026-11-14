@@ -1,6 +1,10 @@
 import {
   type BrainTurnTimings,
   CODEX_FOLDER_PROTOCOL,
+  HOST_ACP_TOOL_NAMES,
+  HOST_ANTIGRAVITY_PROVIDER,
+  type HostAcpHistory,
+  isHostAcpHistory,
   PERMISSION_TOOL,
   type PlanUsage,
   type ProviderFailureCause,
@@ -290,6 +294,7 @@ import {
   type HandedTask,
   invokeToolForRun,
   invokeWithChip,
+  knownBridgeResult,
   mergeToolEffects,
   type PauseRequests,
   postPauseCards,
@@ -536,6 +541,8 @@ export type RunExecutorDeps = EngineDeps;
  * and prompt caches stay valid.
  */
 export interface Transcript {
+  /** A host ACP call lost its delivery result: carried across fresh turns until explicitly reconciled. */
+  hostAcpUncertain?: { runId: string; turn: number; message: string };
   system: SystemBlock[];
   messages: ModelMessage[];
   /** Tools on demand (ADR 0043): the tool groups this run listed up front; absent = every tool. */
@@ -4402,10 +4409,15 @@ async function executeRunInner(
       try {
         // A plan brain's turn costs nothing through the gateway: its person's limit is checked here.
         if (personId && turnPlan.kind !== "model") await assertPersonUnderLimit(db, run.orgId, personId);
+        const hostAcpHistory =
+          turnPlan.kind === "antigravity" && turnPlan.account?.provider === HOST_ANTIGRAVITY_PROVIDER
+            ? await hostAcpHistoryFor(db, run)
+            : undefined;
         result = await thinkOnce(
           brain,
           // Memory and wiki once per run: its first turn, or a session started afresh.
           brainTurnOf(run, thinker, transcript, turnTools, prompt, turnPlan, {
+            hostAcpHistory,
             unattended,
             found: computerTurns === 0 || !turnPlan.session?.resume,
             personId,
@@ -4485,6 +4497,33 @@ async function executeRunInner(
                   })
                   .catch(() => {}),
               );
+            },
+            onHostAcpModelSelection: async (selection) => {
+              await addRunStep(db, run, "context", {
+                hostAcpModelSelection: {
+                  ...selection,
+                  turn,
+                  orgId: run.orgId,
+                  agentId: run.agentId,
+                  accountId: turnPlan.account?.id ?? null,
+                  machineId: turnPlan.session?.machineId ?? null,
+                  provider: turnPlan.account?.provider,
+                },
+              });
+            },
+            onHostAcpUnknown: async (message) => {
+              const fence = { runId: run.id, turn, message };
+              await addRunStep(db, run, "context", {
+                hostAcpToolStop: {
+                  ...fence,
+                  effect: "unknown",
+                  source: "runner_result",
+                  accountId: turnPlan.account?.id,
+                  machineId: turnPlan.session?.machineId,
+                },
+              });
+              transcript.hostAcpUncertain = fence;
+              await saveTranscript(db, transcript);
             },
             onSteerRead: (uuids) => {
               deltas.messageRead();
@@ -5506,6 +5545,111 @@ export const computerMediaNote = (tools: string[]) =>
  * why it was called, what was found for this trigger) comes as "# This turn"
  * at the top of every turn's prompt (`thisTurn`, ADR 0053 §10).
  */
+async function hostAcpHistoryFor(db: Database, run: AgentRun): Promise<HostAcpHistory> {
+  if ((run.transcript as unknown as Transcript | null)?.hostAcpUncertain)
+    throw new BrainFailure(
+      "antigravity_delivery_unknown",
+      "An earlier host tool call has unknown effects. Inspect the native receipt before continuing; no command or replay was dispatched.",
+      false,
+    );
+  const rows = await db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(
+      and(
+        eq(schema.agentRunSteps.orgId, run.orgId),
+        eq(schema.agentRunSteps.runId, run.id),
+        inArray(schema.agentRunSteps.kind, ["tool_call", "tool_result"]),
+      ),
+    )
+    .orderBy(schema.agentRunSteps.seq)
+    .limit(513);
+  if (rows.length > 512)
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native tool history exceeds the continuation bound. Inspect the native receipts; do not replay completed actions.",
+      false,
+    );
+  const observations: HostAcpHistory["observations"] = [];
+  const results = rows.filter((row) => row.kind === "tool_result").reverse();
+  const callIds = rows.filter((row) => row.kind === "tool_call").map((row) => String(row.data.toolUseId));
+  // Refusal/expiry/cancellation never pass through executeApproved, so they have no tool_result.
+  // Their durable native decision is proof of NONexecution only while no execution was claimed.
+  // Scope by org/run/agent and match the exact call below; never infer completion from missing data.
+  const decisions = callIds.length
+    ? await db
+        .select()
+        .from(approvals)
+        .where(
+          and(
+            eq(approvals.orgId, run.orgId),
+            eq(approvals.runId, run.id),
+            eq(approvals.agentId, run.agentId),
+            inArray(approvals.toolUseId, callIds),
+            inArray(approvals.status, ["refused", "expired", "canceled"]),
+            isNull(approvals.executedAt),
+            isNull(approvals.result),
+          ),
+        )
+        .limit(129)
+    : [];
+  if (decisions.length > 128)
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native approval history exceeds the continuation bound. Inspect the native receipts; do not replay actions.",
+      false,
+    );
+  for (const call of rows) {
+    if (call.kind !== "tool_call" || !(HOST_ACP_TOOL_NAMES as readonly unknown[]).includes(call.data.name)) continue;
+    const result = results.find(
+      (row) =>
+        row.kind === "tool_result" &&
+        row.seq > call.seq &&
+        row.data.toolUseId === call.data.toolUseId &&
+        row.data.name === call.data.name,
+    );
+    const matching = decisions.filter(
+      (decision) => decision.toolUseId === call.data.toolUseId && decision.tool === call.data.name,
+    );
+    // A real result always wins, including an uncertain one. Ambiguous decisions are not receipts.
+    const decision = !result && matching.length === 1 ? matching[0] : undefined;
+    const content =
+      typeof result?.data.content === "string"
+        ? result.data.content
+        : decision
+          ? `${toolResultFor(decision).content}\nNative approval decision (not executed): ${JSON.stringify({
+              approvalId: decision.id,
+              status: decision.status,
+              decidedByUserId: decision.decidedByUserId,
+              decidedForUserId: decision.decidedForUserId,
+              decidedAt: decision.decidedAt,
+              reason: decision.reason,
+            })}`
+          : "No native completion receipt exists. Inspect this call; do not replay it.";
+    const isError = decision !== undefined || result?.data.isError === true;
+    const data = result?.data.data as Record<string, unknown> | undefined;
+    observations.push({
+      seq: call.seq,
+      callId: String(call.data.toolUseId),
+      name: String(call.data.name),
+      input: call.data.input as Record<string, unknown>,
+      content,
+      isError,
+      state: decision || (result && knownBridgeResult({ content, isError, data })) ? "completed" : "unknown",
+      // Native run steps keep bounded text excerpts, never image blocks or a promise of a full read.
+      partial: true,
+    });
+  }
+  const history = { runId: run.id, observations };
+  if (!isHostAcpHistory(history, run.id))
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native tool receipts cannot fit the safe continuation bound. Inspect the native run before continuing; do not replay actions.",
+      false,
+    );
+  return history;
+}
+
 function brainTurnOf(
   run: AgentRun,
   agent: Agent,
@@ -5514,6 +5658,7 @@ function brainTurnOf(
   trigger: string,
   plan: BrainPlan,
   options: {
+    hostAcpHistory?: HostAcpHistory;
     found?: boolean;
     code?: Promise<CodeSetup | null>;
     personId?: string | null;
@@ -5532,6 +5677,7 @@ function brainTurnOf(
     return thisTurnParts([...t.system, ...lost], new Date(), options);
   };
   return {
+    ...(options.hostAcpHistory ? { hostAcpHistory: options.hostAcpHistory } : {}),
     runId: run.id,
     orgId: run.orgId,
     agentId: run.agentId,
@@ -5659,6 +5805,9 @@ async function thinkOnce(
     limitGraceMs?: number;
     /** A call the brain already ran (through the bridge, or its own tools). */
     onExecuted?(call: { id: string; name: string; input: unknown; result?: ToolResult }): void;
+    /** Validated CLI selection evidence, never application work or a shortened harness label. */
+    onHostAcpModelSelection?(selection: Record<string, unknown>): Promise<void>;
+    onHostAcpUnknown?(message: string): Promise<void>;
     /** A call of its own the brain started (`tool_started`): its `onExecuted` follows. */
     onStarted?(call: { id: string; name: string }): void;
     /** A file a tool of the brain's own made in the agent's folder (`file`). */
@@ -5714,6 +5863,68 @@ async function thinkOnce(
     if (event.type === "text_delta") onDelta(event.text);
     else if (event.type === "tool_started") hooks.onStarted?.(event);
     else if (event.type === "tool_call") {
+      if (
+        brain.kind === "antigravity" &&
+        turn.account?.provider === HOST_ANTIGRAVITY_PROVIDER &&
+        event.name === "host_acp_model_selection"
+      ) {
+        let value: Record<string, unknown>;
+        try {
+          if (
+            event.id !== `${turn.runId}:model-selection` ||
+            !event.executed ||
+            event.executed.isError ||
+            event.executed.pause ||
+            event.executed.content.length > 4096
+          )
+            throw new Error("invalid envelope");
+          const parsed = JSON.parse(event.executed.content);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid evidence");
+          value = parsed;
+        } catch {
+          throw new BrainFailure("antigravity_failed", "Invalid host ACP model selection evidence", false);
+        }
+        const id = (v: unknown) => typeof v === "string" && /^[a-zA-Z0-9-]{1,256}$/.test(v);
+        const exact = value?.selectionMode === "config_readback" || value?.selectionMode === "session_readback";
+        const pair =
+          value?.selectionMode === "config_pair_readback" &&
+          turn.model === "gemini-4-argon-high" &&
+          value?.selectedModel === "gemini-4-argon" &&
+          value?.thoughtLevel === "high";
+        if (
+          !value ||
+          value.source !== "cli_response" ||
+          value.runId !== turn.runId ||
+          !turn.session ||
+          value.nativeSessionId !== turn.session.id ||
+          !id(value.acpSessionId) ||
+          !turn.model ||
+          value.requestedModel !== turn.model ||
+          !(pair || (exact && value.selectedModel === turn.model && value.thoughtLevel === undefined)) ||
+          !hooks.onHostAcpModelSelection
+        )
+          throw new BrainFailure("antigravity_failed", "Invalid host ACP model selection evidence", false);
+        // Persist only qualified nonsecret fields, binding native identities from the resolved turn.
+        try {
+          await hooks.onHostAcpModelSelection({
+            source: "cli_response",
+            runId: turn.runId,
+            nativeSessionId: turn.session.id,
+            acpSessionId: value.acpSessionId,
+            requestedModel: turn.model,
+            selectedModel: value.selectedModel,
+            selectionMode: value.selectionMode,
+            ...(pair ? { thoughtLevel: "high" } : {}),
+          });
+        } catch {
+          throw new BrainFailure(
+            "antigravity_failed",
+            "Host ACP model selection evidence could not be persisted; inspect the native run before continuing.",
+            false,
+          );
+        }
+        continue;
+      }
       // Executed elsewhere (a computer brain through the runner bridge, which recorded its steps): shown only.
       if (event.executed) {
         executedCount++;
@@ -5733,6 +5944,27 @@ async function thinkOnce(
         };
       }
     } else if (event.type === "error") {
+      if (
+        brain.kind === "antigravity" &&
+        turn.account?.provider === HOST_ANTIGRAVITY_PROVIDER &&
+        event.code === "antigravity_delivery_unknown"
+      ) {
+        if (!hooks.onHostAcpUnknown)
+          throw new BrainFailure(
+            event.code,
+            "Unknown host tool effect could not be recorded; inspect the native run before continuing.",
+            false,
+          );
+        try {
+          await hooks.onHostAcpUnknown(event.message);
+        } catch {
+          throw new BrainFailure(
+            event.code,
+            "Unknown host tool effect could not be persisted; inspect the native run before continuing.",
+            false,
+          );
+        }
+      }
       // After a `limit`, whatever ended the turn was the plan's refusal. Without one, only before anything ran: the
       // words of a later failure can be a command's own.
       const untouched = executedCount === 0 && toolCalls.length === 0;
@@ -6184,6 +6416,7 @@ const withFallback = (t: Transcript, meta: Record<string, unknown> | undefined) 
  */
 export function continuedTranscript(stopped: Transcript, line: string): Transcript {
   const t: Transcript = {
+    ...(stopped.hostAcpUncertain ? { hostAcpUncertain: { ...stopped.hostAcpUncertain } } : {}),
     system: stopped.system,
     messages: structuredClone(stopped.messages),
     postedUpTo: 0,

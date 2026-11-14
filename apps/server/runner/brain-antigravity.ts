@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import type { CommandProfile } from "@agenteschat/adapters/command-policy";
-import type { AgentScope, BrainEffort } from "@agenteschat/adapters/machine-protocol";
+import type { AgentScope, BrainEffort, HostAcpHistory } from "@agenteschat/adapters/machine-protocol";
 import { isAccountId } from "@agenteschat/adapters/machine-protocol";
 import {
   ACCOUNT_MISSING_MESSAGE,
@@ -65,6 +65,7 @@ const KILL_GRACE_MS = 5000;
 
 /** `brain.turn` with `kind: "antigravity"`. */
 export interface AntigravityBrainTurnRequest {
+  hostAcpHistory?: HostAcpHistory;
   runId: string;
   kind: "antigravity";
   session: { id: string; resume: boolean };
@@ -517,11 +518,12 @@ export async function handleAntigravityBrainTurn(
       scope.emit({ type: "error", code: "not_logged_in", message: ACCOUNT_SIGNED_OUT, retryable: false });
       return;
     }
-    if (req.session.resume || !ctx.mcp || !req.model) {
+    // A resumed native run starts a fresh ACP session with engine-reconstructed history.
+    if (!ctx.mcp || !req.model) {
       scope.emit({
         type: "error",
         code: "unsupported",
-        message: "Host ACP requires a fresh session, an app bridge and an explicit model.",
+        message: "Host ACP requires an app bridge and an explicit model.",
         retryable: false,
       });
       return;
@@ -541,6 +543,7 @@ export async function handleAntigravityBrainTurn(
       runId: req.runId,
       sessionId: req.session.id,
       model: req.model,
+      hostAcpHistory: req.hostAcpHistory,
       profile: req.permissions?.mode === "work" ? "work" : "plan",
       prompt: [req.system, req.prompt].filter((x): x is string => typeof x === "string" && x.length > 0).join("\n\n"),
       mcp: { ...ctx.mcp, token: req.mcp.token },

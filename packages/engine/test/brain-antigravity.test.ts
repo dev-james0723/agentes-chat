@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import {
   ANTIGRAVITY_PROTOCOL,
   HOST_ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROVIDER,
   LOCKED_BRAIN_PROTOCOL,
+  MACHINE_PROTOCOL_VERSION,
   SHARED_GEMINI_PROTOCOL,
 } from "@agenteschat/adapters";
 import {
@@ -233,4 +235,47 @@ test("the right hand's reply never carries a Google token, refresh token, key or
   const out = scrubSignIns(`token ${access} refresh ${refresh} key ${key} secret ${secret}`, "[removed]");
   for (const v of [access, refresh, key, secret]) expect(out.text).not.toContain(v);
   expect(out.found).toBe(4);
+});
+
+test("fresh host ACP turns reconstruct original context after pause and consultation return", async () => {
+  const l = link({ protocol: MACHINE_PROTOCOL_VERSION, events: [{ type: "done", text: "phase result" }] });
+  for (const trigger of ["ANSWERED_MARKER", "specialist answer returned; synthesize next phase"]) {
+    const resumed = turn({
+      model: "gemini-4-argon-high",
+      account: { ...ACCOUNT, provider: HOST_ANTIGRAVITY_PROVIDER },
+      session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+      system: "Original role and task instructions",
+      conversation: "Prior native tool observations and owned task",
+      messages: [
+        { role: "user", content: "Original task marker" },
+        { role: "assistant", content: "Requested a harmless marker and consultation" },
+        { role: "user", content: trigger },
+      ],
+      trigger,
+      hostAcpHistory: {
+        runId: "0193aaaa-0000-7000-8000-000000000002",
+        observations: [
+          {
+            seq: 1,
+            callId: "completed-1",
+            name: "create_issue",
+            input: {},
+            content: "completed receipt",
+            isError: false,
+            state: "completed",
+            partial: true,
+          },
+        ],
+      },
+    });
+    await collect(brain(l).run(resumed, io()));
+    const sent = l.sent.at(-1)!;
+    expect(sent.session).toMatchObject({ id: SESSION, resume: false });
+    expect(sent.system).toContain("Original role and task instructions");
+    expect(sent.system).toContain("Prior native tool observations");
+    expect(sent.prompt).toContain("Original task marker");
+    expect(sent.prompt).toContain(trigger);
+    expect(sent.model).toBe("gemini-4-argon-high");
+    expect(sent.hostAcpHistory).toEqual(resumed.hostAcpHistory);
+  }
 });

@@ -3,6 +3,7 @@ import type {
   BrainSpeed,
   BrainTurnRequest,
   BrainTurnTimings,
+  HostAcpHistory,
   ProviderFailureCause,
 } from "@agenteschat/adapters";
 import type { ToolImage } from "@agenteschat/providers";
@@ -102,6 +103,7 @@ export interface BrainSession {
 }
 
 export interface BrainTurn {
+  hostAcpHistory?: HostAcpHistory;
   runId: string;
   orgId: string;
   agentId: string;

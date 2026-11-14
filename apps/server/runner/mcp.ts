@@ -215,8 +215,20 @@ export type IpcReply =
       runStateVersion?: 1 | 2 | 3;
       imageOmitted?: boolean;
       complete?: true;
+      resultTruncated?: boolean;
+      callId?: string;
     }
-  | { ok: false; error: string; transient?: boolean; idle?: boolean };
+  | {
+      ok: false;
+      error: string;
+      transient?: boolean;
+      idle?: boolean;
+      code?: string;
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+      callId?: string;
+    };
 
 /** A frame's pictures, when each is one (anything else in their place is dropped). */
 const validImages = (v: unknown): v is McpImage[] =>
@@ -445,8 +457,18 @@ export class McpBridge {
             ...(frame.runState === "completed" || frame.runState === "suspended" ? { runState: frame.runState } : {}),
             ...(typeof frame.imageOmitted === "boolean" ? { imageOmitted: frame.imageOmitted } : {}),
             ...(frame.complete === true ? { complete: true as const } : {}),
+            ...(typeof frame.resultTruncated === "boolean" ? { resultTruncated: frame.resultTruncated } : {}),
+            ...(frame.runState ? { callId: frame.callId } : {}),
           }
-        : { ok: false, error: frame.error.message },
+        : {
+            ok: false,
+            error: frame.error.message,
+            code: frame.error.code,
+            runState: frame.runState,
+            imageOmitted: frame.imageOmitted,
+            resultTruncated: frame.resultTruncated,
+            callId: frame.callId,
+          },
     );
   }
 
@@ -947,6 +969,19 @@ export async function handleMcpMessage(
         return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(answer) }] } };
       }
       const reply = await call(name, args);
+      const resultMeta = {
+        ...(reply.callId ? { "agenteschat/callId": reply.callId } : {}),
+        ...(reply.runState ? { "agenteschat/runState": reply.runState } : {}),
+        ...(typeof reply.imageOmitted === "boolean" ? { "agenteschat/imageOmitted": reply.imageOmitted } : {}),
+        ...(typeof reply.resultTruncated === "boolean" ? { "agenteschat/resultTruncated": reply.resultTruncated } : {}),
+        ...(reply.ok && reply.complete === true ? { "agenteschat/complete": true } : {}),
+        ...(!reply.ok
+          ? {
+              "agenteschat/errorCode":
+                reply.code ?? (reply.error === MCP_CUT_OFF ? "bridge.cut_off" : "bridge.unconfirmed"),
+            }
+          : {}),
+      };
       return {
         jsonrpc: "2.0",
         id,
@@ -956,17 +991,7 @@ export async function handleMcpMessage(
             ...(reply.ok && reply.images ? mcpImageContent(reply.images) : []),
           ],
           isError: !reply.ok,
-          ...(reply.ok && (reply.runState === "completed" || reply.runState === "suspended")
-            ? {
-                _meta: {
-                  "agenteschat/runState": reply.runState,
-                  ...(typeof reply.imageOmitted === "boolean"
-                    ? { "agenteschat/imageOmitted": reply.imageOmitted }
-                    : {}),
-                  ...(reply.complete === true ? { "agenteschat/complete": true } : {}),
-                },
-              }
-            : {}),
+          ...(Object.keys(resultMeta).length ? { _meta: resultMeta } : {}),
         },
       };
     }

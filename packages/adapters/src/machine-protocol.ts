@@ -1997,6 +1997,71 @@ export interface PaperclipWorkspaceProof {
   nonce: string;
   expiresAt: number;
 }
+/** Authenticated engine reconstruction of this native run's tool receipts; never model-authored history. */
+export interface HostAcpHistory {
+  runId: string;
+  observations: Array<{
+    seq: number;
+    callId: string;
+    name: string;
+    input: Record<string, unknown>;
+    content: string;
+    isError: boolean;
+    state: "completed" | "unknown";
+    partial: boolean;
+  }>;
+}
+export const HOST_ACP_TOOL_NAMES = [
+  "list_issues",
+  "load_skill",
+  "read_skill_file",
+  "search_wiki",
+  "read_wiki_page",
+  "find_agent",
+  "ask_agent",
+  "tell_agent",
+  "ask_user",
+  "comment_issue",
+  "update_issue",
+  "create_issue",
+  "list_files",
+  "read_file",
+  "write_file",
+  "run_code",
+  "run_skill_script",
+] as const;
+export function isHostAcpHistory(value: unknown, runId: string): value is HostAcpHistory {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const h = value as HostAcpHistory;
+  if (
+    h.runId !== runId ||
+    !Array.isArray(h.observations) ||
+    h.observations.length > 128 ||
+    JSON.stringify(h).length > 300_000
+  )
+    return false;
+  let last = 0;
+  return h.observations.every((o) => {
+    const valid =
+      !!o &&
+      Number.isInteger(o.seq) &&
+      o.seq > last &&
+      typeof o.callId === "string" &&
+      o.callId.length > 0 &&
+      o.callId.length <= 256 &&
+      (HOST_ACP_TOOL_NAMES as readonly string[]).includes(o.name) &&
+      !!o.input &&
+      typeof o.input === "object" &&
+      !Array.isArray(o.input) &&
+      typeof o.content === "string" &&
+      o.content.length <= 8000 &&
+      typeof o.isError === "boolean" &&
+      typeof o.partial === "boolean" &&
+      (o.state === "completed" || o.state === "unknown");
+    last = o?.seq;
+    return valid;
+  });
+}
 export interface BrainTurnRequest {
   runId: string;
   /**
@@ -2021,6 +2086,7 @@ export interface BrainTurnRequest {
    * tools, space-separated; a kept-alive Codex, which lists them once when its thread opens, starts again when one is new.
    */
   mcp: { token: string; url?: string; tools?: string };
+  hostAcpHistory?: HostAcpHistory;
   /** Keep one process per (agent, session) alive between turns (default true; false for a background turn). Codex: protocol 16. */
   keepAlive?: boolean;
   /** Also load the machine owner's own MCP servers (default false: `--strict-mcp-config`; never in a `plan` turn). */
@@ -2960,8 +3026,18 @@ export type ServerFrame =
       imageOmitted?: boolean;
       /** The server confirmed this completed result was not shortened. */
       complete?: true;
+      /** A known result was shortened by the native bridge; never a complete read. */
+      resultTruncated?: boolean;
     }
-  | { type: "mcp.result"; callId: string; ok: false; error: { code: string; message: string } }
+  | {
+      type: "mcp.result";
+      callId: string;
+      ok: false;
+      error: { code: string; message: string };
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    }
   /** Protocol 8: the answer to an `mcp.list`: the tools this run may use (JSON Schemas simplified for the CLIs). */
   | { type: "mcp.tools"; callId: string; ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
   | { type: "mcp.tools"; callId: string; ok: false; error: { code: string; message: string } }

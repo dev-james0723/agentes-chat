@@ -59,7 +59,8 @@ export interface RunToolsDeps {
 export interface BridgeCallResult {
   result: ToolResult;
   code?: string;
-  /** Images cannot be consumed by the text-only ACP adapter, even when the bridge carries them. */
+  /** Present only after a known gateway result or persisted suspension. */
+  runState?: "completed" | "suspended";
   imageOmitted?: boolean;
 }
 
@@ -652,6 +653,23 @@ function codeOf(content: string, data?: Record<string, unknown>) {
   return "tool.failed";
 }
 
+/** Same completion proof for live bridge results and native-history reconstruction. */
+export function knownBridgeResult(output: Pick<ToolOutput, "content" | "isError" | "data">): boolean {
+  const canceled = output.data?.canceled as { killed?: boolean } | undefined;
+  return (
+    (!canceled || canceled.killed === true) &&
+    (!output.isError ||
+      typeof output.data?.exitCode === "number" ||
+      [
+        "tool.invalid_input",
+        "tool.unknown",
+        "tool.not_allowed",
+        "command.approval_needed",
+        "command.not_allowed",
+      ].includes(codeOf(output.content, output.data)))
+  );
+}
+
 /**
  * One call for a run or a mission task from outside the engine loop (the
  * runner bridge, `executeToolForRun`), with the error code the bridge answers
@@ -685,7 +703,9 @@ export async function invokeToolForRun(
   const imageOmitted = images !== undefined && (!Array.isArray(images) || images.length > 0);
   const suspend = async (pause: RunPause, r: AgentRun): Promise<BridgeCallResult> => {
     const result = await suspendRunForTool(deps, r, { id: call.id, name: call.name }, pause);
-    return result.isError ? { result, code: "bridge.run_not_running" } : { result, imageOmitted };
+    return result.isError
+      ? { result, code: "bridge.run_not_running" }
+      : { result, runState: "suspended", imageOmitted };
   };
   if (wait && run) {
     return suspend(
@@ -695,14 +715,19 @@ export async function invokeToolForRun(
   }
   if (outcome.type === "result") {
     const isError = outcome.output.isError === true;
+    const code = isError ? codeOf(outcome.output.content, outcome.output.data) : undefined;
+    // A returned failure may represent a lost machine request, not a completed command.
+    // Only explicit command exits or pre-dispatch gateway refusals prove a known error outcome.
+    const known = knownBridgeResult(outcome.output);
     return {
       result: {
         content: outcome.output.content,
         ...(isError ? { isError: true } : {}),
         ...(outcome.output.images?.length ? { images: outcome.output.images } : {}),
       },
+      ...(code ? { code } : {}),
+      ...(known ? { runState: "completed" as const } : {}),
       imageOmitted,
-      ...(isError ? { code: codeOf(outcome.output.content, outcome.output.data) } : {}),
     };
   }
   if (!run) {

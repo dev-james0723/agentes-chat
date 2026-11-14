@@ -1,5 +1,6 @@
 import {
   findPullRequestUrl,
+  isMcpResultMedia,
   MCP_ALWAYS_LOAD,
   MCP_TOOLS_MAX,
   type McpToolInfo,
@@ -73,8 +74,21 @@ const { machineTasks } = schema;
  */
 export type McpCallFrame = Extract<RunnerFrame, { type: "mcp.call" }>;
 export type McpOutcome =
-  | { ok: true; text: string; images?: ToolImage[]; runState?: "completed" | "suspended"; imageOmitted?: boolean }
-  | { ok: false; error: { code: string; message: string } };
+  | {
+      ok: true;
+      text: string;
+      images?: ToolImage[];
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    }
+  | {
+      ok: false;
+      error: { code: string; message: string };
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    };
 export type McpListFrame = Extract<RunnerFrame, { type: "mcp.list" }>;
 export type McpListOutcome =
   | { ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
@@ -388,18 +402,26 @@ export async function handleMissionMcpCall(
       name: frame.tool,
       input: frame.args,
     });
+    if (out.result.images && !isMcpResultMedia(out.result.images))
+      return {
+        ...refuse("bridge.media_rejected", "The action completed but its media output was rejected. Do not replay it."),
+        ...(out.runState ? { runState: out.runState, imageOmitted: true, resultTruncated: false } : {}),
+      };
     if (!out.result.isError && typeof out.imageOmitted === "boolean")
       return {
         ok: true,
         text: out.result.content,
         ...(out.result.images ? { images: out.result.images } : {}),
-        runState: out.result.pause ? "suspended" : "completed",
+        runState: out.runState,
         imageOmitted: out.imageOmitted,
       };
     if (!out.result.isError)
       return refuse("bridge.image_state_unknown", "The tool result's image state is unknown. Stop without retry.");
     const code = out.code ?? "tool.failed";
-    return refuse((id.taskId && TASK_CODES[code]) || code, out.result.content);
+    return {
+      ...refuse((id.taskId && TASK_CODES[code]) || code, out.result.content),
+      ...(out.runState ? { runState: out.runState, imageOmitted: out.imageOmitted, resultTruncated: false } : {}),
+    };
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     return refuse(typeof code === "string" ? code : "internal", error instanceof Error ? error.message : String(error));

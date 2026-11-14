@@ -66,6 +66,73 @@ afterEach(async () => {
 
 const deps = () => ({ db: f.db, pubsub: f.pubsub, publicUrl: "https://agentes.chat" });
 
+test("legacy long text stays bounded with metadata; image first reply persists only its completed receipt", async () => {
+  f = await setup({ machines: true });
+  const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "typed-media-test" });
+  hubs.push(hub);
+  let effects = 0;
+  hub.setMissionHooks({
+    mcp: async (_id, frame) => {
+      effects++;
+      return {
+        ok: true,
+        text: "x".repeat(60_000),
+        runState: "completed",
+        imageOmitted: frame.tool === "image",
+        ...(frame.tool === "image"
+          ? {
+              images: [
+                {
+                  mediaType: "image/png",
+                  data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p5xkAAAAASUVORK5CYII=",
+                },
+              ],
+            }
+          : {}),
+      };
+    },
+  });
+  const paired = await pair();
+  const runner = fakeRunner(hub);
+  await runner.hello(paired.token);
+  const send = async (callId: string, tool: string) => {
+    const before = runner.sent.length;
+    await runner.frame({ type: "mcp.call", callId, taskId: "task", tool, args: {} });
+    await until(() => runner.sent.slice(before).some((s) => s.type === "mcp.result"), "typed result");
+    return runner.sent.slice(before).find((s) => s.type === "mcp.result") as any;
+  };
+  const text = await send("long-text-1", "text");
+  expect(text.ok).toBe(true);
+  expect(text.text.length).toBeLessThanOrEqual(50_000);
+  expect(text.resultTruncated).toBe(true);
+  const image = await send("image-call-1", "image");
+  expect(image.images).toEqual([
+    {
+      mediaType: "image/png",
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p5xkAAAAASUVORK5CYII=",
+    },
+  ]);
+  expect(image.runState).toBe("completed");
+  const [row] = await f.db
+    .select()
+    .from(schema.machineMcpCalls)
+    .where(
+      and(eq(schema.machineMcpCalls.machineId, paired.machineId), eq(schema.machineMcpCalls.callId, "image-call-1")),
+    );
+  expect(JSON.stringify(row?.result)).not.toContain(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p5xkAAAAASUVORK5CYII=",
+  );
+  expect(row?.result).toMatchObject({
+    ok: false,
+    runState: "completed",
+    imageOmitted: true,
+    error: { code: "bridge.completed_media_unavailable" },
+  });
+  const again = await send("image-call-1", "image");
+  expect(again.error.code).toBe("bridge.completed_media_unavailable");
+  expect(effects).toBe(2);
+});
+
 function pair(actorId = f.owner.id, name = "Build box", exec = true) {
   return pairMachine(deps(), actorId, f.org.id, { name, ...RUNNER, exec });
 }

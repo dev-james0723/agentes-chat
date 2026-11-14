@@ -33,7 +33,6 @@ export async function connectHostMcp(input: {
   env.AGENTES_MCP_SOCKET = input.socketPath;
   env.AGENTES_RUNNER_HOME = input.runnerHome;
   env.AGENTES_MCP_CWD = input.cwd;
-  env.AGENTES_MCP_REQUIRE_COMPLETE = "1";
   if (input.profile === "plan") env.AGENTES_MCP_PROFILE = "plan";
   const transport = new StdioClientTransport({
     command,
@@ -60,7 +59,8 @@ export async function connectHostMcp(input: {
       listTools: async (params?: { cursor?: string }) =>
         client.listTools(params, { signal: input.signal, timeout: 60_000 }),
       callTool: async (params: { name: string; arguments: Record<string, unknown> }) =>
-        client.callTool(params, undefined, { signal: input.signal, timeout: 300_000 }),
+        // Foreground commands are bounded to 240s, below the daemon's 360s deadline.
+        client.callTool(params, undefined, { signal: input.signal, timeout: 330_000 }),
       close: async () => {
         await client.close();
       },

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import type { HostAcpHistory } from "@agenteschat/adapters/machine-protocol";
 import type { CodexBrainEvent } from "../../runner/brain-codex";
-import { hostAcpPermission, selectAcpModel, stopHostAcpGroup } from "../../runner/host-acp-runtime";
+import { hostAcpPermission, runHostAcpTurn, selectAcpModel, stopHostAcpGroup } from "../../runner/host-acp-runtime";
 
 describe("ACP runtime boundaries", () => {
   const request = {
@@ -39,7 +43,10 @@ describe("ACP runtime boundaries", () => {
       sessionId: "s1",
       models: { currentModelId: "other", availableModels: [{ modelId: "gemini-4-argon-high" }] },
     };
-    expect(await selectAcpModel(peer, session, "gemini-4-argon-high")).toBe("ack_only");
+    expect(await selectAcpModel(peer, session, "gemini-4-argon-high")).toEqual({
+      selectionMode: "ack_only",
+      selectedModel: null,
+    });
     expect(seen).toEqual(["session/set_model"]);
     await expect(selectAcpModel(peer, session, "other-model")).rejects.toThrow();
   });
@@ -153,7 +160,7 @@ import json,sys
 for line in sys.stdin:
  m=json.loads(line); method=m.get('method'); ident=m.get('id')
  if method=='initialize': result={'protocolVersion':1}
- elif method=='session/new': result={'sessionId':'s1','models':{'currentModelId':'x','availableModels':[{'modelId':'gemini-4-argon-high'}]}}
+ elif method=='session/new': result={'sessionId':'s1','models':{'currentModelId':'gemini-4-argon-high','availableModels':[{'modelId':'gemini-4-argon-high'}]}}
  elif method=='session/set_model': result={}
  elif method=='session/prompt':
   print(json.dumps({'jsonrpc':'2.0','id':90,'method':'session/request_permission','params':{'sessionId':'s1','toolCall':{'title':'Run mcp_agenteschat_agentes_test','kind':'other','rawInput':{}},'options':[{'optionId':'yes','kind':'allow_once'}]}}),flush=True)
@@ -190,7 +197,15 @@ for line in sys.stdin:
         isAuthorized: () => true,
         emit: (e) => events.push(e),
       });
-      expect(events).toEqual([
+      const selections = events.filter((e) => e.type === "tool_call" && e.name === "host_acp_model_selection");
+      expect(selections).toHaveLength(1);
+      expect(JSON.parse(selections[0].executed.content)).toMatchObject({
+        source: "cli_response",
+        requestedModel: "gemini-4-argon-high",
+        selectedModel: "gemini-4-argon-high",
+        selectionMode: "session_readback",
+      });
+      expect(events.filter((e) => e.type !== "tool_call")).toEqual([
         { type: "text_delta", text: "before [redacted] after" },
         { type: "done", text: "before [redacted] after", session: { id: "session-12345678" } },
       ]);
@@ -308,4 +323,278 @@ for line in sys.stdin:
       fs.rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+});
+
+describe("native final model and history contract", () => {
+  test("native ACP permissions stay denied regardless of tool title", () => {
+    expect(hostAcpPermission("session", { toolCall: { title: "agentes read_file" } })).toEqual({
+      outcome: "cancelled",
+    });
+  });
+
+  const pair = () => [
+    {
+      id: "model",
+      category: "model",
+      type: "select",
+      currentValue: "gemini-4-argon",
+      options: [{ value: "gemini-4-argon" }],
+    },
+    {
+      id: "thought_level",
+      category: "thought_level",
+      type: "select",
+      currentValue: "medium",
+      options: [{ value: "low" }, { value: "medium" }, { value: "high" }],
+    },
+  ];
+
+  test("actual CLI shape selects base and High in the same session with final paired readback", async () => {
+    const calls: unknown[] = [];
+    const selection = await selectAcpModel(
+      {
+        request: async (method, params) => {
+          calls.push({ method, params });
+          return {
+            configOptions: pair().map((o) => ({ ...o, currentValue: o.id === "model" ? "gemini-4-argon" : "high" })),
+          };
+        },
+      },
+      { sessionId: "exact-acp-session", configOptions: pair() },
+      "gemini-4-argon-high",
+    );
+    expect(selection).toEqual({
+      selectionMode: "config_pair_readback",
+      selectedModel: "gemini-4-argon",
+      thoughtLevel: "high",
+    });
+    expect(calls).toEqual([
+      {
+        method: "session/set_config_option",
+        params: { sessionId: "exact-acp-session", configId: "model", value: "gemini-4-argon" },
+      },
+      {
+        method: "session/set_config_option",
+        params: { sessionId: "exact-acp-session", configId: "thought_level", value: "high" },
+      },
+    ]);
+  });
+
+  test("paired readback rejects missing, wrong, duplicate and ACK-only values", async () => {
+    const good = pair().map((o) => ({ ...o, currentValue: o.id === "model" ? "gemini-4-argon" : "high" }));
+    for (const configOptions of [
+      [],
+      [good[0]],
+      [good[1]],
+      good.map((o) => ({ ...o, currentValue: o.id === "model" ? "other-model" : "high" })),
+      good.map((o) => ({ ...o, currentValue: o.id === "model" ? "gemini-4-argon" : "medium" })),
+      [...good, good[0]],
+      [...good, good[1]],
+    ]) {
+      await expect(
+        selectAcpModel(
+          { request: async () => ({ configOptions }) },
+          { sessionId: "s", configOptions: pair() },
+          "gemini-4-argon-high",
+        ),
+      ).rejects.toThrow("unconfirmed");
+    }
+    await expect(
+      selectAcpModel({ request: async () => ({}) }, { sessionId: "s", configOptions: pair() }, "gemini-4-argon-high"),
+    ).rejects.toThrow("unconfirmed");
+    for (const configs of [
+      [...pair(), pair()[0]],
+      [...pair(), pair()[1]],
+      pair().map((o) => ({ ...o, options: [...o.options, ...o.options] })),
+    ]) {
+      const calls: unknown[] = [];
+      await expect(
+        selectAcpModel(
+          {
+            request: async (...args) => {
+              calls.push(args);
+              return {};
+            },
+          },
+          { sessionId: "s", configOptions: configs },
+          "gemini-4-argon-high",
+        ),
+      ).rejects.toThrow();
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test("CLI-returned exact model readback differs from legacy setter ACK", async () => {
+    const peer = { request: async () => ({ configOptions: [{ id: "model", currentValue: "gemini-4-argon-high" }] }) };
+    expect(
+      await selectAcpModel(
+        peer,
+        { sessionId: "s", configOptions: [{ id: "model", options: [{ value: "gemini-4-argon-high" }] }] },
+        "gemini-4-argon-high",
+      ),
+    ).toEqual({ selectionMode: "config_readback", selectedModel: "gemini-4-argon-high" });
+    await expect(
+      selectAcpModel(
+        { request: async () => ({ configOptions: [{ id: "model", currentValue: "gemini-4-argon-low" }] }) },
+        { sessionId: "s", configOptions: [{ id: "model", options: [{ value: "gemini-4-argon-high" }] }] },
+        "gemini-4-argon-high",
+      ),
+    ).rejects.toThrow("unconfirmed");
+    expect(
+      await selectAcpModel(
+        peer,
+        { models: { currentModelId: "gemini-4-argon-high", availableModels: [{ modelId: "gemini-4-argon-high" }] } },
+        "gemini-4-argon-high",
+      ),
+    ).toEqual({ selectionMode: "session_readback", selectedModel: "gemini-4-argon-high" });
+    expect(
+      await selectAcpModel(
+        { request: async () => ({}) },
+        { models: { currentModelId: "other", availableModels: [{ modelId: "gemini-4-argon-high" }] } },
+        "gemini-4-argon-high",
+      ),
+    ).toEqual({ selectionMode: "ack_only", selectedModel: null });
+  });
+
+  // Synthetic ACP subprocess: protocol contract only, never evidence of an actual provider run.
+  test("fresh native pause/resume turns retain supplied task context and exact CLI selection traces", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    // The Mac grant is under its home; an isolated image's /app source is not.
+    const relative = path.relative(homedir(), import.meta.dir);
+    const base = relative.startsWith("..") || path.isAbsolute(relative) ? homedir() : import.meta.dir;
+    const dir = mkdtempSync(path.join(base, ".argon-runtime-test-"));
+    const bin = path.join(dir, "fake-acp"),
+      log = path.join(dir, "trace.jsonl");
+    writeFileSync(
+      bin,
+      `#!${process.execPath}
+const fs=require('node:fs'),rl=require('node:readline').createInterface({input:process.stdin});
+const log=${JSON.stringify(log)}; const sessionId='synthetic-'+process.pid;
+const mode=()=>{try{return fs.readFileSync(require('node:path').join(__dirname,'mode'),'utf8')}catch{return 'pair'}};
+const configs=()=>[{id:'model',category:'model',type:'select',currentValue:'gemini-4-argon',options:[{value:'gemini-4-argon'}]},{id:'thought_level',category:'thought_level',type:'select',currentValue:'medium',options:[{value:'low'},{value:'medium'},{value:'high'}]}];
+rl.on('line',line=>{const m=JSON.parse(line);if(!('id' in m))return;
+let result;
+if(m.method==='initialize')result={protocolVersion:1};
+else if(m.method==='session/new')result=mode()==='ack-only'?{sessionId,models:{currentModelId:'other',availableModels:[{modelId:'gemini-4-argon-high'}]}}:{sessionId,configOptions:configs()};
+else if(m.method==='session/set_config_option'){
+let c=configs().map(o=>({...o,currentValue:o.id==='model'?(mode()==='wrong-base'?'other':'gemini-4-argon'):(mode()==='wrong-high'?'medium':'high')}));
+if(mode()==='missing')c=c.slice(0,1);if(mode()==='duplicate')c.push(c[1]);result=mode()==='pair-ack'?{}:{configOptions:c};
+}
+else if(m.method==='session/prompt'){
+const text=m.params.prompt[0].text;fs.appendFileSync(log,JSON.stringify({sessionId,text,tokenInEnv:!!process.env.AGENTES_MCP_TOKEN})+'\\n');
+const response=text.includes('ANSWERED_MARKER')?{type:'final',text:'Original task and ANSWERED_MARKER retained'}:{type:'tool_call',name:'ask_user',arguments:{}};
+process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify(response)}}}})+'\\n');result={stopReason:'end_turn'};
+}else result={};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});`,
+    );
+    chmodSync(bin, 0o700);
+    const events: CodexBrainEvent[] = [];
+    let connections = 0;
+    let unknownResult = false;
+    try {
+      Object.defineProperty(process, "platform", { ...descriptor, value: "darwin" });
+      const run = (runId: string, prompt: string, hostAcpHistory?: HostAcpHistory) =>
+        runHostAcpTurn({
+          cwd: dir,
+          runnerHome: dir,
+          runId,
+          hostAcpHistory,
+          sessionId: "native-session-1234",
+          model: "gemini-4-argon-high",
+          prompt,
+          profile: "work",
+          bin,
+          mcp: { token: "synthetic-scoped-token", socketPath: path.join(dir, "socket"), command: [process.execPath] },
+          signal: new AbortController().signal,
+          isAuthorized: () => true,
+          emit: (e) => events.push(e),
+          connectMcp: async () => {
+            connections++;
+            return {
+              listTools: async () => ({
+                tools: [
+                  {
+                    name: "ask_user",
+                    inputSchema: { type: "object", properties: {} },
+                    _meta: { "agenteschat/runStateEnforced": true },
+                  },
+                ],
+                _meta: { "agenteschat/runStateVersion": 3 },
+              }),
+              callTool: async () =>
+                unknownResult
+                  ? {
+                      isError: true,
+                      content: [],
+                      _meta: {
+                        "agenteschat/errorCode": "bridge.cut_off",
+                        "agenteschat/callId": "effect-before-cutoff",
+                      },
+                    }
+                  : {
+                      content: [],
+                      _meta: { "agenteschat/runState": "suspended", "agenteschat/imageOmitted": false },
+                    },
+              close: async () => {},
+            } as any;
+          },
+        });
+      await run("original-run-1234", "Original task context");
+      expect(events.at(-1)).toMatchObject({ type: "done", text: "" });
+      await run("resumed-run-12345", "Original task context; ANSWERED_MARKER", {
+        runId: "resumed-run-12345",
+        observations: [
+          {
+            seq: 1,
+            callId: "completed-effect-1",
+            name: "create_issue",
+            input: {},
+            content: "persisted-native-receipt",
+            isError: false,
+            state: "completed",
+            partial: true,
+          },
+        ],
+      });
+      expect(events.at(-1)).toMatchObject({ type: "done", text: "Original task and ANSWERED_MARKER retained" });
+      const traces = events
+        .filter((e) => e.type === "tool_call" && e.name === "host_acp_model_selection")
+        .map((e: any) => JSON.parse(e.executed.content));
+      expect(traces).toHaveLength(2);
+      expect(traces.map((t) => t.runId)).toEqual(["original-run-1234", "resumed-run-12345"]);
+      expect(
+        traces.every(
+          (t) =>
+            t.requestedModel === "gemini-4-argon-high" &&
+            t.selectedModel === "gemini-4-argon" &&
+            t.thoughtLevel === "high" &&
+            t.selectionMode === "config_pair_readback" &&
+            t.source === "cli_response" &&
+            t.nativeSessionId === "native-session-1234",
+        ),
+      ).toBe(true);
+      expect(traces[0].acpSessionId).not.toBe(traces[1].acpSessionId);
+      const prompts = readFileSync(log, "utf8");
+      expect(prompts).toContain("persisted-native-receipt");
+      expect(prompts).not.toContain('"tokenInEnv":true');
+      expect(events.find((e) => e.type === "error")).toBeUndefined();
+      unknownResult = true;
+      await run("cutoff-native-run", "recorded side effect followed by cutoff");
+      expect(events.at(-1)).toMatchObject({
+        type: "error",
+        code: "antigravity_delivery_unknown",
+        message: expect.stringContaining("bridge.cut_off; effect unknown; receipt effect-before-cutoff"),
+      });
+      const beforeFailures = connections;
+      for (const mode of ["ack-only", "pair-ack", "missing", "wrong-base", "wrong-high", "duplicate"]) {
+        writeFileSync(path.join(dir, "mode"), mode);
+        await run("unverified-run-123", "must never reach first prompt");
+        expect(events.at(-1)).toMatchObject({ type: "error" });
+        expect(connections).toBe(beforeFailures);
+      }
+      expect(readFileSync(log, "utf8")).not.toContain("must never reach first prompt");
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 35_000);
 });

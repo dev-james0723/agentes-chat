@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { connectHostMcp } from "../../runner/host-acp-mcp";
+import { McpBridge } from "../../runner/mcp";
 
 test("connects a local MCP subprocess with only the scoped run environment", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "host-mcp-test-"));
@@ -37,7 +38,7 @@ test("connects a local MCP subprocess with only the scoped run environment", asy
       expect(JSON.parse(readFileSync(marker, "utf8"))).toEqual({
         token: true,
         profile: "plan",
-        complete: true,
+        complete: false,
         secret: false,
         args: ["mcp", "--run", "run-12345678"],
       });
@@ -48,4 +49,74 @@ test("connects a local MCP subprocess with only the scoped run environment", asy
     delete process.env.UNRELATED_SECRET;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("native scoped result transport", () => {
+  test("authenticated stdio client carries typed state through the actual runner socket", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "argon-client-"));
+    const runId = "scoped-run-12345678";
+    const bridge = new McpBridge({
+      socketPath: path.join(dir, "mcp.sock"),
+      task: (id) =>
+        id === runId ? { token: "scoped", serverToken: "server-scoped", runId, missionId: "", running: true } : null,
+    });
+    let calls = 0;
+    bridge.attach((frame) => {
+      if (frame.type === "mcp.list")
+        bridge.tools({
+          type: "mcp.tools",
+          callId: frame.callId,
+          ok: true,
+          runStateVersion: 3,
+          tools: [{ name: "list_issues", description: "issues", inputSchema: { type: "object", properties: {} } }],
+        });
+      if (frame.type === "mcp.call") {
+        calls++;
+        expect(frame.token).toBe("server-scoped");
+        bridge.result({
+          type: "mcp.result",
+          callId: frame.callId,
+          ok: true,
+          text: "scoped result",
+          runState: "completed",
+          imageOmitted: false,
+        });
+      }
+    });
+    await bridge.listen();
+    const input = {
+      command: [process.execPath, path.resolve(import.meta.dir, "../../runner/main.ts")],
+      runId,
+      token: "scoped",
+      socketPath: bridge.socketPath,
+      runnerHome: dir,
+      cwd: dir,
+      profile: "work" as const,
+      signal: new AbortController().signal,
+    };
+    try {
+      const client = await connectHostMcp(input);
+      try {
+        const listed = await client.listTools();
+        expect(listed._meta?.["agenteschat/runStateVersion"]).toBe(3);
+        expect(listed.tools[0]?._meta?.["agenteschat/runStateEnforced"]).toBe(true);
+        const result: any = await client.callTool({ name: "list_issues", arguments: {} });
+        expect(result.content[0].text).toBe("scoped result");
+        expect(result._meta["agenteschat/runState"]).toBe("completed");
+      } finally {
+        await client.close();
+      }
+      const intruder = await connectHostMcp({ ...input, token: "other-run-token" });
+      try {
+        const result: any = await intruder.callTool({ name: "list_issues", arguments: {} });
+        expect(result.isError).toBe(true);
+        expect(calls).toBe(1);
+      } finally {
+        await intruder.close();
+      }
+    } finally {
+      await bridge.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

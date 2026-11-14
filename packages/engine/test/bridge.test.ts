@@ -2,8 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { MCP_TOOLS_MAX, MISSION_MCP_TOOLS, type ServerFrame } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
 import {
+  answerQuestion,
+  type Brain,
+  type BrainTurn,
+  createJobHandlers,
   createMission,
   createMissionRunToolSource,
+  drainOutbox,
   grantScopes,
   issueRunToolToken,
   type MachineHub,
@@ -14,6 +19,7 @@ import {
   type ToolSource,
   verifyRunToolToken,
 } from "../src";
+import { computerPrompt } from "../src/brains/prompt";
 import { answerSteering, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 import { missionRunner, pairedMachine, RUNNER, type TaskStartRequest } from "./mission-helpers";
@@ -29,6 +35,7 @@ afterEach(async () => {
 
 type McpTools = Extract<ServerFrame, { type: "mcp.tools" }>;
 type McpResult = Extract<ServerFrame, { type: "mcp.result" }>;
+let imageExecutions = 0;
 
 /** A tool whose schema uses `$ref` and a top-level `oneOf` (as some MCP servers send). */
 const refSource: ToolSource = {
@@ -52,10 +59,18 @@ const refSource: ToolSource = {
       description: "A synthetic image result",
       scope: "github:pr.read",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      execute: async () => ({
-        content: "A picture was attached",
-        images: [{ mediaType: "image/png", data: "FAKE_IMAGE_BYTES" }],
-      }),
+      execute: async () => {
+        imageExecutions++;
+        return {
+          content: "A picture was attached",
+          images: [
+            {
+              mediaType: "image/png",
+              data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p5xkAAAAASUVORK5CYII=",
+            },
+          ],
+        };
+      },
     },
     {
       name: "long_demo",
@@ -253,6 +268,7 @@ describe("runner MCP bridge (ADR 0032)", () => {
     expect(gh.executed).toEqual([{ tool: "github_get_pr", input: { repo: "a/b", pr: 3 } }]);
     const steps = await f.db.select().from(schema.agentRunSteps).where(eq(schema.agentRunSteps.runId, run.id));
     expect(steps.map((s) => s.kind)).toEqual(["tool_call", "tool_result"]);
+    const imageBefore = imageExecutions;
     const image = await runner.call(token, "image_demo", {});
     expect(image).toMatchObject({
       ok: true,
@@ -262,9 +278,23 @@ describe("runner MCP bridge (ADR 0032)", () => {
     });
     // Protocol 62 now carries images for native clients; the text-only ACP
     // adapter still receives the typed warning and rejects the image content.
-    expect(image).toMatchObject({ images: [{ mediaType: "image/png", data: "FAKE_IMAGE_BYTES" }] });
+    expect(image).toMatchObject({
+      images: [
+        {
+          mediaType: "image/png",
+          data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p5xkAAAAASUVORK5CYII=",
+        },
+      ],
+    });
     expect(await runner.call(token, "github_get_pr", { repo: "a/b", pr: 3 }, "run", read.callId)).toEqual(read);
-    expect(await runner.call(token, "image_demo", {}, "run", image.callId)).toEqual(image);
+    expect(await runner.call(token, "image_demo", {}, "run", image.callId)).toMatchObject({
+      ok: false,
+      error: { code: "bridge.completed_media_unavailable" },
+      runState: "completed",
+      imageOmitted: true,
+      resultTruncated: false,
+    });
+    expect(imageExecutions).toBe(imageBefore + 1);
     expect(gh.executed).toHaveLength(1);
     const boundary = await runner.call(token, "long_demo", { length: 50_000 });
     expect(boundary).toMatchObject({ ok: true, runState: "completed", imageOmitted: false });
@@ -371,6 +401,130 @@ describe("runner MCP bridge (ADR 0032)", () => {
     await revokeRunToolTokens(f.db, { runId: run.id });
     expect(await runner.list(token)).toMatchObject({ ok: false, error: { code: "bridge.invalid_token" } });
   });
+});
+
+test("native ask_user bridge persists waiting_input and resumes the original run with its answer", async () => {
+  f = await setup({ machines: true, askUser: true });
+  const paired = await pairedMachine(f);
+  const runner = bridgeRunner(f.machineHub as MachineHub);
+  await runner.hello(paired.token);
+  await f.db.update(schema.agents).set({ brain: "claude_code" }).where(eq(schema.agents.id, f.agent.id));
+  const seen: BrainTurn[] = [];
+  let questions = 0;
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    machines: {
+      status: async (id) => ({
+        id,
+        orgId: f.org.id,
+        name: "Synthetic computer",
+        online: true,
+        execAllowed: true,
+        os: "darwin",
+        protocol: RUNNER.protocol,
+        executors: { claude: { version: "synthetic", loggedIn: true } },
+      }),
+    },
+    brains: {
+      claude_code: (_agent, _run, bridge) =>
+        ({
+          kind: "claude_code",
+          async *run(turn: BrainTurn) {
+            seen.push(turn);
+            if (seen.length === 1) {
+              const token = bridge.mcpToken();
+              const listed = await runner.list(token);
+              expect(listed).toMatchObject({ runStateVersion: 3 });
+              expect(names(listed)).toContain("ask_user");
+              const result = await runner.call(token, "ask_user", {
+                question: "Harmless synthetic continuation marker?",
+                why: "Controlled continuation test for the original task.",
+              });
+              expect(result).toMatchObject({ ok: true, runState: "suspended", imageOmitted: false });
+              questions++;
+              yield { type: "done", text: "" };
+            } else {
+              yield { type: "done", text: "Original task continuation verified." };
+            }
+          },
+        }) as Brain,
+    },
+  });
+  await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, f.general.id, {
+    body: "@dev retain ORIGINAL_TASK_SENTINEL and ask for a harmless marker",
+  });
+  await drainOutbox(f.db, handlers);
+  const [paused] = await f.db.select().from(schema.agentRuns);
+  expect(paused?.status).toBe("waiting_input");
+  expect(paused?.transcript).toHaveProperty("pending");
+  const [question] = await f.db.select().from(schema.agentQuestions).where(eq(schema.agentQuestions.runId, paused!.id));
+  expect(question?.status).toBe("open");
+  const answerOnlyNonce = `answer-only-${crypto.randomUUID()}`;
+  expect(JSON.stringify(seen)).not.toContain(answerOnlyNonce);
+  await answerQuestion({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, question!.id, { text: answerOnlyNonce });
+  await drainOutbox(f.db, handlers);
+  const [done] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, paused!.id));
+  expect(done?.status).toBe("done");
+  expect(seen).toHaveLength(2);
+  expect(questions).toBe(1);
+  const resumed = computerPrompt({ ...seen[1]!, session: { ...seen[1]!.session!, resume: false } });
+  expect(resumed).toContain(`The person answered: ${answerOnlyNonce}`);
+  expect(resumed).toContain("ORIGINAL_TASK_SENTINEL");
+});
+
+test("known failed exit remains typed while an unclassified tool failure is uncertain", async () => {
+  const source: ToolSource = {
+    name: "contract-errors",
+    tools: async () => [
+      {
+        name: "known_exit",
+        description: "synthetic completed command",
+        scope: "issues:read",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({ content: "exit code 1: expected 1, got 0", isError: true, data: { exitCode: 1 } }),
+      },
+      {
+        name: "uncertain_exit",
+        description: "synthetic lost command",
+        scope: "issues:read",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({ content: "Failed: machine connection dropped", isError: true }),
+      },
+      {
+        name: "unfinished_exit",
+        description: "synthetic command no longer waited for",
+        scope: "issues:read",
+        inputSchema: { type: "object", properties: {} },
+        execute: async () => ({
+          content: "canceled; may still finish",
+          data: { exitCode: 0, canceled: { killed: false } },
+        }),
+      },
+    ],
+  };
+  f = await setup({ machines: true, toolSources: [source] });
+  const paired = await pairedMachine(f);
+  const runner = bridgeRunner(f.machineHub as MachineHub);
+  await runner.hello(paired.token);
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "issues:read" }]);
+  const run = await runningRun();
+  const token = await issueRunToolToken(f.db, {
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    machineId: paired.machineId,
+    runId: run.id,
+  });
+  expect(await runner.call(token, "known_exit", {})).toMatchObject({
+    ok: false,
+    runState: "completed",
+    imageOmitted: false,
+    error: { message: "exit code 1: expected 1, got 0" },
+  });
+  const uncertain = await runner.call(token, "uncertain_exit", {});
+  expect(uncertain.ok).toBe(false);
+  expect(uncertain).not.toHaveProperty("runState", "completed");
+  const unfinished = await runner.call(token, "unfinished_exit", {});
+  expect(unfinished).not.toHaveProperty("runState", "completed");
 });
 
 describe("mission tools through the bridge", () => {

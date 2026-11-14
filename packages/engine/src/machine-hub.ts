@@ -436,8 +436,15 @@ type McpOutcome =
       runState?: "completed" | "suspended";
       imageOmitted?: boolean;
       complete?: true;
+      resultTruncated?: boolean;
     }
-  | { ok: false; error: { code: string; message: string } };
+  | {
+      ok: false;
+      error: { code: string; message: string };
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    };
 
 /** What an agent reads where its computer's app is too old to hand it a picture or a PDF the tool returned. */
 export const MCP_IMAGES_TOO_OLD =
@@ -447,7 +454,20 @@ const MCP_IMAGES_TOO_BIG =
 
 /** A bridge answer as a runner at `protocol` takes it: pictures and PDFs only from `MCP_IMAGES_PROTOCOL` on. */
 export function mcpResultFrame(callId: string, out: McpOutcome, protocol: number) {
-  if (!out.ok) return { type: "mcp.result" as const, callId, ok: false as const, error: out.error };
+  if (!out.ok)
+    return {
+      type: "mcp.result" as const,
+      callId,
+      ok: false as const,
+      error: out.error,
+      ...(protocol >= MCP_RUN_STATE_PROTOCOL
+        ? {
+            ...(out.runState ? { runState: out.runState } : {}),
+            ...(typeof out.imageOmitted === "boolean" ? { imageOmitted: out.imageOmitted } : {}),
+            ...(typeof out.resultTruncated === "boolean" ? { resultTruncated: out.resultTruncated } : {}),
+          }
+        : {}),
+    };
   const images = out.images?.length ? out.images : null;
   const state =
     protocol >= MCP_RUN_STATE_PROTOCOL
@@ -455,6 +475,7 @@ export function mcpResultFrame(callId: string, out: McpOutcome, protocol: number
           ...(out.runState ? { runState: out.runState } : {}),
           ...(typeof out.imageOmitted === "boolean" ? { imageOmitted: out.imageOmitted || !!images } : {}),
           ...(out.complete === true ? { complete: true as const } : {}),
+          ...(typeof out.resultTruncated === "boolean" ? { resultTruncated: out.resultTruncated } : {}),
         }
       : {};
   const note =
@@ -1062,11 +1083,17 @@ export function createMachineHub(deps: MachineHubDeps) {
                 code: "bridge.result_too_large",
                 message: "The tool result exceeds the bridge limit; stopped without retry.",
               },
+              runState: "completed",
+              imageOmitted: true,
+              resultTruncated: true,
             }
           : out.ok
             ? {
                 ...out,
                 text: cutText(out.text, 50_000),
+                ...(conn.protocol >= MCP_RUN_STATE_PROTOCOL && out.runState === "completed"
+                  ? { resultTruncated: out.resultTruncated === true || out.text.length > 50_000 }
+                  : {}),
                 ...(conn.protocol >= MCP_RUN_STATE_PROTOCOL && requireComplete && out.runState === "completed"
                   ? { complete: true as const }
                   : {}),
@@ -1085,6 +1112,9 @@ export function createMachineHub(deps: MachineHubDeps) {
                   message:
                     "This action completed. Its transient media result is unavailable after reconnect; do not repeat the action to recover it.",
                 },
+                runState: "completed",
+                imageOmitted: true,
+                resultTruncated: kept.resultTruncated,
               }
             : kept;
       await db

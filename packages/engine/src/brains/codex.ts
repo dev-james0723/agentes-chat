@@ -418,6 +418,7 @@ export class CodexBrain implements Brain {
       system: systemWithConversation(turn, code?.prompt),
       prompt: computerPrompt(hostAcp ? { ...turn, session: { ...session, resume: false } } : turn, code?.start),
       mcp: { ...mcp, tools: toolNames.join(" ") },
+      ...(hostAcp && turn.hostAcpHistory ? { hostAcpHistory: turn.hostAcpHistory } : {}),
       ...(agent ? { agent } : {}),
       ...accountFields(status.protocol, turn),
       ...contextFields(status.protocol, turn),
