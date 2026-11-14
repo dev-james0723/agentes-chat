@@ -23,6 +23,10 @@ export const sharedBudgetPools = pgTable(
     approvalUntil: timestamp({ withTimezone: true }).notNull(),
     approvedBy: text().notNull(),
     approvalRef: text().notNull(),
+    /** Canonical provider-issued identity, independently qualified by the trusted transport. */
+    upstreamProvider: text(),
+    upstreamAccount: text(),
+    upstreamPool: text(),
     ceilingNanoUsd: bigint({ mode: "number" }).notNull(),
     spentNanoUsd: bigint({ mode: "number" }).notNull().default(0),
     heldNanoUsd: bigint({ mode: "number" }).notNull().default(0),
@@ -30,6 +34,8 @@ export const sharedBudgetPools = pgTable(
   },
   (t) => [
     unique().on(t.orgId, t.id),
+    // One row for a canonical billing pool globally. Reusing a pool for a later window requires safe reconciliation.
+    unique().on(t.upstreamProvider, t.upstreamAccount, t.upstreamPool),
     check(
       "shared_budget_nonnegative",
       sql`${t.ceilingNanoUsd} >= 0 and ${t.spentNanoUsd} >= 0 and ${t.heldNanoUsd} >= 0`,
@@ -47,6 +53,8 @@ export const sharedBudgetRoutes = pgTable(
     poolId: uuid().notNull(),
     provider: text().notNull(),
     credentialId: uuid().notNull(),
+    /** Digest of the exact sealed row and endpoint configuration that was qualified. */
+    credentialVersion: text(),
     model: text().notNull(),
     subject: text().notNull(),
     dataClass: text().notNull(),

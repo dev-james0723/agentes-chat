@@ -1,11 +1,19 @@
 import { and, type Database, eq, gt, lte, schema } from "@agenteschat/db";
 import type { ModelProvider, ModelRequest, ModelResult, StreamOptions } from "@agenteschat/providers";
 import { sha256 } from "./crypto";
+import { credentialVersion } from "./credentials";
 import { canonicalJson } from "./tools/json-schema";
 
 /** Only trusted server code may provide a transport that actually enforces its per-call maximum upstream.
  * No production transport is registered by this candidate. Estimates or catalog prices are not a hard cap. */
 export interface SharedBudgetTransport {
+  /** Trusted adapter resolves a previously verified canonical account/pool for this exact credential and endpoint.
+   * No production adapter exists in this candidate. Returning null or an unknown identity denies dispatch. */
+  identify(
+    binding: Readonly<{ provider: string; credentialId: string; credentialVersion: string }>,
+  ): Promise<{ account: string; pool: string } | null>;
+  /** Trusted adapter validates exact request context, capabilities and provider-specific constraints. */
+  qualifies(request: Readonly<ModelRequest>): boolean;
   bound(request: ModelRequest): number | null;
   stream(
     provider: ModelProvider,
@@ -32,6 +40,9 @@ type Route = typeof sharedBudgetRoutes.$inferSelect;
 export function sharedBudgetApprovalParams(pool: Pool, routes: Route[]): Record<string, unknown> {
   return {
     poolId: pool.id,
+    upstreamProvider: pool.upstreamProvider,
+    upstreamAccount: pool.upstreamAccount,
+    upstreamPool: pool.upstreamPool,
     ceilingNanoUsd: pool.ceilingNanoUsd,
     windowStart: pool.windowStart.toISOString(),
     windowEnd: pool.windowEnd.toISOString(),
@@ -41,6 +52,7 @@ export function sharedBudgetApprovalParams(pool: Pool, routes: Route[]): Record<
         id: r.id,
         provider: r.provider,
         credentialId: r.credentialId,
+        credentialVersion: r.credentialVersion,
         model: r.model,
         subject: r.subject,
         dataClass: r.dataClass,
@@ -59,6 +71,17 @@ export function sharedBudgetApprovalHash(params: Record<string, unknown>): strin
 }
 const validAmount = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
+/** Qualified request data must be plain, acyclic JSON-like values, then is frozen before trusted adapters see it. */
+function freezeData(value: unknown, seen = new WeakSet<object>()): void {
+  if (value === null || typeof value !== "object") return;
+  if (seen.has(value)) throw new SharedBudgetAdmissionError("cyclic request data");
+  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype)
+    throw new SharedBudgetAdmissionError("unsupported request data");
+  seen.add(value);
+  for (const child of Object.values(value)) freezeData(child, seen);
+  Object.freeze(value);
+}
+
 /** Actual gateway dispatch wrapper. Missing policy is legacy mode, not a claim of budget protection. */
 export async function withSharedBudget(
   db: Database,
@@ -67,6 +90,7 @@ export async function withSharedBudget(
     subject: string;
     providerId: string;
     credentialId: string | null;
+    credentialVersion?: string;
     required: boolean;
     dataClass?: string;
     request: ModelRequest;
@@ -76,20 +100,90 @@ export async function withSharedBudget(
     now: () => Date;
   },
 ): Promise<ModelResult> {
+  // Legacy mode may run on an older schema; never touch candidate tables until this gateway explicitly requires them.
+  if (!input.required) return input.provider.stream(input.request, input.options);
+  // Capture the exact structured request and dispatch options before any asynchronous identity check. The caller
+  // cannot mutate referenced messages or endpoint settings between qualification and provider dispatch.
+  const request: ModelRequest = {
+    ...input.request,
+    system: structuredClone(input.request.system),
+    messages: structuredClone(input.request.messages),
+    ...(input.request.tools ? { tools: structuredClone(input.request.tools) } : {}),
+    ...(input.request.outputSchema ? { outputSchema: structuredClone(input.request.outputSchema) } : {}),
+    ...(input.request.notes ? { notes: structuredClone(input.request.notes) } : {}),
+  };
+  freezeData(request.system);
+  freezeData(request.messages);
+  if (request.tools) freezeData(request.tools);
+  if (request.outputSchema) freezeData(request.outputSchema);
+  if (request.notes) freezeData(request.notes);
+  Object.freeze(request);
+  const dispatchOptions: StreamOptions = {
+    ...input.options,
+    ...(input.options.endpoint ? { endpoint: { ...input.options.endpoint } } : {}),
+  };
   const [policy] = await db.select().from(sharedBudgetPolicies).where(eq(sharedBudgetPolicies.orgId, input.orgId));
   if (!policy?.enabled) {
     if (input.required) throw new SharedBudgetAdmissionError("required policy unavailable");
     return input.provider.stream(input.request, input.options);
   }
-  if (!input.credentialId || !input.dataClass || !input.transport)
-    throw new SharedBudgetAdmissionError("route, data classification or enforceable cost bound unavailable");
-  const max = input.transport.bound(input.request);
+  if (
+    !input.credentialId ||
+    !input.credentialVersion ||
+    !input.dataClass ||
+    !input.transport ||
+    !input.transport.identify
+  )
+    throw new SharedBudgetAdmissionError("route, credential identity or enforceable cost bound unavailable");
+  const transport = input.transport;
+  const { identify, qualifies, bound, stream } = transport;
+  // Identity lookup is a trusted, previously verified registry lookup: it receives neither the key nor callback.
+  const identity = await identify.call(
+    transport,
+    Object.freeze({
+      provider: input.providerId,
+      credentialId: input.credentialId,
+      credentialVersion: input.credentialVersion,
+    }),
+  );
+  if (
+    !identity ||
+    !identity.account?.trim() ||
+    !identity.pool?.trim() ||
+    identity.account !== identity.account.trim() ||
+    identity.pool !== identity.pool.trim() ||
+    identity.account.length > 256 ||
+    identity.pool.length > 256
+  )
+    throw new SharedBudgetAdmissionError("verified upstream identity unavailable");
+  const identityAccount = identity.account;
+  const identityPool = identity.pool;
+  // This candidate has no qualified image/PDF, opaque-history or structured-output routes.
+  if (
+    request.outputSchema ||
+    request.messages.some((m) =>
+      typeof m.content === "string"
+        ? false
+        : !Array.isArray(m.content) ||
+          m.content.some(
+            (b) =>
+              !b ||
+              !["text", "tool_use", "tool_result"].includes(b.type) ||
+              (b.type === "tool_result" && (b.images?.length ?? 0) > 0),
+          ),
+    )
+  )
+    throw new SharedBudgetAdmissionError("request modality not qualified");
+  if (!qualifies || qualifies.call(transport, request) !== true)
+    throw new SharedBudgetAdmissionError("request context or capabilities not qualified");
+  const max = bound.call(transport, request);
   if (!validAmount(max)) throw new SharedBudgetAdmissionError("enforceable cost bound unavailable");
   const promptBytes = new TextEncoder().encode(
     JSON.stringify({
-      system: input.request.system,
-      messages: input.request.messages,
-      tools: input.request.tools,
+      system: request.system,
+      messages: request.messages,
+      tools: request.tools,
+      notes: request.notes,
     }),
   ).length;
   const reservation = await db.transaction(async (tx) => {
@@ -100,6 +194,25 @@ export async function withSharedBudget(
       .where(eq(sharedBudgetPolicies.orgId, input.orgId))
       .for("update");
     if (!lockedPolicy?.enabled) throw new SharedBudgetAdmissionError("policy changed");
+    // The fingerprint came from the exact row used to decrypt the key. Lock and compare the current row before
+    // reserving; same-id rotation, revocation or endpoint/config drift invalidates the old approval.
+    const [credential] = await tx
+      .select()
+      .from(schema.providerCredentials)
+      .where(
+        and(
+          eq(schema.providerCredentials.orgId, input.orgId),
+          eq(schema.providerCredentials.id, input.credentialId as string),
+        ),
+      )
+      .for("update");
+    if (
+      !credential ||
+      credential.revokedAt ||
+      credential.provider !== input.providerId ||
+      credentialVersion(credential) !== input.credentialVersion
+    )
+      throw new SharedBudgetAdmissionError("credential changed or revoked");
     const at = input.now();
     const routes = await tx
       .select()
@@ -109,7 +222,7 @@ export async function withSharedBudget(
           eq(sharedBudgetRoutes.orgId, input.orgId),
           eq(sharedBudgetRoutes.provider, input.providerId),
           eq(sharedBudgetRoutes.credentialId, input.credentialId as string),
-          eq(sharedBudgetRoutes.model, input.request.model),
+          eq(sharedBudgetRoutes.model, request.model),
           eq(sharedBudgetRoutes.subject, input.subject),
           eq(sharedBudgetRoutes.dataClass, input.dataClass as string),
           eq(sharedBudgetRoutes.enabled, true),
@@ -123,8 +236,9 @@ export async function withSharedBudget(
     if (
       !route ||
       !route.evidenceRef.trim() ||
+      route.credentialVersion !== input.credentialVersion ||
       promptBytes > route.maxPromptBytes ||
-      (input.request.tools?.length && !route.supportsTools)
+      (request.tools?.length && !route.supportsTools)
     )
       throw new SharedBudgetAdmissionError("route capability or evidence unavailable");
     const [pool] = await tx
@@ -134,6 +248,9 @@ export async function withSharedBudget(
       .for("update");
     if (
       !pool ||
+      pool.upstreamProvider !== input.providerId ||
+      pool.upstreamAccount !== identityAccount ||
+      pool.upstreamPool !== identityPool ||
       pool.paused ||
       !pool.approvedBy.trim() ||
       !pool.approvalRef.trim() ||
@@ -201,10 +318,35 @@ export async function withSharedBudget(
     return held;
   });
   // Every thrown error or unknown cost retains the reservation, even after a restart.
-  const result = await input.transport.stream(input.provider, input.request, input.options, max);
-  if (result.model !== input.request.model)
-    throw new SharedBudgetAdmissionError("provider returned an unqualified model; reservation held");
-  if (!validAmount(result.costNanoUsd)) return result;
+  // No generated text reaches consumers until the transport has returned the qualified model. A bounded buffer
+  // prevents an unqualified upstream stream from leaking into the caller or growing without limit.
+  const chunks: string[] = [];
+  let bytes = 0;
+  let overflow = false;
+  const result = await stream.call(
+    transport,
+    input.provider,
+    request,
+    {
+      ...dispatchOptions,
+      onDelta: (text) => {
+        if (!text) return;
+        bytes += new TextEncoder().encode(text).length;
+        if (bytes > 1_000_000 || chunks.length >= 16_000) {
+          overflow = true;
+          return;
+        }
+        chunks.push(text);
+      },
+    },
+    max,
+  );
+  if (overflow || result.model !== request.model)
+    throw new SharedBudgetAdmissionError("provider output or model unqualified; reservation held");
+  if (!validAmount(result.costNanoUsd)) {
+    for (const chunk of chunks) input.options.onDelta(chunk);
+    return result;
+  }
   const actual = result.costNanoUsd;
   await db.transaction(async (tx) => {
     const [held] = await tx
@@ -240,5 +382,6 @@ export async function withSharedBudget(
       .where(eq(sharedBudgetPools.id, pool.id));
   });
   if (actual > max) throw new SharedBudgetAdmissionError("enforced cost bound violated; pool paused");
+  for (const chunk of chunks) input.options.onDelta(chunk);
   return result;
 }

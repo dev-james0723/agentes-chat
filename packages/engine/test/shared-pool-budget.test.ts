@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import { noPlatformCredentials } from "@agenteschat/adapters";
-import { eq, schema } from "@agenteschat/db";
-import { createModelGateway } from "../src";
+import { eq, schema, sql } from "@agenteschat/db";
+import { createAgent, createCredential, createModelGateway, rotateCredential } from "../src";
+import { credentialVersion } from "../src/credentials";
 import {
   SHARED_BUDGET_SCOPE,
   SHARED_BUDGET_TOOL,
@@ -16,8 +17,15 @@ afterEach(() => f?.close());
 test("enabled workspace policy denies an unregistered route before provider dispatch", async () => {
   f = await setup();
   await f.db.insert(schema.sharedBudgetPolicies).values({ orgId: f.org.id, enabled: true });
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+  });
   await expect(
-    f.gateway.stream({
+    gateway.stream({
       orgId: f.org.id,
       agentId: f.agent.id,
       system: "sys",
@@ -37,6 +45,7 @@ test("organization summary cannot bypass enabled policy", async () => {
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
   });
   await expect(
     gateway.complete({
@@ -63,16 +72,25 @@ async function enablePool(ceilingNanoUsd: number) {
       approvalUntil: new Date(at + 3600_000),
       approvedBy: "fixture-owner",
       approvalRef: "fixture-only",
+      upstreamProvider: "anthropic",
+      upstreamAccount: "acct:fixture",
+      upstreamPool: "billing:fixture",
       ceilingNanoUsd,
     })
     .returning();
   if (!pool) throw new Error("missing fixture pool");
+  const [credential] = await f.db
+    .select()
+    .from(schema.providerCredentials)
+    .where(eq(schema.providerCredentials.id, f.credential.id));
+  if (!credential) throw new Error("missing synthetic credential");
   for (const subject of [`agent:${f.agent.id}`, "org:summary"]) {
     await f.db.insert(schema.sharedBudgetRoutes).values({
       orgId: f.org.id,
       poolId: pool.id,
       provider: "anthropic",
       credentialId: f.credential.id,
+      credentialVersion: credentialVersion(credential),
       model: "claude-sonnet-5-5",
       subject,
       dataClass: "fixture",
@@ -150,6 +168,8 @@ test("agent and summary calls atomically share one pool and settle observed cost
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
         bound: () => 10,
         stream: async (provider, req, opts) => {
           started++;
@@ -181,8 +201,11 @@ test("unknown or failed cost remains durably reserved after gateway recreation",
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
         bound: () => 10,
         stream: async () => {
           throw new Error("network cutoff");
@@ -207,8 +230,11 @@ test("reported cost beyond the promised bound pauses the pool", async () => {
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
         bound: () => 10,
         stream: async (provider, req, opts) => ({ ...(await provider.stream(req, opts)), costNanoUsd: 11 }),
       },
@@ -228,6 +254,7 @@ test("missing upstream hard cap or classification cannot be mistaken for free us
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
   });
   await expect(agentCall(withoutTransport)).rejects.toThrow("shared budget");
   const capped = createModelGateway({
@@ -235,7 +262,15 @@ test("missing upstream hard cap or classification cannot be mistaken for free us
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
-    sharedBudgetTransports: { anthropic: { bound: () => 10, stream: async (p, r, o) => p.stream(r, o) } },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => p.stream(r, o),
+      },
+    },
   });
   await expect(
     capped.stream({
@@ -262,7 +297,15 @@ test("unverified approval reference cannot authorize spending", async () => {
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
-    sharedBudgetTransports: { anthropic: { bound: () => 10, stream: async (p, r, o) => p.stream(r, o) } },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => p.stream(r, o),
+      },
+    },
   });
   await expect(agentCall(gateway)).rejects.toThrow("shared budget");
   expect(f.provider.calls).toHaveLength(0);
@@ -276,7 +319,15 @@ test("changed route scope, pending decision or expired decision deny before disp
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
-    sharedBudgetTransports: { anthropic: { bound: () => 10, stream: async (p, r, o) => p.stream(r, o) } },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => p.stream(r, o),
+      },
+    },
   });
   const [approval] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.orgId, f.org.id));
   if (!approval) throw new Error("missing fixture approval");
@@ -307,8 +358,11 @@ test("unqualified returned model is rejected and its cost remains held", async (
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), model: "different-model", costNanoUsd: 1 }),
       },
@@ -377,7 +431,14 @@ test("approval identity, action hash and pool ceiling cannot be changed or reuse
     platformCredentials: noPlatformCredentials,
     providers: { anthropic: f.provider },
     sharedBudgetRequired: true,
-    sharedBudgetTransports: { anthropic: { bound: () => 10, stream: async (p, r, o) => p.stream(r, o) } },
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => p.stream(r, o),
+      },
+    },
   });
   const [approval] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.orgId, f.org.id));
   if (!approval) throw new Error("missing fixture approval");
@@ -415,5 +476,440 @@ test("required mode cannot be disabled by mutating the gateway dependency object
   const gateway = createModelGateway(deps);
   deps.sharedBudgetRequired = false;
   await expect(agentCall(gateway)).rejects.toThrow("shared budget");
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("legacy gateway works before the shared budget migration exists", async () => {
+  f = await setup();
+  await f.db.execute(sql`drop table shared_budget_policies`);
+  await agentCall(f.gateway);
+  expect(f.provider.calls).toHaveLength(1);
+});
+
+test("required mode never calls a provider to verify unsaved or stored keys", async () => {
+  f = await setup();
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+  });
+  expect(
+    await gateway.verifyKey({ orgId: f.org.id, provider: "anthropic", key: { apiKey: "synthetic-only" } }),
+  ).toEqual({ state: "unchecked" });
+  expect((await gateway.verifyStoredKey(f.org.id, f.credential.id))?.result).toEqual({ state: "unchecked" });
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("required mode declines unbudgeted embedding without contacting provider", async () => {
+  f = await setup();
+  let calls = 0;
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    embeddings: {
+      apiKey: "synthetic",
+      provider: {
+        id: "fake",
+        model: "fake",
+        embed: async () => {
+          calls++;
+          return { model: "fake", tokens: 1, vectors: [[0]] };
+        },
+      },
+    },
+  });
+  expect(await gateway.embed({ orgId: f.org.id, texts: ["test"], inputType: "query" })).toBeNull();
+  expect(calls).toBe(0);
+});
+
+test("rotating a credential in place invalidates its previously approved route", async () => {
+  f = await setup();
+  await enablePool(10);
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  await rotateCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, f.credential.id, { apiKey: "sk-ant-synthetic-new" });
+  await expect(agentCall(gateway)).rejects.toThrow("shared budget");
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("a duplicate canonical upstream pool cannot acquire a second budget ceiling", async () => {
+  f = await setup();
+  const pool = await enablePool(10);
+  const same = {
+    orgId: f.org.id,
+    windowStart: pool.windowStart,
+    windowEnd: pool.windowEnd,
+    approvalUntil: pool.approvalUntil,
+    approvedBy: pool.approvedBy,
+    approvalRef: pool.approvalRef,
+    ceilingNanoUsd: 10,
+    upstreamProvider: "anthropic",
+    upstreamAccount: "acct:fixture",
+    upstreamPool: "billing:fixture",
+  };
+  await f.db
+    .update(schema.sharedBudgetPools)
+    .set({ upstreamProvider: "anthropic", upstreamAccount: "acct:fixture", upstreamPool: "billing:fixture" } as never)
+    .where(eq(schema.sharedBudgetPools.id, pool.id));
+  await expect(
+    f.db
+      .insert(schema.sharedBudgetPools)
+      .values(same as never)
+      .execute(),
+  ).rejects.toThrow();
+});
+
+test("credential rotated after resolution is rejected under its database row lock", async () => {
+  f = await setup();
+  await enablePool(10);
+  let rotated = false;
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => {
+          if (!rotated) {
+            rotated = true;
+            await rotateCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, f.credential.id, {
+              apiKey: "sk-ant-replacement-key",
+            });
+          }
+          return { account: "acct:fixture", pool: "billing:fixture" };
+        },
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  await expect(agentCall(gateway)).rejects.toThrow("shared budget");
+  expect(rotated).toBe(true);
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("mismatched upstream identity rejects before provider dispatch", async () => {
+  f = await setup();
+  await enablePool(10);
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "different-account", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  await expect(agentCall(gateway)).rejects.toThrow("shared budget");
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("unqualified model output is not streamed to the consumer", async () => {
+  f = await setup();
+  await enablePool(10);
+  const received: string[] = [];
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => {
+          o.onDelta("unqualified");
+          return { ...(await p.stream(r, { ...o, onDelta: () => {} })), model: "other-model", costNanoUsd: 1 };
+        },
+      },
+    },
+  });
+  await expect(
+    gateway.stream({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      dataClass: "fixture",
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 10,
+      onDelta: (s) => received.push(s),
+    }),
+  ).rejects.toThrow("shared budget");
+  expect(received).toEqual([]);
+});
+
+test("images, opaque history and structured output remain unqualified", async () => {
+  f = await setup();
+  await enablePool(10);
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  for (const content of [
+    [
+      {
+        type: "tool_result",
+        toolUseId: "x",
+        content: "",
+        images: [{ mediaType: "application/pdf", data: "dGVzdA==", pages: 1 }],
+      },
+    ],
+    [{ type: "opaque", provider: "anthropic", data: {} }],
+    [{ type: "unrecognized_media", data: "opaque" }],
+  ] as const) {
+    await expect(
+      gateway.stream({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        dataClass: "fixture",
+        system: "sys",
+        messages: [{ role: "user", content: content as never }],
+        maxTokens: 10,
+        onDelta: () => {},
+      }),
+    ).rejects.toThrow("shared budget");
+  }
+  await expect(
+    gateway.complete({
+      orgId: f.org.id,
+      kind: "summary",
+      model: "claude-sonnet-5-5",
+      dataClass: "fixture",
+      system: "sys",
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 10,
+      outputSchema: { type: "object" },
+    }),
+  ).rejects.toThrow("shared budget");
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("two distinct credentials for the same verified upstream pool share one atomic ceiling", async () => {
+  f = await setup();
+  const pool = await enablePool(10);
+  const credential2 = await createCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, {
+    provider: "anthropic",
+    label: "second",
+    apiKey: "sk-ant-synthetic-second",
+  });
+  const agent2 = await createAgent(
+    f.db,
+    f.owner.id,
+    f.org.id,
+    { name: "Second", handle: "second", role: "Developer", instructions: "Test", credentialId: credential2.id },
+    { model: "claude-sonnet-5-5" },
+  );
+  const [row2] = await f.db
+    .select()
+    .from(schema.providerCredentials)
+    .where(eq(schema.providerCredentials.id, credential2.id));
+  if (!row2) throw new Error("missing credential");
+  const at = Date.now();
+  await f.db.insert(schema.sharedBudgetRoutes).values({
+    orgId: f.org.id,
+    poolId: pool.id,
+    provider: "anthropic",
+    credentialId: credential2.id,
+    credentialVersion: credentialVersion(row2),
+    model: "claude-sonnet-5-5",
+    subject: `agent:${agent2.id}`,
+    dataClass: "fixture",
+    supportsTools: false,
+    maxPromptBytes: 100000,
+    evidenceRef: "synthetic-test-only",
+    verifiedAt: new Date(at - 1000),
+    validUntil: new Date(at + 3600000),
+    enabled: true,
+  });
+  const routes = await f.db
+    .select()
+    .from(schema.sharedBudgetRoutes)
+    .where(eq(schema.sharedBudgetRoutes.poolId, pool.id));
+  const params = sharedBudgetApprovalParams(pool, routes);
+  const [approval] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.orgId, f.org.id));
+  if (!approval) throw new Error("missing fixture approval");
+  await f.db
+    .update(schema.approvals)
+    .set({ params, actionHash: sharedBudgetApprovalHash(params) })
+    .where(eq(schema.approvals.id, approval.id));
+  const gate = Promise.withResolvers<void>();
+  let started = 0;
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => {
+          started++;
+          await gate.promise;
+          return { ...(await p.stream(r, o)), costNanoUsd: 4 };
+        },
+      },
+    },
+  });
+  const other = gateway.stream({
+    orgId: f.org.id,
+    agentId: agent2.id,
+    dataClass: "fixture",
+    system: "sys",
+    messages: [{ role: "user", content: "hello" }],
+    maxTokens: 10,
+    onDelta: () => {},
+  });
+  const pending = Promise.allSettled([agentCall(gateway), other]);
+  await Bun.sleep(120);
+  gate.resolve();
+  const results = await pending;
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+  expect(started).toBe(1);
+  const [after] = await f.db.select().from(schema.sharedBudgetPools).where(eq(schema.sharedBudgetPools.id, pool.id));
+  expect(after).toMatchObject({ spentNanoUsd: 4, heldNanoUsd: 0 });
+});
+
+test("admission snapshots the exact request and identity lookup receives no key or callback", async () => {
+  f = await setup();
+  await enablePool(10);
+  const messages: { role: "user"; content: string }[] = [{ role: "user", content: "qualified original" }];
+  const received: string[] = [];
+  let dispatched = "";
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async (o) => {
+          messages[0]!.content = "mutated after resolution";
+          expect(Object.keys(o).sort()).toEqual(["credentialId", "credentialVersion", "provider"]);
+          return { account: "acct:fixture", pool: "billing:fixture" };
+        },
+        qualifies: (r) => r.messages[0]?.content === "qualified original",
+        bound: () => 10,
+        stream: async (p, r, o) => {
+          dispatched = String(r.messages[0]?.content);
+          return { ...(await p.stream(r, o)), costNanoUsd: 1 };
+        },
+      },
+    },
+  });
+  await gateway.stream({
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    dataClass: "fixture",
+    system: "sys",
+    messages,
+    maxTokens: 10,
+    onDelta: (s) => received.push(s),
+  });
+  expect(dispatched).toBe("qualified original");
+  expect(received.join("")).not.toContain("identity leak");
+});
+
+test("qualification cannot mutate the request model after snapshot", async () => {
+  f = await setup();
+  await enablePool(10);
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: (r) => {
+          (r as { model: string }).model = "other-model";
+          return true;
+        },
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  await expect(agentCall(gateway)).rejects.toThrow();
+  expect(f.provider.calls).toHaveLength(0);
+});
+
+test("endpoint changed after resolution invalidates the credential before dispatch", async () => {
+  f = await setup();
+  await enablePool(10);
+  let changed = false;
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => {
+          if (!changed) {
+            changed = true;
+            await f.db
+              .update(schema.providerCredentials)
+              .set({
+                options: { endpoint: { style: "openai", baseURL: "https://changed.invalid/v1", models: [] } } as never,
+              })
+              .where(eq(schema.providerCredentials.id, f.credential.id));
+          }
+          return { account: "acct:fixture", pool: "billing:fixture" };
+        },
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
+      },
+    },
+  });
+  await expect(agentCall(gateway)).rejects.toThrow("shared budget");
+  expect(changed).toBe(true);
   expect(f.provider.calls).toHaveLength(0);
 });
