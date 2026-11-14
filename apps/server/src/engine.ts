@@ -135,6 +135,7 @@ import {
   warmAgentBrowser,
   withComposio,
   withJudgeFallback,
+  createQuotaCliQualifier,
 } from "@agenteschat/engine";
 import { createOpenAIEmbeddings, createVoyageEmbeddings, type ModelProvider } from "@agenteschat/providers";
 import { type AppleTokenRevoker, appleTokenRevoker } from "./auth";
@@ -804,6 +805,15 @@ export function buildEngine(o: EngineOptions) {
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
     quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
     quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
+    // Owner policy 2026-11-14: Codex at its limit continues on the computer's Claude Code subscription sign-in.
+    ...(config.QUOTA_HANDOFF_ENABLED
+      ? {
+          quotaCliContinuation: createQuotaCliQualifier({
+            machines: machineHub,
+            model: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+          }),
+        }
+      : {}),
     // A run started on a person's message reads what they add in the next seconds with it (ADR 0112).
     quietMs: o.routerQuietMs ?? ROUTER_QUIET_MS,
     // It ends early when the person isn't typing, and Claude's API reads the prompt into its cache meanwhile.

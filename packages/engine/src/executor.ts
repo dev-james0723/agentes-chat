@@ -450,6 +450,76 @@ const UNCOUNTED_TOOLS = `^(${REACT_TOOL}|${ON_DEMAND_FIND}|${ON_DEMAND_USE})$|_$
  * cancel, steering, deltas and events, NO_REPLY / `react`, limits, profile.
  * Brains (`brains/*`) only think: one turn in, neutral events out.
  */
+/** Upper bound of the portable record a new harness reads on a quota handoff. */
+export const PORTABLE_CONTEXT_MAX_BYTES = 400_000;
+export const QUOTA_HANDOFF_RESUME_PROMPT =
+  "The previous model for this same task reached its usage limit, so you are continuing its work in a new session. " +
+  "The portable prior conversation and work log above show what was asked, what was already done and what it said. " +
+  "Check the working directory's current state, do not redo finished steps or repeat external actions already taken, " +
+  "and continue with the remaining work.";
+
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}… [${text.length - max} more]` : text);
+
+/**
+ * Text-only portable copy of a run's conversation for a different harness: tool calls and results become short
+ * lines, other parts are named. The newest messages are kept within the byte bound; the first (the goal) always is.
+ */
+export function portableMessages(messages: ModelMessage[], workLog = ""): ModelMessage[] {
+  const flat = messages.map((message) => {
+    if (typeof message.content === "string") return { role: message.role, content: message.content } as ModelMessage;
+    const parts = Array.isArray(message.content) ? (message.content as unknown as Record<string, unknown>[]) : [];
+    const text = parts
+      .map((part) => {
+        if (part.type === "text") return String(part.text ?? "");
+        if (part.type === "tool-call" || part.type === "tool_use")
+          return `[tool call ${String(part.toolName ?? part.name ?? "?")}: ${clip(JSON.stringify(part.input ?? part.args ?? {}), 1_500)}]`;
+        if (part.type === "tool-result" || part.type === "tool_result") {
+          const out = part.output ?? part.result ?? part.content;
+          return `[tool result ${String(part.toolName ?? part.name ?? "")}: ${clip(typeof out === "string" ? out : JSON.stringify(out ?? null), 3_000)}]`;
+        }
+        return `[${String(part.type ?? "part")} omitted]`;
+      })
+      .join("\n");
+    return { role: message.role, content: text } as ModelMessage;
+  });
+  if (workLog) flat.push({ role: "user", content: `[work log of this run so far]\n${workLog}` } as ModelMessage);
+  const budget = PORTABLE_CONTEXT_MAX_BYTES - 8_000;
+  const size = (m: ModelMessage) => new TextEncoder().encode(JSON.stringify(m)).length;
+  if (flat.reduce((n, m) => n + size(m), 0) <= budget) return flat;
+  const [first, ...rest] = flat;
+  const kept: ModelMessage[] = [];
+  let used = first ? size(first) : 0;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const m = rest[i] as ModelMessage;
+    if (used + size(m) > budget) break;
+    used += size(m);
+    kept.unshift(m);
+  }
+  return [
+    ...(first ? [first] : []),
+    { role: "user", content: `[${rest.length - kept.length} earlier messages omitted]` } as ModelMessage,
+    ...kept,
+  ];
+}
+
+/** A bounded, model-independent log of what this run did (its recorded tool calls, results and posts). */
+export async function runWorkDigest(db: Database, runId: string, limit = 300): Promise<string> {
+  const rows = await db
+    .select({ seq: agentRunSteps.seq, kind: agentRunSteps.kind, data: agentRunSteps.data })
+    .from(agentRunSteps)
+    .where(and(eq(agentRunSteps.runId, runId), inArray(agentRunSteps.kind, ["tool_call", "tool_result", "message"])))
+    .orderBy(desc(agentRunSteps.seq))
+    .limit(limit);
+  const lines = rows.reverse().map(({ seq, kind, data }) => {
+    const d = data as Record<string, unknown>;
+    if (kind === "tool_call") return `#${seq} call ${String(d.name ?? "?")} ${clip(JSON.stringify(d.input ?? {}), 400)}`;
+    if (kind === "tool_result")
+      return `#${seq} result${d.isError ? " (error)" : ""} ${clip(typeof d.content === "string" ? d.content : JSON.stringify(d.content ?? d.result ?? ""), 600)}`;
+    return `#${seq} said ${clip(String(d.text ?? d.body ?? ""), 600)}`;
+  });
+  return clip(lines.join("\n"), 60_000);
+}
+
 export interface QuotaCliQualification {
   targetKind: "claude_code";
   machineId: string;
@@ -3435,6 +3505,22 @@ async function executeRunInner(
    * the run waits for the computer, or (nothing to think with) it fails with `no_ai`. A computer with no room for the
    * turn (`busy`) is asked again every `COMPUTER_BUSY_RETRY_MS` until it runs.
    */
+  /** One line in the task's conversation per handoff: it informs and never waits for an answer. */
+  const quotaHandoffNotice = async (from: BrainKind, toModel: string, why: "reserve" | "limit") => {
+    const fromName = planName(from, plan.account?.provider);
+    const body =
+      why === "reserve"
+        ? `${fromName} is near its usage limit, so I switched this task to Claude Code (${toModel}) and I'm continuing from where I was. No action needed.`
+        : `${fromName} reached its usage limit, so I switched this task to Claude Code (${toModel}) and I'm continuing from where I was. No action needed.`;
+    const note = await db.transaction((tx) =>
+      post(tx, replyThreadId, body, { quotaHandoff: { from, to: "claude_code", model: toModel, why } }, undefined, true),
+    );
+    (transcript as Transcript).postedCount++;
+    if (note) {
+      const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+      if (view) await publishMessageCreated(deps.pubsub, view);
+    }
+  };
   const brainUnavailable = async (
     u: BrainUnavailability & { queued?: boolean; retryAt?: number; quotaReserve?: boolean },
     look?: "first" | "again",
@@ -3473,25 +3559,18 @@ async function executeRunInner(
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
     const onlyThisComputer = (t.interruptedTurn?.executed.length ?? 0) > 0 || t.interruptedTurn?.cause === "plan_limit";
-    // This bounded opt-in handles only Codex already known unavailable before its first tool/turn. It never
-    // imports the source vendor's session. Missing capability, billing or data-policy evidence keeps the wait.
+    // Owner policy (2026-11-14): Codex near or at its plan limit hands the same agent and run to a qualified
+    // subscription route at a turn boundary, never importing the source vendor's session. Missing capability,
+    // billing or data-policy evidence keeps the wait. A cut turn with executed or unknown effects still holds.
     let allowLegacyFallback = true;
     if (deps.quotaCliContinuation && (u.code === "plan_limit" || u.quotaReserve === true) && from === "codex") {
       allowLegacyFallback = false;
       const session = plan.session;
-      const content = t.messages;
-      const textOnly = content.every(
-        (message) =>
-          typeof message.content === "string" ||
-          (Array.isArray(message.content) && message.content.every((part) => part.type === "text")),
-      );
-      const bytes = new TextEncoder().encode(JSON.stringify({ system: t.system, messages: content })).length;
+      const workLog = await runWorkDigest(db, run.id).catch(() => "");
+      const content = portableMessages(t.messages, workLog);
+      const textOnly = true;
+      const bytes = new TextEncoder().encode(JSON.stringify(content)).length;
       if (
-        (fresh || t.quotaReservePending !== undefined) &&
-        look === "first" &&
-        run.turns === 0 &&
-        !run.background &&
-        !run.workId &&
         !plan.missionId &&
         !isRightHand(agent) &&
         agent.brainExtraUsage === false &&
@@ -3501,7 +3580,6 @@ async function executeRunInner(
         !t.hostAcpUncertain &&
         !t.continuityCheckpoint &&
         session &&
-        session.resume === false &&
         !(
           await db
             .select({ id: agentRuns.id })
@@ -3521,12 +3599,13 @@ async function executeRunInner(
         deps.machines &&
         deps.brains?.claude_code &&
         textOnly &&
-        bytes <= 64_000
+        bytes <= PORTABLE_CONTEXT_MAX_BYTES
       ) {
         const status = await deps.machines.status(machineId).catch(() => null);
         const owns = await planIsOwners(db, agent, machineId, undefined).catch(() => false);
         const usage = await storedPlanUsage(db, run.orgId, machineId, "claude_code").catch(() => null);
         const context = structuredClone({ system: t.system, messages: content });
+        const contextSnapshot = JSON.stringify(t.messages);
         const serializedContext = JSON.stringify(context);
         const targetReserve = quotaReserveOf(
           usage,
@@ -3567,7 +3646,8 @@ async function executeRunInner(
           proof.noPaidExtraUsage === true &&
           proof.noCredentialsInContext === true &&
           targetReserve.state === "normal" &&
-          JSON.stringify({ system: t.system, messages: content }) === serializedContext &&
+          JSON.stringify(t.messages) === contextSnapshot &&
+          JSON.stringify(context) === serializedContext &&
           Number.isSafeInteger(proof.observedAt) &&
           Number.isSafeInteger(proof.validUntil) &&
           proof.observedAt <= at &&
@@ -3606,7 +3686,7 @@ async function executeRunInner(
             {
               turn: true,
               found: true,
-              text: untrustedBlock("portable prior conversation", JSON.stringify(context.messages), 128_000),
+              text: untrustedBlock("portable prior conversation", JSON.stringify(context.messages), PORTABLE_CONTEXT_MAX_BYTES),
             } as ContextBlock,
           ];
           if (options.owned && !(await options.owned()))
@@ -3639,6 +3719,11 @@ async function executeRunInner(
             model: proof.model,
             session: { id: sessionId, resume: false, machineId, cwd: session.cwd },
           };
+          // Mid-run, the new harness has no native history: it reads the portable record and goes on from there.
+          if (computerTurns > 0 || run.turns > 0) {
+            nextPrompt = [QUOTA_HANDOFF_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+          }
+          await quotaHandoffNotice(from, proof.model, u.quotaReserve === true ? "reserve" : "limit").catch(() => {});
           brain = createBrain(
             deps,
             thinker,
@@ -5095,6 +5180,17 @@ async function executeRunInner(
       if (run.workId && plan.kind === "model" && Date.now() - claimedAt > WORK_JOB_YIELD_MS) return yieldWorkJob();
       // Long work near its limit parks here, between steps: nothing is in flight and the next step reads on.
       const pause = await longWorkPause();
+      if (pause && pause.source === "plan" && plan.kind === "codex" && !isRightHand(agent) && deps.quotaCliContinuation) {
+        // Between steps nothing is in flight: try a qualified route before parking the task.
+        const moved = await brainUnavailable({
+          code: "quota_reserve",
+          message: `The plan is at ${pause.used}%.`,
+          quotaReserve: true,
+        } as BrainUnavailability & { quotaReserve: true });
+        if (moved === "canceled") return stopCanceled("");
+        if (moved === "fallback") continue;
+        if (moved === "waited" || moved === "failed") return;
+      }
       if (pause) {
         return waitForUsage({
           code: "usage_pause",
@@ -5577,7 +5673,28 @@ async function executeRunInner(
           : null;
         // Canceled mid-stream: the gateway recorded the usage so far; keep the text so far.
         if (await isCanceled()) return stopCanceled(deltas.text(), deltas.answer());
-        if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
+        if (epochHold) {
+          // A plan cut with a started tool of unknown outcome keeps the task: a scoped checkpoint hold that waits
+          // for reconciliation (never a replay), instead of failing the run.
+          const cutMachine = turnPlan.session?.machineId ?? agent.machineId ?? null;
+          if (error instanceof BrainFailure && error.code === "plan_limit" && !run.background && cutMachine) {
+            transcript.effectUncertain = epochHold;
+            const prev = transcript.interruptedTurn;
+            transcript.interruptedTurn = {
+              prompt: prev?.prompt ?? prompt,
+              executed: [...new Set([...(prev?.executed ?? []), ...epochHold.tools])],
+              drops: prev?.drops ?? 0,
+              cause: "plan_limit",
+            };
+            return waitForUsage({
+              code: "plan_limit",
+              message: error.message,
+              effectUnknown: true,
+              ...(await refusalOf(cutMachine, error)),
+            });
+          }
+          return stopOnClosedEpochHold(epochHold, deltas.lastText());
+        }
         // Keep the sequence moving: a retried turn must not reuse numbers the app already saw (it drops them).
         if (error instanceof BrainFailure) {
           const cause = accountFailureCause(error.code, error.provider.cause);

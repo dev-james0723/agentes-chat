@@ -417,6 +417,20 @@ export const envVars = {
     description: "Account-wide usage percentage at which a fresh observation signals low capacity for routing.",
     section: "Agents",
   },
+  QUOTA_HANDOFF_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    description:
+      "Owner-approved quota continuity: a Codex agent near or at its plan limit continues on the computer's Claude Code subscription sign-in, with one notice in the task.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_CLAUDE_MODEL: {
+    schema: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).default("claude-fable-5-2"),
+    description: "Claude Code model a quota handoff runs on.",
+    section: "Agents",
+  },
   QUOTA_RESERVE_MAX_AGE_MS: {
     schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
     description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",

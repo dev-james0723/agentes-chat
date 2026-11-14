@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { createQuotaCliQualifier, hasCredentialText } from "../src/quota-qualifier";
+import { QUOTA_HANDOFF_RESUME_PROMPT } from "../src/executor";
 import {
   ACCOUNTS_PROTOCOL,
   CODEX_WINDOWS_PROTOCOL,
@@ -6330,4 +6332,165 @@ test("a quota cut after multiple turns preserves scoped portable source referenc
   expect(checkpoint.portable.memories.some((item: { id: string }) => item.id === hiddenMemory?.id)).toBe(false);
   expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_TOOL_SECRET");
   expect(JSON.stringify(checkpoint)).not.toContain("SYNTH_UNKNOWN_SECRET");
+});
+
+// Owner policy 2026-11-14: Codex at its limit continues mid-task on the computer's Claude Code subscription sign-in.
+async function midTaskQuotaFixture(o: { authMethod: string; goal: string }) {
+  let writes = 0;
+  const source: ToolSource = {
+    name: "synthetic-handoff",
+    tools: async () => [
+      {
+        name: "handoff_write",
+        description: "Synthetic write",
+        scope: "",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        execute: async () => {
+          writes++;
+          return { content: "SYNTH_STEP_ONE_DONE" };
+        },
+      },
+    ],
+  };
+  f = await setup({
+    toolSources: [source],
+    judge: (kind, _id, state) =>
+      kind === "follow_through" ? (String(state.reply).includes("vou") ? "continue" : "done") : undefined,
+  });
+  const machineId = await computerAgent(f, { brain: "codex", brainExtraUsage: false });
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  if (!machine) throw new Error("missing machine");
+  const at = new Date().toISOString();
+  const resetsAt = new Date(Date.now() + 3600_000).toISOString();
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine.executors,
+        ownUsage: {
+          codex: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 60, resetsAt }] },
+          claude_code: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 13, resetsAt }] },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  let codexTurns = 0;
+  const codex: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      codexTurns++;
+      if (codexTurns === 1) {
+        const result = await executeToolForRun(
+          f.jobDeps,
+          { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+          { id: "w-1", name: "handoff_write", input: {} },
+        );
+        yield { type: "tool_call", id: "w-1", name: "handoff_write", input: {}, executed: result };
+        yield { type: "done", text: "Step one done; vou continuar." };
+      } else yield { type: "error", code: "plan_limit", message: "synthetic Codex limit", retryable: true, worked: false };
+    },
+  };
+  const claudeTurns: BrainTurn[] = [];
+  const claude: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      claudeTurns.push(turn);
+      yield { type: "done", text: "Claude finished the remaining step." };
+    },
+  };
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: o.authMethod, plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    });
+  const machines = { status: async (id: string) => status(id) };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => codex, claude_code: () => claude },
+    machines,
+    quotaCliContinuation: createQuotaCliQualifier({ machines, model: "claude-fable-5-2" }),
+  } as Parameters<typeof createJobHandlers>[0]);
+  await post(f, o.goal);
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  const notices = (await timeline(f)).filter((m) => m.body.includes("switched this task to Claude Code"));
+  return { run, codexTurns: () => codexTurns, claudeTurns, writes: () => writes, notices };
+}
+
+test("quota policy: Codex refused mid-task hands the same run to Claude, keeps its work and notifies once", async () => {
+  const r = await midTaskQuotaFixture({ authMethod: "claude.ai", goal: "@dev SYNTH_GOAL do step one then step two" });
+  expect(r.codexTurns()).toBe(2);
+  expect(r.writes()).toBe(1);
+  expect(r.claudeTurns).toHaveLength(1);
+  expect(r.run?.status).toBe("done");
+  expect(r.run?.brain).toBe("claude_code");
+  const turn = r.claudeTurns[0];
+  expect(turn?.runId).toBe(r.run?.id);
+  expect(turn?.agentId).toBe(f.agent.id);
+  expect(turn?.session?.resume).toBe(false);
+  const sent = JSON.stringify(turn);
+  expect(sent).toContain("SYNTH_GOAL");
+  expect(sent).toContain("handoff_write");
+  expect(sent).toContain("SYNTH_STEP_ONE_DONE");
+  expect(sent).toContain(QUOTA_HANDOFF_RESUME_PROMPT.slice(0, 60));
+  expect(r.notices).toHaveLength(1);
+  expect(r.run?.transcript).toMatchObject({
+    quotaCliHandoff: { disposition: "CONTINUE", sourceKind: "codex", targetKind: "claude_code", model: "claude-fable-5-2" },
+  });
+}, 30_000);
+
+test("quota policy: a Claude API-key login is a paid path and is never used; the task waits", async () => {
+  const r = await midTaskQuotaFixture({ authMethod: "api_key", goal: "@dev SYNTH_GOAL do step one then step two" });
+  expect(r.claudeTurns).toHaveLength(0);
+  expect(r.writes()).toBe(1);
+  expect(r.notices).toHaveLength(0);
+  expect(r.run?.brain).toBe("codex");
+  expect(r.run?.status).toBe("waiting_input");
+}, 30_000);
+
+test("quota policy: credential text in the task blocks the handoff; the task waits", async () => {
+  const r = await midTaskQuotaFixture({
+    authMethod: "claude.ai",
+    goal: `@dev SYNTH_GOAL use key sk-ant-${"a".repeat(32)} for step two`,
+  });
+  expect(r.claudeTurns).toHaveLength(0);
+  expect(r.notices).toHaveLength(0);
+  expect(r.run?.status).toBe("waiting_input");
+}, 30_000);
+
+test("quota qualifier refuses non-subscription Claude logins and credential text", async () => {
+  f = await setup();
+  const base = {
+    orgId: "o",
+    runId: "r",
+    agentId: "a",
+    channelId: "c",
+    goalMessageId: "g",
+    machineId: "m",
+    sourceKind: "codex" as const,
+    sourceAccountId: null,
+    requiredTools: [],
+    context: { system: [], messages: [] },
+  };
+  const q = (authMethod?: string, loggedIn = true) =>
+    createQuotaCliQualifier({
+      machines: {
+        status: async (id: string) =>
+          statusOf(id, { executors: { claude: { version: "x", loggedIn, authMethod }, detectedAt: "" } }),
+      },
+      model: "claude-fable-5-2",
+    });
+  expect(await q("claude.ai").qualify(base)).toMatchObject({ targetKind: "claude_code", noPaidExtraUsage: true });
+  expect(await q("api_key").qualify(base)).toBeNull();
+  expect(await q("setup_token").qualify(base)).toBeNull();
+  expect(await q(undefined).qualify(base)).toBeNull();
+  expect(await q("claude.ai", false).qualify(base)).toBeNull();
+  expect(await q("claude.ai").qualify({ ...base, sourceKind: "claude_code" })).toBeNull();
+  expect(hasCredentialText(`ghp_${"x".repeat(36)}`)).toBe(true);
+  expect(hasCredentialText("plain progress text")).toBe(false);
 });
