@@ -1963,8 +1963,8 @@ export async function linkIssueToWork(
 
 /**
  * A card follows its work (ADR 0121 §4): queued → A fazer, working → Em andamento, waiting on a person, paused or
- * failed → the blocked badge in its stage, done → Feito (left in review when the agent moved it there), stopped →
- * back to A fazer. An update is an activity event on it.
+ * failed → the blocked badge in its stage, done → Feito only with no unchecked criteria (left in review when
+ * the agent moved it there), stopped → back to A fazer. An update is an activity event on it (ADR 0186).
  */
 export async function setWorkIssueState(
   deps: IssueDeps,
@@ -1973,23 +1973,31 @@ export async function setWorkIssueState(
 ) {
   if (!work.issueId) return;
   const view = (await workViews(deps.db, work.orgId, [work.id])).get(work.id);
-  const [current] = await deps.db.select().from(issues).where(eq(issues.id, work.issueId));
-  if (!view || !current || current.status === "canceled") return;
-  const now = new Date();
-  let status: IssueStatus = current.status;
-  let blocked: IssueRow["blocked"] = null;
-  const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
-  if (ended === "done") status = current.status === "in_review" ? "in_review" : "done";
-  else if (ended === "canceled") status = "todo";
-  else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
-  else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";
-  else {
-    if (current.status === "todo" || current.status === "done") status = "in_progress";
-    if (view.state && view.state !== "working")
-      blocked = { reason: view.state, since: current.blocked?.since ?? now.toISOString() };
-  }
+  if (!view) return;
   const author: WorkActor = { type: "agent", id: work.agentId };
   const row = await deps.db.transaction(async (tx) => {
+    // Criteria and status share this row. Decide from the locked, current values so a committed edit before
+    // this transaction cannot be overwritten using an earlier read. No work/run locks are acquired here.
+    const [current] = await tx
+      .select()
+      .from(issues)
+      .where(eq(issues.id, work.issueId as string))
+      .for("update");
+    if (!current || current.status === "canceled") return null;
+    const now = new Date();
+    let status: IssueStatus = current.status;
+    let blocked: IssueRow["blocked"] = null;
+    const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
+    if (ended === "done") {
+      if (current.status !== "in_review" && current.criteria.every((criterion) => criterion.done)) status = "done";
+    } else if (ended === "canceled") status = "todo";
+    else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
+    else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";
+    else {
+      if (current.status === "todo" || current.status === "done") status = "in_progress";
+      if (view.state && view.state !== "working")
+        blocked = { reason: view.state, since: current.blocked?.since ?? now.toISOString() };
+    }
     const [updated] = await tx
       .update(issues)
       .set({
