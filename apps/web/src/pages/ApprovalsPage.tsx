@@ -1307,6 +1307,9 @@ function ReviewBody({
           {a.publication ? (
             <>
               <p>{t("privatePublication.destination")}</p>
+              <p>
+                <b>{a.publication.skillName}</b> (v{a.publication.baseVersion})
+              </p>
               <p>{t("privatePublication.warning")}</p>
               {!a.publication.baseCurrent && a.status === "pending" && (
                 <p role="status">{t("privatePublication.stale")}</p>

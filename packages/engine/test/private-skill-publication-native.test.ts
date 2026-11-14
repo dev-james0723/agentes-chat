@@ -107,6 +107,7 @@ test("an exact one-time owner decision resumes the native run and publishes once
   const approval = w.approvals[0]!;
   const preview = await getApproval(f.db, f.owner.id, f.org.id, approval.id);
   expect(preview.publication?.body).toBe(`Exact private draft ${marker}`);
+  expect(preview.publication?.skillName).toBe(w.skill.name);
   await expect(
     decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" }),
   ).rejects.toThrow();

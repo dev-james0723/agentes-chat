@@ -15,7 +15,16 @@ const fingerprint = "a".repeat(64);
 function fixture() {
   const state = seedState();
   const a = state.approvals[0]!;
-  Object.assign(a, { publicationRequired: true, params: {}, detail: "", why: null, approveAlways: null });
+  Object.assign(a, {
+    tool: "update_skill",
+    scope: "skills:read",
+    title: "Review sharing a private draft",
+    publicationRequired: true,
+    params: {},
+    detail: "",
+    why: null,
+    approveAlways: null,
+  });
   const api = createFakeApi(state);
   const detail: Approval = {
     ...a,
@@ -24,6 +33,7 @@ function fixture() {
       body,
       bodyHash: "b".repeat(64),
       skillId: "s",
+      skillName: "Actual <Skill> & name",
       baseVersion: 1,
       baseCurrent: true,
       destination: "organization_skill_library",
@@ -53,6 +63,8 @@ test("the owner reads the whole protected draft and explicitly shares this exact
   expect(screen().queryByRole("button", { name: "Compartilhar esta versão uma vez" })).toBeNull();
   await act(async () => release(detail));
   await settle(4);
+  expect(screen().getByText("Actual <Skill> & name")).toBeDefined();
+  expect(screen().getByText("Actual <Skill> & name").parentElement?.textContent).toBe("Actual <Skill> & name (v1)");
   const preview = screen().getByLabelText("Texto completo da habilidade");
   expect(preview.textContent).toBe(body);
   expect(preview.className).not.toContain("is-folded");

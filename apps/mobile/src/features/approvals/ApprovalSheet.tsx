@@ -244,6 +244,9 @@ export function ApprovalSheet({
             <Text variant="small">{t("privatePublication.warning")}</Text>
             {a.publication ? (
               <>
+                <Text variant="body" style={styles.semibold}>
+                  {a.publication.skillName} (v{a.publication.baseVersion})
+                </Text>
                 {!a.publication.baseCurrent && a.status === "pending" ? (
                   <Text>{t("privatePublication.stale")}</Text>
                 ) : null}

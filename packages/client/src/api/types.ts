@@ -1929,6 +1929,7 @@ export interface Approval {
     fingerprint: string;
     destination: "organization_skill_library";
     skillId: string;
+    skillName: string;
     baseVersion: number;
     body: string;
     bodyHash: string;

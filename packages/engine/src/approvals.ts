@@ -80,6 +80,7 @@ export interface ApprovalView {
     fingerprint: string;
     destination: "organization_skill_library";
     skillId: string;
+    skillName: string;
     baseVersion: number;
     body: string;
     bodyHash: string;
@@ -1419,6 +1420,7 @@ export async function getApproval(db: Database, actorId: string, orgId: string, 
         fingerprint: row.actionHash,
         destination: "organization_skill_library" as const,
         skillId: p.publication.skillId,
+        skillName: bound.facts.skill.name,
         baseVersion: p.publication.baseVersion,
         body: p.input.body,
         bodyHash: sha256(p.input.body),

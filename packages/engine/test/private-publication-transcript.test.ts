@@ -54,10 +54,11 @@ test("ordinary saves preserve current source capture and quota metadata instead 
 });
 test("a current explicit capture invalidation cannot be replaced by an old native object", async () => {
   const result = await save(
-    { system: [], publicationCapture: null },
+    { system: [], publicationCapture: null, metadata: null },
     { system: [], messages: [], publicationCapture: fresh() },
   );
-  expect(result?.publicationCapture).toBeUndefined();
+  expect(result?.publicationCapture).toBeNull();
+  expect(result?.metadata).toBeNull();
 });
 test("fresh native context may initialize capture before the first transcript is stored", async () => {
   const capture = fresh();
@@ -76,4 +77,27 @@ test("persisted or forged JSON cannot manufacture capture for an unknown legacy 
 test("an in-place fresh object cannot restore capture removed from an already stored context", async () => {
   const result = await save({ system: [], messages: [] }, { system: [], messages: [], publicationCapture: fresh() });
   expect(result?.publicationCapture).toBeUndefined();
+});
+
+test.each([
+  {
+    metadata: {
+      quotaContinuity: {
+        goal: { version: null },
+        task: { issueId: null, version: null },
+        identity: { nullable: null },
+        quota: { usedPercent: null },
+      },
+    },
+  },
+  { metadata: [null, { nested: null }] },
+  { metadata: "legacy metadata" },
+])("current metadata and capture preserve all nested JSON shapes verbatim: %j", async ({ metadata }) => {
+  const capture = { version: 2, complete: false, unknown: { value: null }, array: [null, { value: null }] };
+  const result = await save(
+    { system: [], metadata, publicationCapture: capture },
+    { system: [], messages: [], metadata: { stale: true }, publicationCapture: fresh() },
+  );
+  expect(result?.metadata).toEqual(metadata);
+  expect(result?.publicationCapture).toEqual(capture);
 });

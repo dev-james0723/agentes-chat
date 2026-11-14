@@ -379,16 +379,16 @@ async function recordBridgeEffects(
  */
 export function storedTranscript(t: object): SQL {
   const { [BRIDGE_EFFECTS]: _kept, publicationCapture, metadata: _metadata, ...rest } = t as Record<string, unknown>;
-  // Row-owned metadata can be updated concurrently by wait/resume controllers. Never replay an in-memory copy.
-  // A native fresh context initializes coverage only before any system transcript exists. Current invalidation wins.
-  const initial = isFreshPublicationCapture(publicationCapture) ? pgSafeStringify(publicationCapture) : "null";
-  return sql`(${pgSafeStringify(rest)}::jsonb || jsonb_strip_nulls(jsonb_build_object(
-    ${BRIDGE_EFFECTS}::text, ${agentRuns.transcript} -> ${BRIDGE_EFFECTS}::text,
-    'metadata', ${agentRuns.transcript}->'metadata',
-    'publicationCapture', case
-      when coalesce(${agentRuns.transcript},'{}'::jsonb) ? 'publicationCapture' then ${agentRuns.transcript}->'publicationCapture'
-      when not (coalesce(${agentRuns.transcript},'{}'::jsonb) ? 'system') then ${initial}::jsonb
-      else null end)))`;
+  // Row-owned metadata may be updated concurrently. Presence is significant: JSON null is not an absent key.
+  const current = sql`coalesce(${agentRuns.transcript},'{}'::jsonb)`;
+  const keep = (key: string) => sql`case when ${current} ? ${key}::text
+    then jsonb_build_object(${key}::text, ${current}->${key}::text) else '{}'::jsonb end`;
+  // Only genuine newly assembled native context can initialize coverage before a system transcript exists.
+  const initial = isFreshPublicationCapture(publicationCapture)
+    ? sql`case when not (${current} ? 'system') then jsonb_build_object('publicationCapture',${pgSafeStringify(publicationCapture)}::jsonb) else '{}'::jsonb end`
+    : sql`'{}'::jsonb`;
+  return sql`(${pgSafeStringify(rest)}::jsonb || ${keep(BRIDGE_EFFECTS)} || ${keep("metadata")} ||
+    case when ${current} ? 'publicationCapture' then ${keep("publicationCapture")} else ${initial} end)`;
 }
 
 /** Takes (and clears) the side effects the bridge kept for this run (`recordBridgeEffects`). */

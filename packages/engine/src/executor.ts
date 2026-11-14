@@ -543,7 +543,7 @@ export type RunExecutorDeps = EngineDeps;
  */
 export interface Transcript {
   /** Row-owned controller metadata. storedTranscript preserves the current DB value, never this stale copy. */
-  metadata?: Record<string, unknown>;
+  metadata?: unknown;
   publicationCapture?: import("./private-skill-publication").PublicationCapture;
   /** A host ACP call lost its delivery result: carried across fresh turns until explicitly reconciled. */
   hostAcpUncertain?: { runId: string; turn: number; message: string };

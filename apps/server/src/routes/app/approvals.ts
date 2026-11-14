@@ -76,6 +76,7 @@ export const Approval = z
         fingerprint: z.string(),
         destination: z.literal("organization_skill_library"),
         skillId: z.string(),
+        skillName: z.string(),
         baseVersion: z.number(),
         body: z.string(),
         bodyHash: z.string(),

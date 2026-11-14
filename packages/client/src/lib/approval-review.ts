@@ -48,10 +48,13 @@ export type ApprovalEffect = "external" | "production" | "unsent" | "readsOnly";
 /** Whether it can be undone. */
 export type ApprovalUndo = "irreversible" | "reversible" | "deletable";
 
-export function approvalEffects(a: Pick<Approval, "tool" | "scope" | "params" | "connector">): {
+export function approvalEffects(
+  a: Pick<Approval, "tool" | "scope" | "params" | "connector"> & Partial<Pick<Approval, "publicationRequired">>,
+): {
   effect: ApprovalEffect | null;
   undo: ApprovalUndo | null;
 } {
+  if (a.publicationRequired) return { effect: null, undo: null };
   const traits = approvalTraits(a);
   const effect: ApprovalEffect | null = traits.includes("production")
     ? "production"

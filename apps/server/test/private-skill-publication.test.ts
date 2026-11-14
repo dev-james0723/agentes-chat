@@ -61,11 +61,13 @@ test("authenticated native GET previews the whole draft only to its owner; exact
   const preview = (await previewResponse.json()) as {
     publicationRequired: boolean;
     params: unknown;
-    publication: { body: string; fingerprint: string };
+    publication: { body: string; fingerprint: string; skillName: string; baseVersion: number };
   };
   expect(preview.publicationRequired).toBe(true);
   expect(preview.params).toEqual({});
   expect(preview.publication.body).toBe(`Exact draft ${marker}`);
+  expect(preview.publication.skillName).toBe(skill.name);
+  expect(preview.publication.baseVersion).toBe(skill.version);
   expect((await owner(`${at}/approvals/${a!.id}/approve`, { json: {} })).status).toBe(403);
   expect(
     (
