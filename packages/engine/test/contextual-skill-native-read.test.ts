@@ -666,3 +666,24 @@ test("migration 0270 enforces the one-shot activation constraints", async () => 
     resultHash: "c",
   });
 });
+
+test("a configured canary without a run id gates every run of that agent, and only that agent", async () => {
+  await f.close();
+  const p = await nativePublishedReadFixture();
+  f = p.f;
+  ctx = p.ctx;
+  skillId = p.selected.skillId;
+  await installNativeSkillReadTestSchema(f.db);
+  const read = (agentId: string) =>
+    createToolGateway({
+      sources: sources(),
+      nativeSkillReads: { canary: [{ agentId, skillId, operation: "load_skill" }] },
+    }).invoke(ctx, { name: "load_skill", input: { name: p.name }, toolUseId: crypto.randomUUID() });
+  const gated = await read(ctx.agentId);
+  if (gated.type !== "result") throw Error("Unexpected approval");
+  expect(gated.output.content).toContain(p.body);
+  expect(gated.output.data?.skillReadActivation).toMatchObject({ runId: ctx.runId, skillId, state: "completed" });
+  const other = await read(crypto.randomUUID());
+  if (other.type !== "result") throw Error("Unexpected approval");
+  expect(other.output.data?.skillReadActivation).toBeUndefined();
+});

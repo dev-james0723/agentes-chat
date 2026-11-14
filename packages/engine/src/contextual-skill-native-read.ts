@@ -13,7 +13,8 @@ import type { ToolContext, ToolDefinition, ToolOutput } from "./tools/types";
 type Operation = SkillReadSurfaceDescriptor["selected"]["operation"];
 export interface NativeSkillReadScope {
   agentId: string;
-  runId: string;
+  /** One run only; absent: every run of this agent (a configured canary). Each call still binds its exact run. */
+  runId?: string;
   skillId: string;
   operation: Operation;
 }
@@ -120,7 +121,9 @@ export async function beginNativeSkillRead(
   authority: RunAuthority | null,
 ): Promise<NativeSkillReadCall | null> {
   if (!config || !nativeTools.has(tool) || !["load_skill", "read_skill_file"].includes(tool.name)) return null;
-  const scopes = config.canary.filter((s) => s.agentId === ctx.agentId && s.runId === ctx.runId);
+  const scopes = config.canary.filter(
+    (s) => s.agentId === ctx.agentId && (s.runId === undefined || s.runId === ctx.runId),
+  );
   if (!scopes.length) return null;
   if (
     !stepId ||
@@ -204,7 +207,9 @@ export async function nativeSkillReadTargeted(
         ? "folder_listing"
         : "stored_text";
   const ids = config.canary
-    .filter((s) => s.agentId === ctx.agentId && s.runId === ctx.runId && s.operation === operation)
+    .filter(
+      (s) => s.agentId === ctx.agentId && (s.runId === undefined || s.runId === ctx.runId) && s.operation === operation,
+    )
     .map((s) => s.skillId);
   if (!ids.length) return false;
   const [row] = await ctx.db

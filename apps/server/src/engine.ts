@@ -401,6 +401,8 @@ export function buildEngine(o: EngineOptions) {
   // The workspace's cap of live background works (ADR 0121 §7).
   setWorkOrgCap(config.AGENT_WORK_MAX_PER_ORG);
   const tools = createToolGateway({
+    // Default off; a canary's exact agent and skill pairs only (ADR 0189).
+    ...(config.SKILL_READ_CANARY.length ? { nativeSkillReads: { canary: config.SKILL_READ_CANARY } } : {}),
     sources: [
       // A question for what the agent could find, or a secret asked in the chat, is held first (ADR 0109).
       createAskUserToolSource({ judge: context.judge, tools: () => tools }),

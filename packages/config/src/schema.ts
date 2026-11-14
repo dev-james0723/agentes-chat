@@ -373,6 +373,34 @@ export const envVars = {
       "Jev model for judgments over images (an agent finding a target on a screenshot of its browser or desktop). Needs a release that takes images.",
     section: "Agents",
   },
+  SKILL_READ_CANARY: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+          .map((entry) => {
+            const [agentId = "", skillId = "", extra] = entry.split(":");
+            return { agentId: agentId.trim(), skillId: skillId.trim(), extra };
+          }),
+      )
+      .pipe(
+        z
+          .array(
+            z
+              .object({ agentId: z.uuid(), skillId: z.uuid(), extra: z.undefined() })
+              .transform(({ agentId, skillId }) => ({ agentId, skillId, operation: "load_skill" as const })),
+          )
+          .max(20),
+      ),
+    description:
+      "Off when empty. Comma-separated agentId:skillId pairs whose load_skill reads go through the one-shot verified skill-read gate (ADR 0189): the body is released only after a fresh native proof and a single database claim, and an unverifiable read is refused instead of falling back. For a small canary only.",
+    section: "Agents",
+    example: "01a1...agent-uuid:01a1...skill-uuid",
+  },
   OPENAI_CHEAP_MODEL: {
     schema: modelId.default("gpt-6-luna"),
     description:
