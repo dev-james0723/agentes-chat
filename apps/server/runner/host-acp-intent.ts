@@ -27,7 +27,7 @@ type Options = {
   runId?: string;
 };
 const schemaValidator = new AjvJsonSchemaValidator();
-/** Qualified text tools only; the server still checks native grants on every invocation. */
+/** Qualified text/DOM tools (ADR 0196); the server checks native grants on every invocation. */
 export const HOST_ACP_TOOLS: ReadonlySet<string> = new Set(HOST_ACP_TOOL_NAMES);
 const readTools = new Set([
   "list_issues",
@@ -38,7 +38,12 @@ const readTools = new Set([
   "find_agent",
   "list_files",
   "read_file",
+  "browser_read",
+  "get_my_profile",
 ]);
+// Tabs also mutate the browser: only listing is a repeat-safe observation.
+const observesOnly = (name: string, args: Record<string, unknown>) =>
+  readTools.has(name) || (name === "browser_tabs" && args.action === "list");
 export const HOST_ACP_FOREGROUND_SECONDS = 240;
 const keywords = new Set([
   "$schema",
@@ -285,7 +290,7 @@ export async function runStructuredToolLoop(opts: Options): Promise<string> {
   const execution = (name: string) => name === "run_code" || name === "run_skill_script";
   const effectKeyOf = (name: string, args: unknown) => `${name}:${stable(args)}:${execution(name) ? revision : 0}`;
   const remember = (name: string, args: Record<string, unknown>, isError: boolean) => {
-    if (readTools.has(name)) return;
+    if (observesOnly(name, args)) return;
     // A distinct, confirmed successful workspace-capable call can change what a test observes.
     // Record an execution at the NEW revision so an immediate identical command still cannot replay.
     if (workspaceTool(name) && !isError) revision++;
@@ -334,7 +339,7 @@ export async function runStructuredToolLoop(opts: Options): Promise<string> {
     }
     // A test may rerun after a file change. Other identical effects cannot be replayed in this phase.
     const effectKey = effectKeyOf(intent.name, args);
-    if (!readTools.has(intent.name) && seenEffects.has(effectKey))
+    if (!observesOnly(intent.name, args) && seenEffects.has(effectKey))
       throw new ToolStopped("bridge.duplicate_intent", "completed");
     let result: any;
     try {

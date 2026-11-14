@@ -1076,12 +1076,15 @@ export function createMachineHub(deps: MachineHubDeps) {
         conn.protocol >= MCP_RUN_STATE_PROTOCOL &&
         requireComplete &&
         out.runState === "completed" &&
-        out.text.length > 50_000
+        (out.resultTruncated === true || out.text.length > 50_000)
           ? {
               ok: false,
               error: {
-                code: "bridge.result_too_large",
-                message: "The tool result exceeds the bridge limit; stopped without retry.",
+                code: out.text.length > 50_000 ? "bridge.result_too_large" : "bridge.result_incomplete",
+                message:
+                  out.text.length <= 50_000
+                    ? "The native tool returned a partial observation; a complete result cannot be attested. Stop without retry."
+                    : "The tool result exceeds the bridge limit; stopped without retry.",
               },
               runState: "completed",
               imageOmitted: true,

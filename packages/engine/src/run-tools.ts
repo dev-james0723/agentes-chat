@@ -62,6 +62,7 @@ export interface BridgeCallResult {
   /** Present only after a known gateway result or persisted suspension. */
   runState?: "completed" | "suspended";
   imageOmitted?: boolean;
+  resultTruncated?: boolean;
 }
 
 /** Where a run's events and cards go. */
@@ -701,11 +702,12 @@ export async function invokeToolForRun(
   // Malformed image data is also treated as omitted, never silently as text-only.
   const images = outcome.type === "result" ? outcome.output.images : undefined;
   const imageOmitted = images !== undefined && (!Array.isArray(images) || images.length > 0);
+  const resultTruncated = outcome.type === "result" && outcome.output.resultTruncated === true;
   const suspend = async (pause: RunPause, r: AgentRun): Promise<BridgeCallResult> => {
     const result = await suspendRunForTool(deps, r, { id: call.id, name: call.name }, pause);
     return result.isError
       ? { result, code: "bridge.run_not_running" }
-      : { result, runState: "suspended", imageOmitted };
+      : { result, runState: "suspended", imageOmitted, resultTruncated };
   };
   if (wait && run) {
     return suspend(
@@ -728,6 +730,7 @@ export async function invokeToolForRun(
       ...(code ? { code } : {}),
       ...(known ? { runState: "completed" as const } : {}),
       imageOmitted,
+      resultTruncated,
     };
   }
   if (!run) {

@@ -2029,6 +2029,22 @@ export const HOST_ACP_TOOL_NAMES = [
   "write_file",
   "run_code",
   "run_skill_script",
+  "browser_open",
+  "browser_back",
+  "browser_tabs",
+  "browser_read",
+  "browser_click",
+  "browser_fill",
+  "browser_select",
+  "browser_check",
+  "browser_press",
+  "browser_scroll",
+  "browser_wait",
+  "browser_ask_person",
+  "browser_close",
+  "browser_profile",
+  "get_my_profile",
+  "create_artifact",
 ] as const;
 export function isHostAcpHistory(value: unknown, runId: string): value is HostAcpHistory {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

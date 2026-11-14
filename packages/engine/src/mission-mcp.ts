@@ -405,7 +405,9 @@ export async function handleMissionMcpCall(
     if (out.result.images && !isMcpResultMedia(out.result.images))
       return {
         ...refuse("bridge.media_rejected", "The action completed but its media output was rejected. Do not replay it."),
-        ...(out.runState ? { runState: out.runState, imageOmitted: true, resultTruncated: false } : {}),
+        ...(out.runState
+          ? { runState: out.runState, imageOmitted: true, resultTruncated: out.resultTruncated === true }
+          : {}),
       };
     if (!out.result.isError && typeof out.imageOmitted === "boolean")
       return {
@@ -414,13 +416,16 @@ export async function handleMissionMcpCall(
         ...(out.result.images ? { images: out.result.images } : {}),
         runState: out.runState,
         imageOmitted: out.imageOmitted,
+        resultTruncated: out.resultTruncated === true,
       };
     if (!out.result.isError)
       return refuse("bridge.image_state_unknown", "The tool result's image state is unknown. Stop without retry.");
     const code = out.code ?? "tool.failed";
     return {
       ...refuse((id.taskId && TASK_CODES[code]) || code, out.result.content),
-      ...(out.runState ? { runState: out.runState, imageOmitted: out.imageOmitted, resultTruncated: false } : {}),
+      ...(out.runState
+        ? { runState: out.runState, imageOmitted: out.imageOmitted, resultTruncated: out.resultTruncated === true }
+        : {}),
     };
   } catch (error) {
     const code = (error as { code?: unknown }).code;

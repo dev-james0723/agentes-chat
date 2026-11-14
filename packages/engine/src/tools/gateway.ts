@@ -637,6 +637,7 @@ export function createToolGateway(deps: {
       const capped = {
         ...output,
         content: text.length > MAX_RESULT_CHARS ? `${cutText(text, MAX_RESULT_CHARS)}\n[truncated]` : text,
+        ...(output.resultTruncated === true || text.length > MAX_RESULT_CHARS ? { resultTruncated: true } : {}),
       };
       return tool.external ? { ...capped, content: wrapExternal(tool.name, capped.content) } : capped;
     } catch (error) {

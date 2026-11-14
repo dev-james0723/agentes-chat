@@ -63,6 +63,8 @@ export interface ToolContext {
 export interface ToolOutput {
   /** Text the model sees as the tool result. */
   content: string;
+  /** Native text is a partial observation or was capped before transport; never an authorization claim. */
+  resultTruncated?: boolean;
   isError?: boolean;
   /** Pictures the model sees with the text (base64 PNG, JPEG, GIF or WebP): model brains only, never kept in steps. */
   images?: ToolImage[];
