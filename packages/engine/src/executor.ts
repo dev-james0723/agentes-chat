@@ -74,6 +74,7 @@ import {
   type BrainUnavailability,
   bindingReset,
   brainSpeedFor,
+  computerBrainUnavailable,
   forgetModelLimit,
   forgetPlanLimit,
   type ModelScope,
@@ -83,6 +84,8 @@ import {
   noteModelLimit,
   notePlanLimit,
   offRefusal,
+  planIsOwners,
+  quotaReserveOf,
   recordRunBrain,
   refusalScope,
   regionRefusal,
@@ -350,6 +353,7 @@ import {
 import { type Approval, type InvokeResult, isSensitive, type ToolGateway } from "./tools/gateway";
 import { grantedScopeKeys, grantKey } from "./tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./tools/types";
+import { untrustedBlock } from "./untrusted";
 import {
   budgetUsedPercent,
   continuesPastPlan,
@@ -437,8 +441,36 @@ const UNCOUNTED_TOOLS = `^(${REACT_TOOL}|${ON_DEMAND_FIND}|${ON_DEMAND_USE})$|_$
  * cancel, steering, deltas and events, NO_REPLY / `react`, limits, profile.
  * Brains (`brains/*`) only think: one turn in, neutral events out.
  */
+export interface QuotaCliQualification {
+  targetKind: "claude_code";
+  machineId: string;
+  model: string;
+  sourcePool: string;
+  targetPool: string;
+  noPaidExtraUsage: true;
+  noCredentialsInContext: true;
+  evidence: string;
+  observedAt: number;
+  validUntil: number;
+}
+
 export interface EngineDeps {
   db: Database;
+  /** Trusted same-host, same-agent qualification; no production implementation is installed by this patch. */
+  quotaCliContinuation?: {
+    qualify(input: {
+      orgId: string;
+      runId: string;
+      agentId: string;
+      channelId: string;
+      goalMessageId: string;
+      machineId: string;
+      sourceKind: BrainKind;
+      sourceAccountId: string | null;
+      requiredTools: string[];
+      context: { system: SystemBlock[]; messages: ModelMessage[] };
+    }): Promise<QuotaCliQualification | null>;
+  };
   paperclipCompatibilityEnabled?: boolean;
   /** Reads a live block's parts (`blockSpecAt`): the agent reads what its blocks show (ADR 0113). */
   blockSpec?: BlockSpecReader;
@@ -452,6 +484,9 @@ export interface EngineDeps {
   tools?: ToolGateway;
   /** Model calls one run may make (tool loops). */
   maxToolTurns?: number;
+  /** Shared plan reserve threshold and maximum age for the admission signal. */
+  quotaReservePercent?: number;
+  quotaReserveMaxAgeMs?: number;
   /** Long work's safety net (ADR 0121 §1): active time and model calls before a person's run moves, and how often it looks. */
   workAutoAfterMs?: number;
   workAutoAfterCalls?: number;
@@ -659,6 +694,32 @@ export interface Transcript {
     source: { throughSeq: number; capturedAt: string; complete: false };
     nextSafeAction: "reconcile_effects_and_qualify_route";
     dispatch: "hold";
+  };
+  /** A pre-dispatch reserve hold, whose last measured reading is retained without claiming freshness. */
+  quotaReservePending?: {
+    usedPercent: number;
+    observedAt?: string;
+    pool: { machineId: string | null; kind: BrainKind; accountId: string | null };
+  };
+  /** Portable qualified continuation, using a new target harness session; not a native session import. */
+  quotaCliHandoff?: {
+    schema: "quota-cli-handoff/1";
+    disposition: "CONTINUE";
+    runId: string;
+    agentId: string;
+    channelId: string;
+    goalMessageId: string;
+    sourceKind: BrainKind;
+    sourceSessionId: string;
+    targetKind: "claude_code";
+    targetSessionId: string;
+    machineId: string;
+    model: string;
+    sourcePool: string;
+    targetPool: string;
+    evidence: string;
+    observedAt: number;
+    validUntil: number;
   };
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
   fallback?: { from: BrainKind; code: string; message: string; resetsAt?: string };
@@ -2863,6 +2924,8 @@ async function executeRunInner(
     // A routine's or any background run's work never continues a conversation's session, nor the other way.
     fresh: Boolean(viaRoutine) || run.background,
     promptKey: transcript.promptKey,
+    quotaReservePercent: deps.quotaReservePercent,
+    quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
   });
   // The agent's model left its plan's live list, so this turn runs another: its owner hears it, never silently.
   const dropped =
@@ -2907,6 +2970,41 @@ async function executeRunInner(
         text: settingsChangedNote(transcript.system, await isPersonalWorkspace(db, run.orgId)),
       } as ContextBlock,
     ];
+  }
+  // A restarted or paused cross-harness continuation needs fresh route/effect reconciliation. Never guess that
+  // a native session can be replayed by a new owner; leave the task durably held until that flow exists.
+  if (transcript.quotaCliHandoff) {
+    const h = transcript.quotaCliHandoff;
+    transcript.continuityCheckpoint = {
+      schema: "quota-cut-checkpoint/1",
+      orgId: run.orgId,
+      runId: run.id,
+      channelId: run.channelId,
+      agentId: run.agentId,
+      goal: { state: "reference", messageId: h.goalMessageId },
+      task: "unknown",
+      executionOwner: "unknown",
+      constraints: "unknown",
+      completed: "unknown",
+      pending: "unknown",
+      decisions: "unknown",
+      tests: "unknown",
+      fileVersions: "unknown",
+      dependencies: "unknown",
+      effects: "unknown",
+      source: { throughSeq: await lastStepSeq(db, run.id), capturedAt: new Date().toISOString(), complete: false },
+      nextSafeAction: "reconcile_effects_and_qualify_route",
+      dispatch: "hold",
+    };
+    await db.transaction(async (tx) => {
+      await addRunStep(tx, run, "error", { reason: "quota_handoff_reconciliation_required" });
+      const held = await transitionRun(tx, run.id, "running", "waiting_input", {
+        transcript: storedTranscript(transcript),
+      });
+      if (!held) throw new PermanentJobError("run changed state while holding a prior quota handoff");
+    });
+    await finished("waiting_input");
+    return;
   }
   // A conversation run that fell back to the model brain keeps it when it resumes (an approval, an answer):
   // its transcript is the model's, and the computer would start the task again from the trigger.
@@ -3230,7 +3328,7 @@ async function executeRunInner(
    * turn (`busy`) is asked again every `COMPUTER_BUSY_RETRY_MS` until it runs.
    */
   const brainUnavailable = async (
-    u: BrainUnavailability & { queued?: boolean; retryAt?: number },
+    u: BrainUnavailability & { queued?: boolean; retryAt?: number; quotaReserve?: boolean },
     look?: "first" | "again",
   ): Promise<"fallback" | "waited" | "failed" | "no" | "back" | "canceled"> => {
     const from = plan.kind;
@@ -3267,9 +3365,189 @@ async function executeRunInner(
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
     const onlyThisComputer = (t.interruptedTurn?.executed.length ?? 0) > 0 || t.interruptedTurn?.cause === "plan_limit";
+    // This bounded opt-in handles only Codex already known unavailable before its first tool/turn. It never
+    // imports the source vendor's session. Missing capability, billing or data-policy evidence keeps the wait.
+    let allowLegacyFallback = true;
+    if (deps.quotaCliContinuation && (u.code === "plan_limit" || u.quotaReserve === true) && from === "codex") {
+      allowLegacyFallback = false;
+      const session = plan.session;
+      const content = t.messages;
+      const textOnly = content.every(
+        (message) =>
+          typeof message.content === "string" ||
+          (Array.isArray(message.content) && message.content.every((part) => part.type === "text")),
+      );
+      const bytes = new TextEncoder().encode(JSON.stringify({ system: t.system, messages: content })).length;
+      if (
+        (fresh || t.quotaReservePending !== undefined) &&
+        look === "first" &&
+        run.turns === 0 &&
+        !run.background &&
+        !run.workId &&
+        !plan.missionId &&
+        !isRightHand(agent) &&
+        agent.brainExtraUsage === false &&
+        !onlyThisComputer &&
+        !t.pending &&
+        !t.effectUncertain &&
+        !t.hostAcpUncertain &&
+        !t.continuityCheckpoint &&
+        session &&
+        session.resume === false &&
+        !(
+          await db
+            .select({ id: agentRuns.id })
+            .from(agentRuns)
+            .where(
+              and(
+                eq(agentRuns.orgId, run.orgId),
+                eq(agentRuns.agentId, run.agentId),
+                eq(agentRuns.brainSessionId, session.id),
+                ne(agentRuns.id, run.id),
+              ),
+            )
+            .limit(1)
+        ).length &&
+        machineId &&
+        session.machineId === machineId &&
+        deps.machines &&
+        deps.brains?.claude_code &&
+        textOnly &&
+        bytes <= 64_000
+      ) {
+        const status = await deps.machines.status(machineId).catch(() => null);
+        const owns = await planIsOwners(db, agent, machineId, undefined).catch(() => false);
+        const usage = await storedPlanUsage(db, run.orgId, machineId, "claude_code").catch(() => null);
+        const context = structuredClone({ system: t.system, messages: content });
+        const serializedContext = JSON.stringify(context);
+        const targetReserve = quotaReserveOf(
+          usage,
+          { machineId, kind: "claude_code", accountId: null },
+          {
+            thresholdPercent: deps.quotaReservePercent,
+            maxAgeMs: deps.quotaReserveMaxAgeMs,
+          },
+        );
+        const proof = await deps.quotaCliContinuation
+          .qualify({
+            orgId: run.orgId,
+            runId: run.id,
+            agentId: agent.id,
+            channelId: run.channelId,
+            goalMessageId: run.triggerMessageId,
+            machineId,
+            sourceKind: from,
+            sourceAccountId: plan.account?.id ?? null,
+            requiredTools: tools.map((tool) => tool.name),
+            context,
+          })
+          .catch(() => null);
+        const at = Date.now();
+        if (
+          proof &&
+          proof.targetKind === "claude_code" &&
+          proof.machineId === machineId &&
+          typeof proof.model === "string" &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(proof.model) &&
+          typeof proof.sourcePool === "string" &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(proof.sourcePool) &&
+          typeof proof.targetPool === "string" &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(proof.targetPool) &&
+          proof.sourcePool !== proof.targetPool &&
+          typeof proof.evidence === "string" &&
+          /^[A-Za-z0-9._:-]{1,128}$/.test(proof.evidence) &&
+          proof.noPaidExtraUsage === true &&
+          proof.noCredentialsInContext === true &&
+          targetReserve.state === "normal" &&
+          JSON.stringify({ system: t.system, messages: content }) === serializedContext &&
+          Number.isSafeInteger(proof.observedAt) &&
+          Number.isSafeInteger(proof.validUntil) &&
+          proof.observedAt <= at &&
+          proof.observedAt >= at - 300_000 &&
+          proof.validUntil > at &&
+          proof.validUntil <= proof.observedAt + 300_000 &&
+          status?.executors?.claude?.authMethod === "cli_login" &&
+          !computerBrainUnavailable("claude_code", machineId, status, at, undefined, owns, usage, proof.model)
+        ) {
+          const sessionId = Bun.randomUUIDv7();
+          delete t.quotaReservePending;
+          t.quotaCliHandoff = {
+            schema: "quota-cli-handoff/1",
+            disposition: "CONTINUE",
+            runId: run.id,
+            agentId: agent.id,
+            channelId: run.channelId,
+            goalMessageId: run.triggerMessageId,
+            sourceKind: from,
+            sourceSessionId: session.id,
+            targetKind: "claude_code",
+            targetSessionId: sessionId,
+            machineId,
+            model: proof.model,
+            sourcePool: proof.sourcePool,
+            targetPool: proof.targetPool,
+            evidence: proof.evidence,
+            observedAt: proof.observedAt,
+            validUntil: proof.validUntil,
+          };
+          // This is portable context for a new harness, never a claim that the Codex native session resumed.
+          t.system = [
+            ...t.system,
+            {
+              turn: true,
+              found: true,
+              text: untrustedBlock("portable prior conversation", JSON.stringify(context.messages), 128_000),
+            } as ContextBlock,
+          ];
+          if (options.owned && !(await options.owned()))
+            throw new PermanentJobError("lost run ownership before handoff");
+          await db.transaction(async (tx) => {
+            const [moved] = await tx
+              .update(agentRuns)
+              .set({
+                brain: "claude_code",
+                brainSessionId: sessionId,
+                transcript: storedTranscript(t),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(agentRuns.id, run.id),
+                  eq(agentRuns.status, "running"),
+                  eq(agentRuns.brainSessionId, session.id),
+                  sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+                  sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+                ),
+              )
+              .returning();
+            if (!moved) throw new PermanentJobError("run changed before qualified handoff");
+            await addRunStep(tx, run, "context", { quotaCliHandoff: t.quotaCliHandoff });
+            run = moved;
+          });
+          plan = {
+            kind: "claude_code",
+            model: proof.model,
+            session: { id: sessionId, resume: false, machineId, cwd: session.cwd },
+          };
+          brain = createBrain(
+            deps,
+            thinker,
+            run,
+            "claude_code",
+            turnToken,
+            () => transcript as Transcript,
+            triggerMessage,
+          );
+          return "fallback";
+        }
+      }
+    }
+    // A reserve reading is not provider exhaustion. If no alternate qualified, leave existing admission unchanged.
+    if (u.quotaReserve) return "no";
     // A background run never stands in on the model brain (`mayFallBack`): it waits for its computer.
     // Behind others in the computer's line (`roomGate`) is no refusal: it waits its turn.
     if (
+      allowLegacyFallback &&
       !onlyThisComputer &&
       !u.queued &&
       mayFallBack(agent, run) &&
@@ -3759,6 +4037,8 @@ async function executeRunInner(
     soon?: boolean;
     /** Long work paused near a limit (ADR 0118): on what, how far along, and the plan's window. */
     pause?: { source: "plan" | "budget"; used: number; window?: string };
+    /** Atomically persist a reserve pre-dispatch hold and its wake. */
+    reserve?: true;
     /** Positive evidence of an uncertain tool outcome in the caught turn; absent evidence is not proof of safety. */
     effectUnknown?: boolean;
     /** One model's refusal, not the account's (`refusalScope`). */
@@ -4155,6 +4435,30 @@ async function executeRunInner(
         });
         if (!moved) throw new PermanentJobError("run changed state while executing");
       });
+    } else if (u.reserve) {
+      await db.transaction(async (tx) => {
+        await addRunStep(tx, run, "error", {
+          reason: "usage_wait",
+          code: u.code,
+          message: u.message,
+          ...(u.pause ? { pause: u.pause } : {}),
+          until: runAt.toISOString(),
+          ...(resetsAt ? { resetsAt } : {}),
+        });
+        await enqueue(tx, {
+          orgId: run.orgId,
+          kind: "agent_run.execute",
+          payload: { runId: run.id, wait: waitId },
+          dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+          runAt,
+          maxAttempts: 4,
+        });
+        const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+          transcript: storedTranscript(t),
+          waitingMachineId: null,
+        });
+        if (!moved) throw new PermanentJobError("run changed state while executing");
+      });
     } else {
       await addRunStep(db, run, "error", {
         reason: "usage_wait",
@@ -4214,6 +4518,52 @@ async function executeRunInner(
     await finished("waiting_input", undefined, undefined, undefined, undefined, usage);
   };
 
+  const reservePending = (transcript as Transcript).quotaReservePending;
+  if (
+    reservePending ||
+    (!plan.unavailable &&
+      plan.kind === "codex" &&
+      !isRightHand(agent) &&
+      deps.quotaCliContinuation &&
+      plan.quotaReserve?.state === "low")
+  ) {
+    const reserve = plan.quotaReserve;
+    const samePool =
+      !reservePending ||
+      (reserve?.pool.machineId === reservePending.pool.machineId &&
+        reserve?.pool.kind === reservePending.pool.kind &&
+        reserve?.pool.accountId === reservePending.pool.accountId);
+    await addRunStep(db, run, "context", { quotaReserveWarning: reserve });
+    const reserveHandled =
+      samePool && plan.kind === "codex" && !isRightHand(agent) && deps.quotaCliContinuation
+        ? await brainUnavailable(
+            {
+              code: "quota_reserve",
+              message: "The source account is near its configured reserve.",
+              quotaReserve: true,
+            },
+            "first",
+          )
+        : "no";
+    if (reserveHandled === "canceled") return stopCanceled("");
+    if (reserveHandled === "waited" || reserveHandled === "failed") return;
+    if (reserveHandled === "no") {
+      const used = samePool && reserve?.state === "low" ? reserve.usedPercent : reservePending?.usedPercent;
+      if (used === undefined || (!reservePending && !reserve))
+        throw new PermanentJobError("missing reserve observation");
+      (transcript as Transcript).quotaReservePending =
+        !reservePending && reserve
+          ? { usedPercent: used, observedAt: reserve.observedAt, pool: reserve.pool }
+          : reservePending;
+      return waitForUsage({
+        code: "usage_pause",
+        reserve: true,
+        message: "The account reached its configured reserve; no qualified alternate is currently available.",
+        ...(samePool && reserve?.state === "low" && reserve.resetsAt ? { resetsAt: reserve.resetsAt } : {}),
+        pause: { source: "plan", used },
+      });
+    }
+  }
   if (plan.unavailable) {
     // A run back from waiting for its computer has waited for it already, unless the computer fell asleep since.
     const handled = await brainUnavailable(plan.unavailable, backFromComputerWait ? "again" : "first");
