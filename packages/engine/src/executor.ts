@@ -5942,15 +5942,10 @@ async function executeRunInner(
       if (result.imagesLeftOut) transcript.filesTextOnly = true;
       if (result.timings) prof.brain.push(result.timings);
       await deferred;
-      const epochHold = bridgeEpochId
-        ? await closeBridgeEffectEpoch(
-            db,
-            run.id,
-            bridgeEpochId,
-            turn,
-            [...startedNow.values()].map((c) => c.name),
-          )
-        : null;
+      // A turn that completed: the CLI waited for its own tools, so their outcome is known even when a result was an
+      // error (a failing `npm test`) or an older runner did not relay it. Only bridge receipts can still be open here;
+      // a cut turn (the catch path) keeps native starts as unknown.
+      const epochHold = bridgeEpochId ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, []) : null;
       if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);

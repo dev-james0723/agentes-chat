@@ -6517,3 +6517,29 @@ test("quota policy: a stale Claude reading is tried; a fresh low one keeps the t
   expect(low.claudeTurns).toHaveLength(0);
   expect(low.run?.status).toBe("waiting_input");
 }, 60_000);
+
+test("a completed turn whose native command failed, or whose result was not relayed, still finishes with its reply", async () => {
+  f = await setup();
+  await computerAgent(f);
+  const { brain } = scriptedComputerBrain((n) =>
+    n === 0
+      ? [
+          { type: "tool_started", id: "bash-1", name: "Bash" },
+          { type: "tool_call", id: "bash-1", name: "Bash", input: { command: "npm test" }, executed: { content: "1 failing", isError: true } },
+          { type: "tool_started", id: "bash-2", name: "Bash" },
+          { type: "done", text: "Tests ran: 1 failing, details above." },
+        ]
+      : [{ type: "done", text: "unused" }],
+  );
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev run the tests");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("done");
+  expect((run?.transcript as { effectUncertain?: unknown } | undefined)?.effectUncertain ?? null).toBeNull();
+  expect((await timeline(f)).some((m) => m.body.includes("Tests ran: 1 failing"))).toBe(true);
+}, 30_000);
