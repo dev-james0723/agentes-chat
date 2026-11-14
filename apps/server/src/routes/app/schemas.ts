@@ -984,6 +984,15 @@ export const BrainMachine = z
 export const AgentBrain = z
   .object({
     agentId: z.uuid(),
+    configHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          "Opaque stable raw configuration token for optional conditional brain updates; null outside the ordinary owner's own-sign-in scope. Not an availability, quota or full-organization version.",
+      }),
     scope: z.enum(["mine", "workspace"]).optional().openapi({
       description:
         "The team's right hand only (ADR 0137 §11): `mine`, the caller's own AI for their DM with it (`brain` `model` = none, their DM thinks with the workspace's); `workspace`, the one every DM thinks with while its person has none.",

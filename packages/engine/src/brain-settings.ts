@@ -66,6 +66,7 @@ import { recordAudit } from "./audit";
 import { BRAIN_NAMES, type BrainKind, isComputerBrain } from "./brains/types";
 import { caches } from "./cache";
 import { defaultCredentials, providerKeyOf } from "./credentials";
+import { sha256 } from "./crypto";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import {
   defaultAccountLabel,
@@ -102,6 +103,7 @@ import { can, getMembership, requirePermission } from "./organizations";
 import { isRightHand, personalBrain } from "./right-hand";
 import { orgModelProvider } from "./router";
 import { readRefusal } from "./standing";
+import { canonicalJson } from "./tools/json-schema";
 import { wakeAgentUsageWaits } from "./usage-pause";
 
 /*
@@ -437,6 +439,8 @@ export interface RightHandWorkspaceAi {
 
 export interface AgentBrainView {
   agentId: string;
+  /** Opaque raw-config CAS token; null outside the guarded ordinary-owner own-sign-in scope. */
+  configHash?: string | null;
   /** The team's right hand only: which of its AIs this is. */
   scope?: BrainScope;
   /** The team's right hand, `mine` only. */
@@ -606,6 +610,48 @@ async function agentMachine(db: Database, orgId: string, machineId: string | nul
   return machine && !machine.deletedAt ? machine : null;
 }
 
+/** Stable raw fields used by guarded brain updates; never availability, quota, display values or secrets. */
+const BRAIN_CONFIG_FIELDS = [
+  "orgId",
+  "id",
+  "builtin",
+  "ownerUserId",
+  "machineId",
+  "model",
+  "credentialId",
+  "brain",
+  "brainModel",
+  "brainFallback",
+  "brainExtraUsage",
+  "brainAccountId",
+  "brainAccountLentBy",
+  "brainEffort",
+  "brainSpeed",
+  "contextTokens",
+  "planForOthers",
+  "audienceMode",
+  "audienceUserIds",
+  "audienceRoleIds",
+] as const;
+const brainConfigHash = (agent: Agent) =>
+  sha256(
+    canonicalJson({
+      schema: "agent-brain-config/v1",
+      scope: "ordinary-agent",
+      config: Object.fromEntries(BRAIN_CONFIG_FIELDS.map((field) => [field, agent[field]])),
+    }),
+  );
+const guardedBrainScope = (agent: Agent, userId: string, machine: MachineRow | null) =>
+  !isRightHand(agent) &&
+  agent.ownerUserId === userId &&
+  agent.brainAccountId === null &&
+  machine?.pairedByUserId === userId;
+const unsupportedBrainCas = () =>
+  new ConflictError(
+    "Conditional brain changes support only the ordinary agent owner's own sign-in, without account or audience changes",
+    "brain.config_cas_unsupported",
+  );
+
 function view(
   agent: Agent,
   machine: MachineRow | null,
@@ -616,6 +662,7 @@ function view(
   const brain = brainOf(agent.brain);
   return {
     agentId: agent.id,
+    configHash: guardedBrainScope(agent, userId, machine) ? brainConfigHash(agent) : null,
     brain,
     model: brain === "model" ? null : agent.brainModel,
     effectiveModel: brain === "model" ? null : (agent.brainModel ?? defaultBrainModel(brain)),
@@ -938,6 +985,8 @@ export async function newAgentBrainMachines(
 }
 
 export interface AgentBrainInput {
+  /** Compare against GET configHash before any mutation. Omitted preserves the legacy update path. */
+  expectedConfigHash?: unknown;
   /** The team's right hand: `mine` (the caller's own AI) or `workspace` (the default). Ignored for any other agent. */
   scope?: unknown;
   brain?: unknown;
@@ -993,18 +1042,84 @@ function nextAudience(agent: Agent, ontoPlan: boolean, onlyOwner: boolean | unde
  * `PUT …/agents/{id}/brain` (an admin or the agent's owner). Audited, with `options.audit` added to the entry. What it
  * thinks with becomes what new agents start with, unless `options.remember` is false.
  */
+interface AgentBrainOptions {
+  remember?: boolean;
+  audit?: Record<string, unknown>;
+  onPlanOpened?: () => void;
+}
+
+/** Optional CAS is isolated from the legacy account-transfer path and derives every value inside its row lock. */
 export async function setAgentBrain(
   deps: BrainDeps,
   userId: string,
   orgId: string,
   agentId: string,
   input: AgentBrainInput,
-  options: {
-    remember?: boolean;
-    audit?: Record<string, unknown>;
-    /** Called in its transaction when the save lets more people talk to it on its owner's plan (`planOpened`). */
-    onPlanOpened?: () => void;
-  } = {},
+  options: AgentBrainOptions = {},
+): Promise<AgentBrainView> {
+  if (input.expectedConfigHash === undefined) return applyAgentBrain(deps, userId, orgId, agentId, input, options);
+  // Permission precedes token validation/conflict reporting, and is checked again in the transaction.
+  await agentBrainAccess(deps.db, userId, orgId, agentId, input.scope);
+  if (typeof input.expectedConfigHash !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedConfigHash)) {
+    throw new ValidationError(
+      "expectedConfigHash must be the configHash from this agent's brain view",
+      "brain.invalid_config_hash",
+    );
+  }
+  const { expectedConfigHash, ...patch } = input;
+  const effects: (() => void)[] = [];
+  const result = await deps.db.transaction(async (tx) => {
+    const db = tx as unknown as Database;
+    const [locked] = await db
+      .select()
+      .from(schema.agents)
+      .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.id, agentId), isNull(schema.agents.deletedAt)))
+      .for("update");
+    if (!locked || locked.archivedAt) throw new NotFoundError("Agent not found");
+    const fresh = await agentBrainAccess(db, userId, orgId, agentId, patch.scope);
+    const machine = await agentMachine(db, orgId, fresh.agent.machineId);
+    if (
+      !guardedBrainScope(locked, userId, machine) ||
+      patch.moveAccount === true ||
+      (patch.account !== undefined && patch.account !== null) ||
+      (patch.onlyOwner !== undefined && patch.onlyOwner !== !answersOthers(audienceOf(locked), locked.ownerUserId))
+    ) {
+      throw unsupportedBrainCas();
+    }
+    if (brainConfigHash(locked) !== expectedConfigHash) {
+      throw new ConflictError(
+        "The agent's brain configuration changed; read it again before saving",
+        "brain.config_changed",
+      );
+    }
+    // getAgent is a direct SELECT; this worker re-reads the same locked row, never precomputed stale settings.
+    return applyAgentBrain(
+      { db },
+      userId,
+      orgId,
+      agentId,
+      patch,
+      {
+        ...options,
+        onPlanOpened: options.onPlanOpened ? () => effects.push(options.onPlanOpened as () => void) : undefined,
+      },
+      effects,
+      true,
+    );
+  });
+  for (const effect of effects) effect();
+  return result;
+}
+
+async function applyAgentBrain(
+  deps: BrainDeps,
+  userId: string,
+  orgId: string,
+  agentId: string,
+  input: AgentBrainInput,
+  options: AgentBrainOptions = {},
+  afterCommit?: (() => void)[],
+  guarded = false,
 ): Promise<AgentBrainView> {
   const access = await agentBrainAccess(deps.db, userId, orgId, agentId, input.scope);
   const { admin, membership } = access;
@@ -1121,6 +1236,10 @@ export async function setAgentBrain(
       : (changed && isComputerBrain(brain)) || newPlan
         ? false
         : agent.planForOthers;
+  // Guarded own-sign-in calls must never acquire an account lock, release another agent or mutate audience.
+  if (guarded && (rightHand || account !== null || next.from || audience || to.mode !== agent.audienceMode)) {
+    throw unsupportedBrainCas();
+  }
   // Choosing a model its plan refused for this key (switched off there) asks the plan again: the next turn tries it.
   const picked = typeof input.model === "string" ? planModelById(input.model) : undefined;
   if (account && picked) {
@@ -1228,9 +1347,13 @@ export async function setAgentBrain(
     if (opened) options.onPlanOpened?.();
     return { row, released };
   });
-  caches.agents.delete(`${orgId}:${agentId}`);
-  if (audience) caches.agents.delete(`${orgId}:team`);
-  forgetAgents(orgId, released);
+  const invalidate = () => {
+    caches.agents.delete(`${orgId}:${agentId}`);
+    if (audience) caches.agents.delete(`${orgId}:team`);
+    forgetAgents(orgId, released);
+  };
+  if (afterCommit) afterCommit.push(invalidate);
+  else invalidate();
   // Another model chosen: the note that its model left its plan's list is done.
   if (changed || model !== agent.brainModel || account !== agent.brainAccountId) {
     await resolveNotifications(deps, orgId, {

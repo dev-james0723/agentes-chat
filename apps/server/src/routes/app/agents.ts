@@ -1895,6 +1895,14 @@ export function agentRoutes(deps: AppDeps) {
         body: body(
           z.object({
             scope: BrainScope.optional(),
+            expectedConfigHash: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional()
+              .openapi({
+                description:
+                  "Compare the current raw agent brain configuration before any mutation; stale (including no-op) is 409. Only the ordinary owner own-sign-in scope is supported. Omitted keeps legacy behavior.",
+              }),
             rememberSetup: z.boolean().optional().openapi({
               description:
                 "False changes only this agent without replacing the workspace's new-agent AI setup. Omitted or true keeps remembering it, as before. Does not change who may edit the agent.",
