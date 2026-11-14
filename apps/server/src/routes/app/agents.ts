@@ -1378,6 +1378,22 @@ export function agentRoutes(deps: AppDeps) {
     state: z.enum(["queued", "answering"]),
     title: z.string().nullable().openapi({ description: "A routine's or a long work's title." }),
     mayStop: z.boolean().openapi({ description: "The viewer may say not to run it (who asked, the owner, an admin)." }),
+    quotaContinuity: z
+      .object({
+        version: z.literal(1),
+        state: z.enum(["captured", "consumed"]),
+        capturedAt: z.iso.datetime(),
+        nextSafeAction: z.enum(["RECONCILE_EFFECT", "RESUME_SAME_HARNESS"]),
+        completedReceipts: z.number().int().nonnegative(),
+        unresolvedEffects: z.number().int().nonnegative(),
+        evidenceTruncated: z.boolean(),
+      })
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          "Readable rows only: content-free same-harness checkpoint status, not permission to replay. Null means legacy or unknown metadata.",
+      }),
   });
   const UsageQueueClosedRow = z.object({
     runId: z.uuid(),

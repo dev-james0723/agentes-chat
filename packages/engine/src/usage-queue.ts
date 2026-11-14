@@ -7,6 +7,7 @@ import { ANSWER_ANYWAY_MS, type ClosedNote } from "./catch-up-triage";
 import { readableChannelIds } from "./channels";
 import { ForbiddenError, NotFoundError } from "./errors";
 import { can, requirePermission } from "./organizations";
+import { quotaContinuityProjection, quotaContinuityValue } from "./quota-continuity";
 import { replyThreadOf } from "./runs";
 
 const { agentRuns, agents, agentWorks, channels, messages, routineRuns, routines } = schema;
@@ -34,6 +35,8 @@ export interface UsageQueueRow {
   title: string | null;
   /** The viewer may say not to run it (`mayStopRun`). */
   mayStop: boolean;
+  /** Content-free checkpoint status, only after the existing viewer ACL; null for legacy/unknown metadata. */
+  quotaContinuity?: ReturnType<typeof quotaContinuityProjection>;
 }
 
 /** A catch-up the check skipped as already handled (ADR 0136), in the queue for a day with "Responder mesmo assim". */
@@ -197,6 +200,7 @@ export async function usageQueue(db: Database, viewerId: string, orgId: string, 
           requester: r.requester,
           ownerUserId: agent.ownerUserId,
         })),
+      quotaContinuity: quotaContinuityProjection(quotaContinuityValue(r.run.transcript)),
     });
   }
   const head = ordered.find((r) => r.run.status === "waiting_input") ?? ordered[0];

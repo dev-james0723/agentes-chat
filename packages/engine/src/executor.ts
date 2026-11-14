@@ -260,6 +260,13 @@ import { capturePublicationContext } from "./private-skill-publication";
 import { createProfiler, type StageTiming } from "./profile";
 import { ASK_USER_TOOL, QUESTION_MAX_CHARS, questionResult } from "./questions";
 import {
+  captureQuotaContinuity,
+  consumeQuotaContinuity,
+  quotaContinuityTranscript,
+  quotaContinuityValue,
+  readQuotaContinuity,
+} from "./quota-continuity";
+import {
   endsWithSentinel,
   isSentinelOnly,
   PASS_TOOL,
@@ -2509,6 +2516,7 @@ async function executeRunInner(
   };
 
   // Back from waiting for the computer: it is tried again below. Asking for room again ends no wait anyone reads.
+  const quotaResumeWaitId = transcript.waitingForBrain?.waitId;
   const backFromComputerWait = Boolean(transcript.waitingForBrain);
   if (backFromComputerWait) {
     delete transcript.waitingForBrain;
@@ -2955,6 +2963,34 @@ async function executeRunInner(
   // The context budget reads the model's window: an OpenRouter model's comes with its list.
   await modelInfoFor(db, thinker.model, run.orgId);
   let plan: BrainPlan = brainPlan;
+  // Evidence consumption only: the existing native wait/job/permission gates own the resume.
+  // A legacy, changed-owner or changed-harness record grants no new action and is never replayed here.
+  if (quotaResumeWaitId) {
+    const checkpoint = readQuotaContinuity(quotaContinuityValue(transcript));
+    const consumed = consumeQuotaContinuity(checkpoint, run, thinker, plan, quotaResumeWaitId);
+    if (consumed) {
+      const [saved] = await db
+        .update(agentRuns)
+        .set({ transcript: quotaContinuityTranscript(sql`coalesce(${agentRuns.transcript}, '{}'::jsonb)`, consumed) })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            sql`${agentRuns.transcript}->'metadata'->'quotaContinuity'->>'waitId' = ${quotaResumeWaitId}`,
+            sql`${agentRuns.transcript}->'metadata'->'quotaContinuity' = ${JSON.stringify(checkpoint)}::jsonb`,
+            sql`exists (select 1 from ${schema.agents} a where a.org_id = ${run.orgId}::uuid and a.id = ${run.agentId}::uuid
+              and a.owner_user_id is not distinct from ${consumed.identity.ownerUserId}::text)`,
+          ),
+        )
+        .returning({ transcript: agentRuns.transcript });
+      if (saved) {
+        transcript.metadata = saved.transcript?.metadata;
+        await addRunStep(db, run, "context", {
+          quotaContinuity: { state: "consumed", nextSafeAction: consumed.nextSafeAction },
+        });
+      }
+    }
+  }
   /**
    * What the turn-end judge reads (ADR 0109), filled only when it runs: the run's general means (`turnMeans`, its
    * computer's own tools on a computer brain) and every call it tried (`triedCalls`). An `untried` nudge names them.
@@ -3902,11 +3938,26 @@ async function executeRunInner(
       const base = known ? at : now + LINE_SAFETY_MS;
       await retimeLine(db, line.behind, (i) => new Date(base + RESUME_AFTER_MS + RESUME_GAP_MS * (line.place + 1 + i)));
     }
+    // Constructed from persisted native references without a model. Failure leaves the original valid wait intact.
+    const checkpoint = await captureQuotaContinuity(
+      db,
+      run,
+      thinker,
+      plan,
+      {
+        waitId,
+        code: u.code,
+        resetsAt,
+        usedPercent: u.pause?.used,
+      },
+      Boolean(t.hostAcpUncertain),
+    ).catch(() => null);
     const moved = await transitionRun(db, run.id, "running", "waiting_input", {
-      transcript: storedTranscript(t),
+      transcript: checkpoint ? quotaContinuityTranscript(storedTranscript(t), checkpoint) : storedTranscript(t),
       waitingMachineId: null,
     });
     if (!moved) throw new PermanentJobError("run changed state while executing");
+    t.metadata = moved.transcript?.metadata;
     if (note) {
       const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
       if (view) await publishMessageCreated(deps.pubsub, view);
