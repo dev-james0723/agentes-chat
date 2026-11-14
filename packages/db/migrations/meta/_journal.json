@@ -1856,6 +1856,13 @@
       "when": 1794745400004,
       "tag": "0266_paperclip_dynamic_workspace_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 267,
+      "version": "7",
+      "when": 1794745400005,
+      "tag": "0267_shared_budget_pilot",
+      "breakpoints": true
     }
   ]
 }

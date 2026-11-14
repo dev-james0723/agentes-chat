@@ -42,6 +42,7 @@ import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationE
 import { publishUserEvent } from "./events";
 import { maySql, type RolePermission } from "./permissions";
 import { addPersonSpend, assertPersonUnderLimit, personSpendAdded } from "./person-usage";
+import { type SharedBudgetTransport, withSharedBudget } from "./shared-budget";
 import { assertCanWork, standingRefusal } from "./standing";
 import { redactCredentials } from "./tool-detail";
 import { budgetPercent, monthStartUtc, withEffectiveBudget } from "./usage";
@@ -63,6 +64,10 @@ export interface ModelGatewayDeps {
   providers: Record<string, ModelProvider>;
   platformCredentials: PlatformCredentials;
   now?: () => Date;
+  /** Trusted server transport with a provider-enforced per-call cost cap; absent fails closed when the policy is on. */
+  sharedBudgetTransports?: Record<string, SharedBudgetTransport>;
+  /** Immutable admission mode for this gateway instance. Legacy calls are outside shared-budget protection. */
+  sharedBudgetRequired?: boolean;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
   /** Where an embeddings outage is reported, once (ADR 0104); absent: not reported. */
@@ -109,6 +114,8 @@ export interface GatewayCall {
    * limit before the call. Absent or null: nobody's (an agent's own work).
    */
   personId?: string | null;
+  /** Explicit trusted data classification for shared-budget route admission. */
+  dataClass?: string;
   system: SystemPrompt;
   messages: ModelMessage[];
   maxTokens: number;
@@ -144,6 +151,7 @@ export interface OrgCall {
   /** Agent the call is about, if any (recorded, not billed to its budget). */
   agentId?: string | null;
   runId?: string;
+  dataClass?: string;
   signal?: AbortSignal;
 }
 
@@ -222,6 +230,7 @@ const masked = (
  * Keys exist in memory only for the duration of the call.
  */
 export function createModelGateway(deps: ModelGatewayDeps) {
+  const sharedBudgetRequired = deps.sharedBudgetRequired === true;
   const now = deps.now ?? (() => new Date());
   const { db } = deps;
   let embedFailures = 0;
@@ -768,14 +777,26 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
       let result: ModelResult;
       try {
-        result = await provider.stream(request, {
-          apiKey: key.apiKey,
-          workspaceId: key.workspaceId,
-          organization: key.organization,
-          project: key.project,
-          endpoint: key.endpoint,
-          ...(call.session ? { session: call.session } : {}),
-          onDelta: call.onDelta,
+        result = await withSharedBudget(db, {
+          orgId: call.orgId,
+          subject: `agent:${agent.id}`,
+          providerId,
+          credentialId: key.credentialId,
+          required: sharedBudgetRequired,
+          dataClass: call.dataClass,
+          request,
+          provider,
+          now,
+          transport: deps.sharedBudgetTransports?.[providerId],
+          options: {
+            apiKey: key.apiKey,
+            workspaceId: key.workspaceId,
+            organization: key.organization,
+            project: key.project,
+            endpoint: key.endpoint,
+            ...(call.session ? { session: call.session } : {}),
+            onDelta: call.onDelta,
+          },
         });
       } catch (error) {
         const usage = error instanceof ProviderError ? await partialUsage(error, provider, request, key) : null;
@@ -1023,11 +1044,18 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       };
       let result: ModelResult;
       try {
-        result = await provider.stream(request, {
-          apiKey: key.apiKey,
-          workspaceId: key.workspaceId,
-          endpoint: key.endpoint,
-          onDelta: () => {},
+        result = await withSharedBudget(db, {
+          orgId: call.orgId,
+          subject: `org:${call.kind}`,
+          providerId,
+          credentialId: key.credentialId,
+          required: sharedBudgetRequired,
+          dataClass: call.dataClass,
+          request,
+          provider,
+          now,
+          transport: deps.sharedBudgetTransports?.[providerId],
+          options: { apiKey: key.apiKey, workspaceId: key.workspaceId, endpoint: key.endpoint, onDelta: () => {} },
         });
       } catch (error) {
         const usage = error instanceof ProviderError ? await partialUsage(error, provider, request, key) : null;
