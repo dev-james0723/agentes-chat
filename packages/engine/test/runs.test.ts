@@ -8,6 +8,7 @@ import {
   InvalidRunTransitionError,
   RUN_TRANSITIONS,
   type RunStatus,
+  storedTranscript,
   transitionRun,
 } from "../src";
 import { type Fixture, setup } from "./fixtures";
@@ -90,6 +91,43 @@ describe("transitionRun", () => {
   test("compare-and-set: a stale `from` changes nothing", async () => {
     await transitionRun(f.db, runId, "queued", "running");
     expect(await transitionRun(f.db, runId, "queued", "running")).toBeNull();
+  });
+
+  test("a resume claim atomically refuses a persisted unknown-effect marker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_approval", {
+      transcript: { effectUncertain: { runId, turn: 1, tools: ["write_file"] } },
+    });
+    const claimed = await transitionRun(f.db, runId, "waiting_approval", "running", { requireNoUnknownEffect: true });
+    expect(claimed).toBeNull();
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(row?.status).toBe("waiting_approval");
+    expect(row?.transcript).toMatchObject({ effectUncertain: { runId } });
+    await f.db
+      .update(schema.agentRuns)
+      .set({ transcript: storedTranscript({ system: [], messages: [] }) })
+      .where(eq(schema.agentRuns.id, runId));
+    const [afterStaleSave] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(afterStaleSave?.transcript).toMatchObject({ effectUncertain: { runId } });
+  });
+
+  test("a matching timer still cannot claim a run with an unknown-effect marker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "wait-Y" }, effectUncertain: { runId, turn: 1, tools: ["write_file"] } },
+    });
+    const claimed = await transitionRun(
+      f.db,
+      runId,
+      "waiting_input",
+      "running",
+      { requireNoUnknownEffect: true },
+      { waitId: "wait-Y" },
+    );
+    expect(claimed).toBeNull();
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, runId));
+    expect(row?.status).toBe("waiting_input");
+    expect(row?.transcript).toMatchObject({ waitingForBrain: { waitId: "wait-Y" }, effectUncertain: { runId } });
   });
 
   test("a stale wait claim cannot consume a newer wait on the same run", async () => {

@@ -143,6 +143,25 @@ const recoveries = async (runId: string) =>
   ).length;
 
 describe("server restarts", () => {
+  test("the stale-run sweep does not resume a run with a persisted unknown-effect marker", async () => {
+    const { run } = await interruptedRun();
+    await orphan(run.id);
+    const row = await runRow(run.id);
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: {
+          ...(row?.transcript ?? {}),
+          effectUncertain: { runId: run.id, turn: 1, tools: ["long_task"] },
+        },
+      })
+      .where(eq(schema.agentRuns.id, run.id));
+    const swept = await recoverStaleRuns({ db: f.db, pubsub: f.pubsub });
+    expect(swept.resumed).not.toContain(run.id);
+    expect(swept.failed).not.toContain(run.id);
+    expect(await recoveries(run.id)).toBe(0);
+    expect((await runRow(run.id))?.transcript).toMatchObject({ effectUncertain: { runId: run.id } });
+  });
   test("SIGTERM mid-tool: the step is saved and the run handed back at once, without spending an attempt", async () => {
     const { run } = await interruptedRun();
     expect(run.status).toBe("running");

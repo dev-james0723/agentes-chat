@@ -541,6 +541,8 @@ export type RunExecutorDeps = EngineDeps;
  * and prompt caches stay valid.
  */
 export interface Transcript {
+  /** A caught bridged turn has an unknown effect; a decision must not resume it before reconciliation. */
+  effectUncertain?: { runId: string; turn: number; tools: string[] };
   /** A host ACP call lost its delivery result: carried across fresh turns until explicitly reconciled. */
   hostAcpUncertain?: { runId: string; turn: number; message: string };
   system: SystemBlock[];
@@ -1114,6 +1116,13 @@ async function executeRunInner(
   steerGate: { close: () => void },
 ) {
   const { db } = deps;
+  // An already-held run never consumes a decision or starts a model turn. The transition CAS below repeats this
+  // check atomically for queued/waiting runs; this read covers recovery of a row still marked running.
+  const [effectHold] = await db
+    .select({ transcript: agentRuns.transcript })
+    .from(agentRuns)
+    .where(eq(agentRuns.id, runId));
+  if ((effectHold?.transcript as { effectUncertain?: unknown } | null)?.effectUncertain) return;
   // A job for one wait for the computer (back, grace, plan reset, room): only while the run still waits on it.
   // Another job may have resumed it already; running it again would run the run twice.
   let askingForRoom = false;
@@ -1256,7 +1265,7 @@ async function executeRunInner(
   let waitedModel: string | null | undefined;
   /** When its wait's own timer was due: a claim before it was a wake (a turn through, a reading with room). */
   let waitedUntil: string | undefined;
-  const started = await transitionRun(db, runId, "queued", "running");
+  const started = await transitionRun(db, runId, "queued", "running", { requireNoUnknownEffect: true });
   if (started) {
     run = started;
     fresh = true;
@@ -1298,7 +1307,7 @@ async function executeRunInner(
         run.id,
         run.status,
         "running",
-        lineMachine ? { waitingMachineId: lineMachine } : {},
+        { ...(lineMachine ? { waitingMachineId: lineMachine } : {}), requireNoUnknownEffect: true },
         options.wait ? { waitId: options.wait } : undefined,
       );
       if (!resumed) return;
@@ -3481,6 +3490,11 @@ async function executeRunInner(
     // A background run never posts by itself (ADR 0053 §5): its cards speak for it.
     if (run.background || repeatsLastPost(text)) text = "";
     text = await heldWords(text);
+    if (!run.background && t.effectUncertain) {
+      const warning =
+        "An earlier tool outcome is unknown. The decision is retained, but this run cannot continue until the effect is reconciled.";
+      text = text ? `${text}\n\n${warning}` : warning;
+    }
     // The bridge posted its cards when it asked: what it says goes with them.
     const message = text ? await post(db, replyThreadId, text, withFallback(t, takeMemoryUpdates(t)), at) : null;
     if (message) t.postedCount++;
@@ -3495,7 +3509,7 @@ async function executeRunInner(
     }
     await finished(status);
     // Decided while the turn still ran (the decision's job left the run to this turn): it goes on now.
-    if (t.pending && !(await pauseOpen(db, run.id, t))) {
+    if (!t.effectUncertain && t.pending && !(await pauseOpen(db, run.id, t))) {
       await enqueue(db, {
         orgId: run.orgId,
         kind: "agent_run.execute",
@@ -4638,6 +4652,36 @@ async function executeRunInner(
       // A started native tool has an unknown effect until this turn reports a matching successful result. This is
       // in-memory evidence for the caught-turn path only; it does not fence a crash before this process records it.
       const startedNow = new Map<string, { id: string; name: string; input: unknown }>();
+      const holdUnknownWhileWaiting = async (pending: NonNullable<Transcript["pending"]>["calls"]) => {
+        let unresolved: Awaited<ReturnType<typeof executedSince>>;
+        try {
+          unresolved = await executedSince(db, run.id, turnStepSeq, [...executedNow, ...startedNow.values()], pending);
+        } catch {
+          // A transient evidence read failure is not evidence of no effects. Persist a hold if the DB can accept it.
+          // If persistence also fails, callers must treat this run as unreconciled; no stronger fence is implied.
+          unresolved = [{ name: "tool evidence unavailable", label: "tool evidence unavailable", uncertain: true }];
+        }
+        if (unresolved.some((c) => c.uncertain)) {
+          const marker = {
+            runId: run.id,
+            turn,
+            tools: [...new Set(unresolved.filter((c) => c.uncertain).map((c) => c.name))],
+          };
+          await db.transaction(async (tx) => {
+            const [held] = await tx
+              .update(agentRuns)
+              .set({
+                transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', coalesce(nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb), ${JSON.stringify(marker)}::jsonb), true)`,
+                updatedAt: new Date(),
+              })
+              .where(and(eq(agentRuns.id, run.id), inArray(agentRuns.status, ["waiting_approval", "waiting_input"])))
+              .returning({ id: agentRuns.id });
+            if (!held) throw new PermanentJobError("run changed state before unknown effect could be recorded");
+            await addRunStep(tx, run, "error", { reason: "effect_unknown_waiting", tools: marker.tools });
+          });
+          transcript.effectUncertain = marker;
+        }
+      };
       const conflictingStarts = new Set<string>();
       const seenStarts = new Set<string>();
       /** Its own calls whose step line went out as they started (`tool_started`): not again as they end. */
@@ -4933,8 +4977,13 @@ async function executeRunInner(
           mergeToolEffects(transcript, await takeBridgeEffects(db, run.id).catch(() => null));
           // A bridged call paused the run before the brain failed: the run waits for the person, with the
           // pending calls the bridge wrote (no fallback, no failure; the decision resumes the session).
-          const [row] = await db.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id));
+          const [row] = await db
+            .select({ status: agentRuns.status, transcript: agentRuns.transcript })
+            .from(agentRuns)
+            .where(eq(agentRuns.id, run.id));
           if (row?.status === "waiting_approval" || row?.status === "waiting_input") {
+            const pending = (row.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
+            await holdUnknownWhileWaiting(pending);
             return suspendedByBridge(row.status, deltas.lastText(), deltas.text() ? deltas.textBefore : undefined);
           }
         }
@@ -5186,6 +5235,8 @@ async function executeRunInner(
       if (counted[0]) run = counted[0];
       // A computer brain's call through the bridge paused the run during the turn: it waits now.
       if (turnPlan.kind !== "model" && (run.status === "waiting_approval" || run.status === "waiting_input")) {
+        const pending = (run.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
+        await holdUnknownWhileWaiting(pending);
         return suspendedByBridge(run.status, turnText, deltas.text() ? deltas.textBefore : undefined);
       }
 
@@ -6441,11 +6492,47 @@ async function uncertainGatewayCallsSince(
  * for each) and the calls the brain reported as executed. Once per call: its
  * name, and `label` with what it ran on (`executedLabel`).
  */
+// JSONB may reorder object keys. Reject non-JSON inputs instead of equating omissions or redactions.
+function canonicalToolInput(value: unknown): string | null {
+  const seen = new Set<object>();
+  const normalize = (v: unknown): unknown => {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v !== "object" || seen.has(v)) throw new Error("non-JSON tool input");
+    if (!Array.isArray(v) && Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null)
+      throw new Error("non-JSON tool input");
+    const keys = Reflect.ownKeys(v);
+    if (keys.some((key) => typeof key !== "string")) throw new Error("non-JSON tool input");
+    const values = Object.getOwnPropertyDescriptors(v);
+    const readValue = (key: string) => {
+      const descriptor = values[key];
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("non-JSON tool input");
+      return normalize(descriptor.value);
+    };
+    seen.add(v);
+    let result: unknown;
+    if (Array.isArray(v)) {
+      if (keys.length !== v.length + 1 || !keys.includes("length")) throw new Error("non-JSON tool input");
+      result = Array.from({ length: v.length }, (_, i) => readValue(String(i)));
+    } else {
+      result = Object.fromEntries((keys as string[]).sort().map((key) => [key, readValue(key)]));
+    }
+    seen.delete(v);
+    return result;
+  };
+  try {
+    return JSON.stringify(normalize(value));
+  } catch {
+    return null;
+  }
+}
+
 async function executedSince(
   db: Executor,
   runId: string,
   fromSeq: number,
   reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
+  pending: NonNullable<Transcript["pending"]>["calls"] = [],
 ): Promise<{ name: string; label: string; uncertain: boolean }[]> {
   const steps = await db
     .select({ kind: schema.agentRunSteps.kind, data: schema.agentRunSteps.data })
@@ -6508,13 +6595,10 @@ async function executedSince(
   const reportedIds = new Set<string>();
   for (const c of reported) {
     const previous = evidence.get(c.id);
-    // Inputs are compared conservatively: non-identical JSON encodings, including redaction or aliases, require
+    // Inputs are compared conservatively: unequal JSON values, including redaction or aliases, require
     // reconciliation. Their contents are never included in the handoff message.
-    let sameInput = false;
-    try {
-      const stored = previous && JSON.stringify(previous.input);
-      sameInput = stored !== undefined && stored === JSON.stringify(c.input);
-    } catch {}
+    const stored = previous && canonicalToolInput(previous.input);
+    const sameInput = stored != null && stored === canonicalToolInput(c.input);
     evidence.set(c.id, {
       name: previous?.name ?? c.name,
       label: previous?.label ?? executedLabel(c.name, c.input),
@@ -6528,6 +6612,46 @@ async function executedSince(
         c.result.isError === true,
     });
     reportedIds.add(c.id);
+  }
+  // Exclude only the uniquely evidenced still-pending call itself. An ID collision, a previous result, a mismatched
+  // tool or a conflicting runner report is not proof of a harmless approval request and must stay unknown.
+  for (const p of pending) {
+    const c = calls.get(p.toolUseId);
+    const reports = reported.filter((r) => r.id === p.toolUseId);
+    const pendingId = p.approvalId ?? p.questionId ?? p.secretRequestId ?? p.waitId;
+    const uniquePending = pending.filter((other) => other.toolUseId === p.toolUseId).length === 1;
+    const consistentReport =
+      reports.length <= 1 &&
+      reports.every((r) => {
+        const stored = c && canonicalToolInput(c.input);
+        const sameInput = stored != null && stored === canonicalToolInput(r.input);
+        return (
+          r.name === p.name &&
+          r.result?.isError !== true &&
+          !!pendingId &&
+          r.result?.pause?.id === pendingId &&
+          sameInput
+        );
+      });
+    if (
+      uniquePending &&
+      c &&
+      !c.conflict &&
+      c.intents === 1 &&
+      c.results === 0 &&
+      c.name === p.name &&
+      consistentReport
+    ) {
+      evidence.delete(p.toolUseId);
+    } else {
+      const prior = evidence.get(p.toolUseId);
+      evidence.set(p.toolUseId, {
+        name: prior?.name ?? p.name,
+        label: prior?.label ?? p.name,
+        input: prior?.input,
+        uncertain: true,
+      });
+    }
   }
   const labels = new Map<string, { name: string; label: string; uncertain: boolean }>();
   for (const c of evidence.values()) {

@@ -437,13 +437,15 @@ export async function transitionRun(
     waitingMachineId?: string | null;
     /** A failure: the brain's code and the provider's cause (`run.finished`; not stored on the run). */
     failure?: { code: string; cause?: string | null };
+    /** Do not claim a run with a persisted unknown-effect hold. */
+    requireNoUnknownEffect?: boolean;
   } = {},
   claim?: { waitId: string },
 ): Promise<AgentRun | null> {
   if (!canTransition(from, to)) throw new InvalidRunTransitionError(from, to);
   if (claim && (from !== "waiting_input" || to !== "running"))
     throw new Error("A wait claim only applies to resuming a waiting input run");
-  const { failure, transcript, ...set } = patch;
+  const { failure, transcript, requireNoUnknownEffect, ...set } = patch;
   const now = new Date();
   const [row] = await db
     .update(agentRuns)
@@ -466,6 +468,9 @@ export async function transitionRun(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, from),
+        requireNoUnknownEffect
+          ? sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`
+          : undefined,
         // A timer must still own the exact wait, and no waiting run may resume while its checkpoint is held.
         claim
           ? sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${claim.waitId}`

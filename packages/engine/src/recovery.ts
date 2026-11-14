@@ -84,6 +84,7 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "running"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
         sql`${lastBeat} < ${cutoff.toISOString()}::timestamptz`,
         sql`not exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
           and o.payload->>'runId' = ${agentRuns.id}::text and o.status = 'pending' and o.payload->>'wait' is null)`,
@@ -124,6 +125,7 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "queued"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
         sql`${agentRuns.createdAt} < ${cutoff.toISOString()}::timestamptz`,
         sql`not ${liveJob}`,
       ),
@@ -199,6 +201,7 @@ async function claimStale(tx: Executor, runId: string, at: SweepTime) {
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, "running"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
         sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
       ),
     )

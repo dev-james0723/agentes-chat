@@ -6,7 +6,7 @@ import {
   MACHINE_PROTOCOL_VERSION,
   orgTopic,
 } from "@agenteschat/adapters";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import { systemText } from "@agenteschat/providers";
 import {
   activeRunsIn,
@@ -635,7 +635,13 @@ test("a gated call through the bridge leaves the run waiting; the decision resum
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "usage", input: 10, output: 2, source: "plan" };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
@@ -728,7 +734,13 @@ test("approved, it ran, and the brain ended its turn without a word: one more tu
         { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
         { id: "wb-1", name: "ci_workbench", input: { run: 42, why: WORKBENCH_WHY } },
       );
-      yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-wb-1",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: promised };
       return;
     }
@@ -788,7 +800,13 @@ test("told once after a decision: a second silent turn ends the run, never a loo
         { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
         { id: "wb-1", name: "ci_workbench", input: { run: 7, why: WORKBENCH_WHY } },
       );
-      yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-wb-1",
+        name: "ci_workbench",
+        input: { run: 7, why: WORKBENCH_WHY },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       return yield { type: "done", text: "Asked for the CI numbers." };
     }
     yield { type: "done", text: "" };
@@ -829,7 +847,13 @@ test("decided while the turn that asked still runs: the run goes on once that tu
     });
     await drainOutbox(f.db, handlers);
     turnsWhileFirstRan = seen.length;
-    yield { type: "tool_call", id: "wb-1", name: "ci_workbench", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-wb-1",
+      name: "ci_workbench",
+      input: { run: 42, why: WORKBENCH_WHY },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     yield { type: "done", text: "When you approve, I'll give you the numbers." };
   });
   const handlers = createJobHandlers({
@@ -919,7 +943,16 @@ test("a question asked through the bridge: the text written before it comes firs
         },
       },
     );
-    yield { type: "tool_call", id: "ask-1", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-1",
+      name: "ask_user",
+      input: {
+        why: "I need a person's answer before I go on: this decides what I change next.",
+        question: "Quais datas eu coloco?",
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     // After the call the brain repeats itself (what the person saw in production).
     await Bun.sleep(400);
     yield { type: "text_delta", text: "\n\nQuais datas eu coloco: você me passa a ida e a volta?" };
@@ -1009,7 +1042,17 @@ test("a question asked after the brain dropped a draft for a call: only the text
         },
       },
     );
-    yield { type: "tool_call", id: "ask-1", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-1",
+      name: "ask_user",
+      input: {
+        why: "I sent the wrong file before; the person picks the right one.",
+        question: "Which video do I send to Acme?",
+        choices: ["europe_trip.mp4", "lisbon_v3.mp4"],
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     // Claude Code's result is its last model call's text.
     yield { type: "done", text: answer };
   });
@@ -1091,7 +1134,16 @@ test("sent on after its turn, a computer brain that opens again with the same li
         },
       },
     );
-    yield { type: "tool_call", id: "ask-2", name: "ask_user", input: {}, executed: result };
+    yield {
+      type: "tool_call",
+      id: "native-ask-2",
+      name: "ask_user",
+      input: {
+        why: "I need a person's answer before I go on: only they have it.",
+        question: "Qual é o endereço da API?",
+      },
+      executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+    };
     yield { type: "done", text: opening };
   });
   const handlers = createJobHandlers({
@@ -2135,7 +2187,13 @@ test("a computer turn cut by a crash while it answered a decision is sent again 
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
     }
@@ -2884,11 +2942,18 @@ test.each(["executor_crashed", "plan_limit"] as const)(
     expect(seen.length).toBe(1);
     expect(fallbackCalls).toBe(0);
     const [run] = await f.db.select().from(schema.agentRuns);
-    expect(run?.status).toBe("failed");
-    expect(run?.error).toContain("outcome unknown");
     const last = (await timeline(f)).at(-1);
-    expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["uncertain_write"], outcomeUnknown: true });
-    expect(last?.body).toContain("outcome unknown");
+    if (code === "plan_limit") {
+      // A known quota cut is durably held for reconciliation, rather than ending or replaying the turn.
+      expect(run?.status).toBe("waiting_input");
+      expect(run?.transcript).toMatchObject({ continuityCheckpoint: { dispatch: "hold", effects: "unknown" } });
+      expect(last?.body).toContain("needs reconciliation");
+    } else {
+      expect(run?.status).toBe("failed");
+      expect(run?.error).toContain("outcome unknown");
+      expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["uncertain_write"], outcomeUnknown: true });
+      expect(last?.body).toContain("outcome unknown");
+    }
   },
 );
 
@@ -3077,54 +3142,277 @@ test.each(["duplicate reported", "different input", "malformed intent"] as const
   },
 );
 
-test("a computer brain that fails after a bridged pause: the run keeps waiting with its pending call, then resumes", async () => {
-  const gh = fakeGithub();
-  f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["Respondi pela API."] }) });
-  await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
-  const machineId = await computerAgent(f);
-  const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
-    if (n === 0) {
+test.each(["during", "after", "id_collision"] as const)(
+  "an unknown earlier effect and approval %s the turn must not resume before reconciliation",
+  async (when) => {
+    let firstAttempts = 0;
+    const unknown: ToolSource = {
+      name: "uncertain",
+      tools: async () => [
+        {
+          name: "uncertain_write",
+          description: "Synthetic uncertain effect",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => {
+            firstAttempts++;
+            return { content: "delivery unknown", isError: true };
+          },
+        },
+      ],
+    };
+    const gh = fakeGithub();
+    f = await setup({ toolSources: [unknown, gh.source], reply: () => ({ chunks: ["fallback"] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+      if (n > 0) {
+        yield { type: "done", text: "done" };
+        return;
+      }
       const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
-      const result = await executeToolForRun(f.jobDeps, id, {
-        id: "call-1",
+      await executeToolForRun(f.jobDeps, id, {
+        id: when === "id_collision" ? "approval-1" : "uncertain-1",
+        name: "uncertain_write",
+        input: {},
+      });
+      await executeToolForRun(f.jobDeps, id, {
+        id: "approval-1",
         name: "github_merge_pr",
         input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
       });
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
-      yield { type: "error", code: "executor_crashed", message: "Claude Code exited", retryable: true };
-      return;
-    }
-    yield { type: "done", text: "Merge feito." };
+      if (when === "during") {
+        const [pending] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+        if (!pending) throw new Error("expected pending approval");
+        await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, pending.id, {
+          decision: "approve",
+        });
+      }
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev run the work");
+    await drainOutbox(f.db, handlers);
+    const [before] = await f.db.select().from(schema.agentRuns);
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, {
+      status: when === "during" ? "decided" : "pending",
+    });
+    expect(firstAttempts).toBe(1);
+    expect(before?.status).toBe("waiting_approval");
+    expect(approval).toBeDefined();
+    if (!approval) throw new Error("expected approval");
+    expect((await timeline(f)).at(-1)?.body).toContain("outcome is unknown");
+    if (when !== "during")
+      await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+    await drainOutbox(f.db, handlers);
+    const [after] = await f.db.select().from(schema.agentRuns);
+    const [decided] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "decided" });
+    expect(decided?.id).toBe(approval.id);
+    expect(decided?.status).toBe("approved");
+    expect(after?.status).toBe("waiting_approval");
+    if (!after) throw new Error("expected run");
+    expect(after.transcript).toMatchObject({ effectUncertain: { runId: after.id, tools: ["uncertain_write"] } });
+    await enqueue(f.db, {
+      orgId: f.org.id,
+      kind: "agent_run.execute",
+      payload: { runId: after.id },
+      dedupeKey: `fixture-restart:${after.id}`,
+      maxAttempts: 4,
+    });
+    const restartedHandlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await drainOutbox(f.db, restartedHandlers);
+    expect(gh.executed).toEqual([]);
+    expect(seen.length).toBe(1);
+  },
+);
+
+test("an evidence read failure keeps the approval held through retry", async () => {
+  const gh = fakeGithub();
+  f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["fallback"] }) });
+  await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+  const machineId = await computerAgent(f);
+  let injected = false;
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    yield { type: "tool_started", id: "native-1", name: "uncertain_write" };
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "approval-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+      },
+    );
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: sql`jsonb_set(coalesce(${schema.agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', 'null'::jsonb, true)`,
+      })
+      .where(eq(schema.agentRuns.id, turn.runId));
+    const original = f.db.select.bind(f.db);
+    Reflect.set(f.db, "select", (...args: unknown[]) => {
+      const selected = args[0] as { kind?: unknown; data?: unknown } | undefined;
+      if (!injected && selected?.kind === schema.agentRunSteps.kind && selected.data === schema.agentRunSteps.data) {
+        injected = true;
+        Reflect.set(f.db, "select", original);
+        throw new Error("synthetic evidence query failure");
+      }
+      return Reflect.apply(original, f.db, args);
+    });
+    yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
   });
   const handlers = createJobHandlers({
     ...f.jobDeps,
     brains: { claude_code: () => brain },
     machines: { status: async (id) => statusOf(id) },
   });
-  await post(f, "@dev faz o merge do PR 42");
+  await post(f, "@dev merge the PR");
   await drainOutbox(f.db, handlers);
-
-  let [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.status).toBe("waiting_approval");
-  expect(run?.error).toBeNull();
-  const transcript = run?.transcript as { pending?: { calls: { toolUseId: string; bridged?: boolean }[] } };
-  expect(transcript.pending?.calls).toMatchObject([{ toolUseId: "call-1", bridged: true }]);
-  const usage = await f.db
-    .select()
-    .from(schema.usageRecords)
-    .where(eq(schema.usageRecords.runId, run?.id ?? ""));
-  expect(usage.some((u) => u.provider === "anthropic")).toBe(false);
-
+  expect(injected).toBe(true);
+  const [run] = await f.db.select().from(schema.agentRuns);
   const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
-  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval?.id ?? "", {
-    decision: "approve",
-  });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
   await drainOutbox(f.db, handlers);
-  [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.status).toBe("done");
-  expect(seen.length).toBe(2);
-  expect(gh.executed).toEqual([{ tool: "github_merge_pr", input: { repo: "acme/app", pr: 42 } }]);
+  expect(gh.executed).toEqual([]);
+  expect(run?.transcript).toHaveProperty("effectUncertain");
+  expect(seen).toHaveLength(1);
 });
+
+test.each(["different", "sparse", "getter"] as const)(
+  "a pending call with %s gateway and runner inputs remains unknown",
+  async (kind) => {
+    const gh = fakeGithub();
+    const merge = gh.tools.find((tool) => tool.name === "github_merge_pr");
+    if (!merge) throw new Error("missing fake merge tool");
+    merge.inputSchema = {
+      type: "object",
+      properties: { repo: { type: "string" }, pr: { type: "integer" }, extra: { type: "array" } },
+      required: ["repo", "pr"],
+      additionalProperties: false,
+    };
+    f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["fallback"] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const input = {
+        repo: "acme/app",
+        pr: 42,
+        why: "CI passed on the PR and it was reviewed: merging ships the fix.",
+        extra: [1, null],
+      };
+      const sparse: unknown[] = Array(2);
+      sparse[0] = 1;
+      Object.assign(sparse, { extra: "x" });
+      const reported =
+        kind === "different"
+          ? { repo: "other/app", pr: 99 }
+          : { ...input, extra: kind === "sparse" ? sparse : [1, null] };
+      if (kind === "getter") Object.defineProperty(reported, "extra", { enumerable: true, get: () => [1, null] });
+      const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+      const result = await executeToolForRun(f.jobDeps, id, {
+        id: "call-1",
+        name: "github_merge_pr",
+        input,
+      });
+      yield {
+        type: "tool_call",
+        id: "call-1",
+        name: "github_merge_pr",
+        input: reported,
+        executed: result,
+      };
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev merge the PR");
+    await drainOutbox(f.db, handlers);
+    const [before] = await f.db.select().from(schema.agentRuns);
+    expect(before?.transcript).toMatchObject({ effectUncertain: { tools: ["github_merge_pr"] } });
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+    if (!approval) throw new Error("expected pending approval");
+    await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+    await drainOutbox(f.db, handlers);
+    expect(gh.executed).toEqual([]);
+  },
+);
+
+test.each(["absent", "json null"] as const)(
+  "a computer brain that fails after a bridged pause with %s marker then resumes",
+  async (marker) => {
+    const gh = fakeGithub();
+    f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["Respondi pela API."] }) });
+    await grantScopes(f.db, f.org.id, f.agent.id, ALL_GITHUB_SCOPES);
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+      if (n === 0) {
+        const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+        const input = {
+          repo: "acme/app",
+          pr: 42,
+          why: "CI passed on the PR and it was reviewed: merging ships the fix.",
+        };
+        const result = await executeToolForRun(f.jobDeps, id, {
+          id: "call-1",
+          name: "github_merge_pr",
+          input,
+        });
+        yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input, executed: result };
+        yield { type: "error", code: "executor_crashed", message: "Claude Code exited", retryable: true };
+        return;
+      }
+      yield { type: "done", text: "Merge feito." };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev faz o merge do PR 42");
+    await drainOutbox(f.db, handlers);
+
+    let [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("waiting_approval");
+    expect(run?.error).toBeNull();
+    const transcript = run?.transcript as { pending?: { calls: { toolUseId: string; bridged?: boolean }[] } };
+    expect(transcript.pending?.calls).toMatchObject([{ toolUseId: "call-1", bridged: true }]);
+    const usage = await f.db
+      .select()
+      .from(schema.usageRecords)
+      .where(eq(schema.usageRecords.runId, run?.id ?? ""));
+    expect(usage.some((u) => u.provider === "anthropic")).toBe(false);
+
+    if (marker === "json null")
+      await f.db
+        .update(schema.agentRuns)
+        .set({
+          transcript: sql`jsonb_set(coalesce(${schema.agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', 'null'::jsonb, true)`,
+        })
+        .where(eq(schema.agentRuns.id, run?.id ?? ""));
+
+    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+    await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval?.id ?? "", {
+      decision: "approve",
+    });
+    await drainOutbox(f.db, handlers);
+    [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("done");
+    expect(seen.length).toBe(2);
+    expect(gh.executed).toEqual([{ tool: "github_merge_pr", input: { repo: "acme/app", pr: 42 } }]);
+  },
+);
 
 /** Its pending `agent_run.execute` jobs due now: their backoff and waits are over. */
 const runJobsDue = (fx: Fixture) =>
@@ -4218,7 +4506,13 @@ test("held in line as it resumes after a decision: the turn that runs later read
           input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
         },
       );
-      yield { type: "tool_call", id: "call-1", name: "github_merge_pr", input: {}, executed: result };
+      yield {
+        type: "tool_call",
+        id: "native-call-1",
+        name: "github_merge_pr",
+        input: { repo: "acme/app", pr: 42, why: "CI passed on the PR and it was reviewed: merging ships the fix." },
+        executed: { content: result.content, ...(result.isError ? { isError: true } : {}) },
+      };
       yield { type: "done", text: "Pedi aprovação para o merge." };
       return;
     }
