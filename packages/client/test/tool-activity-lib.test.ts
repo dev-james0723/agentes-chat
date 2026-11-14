@@ -39,3 +39,25 @@ test("a computer brain cut mid-turn says what it already did in the person's wor
     "_Claude Code stopped before finishing. Already done, not repeated: ran code on the PC, updated the plan, and checked GitHub._",
   );
 });
+
+test("an uncertain tool outcome is not presented as completed", async () => {
+  const { resources } = await import("@agenteschat/i18n");
+  const i18next = (await import("i18next")).default;
+  const instance = i18next.createInstance();
+  void instance.init({ lng: "en", fallbackLng: "en", resources, initAsync: false });
+  const body = serverBody(
+    instance.t,
+    "…",
+    {
+      brainInterrupted: {
+        brain: "claude_code",
+        text: "",
+        tools: ["write_file"],
+        outcomeUnknown: true,
+      },
+    },
+    "en",
+  );
+  expect(body).toContain("outcome unknown; reconcile before retrying");
+  expect(body).not.toContain("Already done");
+});

@@ -2836,6 +2836,247 @@ test("a computer brain that fails after a bridged tool ran: no fallback, what it
   expect(last?.meta.brainFallback).toBeUndefined();
 });
 
+test.each(["executor_crashed", "plan_limit"] as const)(
+  "an errored bridged call followed by %s is not replayed",
+  async (code) => {
+    let attempts = 0;
+    let fallbackCalls = 0;
+    const sideEffect: ToolSource = {
+      name: "uncertain",
+      tools: async () => [
+        {
+          name: "uncertain_write",
+          description: "A write whose result may be uncertain",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => {
+            attempts++;
+            return { content: "delivery unknown", isError: true };
+          },
+        },
+      ],
+    };
+    f = await setup({
+      toolSources: [sideEffect],
+      reply: () => {
+        fallbackCalls++;
+        return { chunks: ["fallback"] };
+      },
+    });
+    const machineId = await computerAgent(f);
+    const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+      await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id: "uncertain-1", name: "uncertain_write", input: {} },
+      );
+      // The runner never reported an executed event before it failed.
+      yield { type: "error", code, message: "connection lost", retryable: true, worked: false };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev perform the write");
+    await drainOutbox(f.db, handlers);
+    expect(attempts).toBe(1);
+    expect(seen.length).toBe(1);
+    expect(fallbackCalls).toBe(0);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toContain("outcome unknown");
+    const last = (await timeline(f)).at(-1);
+    expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["uncertain_write"], outcomeUnknown: true });
+    expect(last?.body).toContain("outcome unknown");
+  },
+);
+
+test("a recorded bridged call with no result is not resumed after its computer drops", async () => {
+  let fallbackCalls = 0;
+  f = await setup({
+    reply: () => {
+      fallbackCalls++;
+      return { chunks: ["fallback"] };
+    },
+  });
+  await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    await addRunStep(f.db, { id: turn.runId, orgId: turn.orgId }, "tool_call", {
+      toolUseId: "pending-1",
+      name: "write_file",
+      input: { path: "out.txt" },
+    });
+    yield { type: "error", code: "machine_offline", message: "connection lost", retryable: true };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev update the file");
+  await drainOutbox(f.db, handlers);
+  expect(seen.length).toBe(1);
+  expect(fallbackCalls).toBe(0);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("failed");
+  const last = (await timeline(f)).at(-1);
+  expect(last?.meta.brainInterrupted).toMatchObject({ tools: ["write_file"], outcomeUnknown: true });
+  expect(last?.body).toContain("reconcile before retrying");
+});
+
+test.each(["reported error", "mismatched name"] as const)(
+  "conflicting %s remains an unknown tool outcome",
+  async (conflict) => {
+    const source: ToolSource = {
+      name: "conflicting",
+      tools: async () => [
+        {
+          name: "conflicting_write",
+          description: "Test write",
+          scope: "",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: async () => ({ content: "ok" }),
+        },
+      ],
+    };
+    f = await setup({ toolSources: [source], reply: () => ({ chunks: ["fallback"] }) });
+    const machineId = await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        { id: "conflict-1", name: "conflicting_write", input: {} },
+      );
+      yield {
+        type: "tool_call",
+        id: "conflict-1",
+        name: conflict === "mismatched name" ? "different_write" : "conflicting_write",
+        input: {},
+        executed: { content: "connection lost", isError: conflict === "reported error" },
+      };
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev perform the write");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
+test.each(["error then success", "duplicate intent"] as const)(
+  "durable %s is not cleared by a later success",
+  async (kind) => {
+    f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const run = { id: turn.runId, orgId: turn.orgId };
+      const call = { toolUseId: "repeated-1", name: "write_file", input: { path: "out.txt" } };
+      await addRunStep(f.db, run, "tool_call", call);
+      if (kind === "duplicate intent") await addRunStep(f.db, run, "tool_call", call);
+      else await addRunStep(f.db, run, "tool_result", { toolUseId: "repeated-1", name: "write_file", isError: true });
+      await addRunStep(f.db, run, "tool_result", { toolUseId: "repeated-1", name: "write_file", isError: false });
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev update the file");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
+test("a synthetic resumed background transcript with held text cannot turn an unknown effect into done", async () => {
+  f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+  await computerAgent(f);
+  const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+    const run = { id: turn.runId, orgId: turn.orgId };
+    await addRunStep(f.db, run, "tool_call", { toolUseId: "held-1", name: "write_file", input: {} });
+    await addRunStep(f.db, run, "tool_result", { toolUseId: "held-1", name: "write_file", isError: true });
+    yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const message = await post(f, "@dev update the file");
+  const [run] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.triggerMessageId, message.id));
+  if (!run) throw new Error("Expected the background run to exist");
+  await f.db
+    .update(schema.agentRuns)
+    .set({
+      background: true,
+      transcript: {
+        system: [],
+        messages: [{ role: "user", content: "update the file" }],
+        postedUpTo: 1,
+        postedCount: 0,
+        held: "An earlier held response",
+      },
+    })
+    .where(eq(schema.agentRuns.id, run.id));
+  await drainOutbox(f.db, handlers);
+  const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+  expect(after?.status).toBe("failed");
+  expect(after?.error).toContain("tool outcome unknown; reconcile before retrying");
+  expect((after?.transcript as { messages?: unknown[] })?.messages?.length).toBeGreaterThan(1);
+});
+
+test.each(["duplicate reported", "different input", "malformed intent"] as const)(
+  "%s is not treated as a certain tool outcome",
+  async (kind) => {
+    f = await setup({ reply: () => ({ chunks: ["fallback"] }) });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const run = { id: turn.runId, orgId: turn.orgId };
+      if (kind === "malformed intent") {
+        await addRunStep(f.db, run, "tool_call", { toolUseId: "evidence-1", input: { path: "a" } });
+      } else {
+        if (kind === "different input") {
+          await addRunStep(f.db, run, "tool_call", {
+            toolUseId: "evidence-1",
+            name: "write_file",
+            input: { path: "a" },
+          });
+          await addRunStep(f.db, run, "tool_result", { toolUseId: "evidence-1", name: "write_file", isError: false });
+        }
+        const call = {
+          type: "tool_call" as const,
+          id: "evidence-1",
+          name: "write_file",
+          input: { path: "b" },
+          executed: { content: "ok", isError: false },
+        };
+        yield call;
+        if (kind === "duplicate reported") yield call;
+      }
+      yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev update the file");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).toBe("failed");
+    expect((await timeline(f)).at(-1)?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  },
+);
+
 test("a computer brain that fails after a bridged pause: the run keeps waiting with its pending call, then resumes", async () => {
   const gh = fakeGithub();
   f = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["Respondi pela API."] }) });

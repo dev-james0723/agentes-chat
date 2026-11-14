@@ -437,8 +437,11 @@ export async function transitionRun(
     /** A failure: the brain's code and the provider's cause (`run.finished`; not stored on the run). */
     failure?: { code: string; cause?: string | null };
   } = {},
+  claim?: { waitId: string },
 ): Promise<AgentRun | null> {
   if (!canTransition(from, to)) throw new InvalidRunTransitionError(from, to);
+  if (claim && (from !== "waiting_input" || to !== "running"))
+    throw new Error("A wait claim only applies to resuming a waiting input run");
   const { failure, ...set } = patch;
   const now = new Date();
   const [row] = await db
@@ -457,7 +460,17 @@ export async function transitionRun(
       waitingMachineId: null,
       ...set,
     })
-    .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, from)))
+    .where(
+      and(
+        eq(agentRuns.id, runId),
+        eq(agentRuns.status, from),
+        // A timer may have read an older wait before another worker resumed and parked the same run again.
+        // Compare the wait in the same UPDATE as the state claim, not only in a prior SELECT.
+        claim
+          ? sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${claim.waitId}`
+          : undefined,
+      ),
+    )
     .returning();
   if (row && isTerminal(to)) {
     await recordRunFinished(

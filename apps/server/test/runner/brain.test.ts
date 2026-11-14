@@ -334,7 +334,6 @@ test("parser: today's limit wordings are plan limits, the server's throttle is n
     "You've hit your weekly limit · resets Mon 10am",
     "You've hit your Opus limit",
     "You've hit your Sonnet limit",
-    "You've reached your monthly spend limit",
   ]) {
     const r = end(text);
     expect(r.final).toMatchObject({ code: "plan_limit" });
@@ -344,6 +343,69 @@ test("parser: today's limit wordings are plan limits, the server's throttle is n
   const throttle = end("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited");
   expect(throttle.final).toMatchObject({ code: "claude_failed" });
   expect(throttle.rateLimit).toBeUndefined();
+});
+
+test("parser: generic throttling does not assert a depleted plan or synthesize a quota rejection", () => {
+  for (const result of [
+    "API Error: 429 Too Many Requests",
+    "API Error: 429 rate limit reached",
+    "API Error: 429 You've hit your rate limit",
+    "API Error: 429 You've hit your concurrency limit",
+    "API Error: 429 You've hit your limit",
+    "request failed",
+  ]) {
+    const p = new ClaudeStreamParser();
+    p.beginTurn();
+    p.push(line({ type: "system", subtype: "api_retry", error: "rate_limit", error_status: 429 }));
+    const r = p.push(line({ type: "result", is_error: true, result }));
+    expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+    expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+    expect(r.rateLimit).toBeUndefined();
+  }
+});
+
+test("parser: negated or unchecked usage limits are not evidence of exhaustion", () => {
+  for (const result of [
+    "API Error: 429 Your usage limit has not been reached; temporary rate limit",
+    "API Error: 429 request failed before usage limit could be checked",
+    "API Error: 429 You have not reached your usage limit",
+    "API Error: 429 no usage limit was reached",
+  ]) {
+    const p = new ClaudeStreamParser();
+    p.beginTurn();
+    const r = p.push(line({ type: "result", is_error: true, result }));
+    expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+    expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+    expect(r.rateLimit).toBeUndefined();
+  }
+});
+
+test("parser: a paid spend cap does not become a depleted subscription", () => {
+  const p = new ClaudeStreamParser();
+  p.beginTurn();
+  const r = p.push(
+    line({ type: "result", is_error: true, result: "API Error: 429 You've reached your monthly spend limit" }),
+  );
+  expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+  expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+  expect(r.rateLimit).toBeUndefined();
+});
+
+test("parser: an assistant rate-limit frame after a CLI tool stays fail-closed", () => {
+  const p = new ClaudeStreamParser();
+  p.beginTurn();
+  p.push(line({ type: "assistant", message: { content: [{ type: "tool_use", id: "b1", name: "Bash", input: {} }] } }));
+  p.push(
+    line({
+      type: "assistant",
+      error: "rate_limit",
+      message: { content: [{ type: "text", text: "Too many requests" }] },
+    }),
+  );
+  const r = p.push(line({ type: "result", is_error: true, result: "API Error: 429 Too Many Requests" }));
+  expect(r.final).toMatchObject({ code: "claude_failed", cause: "quota", retryable: false, httpStatus: 429 });
+  expect(r.events.filter((event) => event.type === "limit")).toEqual([]);
+  expect(r.rateLimit).toBeUndefined();
 });
 
 test("parser: OpenCode Go's 429 after Claude Code's retries is a plan limit that keeps the provider's words", () => {

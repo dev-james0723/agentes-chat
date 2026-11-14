@@ -17,7 +17,6 @@ import {
   withoutSignIns,
 } from "./accounts";
 import { AGY_CHAT_AGENT, prepareAgyHome } from "./agy-home";
-import { LIMIT_TEXT } from "./brain";
 import { type CodexBrainEvent, CodexThreads, chatFolder, codexProfileOf, codexThreadKey } from "./brain-codex";
 import { cursorPrompt } from "./brain-cursor";
 import { RunnerError } from "./errors";
@@ -26,6 +25,7 @@ import { AGY_BIN, resolveCommand } from "./executors";
 import { runHostAcpTurn } from "./host-acp-runtime";
 import { CODEX_MCP_ENV, CODEX_MCP_SERVER, redactDeep } from "./mcp";
 import { resolveForAgent } from "./paths";
+import { ambiguousLimit, explicitPlanLimit } from "./plan-limit-evidence";
 import { resetFromWords } from "./plan-usage";
 import type { Spawn } from "./scope-gate";
 import { agentSecrets } from "./secrets";
@@ -151,7 +151,9 @@ export function antigravityChatBreach(ev: Record<string, unknown>, sawInit: bool
 }
 
 /** `AGY_ERROR: {…}` on stderr (CLI 1.2.x): what it says, and whether it is a limit or a refused sign-in. */
-export function parseAgyError(stderr: string): { message: string; limit: boolean; auth: boolean } | null {
+export function parseAgyError(
+  stderr: string,
+): { message: string; limit: boolean; auth: boolean; ambiguous: boolean } | null {
   const line = stderr
     .split("\n")
     .reverse()
@@ -162,19 +164,19 @@ export function parseAgyError(stderr: string): { message: string; limit: boolean
     const v = JSON.parse(line.slice("AGY_ERROR:".length).trim());
     if (isRecord(v)) o = v;
   } catch {
-    return { message: line.slice(0, 500), limit: false, auth: false };
+    return { message: line.slice(0, 500), limit: false, auth: false, ambiguous: false };
   }
   const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
   const status = `${str(o.status)} ${str(o.canonical_status)} ${str(o.code)} ${str(o.http_status)}`;
   const message = (str(o.message) || str(o.error) || status.trim() || "The model call failed").slice(0, 500);
   return {
     message,
-    limit: /RESOURCE_EXHAUSTED|\b429\b/i.test(status) || AGY_LIMIT.test(message),
+    limit: explicitPlanLimit(message),
+    ambiguous: /RESOURCE_EXHAUSTED|\b429\b/i.test(status) || ambiguousLimit(message),
     auth: /UNAUTHENTICATED|\b401\b/i.test(status) || AGY_AUTH.test(message),
   };
 }
 
-const AGY_LIMIT = /quota|rate.?limit|usage limit|resource.?exhausted|weekly limit|five.?hour limit|out of credits/i;
 /** The CLI can't sign in (signed out, a refused token, no license). */
 export const AGY_AUTH =
   /auth(?:entication)? required|not (?:authenticated|logged in|signed in)|unauthenticated|unauthori[sz]ed|\b401\b|invalid (?:token|credentials|grant)|license/i;
@@ -182,9 +184,9 @@ export const AGY_AUTH =
 /** How a turn that went wrong ends: `limit` then `plan_limit`, `not_logged_in`, or `antigravity_failed`. */
 export function antigravityProblem(
   problem: string,
-  o: { worked?: boolean; limit?: boolean; auth?: boolean; now?: number } = {},
+  o: { worked?: boolean; auth?: boolean; ambiguous?: boolean; now?: number } = {},
 ): CodexBrainEvent[] {
-  if (o.limit || AGY_LIMIT.test(problem) || LIMIT_TEXT.test(problem)) {
+  if (explicitPlanLimit(problem)) {
     const resetsAt = resetFromWords(problem, o.now);
     return [
       { type: "limit", ...(resetsAt ? { resetsAt } : {}) },
@@ -193,7 +195,14 @@ export function antigravityProblem(
   }
   if (o.auth || AGY_AUTH.test(problem))
     return [{ type: "error", code: "not_logged_in", message: problem, retryable: true }];
-  return [{ type: "error", code: "antigravity_failed", message: problem, retryable: true }];
+  return [
+    {
+      type: "error",
+      code: "antigravity_failed",
+      message: problem,
+      retryable: !(o.ambiguous || ambiguousLimit(problem)),
+    },
+  ];
 }
 
 const tokens = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
@@ -454,7 +463,7 @@ export async function runAntigravityTurn(input: AntigravityTurnInput, opts: Anti
             : `The Antigravity CLI exited with code ${exit.code ?? "?"}${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ""}`);
     for (const event of antigravityProblem(clean(why), {
       worked: worked || streamed,
-      limit: agyError?.limit ?? false,
+      ambiguous: agyError?.ambiguous ?? false,
       auth: agyError?.auth ?? false,
       ...(opts.now ? { now: opts.now() } : {}),
     }))

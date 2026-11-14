@@ -135,6 +135,18 @@ test("a turn that went wrong: a usage limit, a sign-in that ended, anything else
   expect(grokProblem("boom")[0]).toMatchObject({ code: "grok_failed" });
 });
 
+test("grok: generic 429 and unverified limits do not mean the subscription is exhausted", () => {
+  for (const text of [
+    "HTTP 429 Too Many Requests",
+    "You've hit your rate limit",
+    "Quota exceeded",
+    "out of credits",
+    "Your weekly usage limit has not been reached",
+  ]) {
+    expect(grokProblem(text, true)).toEqual([{ type: "error", code: "grok_failed", message: text, retryable: false }]);
+  }
+});
+
 test("the CLI's words: its models, its sign-in status and its device sign-in", () => {
   const models =
     "You are not authenticated.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";
@@ -397,4 +409,144 @@ test.skipIf(!posix)("sign-in on the computer: Grok's device link and code, then 
   await waitFor(() => m.status(id).state === "done", 5000);
   expect(m.status(id).account).toMatchObject({ kind: "grok", loggedIn: true });
   expect(m.accountDir("grok", id)).toBe(path.join(home, "accounts", "grok", id));
+});
+
+test.skipIf(!posix)("grok: 429 in the stream never emits a fabricated limit or an automatic retry", async () => {
+  const root = tempDir("grok-throttle-");
+  dirs.push(root);
+  const { ctx, accountDir } = turnContext(root);
+  writeFileSync(path.join(accountDir, "auth.json"), "{}");
+  const frames: unknown[] = [];
+  const result = (await handleRequest(ctx as never, turn({ prompt: "THROTTLE" }), scopeOf(frames) as never)) as {
+    final: CodexBrainEvent;
+  };
+  expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+  expect(eventsOf(frames)).toContainEqual({ type: "tool_started", id: "uncertain-1", name: "run_terminal_command" });
+  expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+});
+
+test.skipIf(!posix)(
+  "grok: empty error after a rejected event does not turn parser default text into provider evidence",
+  async () => {
+    const root = tempDir("grok-empty-error-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    writeFileSync(path.join(accountDir, "auth.json"), "{}");
+    const frames: unknown[] = [];
+    const result = (await handleRequest(ctx as never, turn({ prompt: "EMPTYFAIL" }), scopeOf(frames) as never)) as {
+      final: CodexBrainEvent;
+    };
+    expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+    expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+    if (result.final.type === "error") expect(result.final.message).not.toContain("usage limit was reached");
+  },
+);
+
+test.skipIf(!posix)(
+  "grok: earlier error text cleared by a later assistant response is not evidence of a new failure",
+  async () => {
+    const root = tempDir("grok-stale-error-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    writeFileSync(path.join(accountDir, "auth.json"), "{}");
+    const frames: unknown[] = [];
+    const result = (await handleRequest(ctx as never, turn({ prompt: "STALEFAIL" }), scopeOf(frames) as never)) as {
+      final: CodexBrainEvent;
+    };
+    expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+    expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+  },
+);
+
+test.skipIf(!posix)("grok: unverified stderr alone is not provider quota evidence", async () => {
+  const root = tempDir("grok-stderr-");
+  dirs.push(root);
+  const { ctx, accountDir } = turnContext(root);
+  writeFileSync(path.join(accountDir, "auth.json"), "{}");
+  const frames: unknown[] = [];
+  const result = (await handleRequest(ctx as never, turn({ prompt: "STDERRLIMIT" }), scopeOf(frames) as never)) as {
+    final: CodexBrainEvent;
+  };
+  expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+  expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+});
+
+test.skipIf(!posix)(
+  "grok: unverified stderr cannot authorize retryable auth fallback after a started tool",
+  async () => {
+    const root = tempDir("grok-stderr-auth-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    writeFileSync(path.join(accountDir, "auth.json"), "{}");
+    const frames: unknown[] = [];
+    const result = (await handleRequest(ctx as never, turn({ prompt: "STDERRAUTH" }), scopeOf(frames) as never)) as {
+      final: CodexBrainEvent;
+    };
+    expect(eventsOf(frames)).toContainEqual({
+      type: "tool_started",
+      id: "uncertain-auth-1",
+      name: "run_terminal_command",
+    });
+    expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+  },
+);
+
+test.skipIf(!posix)(
+  "grok: even an explicit plan limit cannot auto-resume while a native tool result is missing",
+  async () => {
+    const root = tempDir("grok-pending-limit-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    writeFileSync(path.join(accountDir, "auth.json"), "{}");
+    const frames: unknown[] = [];
+    const result = (await handleRequest(ctx as never, turn({ prompt: "PENDINGLIMIT" }), scopeOf(frames) as never)) as {
+      final: CodexBrainEvent;
+    };
+    expect(eventsOf(frames)).toContainEqual({
+      type: "tool_started",
+      id: "pending-limit-1",
+      name: "run_terminal_command",
+    });
+    expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+    expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+  },
+);
+
+test.skipIf(!posix)("grok: a done event with an unfinished native tool does not mark the run complete", async () => {
+  const root = tempDir("grok-pending-done-");
+  dirs.push(root);
+  const { ctx, accountDir } = turnContext(root);
+  writeFileSync(path.join(accountDir, "auth.json"), "{}");
+  const frames: unknown[] = [];
+  const result = (await handleRequest(ctx as never, turn({ prompt: "PENDINGDONE" }), scopeOf(frames) as never)) as {
+    final: CodexBrainEvent;
+  };
+  expect(eventsOf(frames)).toContainEqual({ type: "tool_started", id: "pending-done-1", name: "run_terminal_command" });
+  expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+});
+
+test.skipIf(!posix)("grok: a native tool error with a possible write does not auto-resume on plan limit", async () => {
+  const root = tempDir("grok-error-limit-");
+  dirs.push(root);
+  const { ctx, accountDir } = turnContext(root);
+  writeFileSync(path.join(accountDir, "auth.json"), "{}");
+  const frames: unknown[] = [];
+  const result = (await handleRequest(ctx as never, turn({ prompt: "ERRORLIMIT" }), scopeOf(frames) as never)) as {
+    final: CodexBrainEvent;
+  };
+  expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+  expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
+});
+
+test.skipIf(!posix)("grok: conflicting duplicate native tool IDs do not auto-resume", async () => {
+  const root = tempDir("grok-duplicate-limit-");
+  dirs.push(root);
+  const { ctx, accountDir } = turnContext(root);
+  writeFileSync(path.join(accountDir, "auth.json"), "{}");
+  const frames: unknown[] = [];
+  const result = (await handleRequest(ctx as never, turn({ prompt: "DUPLICATELIMIT" }), scopeOf(frames) as never)) as {
+    final: CodexBrainEvent;
+  };
+  expect(eventsOf(frames).filter((e) => e.type === "limit")).toEqual([]);
+  expect(result.final).toMatchObject({ type: "error", code: "grok_failed", retryable: false });
 });

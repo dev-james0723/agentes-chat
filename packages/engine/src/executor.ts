@@ -1157,13 +1157,21 @@ async function executeRunInner(
       busyTries < BUSY_RETRIES &&
       (await otherAgentAnswering(db, row).catch(() => false))
     ) {
-      await db
+      const [stillWaiting] = await db
         .update(agentRuns)
         .set({
           transcript: sql`jsonb_set(${agentRuns.transcript}, '{catchUpTriage}', coalesce(${agentRuns.transcript}->'catchUpTriage', '{"calls":0}'::jsonb)
             || jsonb_build_object('busyRetries', ${busyTries + 1}::int, 'outcome', 'skipped_busy', 'at', ${Date.now()}::bigint))`,
         })
-        .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "waiting_input")));
+        .where(
+          and(
+            eq(agentRuns.id, runId),
+            eq(agentRuns.status, "waiting_input"),
+            sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${options.wait}`,
+          ),
+        )
+        .returning({ id: agentRuns.id });
+      if (!stillWaiting) return;
       await enqueue(db, {
         orgId: row.orgId,
         kind: "agent_run.execute",
@@ -1234,6 +1242,8 @@ async function executeRunInner(
     if (!loaded) throw new PermanentJobError(`agent run ${runId} not found`);
     run = loaded;
     if (isTerminal(run.status) || run.status === "queued") return;
+    // A timer belongs to exactly one waiting_input generation; it cannot pick up a run already moved elsewhere.
+    if (options.wait && run.status !== "waiting_input") return;
     if (run.status === "running") {
       // Another job runs it right now (a second resume of the same pause): one run never thinks twice at once.
       if (await runJobElsewhere(db, run.id, options.jobId)) return;
@@ -1266,6 +1276,7 @@ async function executeRunInner(
         run.status,
         "running",
         lineMachine ? { waitingMachineId: lineMachine } : {},
+        options.wait ? { waitId: options.wait } : undefined,
       );
       if (!resumed) return;
       run = resumed;
@@ -3484,6 +3495,7 @@ async function executeRunInner(
     failure: { code: string; message: string },
     executed: string[],
     partial: string,
+    outcomeUnknown = false,
   ) => {
     await deferred;
     const t = transcript as Transcript;
@@ -3492,33 +3504,49 @@ async function executeRunInner(
     const said = [t.held, stripSentinel(partial)].filter(Boolean).join("\n\n");
     // What the CLI said goes where everyone in the conversation reads it: without its paths, stack or secrets.
     const why = cliErrorWords(failure.message);
-    const note = `_${name} stopped before finishing (${why}). Already done, not repeated: ${executed.join(", ")}._`;
+    const note = outcomeUnknown
+      ? `_${name} stopped before finishing (${why}). Tool outcome unknown; reconcile before retrying: ${executed.join(", ")}._`
+      : `_${name} stopped before finishing (${why}). Already done, not repeated: ${executed.join(", ")}._`;
     await addRunStep(db, run, "error", {
       reason: "brain_interrupted",
       code: failure.code,
       message: why,
       executed,
+      ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
     });
+    const unknownError = "brain_interrupted: tool outcome unknown; reconcile before retrying";
     // A background run posts nothing (ADR 0053 §5): it fails with the brain's code, its ledger says so.
     if (run.background) {
       if (said && t.messages.at(-1)?.role !== "assistant")
         t.messages.push({ role: "assistant", content: [{ type: "text", text: said }] });
       t.postedUpTo = t.messages.length;
       await saveTranscript(db, t);
-      return fail(`brain_interrupted: ${why}`, { code: failure.code, detail: why });
+      // A saved held reply cannot make an unresolved tool outcome a successful background run.
+      if (outcomeUnknown) endWithHeld = null;
+      return fail(outcomeUnknown ? unknownError : `brain_interrupted: ${why}`, {
+        code: failure.code,
+        detail: outcomeUnknown ? "tool outcome unknown; reconcile before retrying" : why,
+      });
     }
     const reply = await db.transaction(async (tx) => {
       const m = await post(tx, workThread(), said ? `${said}\n\n${note}` : note, {
         ...(takeMemoryUpdates(t) ?? {}),
-        brainInterrupted: { brain: from, code: failure.code, message: why, text: said, tools: executed },
+        brainInterrupted: {
+          brain: from,
+          code: failure.code,
+          message: why,
+          text: said,
+          tools: executed,
+          ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
+        },
         ...workEnd("run.brain_interrupted"),
       });
       t.postedUpTo = t.messages.length;
       t.postedCount++;
       await addRunStep(tx, run, "message", { messageId: m.id });
-      const done = await transitionRun(tx, run.id, "running", "done", {
+      const done = await transitionRun(tx, run.id, "running", outcomeUnknown ? "failed" : "done", {
         replyMessageId: m.id,
-        error: null,
+        error: outcomeUnknown ? unknownError : null,
         transcript: storedTranscript(t),
       });
       if (!done) throw new PermanentJobError("run changed state while executing");
@@ -3526,9 +3554,15 @@ async function executeRunInner(
     });
     const [view] = await withWikiLinks(db, run.orgId, [messageView(reply)]);
     if (view) await publishMessageCreated(deps.pubsub, view);
-    await publishChannelEvent(deps.pubsub, event("done"));
-    await finished("done");
-    await redispatchPending("done");
+    if (outcomeUnknown) {
+      await publishChannelEvent(deps.pubsub, event("failed", unknownError));
+      await finished("failed", unknownError);
+      await redispatchPending("failed");
+    } else {
+      await publishChannelEvent(deps.pubsub, event("done"));
+      await finished("done");
+      await redispatchPending("done");
+    }
   };
 
   /**
@@ -4351,6 +4385,11 @@ async function executeRunInner(
       const executedNow: { id: string; name: string; input: unknown; result?: ToolResult }[] = [];
       /** Files the brain's own tools made this turn (`file` events), on their way to the Drive. */
       const sharing: Promise<void>[] = [];
+      // A started native tool has an unknown effect until this turn reports a matching successful result. This is
+      // in-memory evidence for the caught-turn path only; it does not fence a crash before this process records it.
+      const startedNow = new Map<string, { id: string; name: string; input: unknown }>();
+      const conflictingStarts = new Set<string>();
+      const seenStarts = new Set<string>();
       /** Its own calls whose step line went out as they started (`tool_started`): not again as they end. */
       const stepTold = new Set<string>();
       /** A call of its own (not ours through the bridge, which says its step as it starts) is the step line now. */
@@ -4473,10 +4512,22 @@ async function executeRunInner(
             },
             ...(deps.planLimitGraceMs !== undefined ? { limitGraceMs: deps.planLimitGraceMs } : {}),
             onStarted: (call) => {
+              if (seenStarts.has(call.id)) conflictingStarts.add(call.id);
+              seenStarts.add(call.id);
+              startedNow.set(call.id, { ...call, input: undefined });
               stepTold.add(call.id);
               ownStep(call);
             },
             onExecuted: (call) => {
+              const started = startedNow.get(call.id);
+              if (
+                started &&
+                started.name === call.name &&
+                call.result &&
+                !call.result.isError &&
+                !conflictingStarts.has(call.id)
+              )
+                startedNow.delete(call.id);
               executedNow.push(call);
               // A brain that tells its calls only once they ended (Codex, an older runner) says the step now.
               if (!stepTold.delete(call.id)) ownStep(call);
@@ -4639,7 +4690,22 @@ async function executeRunInner(
         // transcript): neither the model brain (fallback) nor a retried job may redo the turn from scratch,
         // they would run them again. Post what the brain said and what it did instead, and end the run there.
         if (turnPlan.kind !== "model") {
-          const executed = await executedSince(db, run.id, turnStepSeq, executedNow);
+          const executed = await executedSince(db, run.id, turnStepSeq, [...executedNow, ...startedNow.values()]);
+          // A recorded gateway intent without a successful result may have produced an effect even if it returned
+          // an error. Never resume the interrupted turn or fall back until the effect has been reconciled.
+          if (executed.some((call) => call.uncertain)) {
+            const failure =
+              error instanceof BrainFailure
+                ? { code: error.code, message: error.message }
+                : { code: "brain_failed", message: error instanceof Error ? error.message : String(error) };
+            return interruptedAfterTools(
+              turnPlan.kind,
+              failure,
+              [...new Set(executed.map((c) => c.name))],
+              deltas.lastText(),
+              true,
+            );
+          }
           // The computer dropped mid-turn: the turn resumes there when it is back (its session keeps what it did).
           const machineId = turnPlan.session?.machineId;
           if (
@@ -6058,8 +6124,8 @@ async function executedSince(
   db: Executor,
   runId: string,
   fromSeq: number,
-  reported: { id: string; name: string; input?: unknown }[],
-): Promise<{ name: string; label: string }[]> {
+  reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
+): Promise<{ name: string; label: string; uncertain: boolean }[]> {
   const steps = await db
     .select({ kind: schema.agentRunSteps.kind, data: schema.agentRunSteps.data })
     .from(schema.agentRunSteps)
@@ -6071,20 +6137,83 @@ async function executedSince(
       ),
     )
     .orderBy(schema.agentRunSteps.seq);
-  const inputs = new Map<string, unknown>();
-  const calls = new Map<string, { name: string; label: string }>();
+  type Evidence = { name: string; label: string; input: unknown; intents: number; results: number; conflict: boolean };
+  const calls = new Map<string, Evidence>();
   for (const { kind, data } of steps) {
     const id = typeof data.toolUseId === "string" ? data.toolUseId : null;
     if (kind === "tool_call") {
-      if (id) inputs.set(id, data.input);
+      const name = typeof data.name === "string" ? data.name : "unknown tool";
+      const key = id ?? `step:${calls.size}`;
+      const prior = calls.get(key);
+      calls.set(
+        key,
+        prior
+          ? { ...prior, intents: prior.intents + 1, conflict: true }
+          : {
+              name,
+              label: executedLabel(name, data.input),
+              input: data.input,
+              intents: 1,
+              results: 0,
+              conflict: !id || typeof data.name !== "string",
+            },
+      );
       continue;
     }
-    if (data.isError === true || typeof data.name !== "string") continue;
-    const input = id ? inputs.get(id) : undefined;
-    calls.set(id ?? `step:${calls.size}`, { name: data.name, label: executedLabel(data.name, input) });
+    const previous = id ? calls.get(id) : undefined;
+    const name = typeof data.name === "string" ? data.name : "unknown tool";
+    calls.set(id ?? `step:${calls.size}`, {
+      name: previous?.name ?? name,
+      label: previous?.label ?? executedLabel(name, undefined),
+      input: previous?.input,
+      intents: previous?.intents ?? 0,
+      results: (previous?.results ?? 0) + 1,
+      conflict:
+        previous?.conflict === true ||
+        !previous ||
+        previous.name !== name ||
+        data.isError !== false ||
+        (previous?.results ?? 0) > 0,
+    });
   }
-  for (const c of reported) calls.set(c.id, { name: c.name, label: executedLabel(c.name, c.input) });
-  return [...new Map([...calls.values()].map((c) => [c.label, c])).values()];
+  const evidence = new Map<string, { name: string; label: string; input?: unknown; uncertain: boolean }>();
+  for (const [id, c] of calls)
+    evidence.set(id, {
+      name: c.name,
+      label: c.label,
+      input: c.input,
+      uncertain: c.conflict || c.intents !== 1 || c.results !== 1,
+    });
+  const reportedIds = new Set<string>();
+  for (const c of reported) {
+    const previous = evidence.get(c.id);
+    // Inputs are compared conservatively: non-identical JSON encodings, including redaction or aliases, require
+    // reconciliation. Their contents are never included in the handoff message.
+    let sameInput = false;
+    try {
+      const stored = previous && JSON.stringify(previous.input);
+      sameInput = stored !== undefined && stored === JSON.stringify(c.input);
+    } catch {}
+    evidence.set(c.id, {
+      name: previous?.name ?? c.name,
+      label: previous?.label ?? executedLabel(c.name, c.input),
+      input: previous?.input ?? c.input,
+      uncertain:
+        previous?.uncertain === true ||
+        (previous !== undefined && previous.name !== c.name) ||
+        (calls.has(c.id) && !sameInput) ||
+        reportedIds.has(c.id) ||
+        !c.result ||
+        c.result.isError === true,
+    });
+    reportedIds.add(c.id);
+  }
+  const labels = new Map<string, { name: string; label: string; uncertain: boolean }>();
+  for (const c of evidence.values()) {
+    const prior = labels.get(c.label);
+    labels.set(c.label, { ...c, uncertain: c.uncertain || prior?.uncertain === true });
+  }
+  return [...labels.values()];
 }
 
 /**

@@ -92,6 +92,139 @@ if (args[0] === "-p") {
     });
     process.exit(1);
   }
+  if (prompt.includes("DUPLICATELIMIT")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "duplicate-1", name: "run_terminal_command", input: { command: "first" } }],
+      },
+      ...base,
+    });
+    out({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "duplicate-1", name: "run_terminal_command", input: { command: "second" } }],
+      },
+      ...base,
+    });
+    out({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "duplicate-1", content: "ok" }] },
+      ...base,
+    });
+    out({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "You've hit your weekly limit",
+      ...base,
+    });
+    process.exit(1);
+  }
+  if (prompt.includes("ERRORLIMIT")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "error-limit-1", name: "run_terminal_command", input: { command: "test" } }],
+      },
+      ...base,
+    });
+    out({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "error-limit-1", content: "failed after possible write", is_error: true },
+        ],
+      },
+      ...base,
+    });
+    out({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "You've hit your weekly limit",
+      ...base,
+    });
+    process.exit(1);
+  }
+  if (prompt.includes("PENDINGDONE")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "pending-done-1", name: "run_terminal_command", input: { command: "test" } }],
+      },
+      ...base,
+    });
+    out({ type: "result", subtype: "success", is_error: false, result: "done", ...base });
+    process.exit(0);
+  }
+  if (prompt.includes("PENDINGLIMIT")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "pending-limit-1", name: "run_terminal_command", input: { command: "test" } },
+        ],
+      },
+      ...base,
+    });
+    out({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      result: "You've hit your weekly limit",
+      ...base,
+    });
+    process.exit(1);
+  }
+  if (prompt.includes("STDERRAUTH")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "tool_use", id: "uncertain-auth-1", name: "run_terminal_command", input: { command: "test" } },
+        ],
+      },
+      ...base,
+    });
+    process.stderr.write("You are not authenticated");
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "", errors: [], ...base });
+    process.exit(1);
+  }
+  if (prompt.includes("STDERRLIMIT")) {
+    process.stderr.write("You've hit your weekly limit");
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "", errors: [], ...base });
+    process.exit(1);
+  }
+  if (prompt.includes("STALEFAIL")) {
+    out({
+      type: "assistant",
+      error: "rate_limit",
+      message: { content: [{ type: "text", text: "You've hit your weekly limit" }] },
+      ...base,
+    });
+    out({ type: "assistant", message: { content: [{ type: "text", text: "A response arrived" }] }, ...base });
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "", errors: [], ...base });
+    process.exit(1);
+  }
+  if (prompt.includes("EMPTYFAIL")) {
+    out({ type: "rate_limit_event", rate_limit_info: { status: "rejected" }, ...base });
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "", errors: [], ...base });
+    process.exit(1);
+  }
+  if (prompt.includes("THROTTLE")) {
+    out({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "uncertain-1", name: "run_terminal_command", input: { command: "test" } }],
+      },
+      ...base,
+    });
+    out({ type: "rate_limit_event", rate_limit_info: { status: "rejected" }, ...base });
+    out({ type: "system", subtype: "api_retry", error: "rate_limit", error_status: 429, ...base });
+    out({ type: "result", subtype: "error_during_execution", is_error: true, result: "request failed", ...base });
+    process.exit(1);
+  }
   if (prompt.includes("LIMIT")) {
     out({
       type: "result",

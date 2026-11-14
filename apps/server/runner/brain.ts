@@ -235,11 +235,11 @@ const OUR_TOOL_PREFIX = "mcp__agentes__";
 // ── Stream parsing ───────────────────────────────────────────────────────────
 
 /**
- * Claude Code says the plan's usage is exhausted (a result text, older and newer wordings: "You've hit your
- * session limit", "…weekly limit", "…Opus limit", "…Sonnet limit", "monthly spend limit").
+ * Explicit usage exhaustion in a provider's error text. A bare "rate limit", an unchecked/negated usage limit,
+ * and a spend cap do not establish that a subscription pool is exhausted. Ambiguous text stays unclassified.
  */
 export const LIMIT_TEXT =
-  /usage limit|hit your (?:[\w-]+ )?limit|limit reached|out of extra usage|spend limit|rate limit/i;
+  /^(?![\s\S]*\b(?:not|never|no|before|without|haven't|hasn't|isn't|wasn't)\b[\s\S]{0,80}\blimit\b)[\s\S]*(?:\bhit your (?:usage|session|weekly|opus|sonnet) limit\b|\b(?:reached|exceeded) (?:your |the )?(?:[\w-]+ )?usage limit\b|\busage limit (?:is |was |has been )?(?:reached|exceeded|exhausted)\b)/i;
 /** The server throttling everyone, which it says is no plan limit. */
 export const NOT_LIMIT_TEXT = /not your usage limit/i;
 /** Claude Code can't authenticate (not logged in, a revoked token, a bad key). */
@@ -381,7 +381,6 @@ export class ClaudeStreamParser {
   private sawDelta = false;
   /** The API message whose text streamed (`message_start`): Claude Code says it in one `assistant` per block. */
   private streamedMessage: string | null = null;
-  private limited = false;
   /** A `rate_limit_event` said `rejected`: the plan itself refused, whatever the result's text. */
   private rejected = false;
   private limitSent = false;
@@ -399,7 +398,6 @@ export class ClaudeStreamParser {
     this.tools.clear();
     this.sawDelta = false;
     this.streamedMessage = null;
-    this.limited = false;
     this.rejected = false;
     this.limitSent = false;
     this.worked = false;
@@ -438,7 +436,6 @@ export class ClaudeStreamParser {
           this.authFailed = true;
           return { events: [], authRetry: true };
         }
-        if (ev.subtype === "api_retry" && ev.error === "rate_limit") this.limited = true;
         // Claude Code says `init` as each turn starts (also one it starts by itself).
         if (ev.subtype === "init") return { events: [], turnStart: true };
         if (ev.subtype === "compact_boundary" && main) {
@@ -467,7 +464,6 @@ export class ClaudeStreamParser {
       case "assistant": {
         if (!main) return { events: [] };
         if (ev.error === "authentication_failed") this.authFailed = true;
-        if (ev.error === "rate_limit") this.limited = true;
         const content = isObj(ev.message) && Array.isArray(ev.message.content) ? ev.message.content : [];
         // Claude Code's own frame for a provider's error (its `error` word set): its text is the provider's answer.
         if (typeof ev.error === "string") {
@@ -535,7 +531,6 @@ export class ClaudeStreamParser {
       case "rate_limit_event": {
         const info = isObj(ev.rate_limit_info) ? ev.rate_limit_info : {};
         if (info.status !== "rejected") return { events: [], rateLimit: info };
-        this.limited = true;
         this.rejected = true;
         this.failure = { cause: "quota" };
         this.resetsAt = resetIso(info.resetsAt);
@@ -590,7 +585,9 @@ export class ClaudeStreamParser {
       const said = providerFailure({ status: ev.api_error_status, text });
       const httpStatus = said.httpStatus ?? this.failure.httpStatus;
       const http = httpStatus ? { httpStatus } : {};
-      if (this.rejected || ((this.limited || LIMIT_TEXT.test(text)) && !NOT_LIMIT_TEXT.test(text))) {
+      // A generic 429 or rate_limit retry only establishes throttling, not an exhausted subscription. It must not
+      // synthesize a rejected plan-usage reading or enter the plan-reset queue without specific evidence.
+      if (this.rejected || (LIMIT_TEXT.test(text) && !NOT_LIMIT_TEXT.test(text))) {
         const legacy = /\|(\d{10})\b/.exec(text)?.[1];
         const resetsAt = this.resetsAt ?? (legacy ? resetIso(Number(legacy)) : undefined);
         if (!this.limitSent) events.push({ type: "limit", ...(resetsAt ? { resetsAt } : {}) });
