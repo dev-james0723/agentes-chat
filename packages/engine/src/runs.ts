@@ -4,6 +4,7 @@ import { BRAIN_NAMES, type ComputerBrainKind, planName } from "./brains/types";
 import { cutText, pgSafeJson } from "./format";
 import { recordRunFinished } from "./operator-events";
 import { standingErrorDetail } from "./standing";
+import { keepRunMarkers } from "./sticky-transcript";
 import { cliErrorWords, redactCredentials } from "./tool-detail";
 
 const { agentRuns, agentRunSteps } = schema;
@@ -442,7 +443,7 @@ export async function transitionRun(
   if (!canTransition(from, to)) throw new InvalidRunTransitionError(from, to);
   if (claim && (from !== "waiting_input" || to !== "running"))
     throw new Error("A wait claim only applies to resuming a waiting input run");
-  const { failure, ...set } = patch;
+  const { failure, transcript, ...set } = patch;
   const now = new Date();
   const [row] = await db
     .update(agentRuns)
@@ -459,15 +460,18 @@ export async function transitionRun(
       // Only a run waiting for its computer keeps the machine it waits for.
       waitingMachineId: null,
       ...set,
+      ...(transcript !== undefined ? { transcript: keepRunMarkers(transcript) } : {}),
     })
     .where(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, from),
-        // A timer may have read an older wait before another worker resumed and parked the same run again.
-        // Compare the wait in the same UPDATE as the state claim, not only in a prior SELECT.
+        // A timer must still own the exact wait, and no waiting run may resume while its checkpoint is held.
         claim
           ? sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${claim.waitId}`
+          : undefined,
+        from === "waiting_input" && to === "running"
+          ? sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`
           : undefined,
       ),
     )

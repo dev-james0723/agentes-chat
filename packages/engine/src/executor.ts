@@ -636,6 +636,28 @@ export interface Transcript {
    * the judges read this as the request instead.
    */
   request?: string;
+  /** A foreground plan cut after work: scoped source references only, never a claim that effects are safe. */
+  continuityCheckpoint?: {
+    schema: "quota-cut-checkpoint/1";
+    orgId: string;
+    runId: string;
+    channelId: string;
+    agentId: string;
+    goal: { state: "reference"; messageId: string } | { state: "unknown" };
+    task: "unknown";
+    executionOwner: "unknown";
+    constraints: "unknown";
+    completed: "unknown";
+    pending: "unknown";
+    decisions: "unknown";
+    tests: "unknown";
+    fileVersions: "unknown";
+    dependencies: "unknown";
+    effects: "unknown";
+    source: { throughSeq: number; capturedAt: string; complete: false };
+    nextSafeAction: "reconcile_effects_and_qualify_route";
+    dispatch: "hold";
+  };
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
   fallback?: { from: BrainKind; code: string; message: string; resetsAt?: string };
   /** Fast was refused on a turn of this run, which went on at standard speed (`meta.speedFallback`). */
@@ -1108,6 +1130,7 @@ async function executeRunInner(
         code: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'code'`,
         people: sql<boolean | null>`(${agentRuns.transcript}->>'roomPeople')::boolean`,
         spilled: sql<boolean>`${agentRuns.transcript} ? 'spill'`,
+        continuityHold: sql<string | null>`${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch'`,
         source: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'source'`,
         cut: sql<string | null>`${agentRuns.transcript}->'interruptedTurn'->>'cause'`,
         orgId: agentRuns.orgId,
@@ -1126,7 +1149,7 @@ async function executeRunInner(
       })
       .from(agentRuns)
       .where(eq(agentRuns.id, runId));
-    if (row?.status !== "waiting_input" || row.waitId !== options.wait) return;
+    if (row?.status !== "waiting_input" || row.waitId !== options.wait || row.continuityHold === "hold") return;
     // Only the head of its key's line tries the provider again; the others look later, without claiming. A wake for
     // another wait (its budget, once back from the park) isn't this line's to hold.
     if (row.keyLine && row.outageWait === options.wait) {
@@ -3722,6 +3745,8 @@ async function executeRunInner(
     soon?: boolean;
     /** Long work paused near a limit (ADR 0118): on what, how far along, and the plan's window. */
     pause?: { source: "plan" | "budget"; used: number; window?: string };
+    /** Positive evidence of an uncertain tool outcome in the caught turn; absent evidence is not proof of safety. */
+    effectUnknown?: boolean;
     /** One model's refusal, not the account's (`refusalScope`). */
     scope?: ModelScope;
   }) => {
@@ -3781,12 +3806,15 @@ async function executeRunInner(
     else delete wait.resetsAt;
     t.usageWait = wait;
     const cut = t.interruptedTurn?.cause === "plan_limit";
+    // This first bounded path holds only foreground quota cuts after work; background and other waits retain their
+    // existing behavior pending their own supervisor integration. It does not prove native effects are fenced.
+    const checkpointHold = cut && !run.background && !u.pause && u.effectUnknown === true;
     const name = planName(plan.kind, plan.account?.provider);
     // A routine's run waits quietly (Rotinas says so); any other says it once per wait.
     const firstPark = t.brainNotice !== u.code;
-    const say = !(run.background || viaRoutine !== null || u.soon) && firstPark;
+    const say = !(run.background || viaRoutine !== null || u.soon) && (firstPark || checkpointHold);
     const waitId = Bun.randomUUIDv7();
-    let joined = null as Message | null;
+    const joined: Message[] = [];
     const note = say
       ? await db.transaction(async (tx) => {
           if (u.pause) {
@@ -3796,57 +3824,214 @@ async function executeRunInner(
             return card;
           }
           const forUserId = await personOfMessage(tx, run.orgId, run.triggerMessageId).catch(() => null);
+          if (checkpointHold) {
+            const { messages, agentRuns } = schema;
+            const scope = and(
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+              sql`${messages.meta}->'usageWait'->'canceled' is null`,
+              sql`(${messages.meta}->'usageWait'->>'runId' = ${run.id} or coalesce(${messages.meta}->'usageWait'->'runIds', '[]'::jsonb) ? ${run.id})`,
+            );
+            // Join uses per-thread advisory locks. Take all known thread locks in stable order before row locks.
+            const observed = await tx.select({ threadId: messages.threadId }).from(messages).where(scope);
+            const threads = [...new Set([replyThreadId ?? "", ...observed.map((m) => m.threadId ?? "")])].sort();
+            for (const thread of threads) {
+              await tx.execute(
+                sql`select pg_advisory_xact_lock(hashtext(${`usage-note:${run.agentId}:${run.channelId}:${thread}`}))`,
+              );
+            }
+            const prior = await tx.select().from(messages).where(scope).orderBy(desc(messages.createdAt)).for("update");
+            if (prior.some((m) => !threads.includes(m.threadId ?? "")))
+              throw new Error("usage note thread changed while splitting");
+            const ids = [
+              ...new Set(
+                prior.flatMap((m) => {
+                  const wait = m.meta.usageWait as { runIds?: unknown } | undefined;
+                  return Array.isArray(wait?.runIds)
+                    ? wait.runIds.filter(
+                        (id): id is string =>
+                          typeof id === "string" &&
+                          id !== run.id &&
+                          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+                      )
+                    : [];
+                }),
+              ),
+            ];
+            // Lock the same-org, same-channel, same-agent waiting rows while choosing a holder. Terminal or foreign
+            // IDs cannot receive the note. A different requester cannot receive this person's cancellation control.
+            const candidates = ids.length
+              ? await tx
+                  .select()
+                  .from(agentRuns)
+                  .where(
+                    and(
+                      inArray(agentRuns.id, ids),
+                      eq(agentRuns.orgId, run.orgId),
+                      eq(agentRuns.channelId, run.channelId),
+                      eq(agentRuns.agentId, run.agentId),
+                      eq(agentRuns.status, "waiting_input"),
+                    ),
+                  )
+                  .orderBy(agentRuns.id)
+                  .for("update")
+              : [];
+            const people = new Map<string, string | null>();
+            for (const candidate of candidates)
+              people.set(candidate.id, await personOfMessage(tx, run.orgId, candidate.triggerMessageId));
+            // null also means broken, routine or unknown authority. Accept only independently verified direct
+            // agent messages from the same author and conversation; other null roots remain unresolved.
+            const originIds = [...new Set([run.triggerMessageId, ...candidates.map((r) => r.triggerMessageId)])];
+            const origins = await tx
+              .select()
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.orgId, run.orgId),
+                  eq(messages.channelId, run.channelId),
+                  inArray(messages.id, originIds),
+                ),
+              )
+              .for("share");
+            const directOrigin = (id: string, threadId: string | null) => {
+              const origin = origins.find((m) => m.id === id && m.threadId === threadId);
+              return origin?.authorType === "agent" &&
+                origin.authorAgentId &&
+                !origin.agentRunId &&
+                origin.deletedAt === null &&
+                Object.keys(origin.meta).length === 0
+                ? origin.authorAgentId
+                : null;
+            };
+            let heldNote: Message | null = null;
+            for (const previous of prior) {
+              const wait = previous.meta.usageWait as
+                | { runId?: unknown; runIds?: unknown; forUserId?: unknown }
+                | undefined;
+              const where = and(
+                eq(messages.id, previous.id),
+                eq(messages.orgId, run.orgId),
+                eq(messages.channelId, run.channelId),
+                sql`${messages.createdAt} >= ${previous.createdAt.toISOString()}::timestamptz and ${messages.createdAt} < ${new Date(previous.createdAt.getTime() + 1).toISOString()}::timestamptz`,
+              );
+              if (wait?.runId !== run.id) {
+                const [detached] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait,runIds}', (${messages.meta}->'usageWait'->'runIds') - ${run.id}::text)`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!detached) throw new Error("usage note membership changed while splitting");
+                joined.push(detached);
+                continue;
+              }
+              const listed = Array.isArray(wait.runIds) ? wait.runIds : [];
+              const live = candidates
+                .filter(
+                  (candidate) =>
+                    listed.includes(candidate.id) &&
+                    ((typeof wait.forUserId === "string" && people.get(candidate.id) === wait.forUserId) ||
+                      (wait.forUserId === null &&
+                        people.get(candidate.id) === null &&
+                        directOrigin(run.triggerMessageId, previous.threadId) !== null &&
+                        directOrigin(run.triggerMessageId, previous.threadId) ===
+                          directOrigin(candidate.triggerMessageId, previous.threadId))),
+                )
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+              const [holder, ...rest] = live;
+              if (holder) {
+                const [moved] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait}', ((${messages.meta}->'usageWait') - 'ended') || jsonb_build_object('runId', ${holder.id}::text, 'runIds', ${JSON.stringify(rest.map((r) => r.id))}::jsonb))`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!moved) throw new Error("usage note ownership changed while splitting");
+                joined.push(moved);
+              } else if (!heldNote && previous.threadId === replyThreadId && previous.deletedAt === null) {
+                const [updated] = await tx
+                  .update(messages)
+                  .set({
+                    body: `This run stopped at the ${name} plan's limit after work began. Its outcome needs reconciliation and a qualified route before resuming.`,
+                    meta: sql`jsonb_set((${messages.meta} - 'bodyCode' - 'bodyParams') #- '{usageWait,ended}', '{usageWait,runIds}', '[]'::jsonb)`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!updated) throw new Error("usage note changed while updating hold");
+                heldNote = updated;
+              } else {
+                const [ended] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait}', (${messages.meta}->'usageWait') || jsonb_build_object('ended', true, 'runIds', '[]'::jsonb))`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!ended) throw new Error("usage note changed while closing old wait");
+                joined.push(ended);
+              }
+            }
+            if (heldNote) return heldNote;
+          }
           // Its conversation already heard it waits on this limit: one note speaks for every turn waiting there.
           const join = cut ? null : await joinUsageNote(tx, run, replyThreadId, forUserId, u.code, resetsAt, now);
           if (join) {
-            joined = join.note;
+            if (join.note) joined.push(join.note);
             return null;
           }
           const ownModel = scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
           const modelWords: Record<string, string> = ownModel ? { model: ownModel.label, agent: agent.name } : {};
-          const [code, text] = budget
+          const [code, text] = checkpointHold
             ? [
-                "budget_wait",
-                "My budget for the month ran out. I'll go on when it renews, or sooner if an admin raises it.",
+                "plan_limit_cut_unknown",
+                `I stopped at the ${name} plan's limit after work began. The outcome needs reconciliation and a qualified route before resuming.`,
               ]
-            : ownModel && scope === "region"
+            : budget
               ? [
-                  "plan_model_region_wait",
-                  `This model (${ownModel.label}) needs the Global region on in OpenCode (Settings › Privacy).`,
+                  "budget_wait",
+                  "My budget for the month ran out. I'll go on when it renews, or sooner if an admin raises it.",
                 ]
-              : ownModel && scope === "inactive"
+              : ownModel && scope === "region"
                 ? [
-                    "plan_inactive_wait",
-                    "OpenCode Go isn't active on this key's OpenCode account, so none of its models answer. Check the Go subscription in OpenCode, or connect a key from the account that has it.",
+                    "plan_model_region_wait",
+                    `This model (${ownModel.label}) needs the Global region on in OpenCode (Settings › Privacy).`,
                   ]
-                : ownModel && scope === "off"
+                : ownModel && scope === "inactive"
                   ? [
-                      "plan_model_off_wait",
-                      `OpenCode refused ${ownModel.label} with this key: the model or the account is turned off there. Turn it on in OpenCode or change ${agent.name}'s model.`,
+                      "plan_inactive_wait",
+                      "OpenCode Go isn't active on this key's OpenCode account, so none of its models answer. Check the Go subscription in OpenCode, or connect a key from the account that has it.",
                     ]
-                  : ownModel
+                  : ownModel && scope === "off"
                     ? [
-                        known ? "plan_model_limit_wait" : "plan_model_limit_wait_unknown",
-                        `${ownModel.label} hit its own limit on ${name}. The plan's other models keep working: change ${agent.name}'s model or wait ${known ? "until it resets" : "for it to reset"}.`,
+                        "plan_model_off_wait",
+                        `OpenCode refused ${ownModel.label} with this key: the model or the account is turned off there. Turn it on in OpenCode or change ${agent.name}'s model.`,
                       ]
-                    : cut
+                    : ownModel
                       ? [
-                          known ? "plan_limit_cut" : "plan_limit_cut_unknown",
-                          `I stopped at the ${name} plan's limit. I'll pick up where I left off ${known ? "when" : "as soon as"} it resets.`,
+                          known ? "plan_model_limit_wait" : "plan_model_limit_wait_unknown",
+                          `${ownModel.label} hit its own limit on ${name}. The plan's other models keep working: change ${agent.name}'s model or wait ${known ? "until it resets" : "for it to reset"}.`,
                         ]
-                      : [
-                          known ? "plan_limit_wait" : "plan_limit_wait_unknown",
-                          known
-                            ? `The ${name} plan hit its limit. I'll answer when it resets. If it's freed sooner on ${name}, I'll notice and answer right away.`
-                            : `The ${name} plan hit its limit. I'll answer as soon as it resets.`,
-                        ];
+                      : cut
+                        ? [
+                            known ? "plan_limit_cut" : "plan_limit_cut_unknown",
+                            `I stopped at the ${name} plan's limit. I'll pick up where I left off ${known ? "when" : "as soon as"} it resets.`,
+                          ]
+                        : [
+                            known ? "plan_limit_wait" : "plan_limit_wait_unknown",
+                            known
+                              ? `The ${name} plan hit its limit. I'll answer when it resets. If it's freed sooner on ${name}, I'll notice and answer right away.`
+                              : `The ${name} plan hit its limit. I'll answer as soon as it resets.`,
+                          ];
           const m = await post(
             tx,
             replyThreadId,
             text,
             // `usageWait.resetsAt`: the apps say when in the reader's zone; `runId`: "Don't run it" cancels it.
             {
-              ...bodyCode(code, { plan: name, ...modelWords }),
+              // The old localized body promises automatic resumption; keep the explicit hold text instead.
+              ...(checkpointHold ? {} : bodyCode(code, { plan: name, ...modelWords })),
               usageWait: { code: u.code, runId: run.id, forUserId, ...(resetsAt ? { resetsAt } : {}) },
             },
             undefined,
@@ -3894,39 +4079,104 @@ async function executeRunInner(
           }
         : {}),
     };
-    await addRunStep(db, run, "error", {
-      reason: "usage_wait",
-      code: u.code,
-      message: u.message,
-      ...(u.pause ? { pause: u.pause } : {}),
-      until: runAt.toISOString(),
-      ...(resetsAt ? { resetsAt } : {}),
-    });
-    // Queued before the wait is stored: a crash in between leaves at worst a job that finds no such wait.
-    await enqueue(db, {
-      orgId: run.orgId,
-      kind: "agent_run.execute",
-      payload: { runId: run.id, wait: waitId },
-      dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
-      runAt,
-      maxAttempts: 4,
-    });
-    // The line pauses together: whoever is behind it waits for the same reset, in its place, 60 s apart (with an
-    // unknown reset, on the safety timer until the head gets through).
-    if (!u.soon) {
-      const base = known ? at : now + LINE_SAFETY_MS;
-      await retimeLine(db, line.behind, (i) => new Date(base + RESUME_AFTER_MS + RESUME_GAP_MS * (line.place + 1 + i)));
+    // A held run is excluded from the line and must not postpone other runs' existing timers.
+    if (checkpointHold) {
+      // Event, source-only checkpoint, scheduled wake and wait state commit together. No model is needed to build it.
+      await db.transaction(async (tx) => {
+        await addRunStep(tx, run, "error", {
+          reason: "usage_wait",
+          code: u.code,
+          message: u.message,
+          until: runAt.toISOString(),
+          ...(resetsAt ? { resetsAt } : {}),
+        });
+        const [last] = await tx
+          .select({ seq: sql<number>`coalesce(max(${agentRunSteps.seq}), 0)::int` })
+          .from(agentRunSteps)
+          .where(eq(agentRunSteps.runId, run.id));
+        // A run can be routed from another conversation; never export its message reference across audiences.
+        const [goal] = await tx
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.id, run.triggerMessageId),
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+            ),
+          );
+        t.continuityCheckpoint = {
+          schema: "quota-cut-checkpoint/1",
+          orgId: run.orgId,
+          runId: run.id,
+          channelId: run.channelId,
+          agentId: run.agentId,
+          goal: goal ? { state: "reference", messageId: goal.id } : { state: "unknown" },
+          task: "unknown",
+          executionOwner: "unknown",
+          constraints: "unknown",
+          completed: "unknown",
+          pending: "unknown",
+          decisions: "unknown",
+          tests: "unknown",
+          fileVersions: "unknown",
+          dependencies: "unknown",
+          effects: "unknown",
+          source: { throughSeq: last?.seq ?? 0, capturedAt: new Date(now).toISOString(), complete: false },
+          nextSafeAction: "reconcile_effects_and_qualify_route",
+          dispatch: "hold",
+        };
+        await addRunStep(tx, run, "context", { continuityCheckpoint: t.continuityCheckpoint });
+        await enqueue(tx, {
+          orgId: run.orgId,
+          kind: "agent_run.execute",
+          payload: { runId: run.id, wait: waitId },
+          dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+          runAt,
+          maxAttempts: 4,
+        });
+        const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+          transcript: storedTranscript(t),
+          waitingMachineId: null,
+        });
+        if (!moved) throw new PermanentJobError("run changed state while executing");
+      });
+    } else {
+      await addRunStep(db, run, "error", {
+        reason: "usage_wait",
+        code: u.code,
+        message: u.message,
+        ...(u.pause ? { pause: u.pause } : {}),
+        until: runAt.toISOString(),
+        ...(resetsAt ? { resetsAt } : {}),
+      });
+      await enqueue(db, {
+        orgId: run.orgId,
+        kind: "agent_run.execute",
+        payload: { runId: run.id, wait: waitId },
+        dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+        runAt,
+        maxAttempts: 4,
+      });
+      if (!u.soon) {
+        const base = known ? at : now + LINE_SAFETY_MS;
+        await retimeLine(
+          db,
+          line.behind,
+          (i) => new Date(base + RESUME_AFTER_MS + RESUME_GAP_MS * (line.place + 1 + i)),
+        );
+      }
+      const moved = await transitionRun(db, run.id, "running", "waiting_input", {
+        transcript: storedTranscript(t),
+        waitingMachineId: null,
+      });
+      if (!moved) throw new PermanentJobError("run changed state while executing");
     }
-    const moved = await transitionRun(db, run.id, "running", "waiting_input", {
-      transcript: storedTranscript(t),
-      waitingMachineId: null,
-    });
-    if (!moved) throw new PermanentJobError("run changed state while executing");
     if (note) {
       const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
       if (view) await publishMessageCreated(deps.pubsub, view);
     }
-    if (joined) await publishMessageCreated(deps.pubsub, messageView(joined));
+    for (const shared of joined) await publishMessageCreated(deps.pubsub, messageView(shared));
     // A routine's run says nothing in the conversation: its people hear it once per outage instead, and a widget's
     // refresh says on its widget what it waits for.
     if (firstPark && !budget) await routineRunWaitingForPlan({ db, pubsub: deps.pubsub }, run).catch(() => {});
@@ -4392,6 +4642,9 @@ async function executeRunInner(
       const seenStarts = new Set<string>();
       /** Its own calls whose step line went out as they started (`tool_started`): not again as they end. */
       const stepTold = new Set<string>();
+      const startedNames = new Map<string, string>();
+      const finishedIds = new Set<string>();
+      let conflictingNativeStarts = false;
       /** A call of its own (not ours through the bridge, which says its step as it starts) is the step line now. */
       const ownStep = (call: { id: string; name: string }) => {
         if (run.background || turnTools.some((t) => t.name === call.name)) return;
@@ -4515,6 +4768,8 @@ async function executeRunInner(
               if (seenStarts.has(call.id)) conflictingStarts.add(call.id);
               seenStarts.add(call.id);
               startedNow.set(call.id, { ...call, input: undefined });
+              if (startedNames.has(call.id) || finishedIds.has(call.id)) conflictingNativeStarts = true;
+              startedNames.set(call.id, call.name);
               stepTold.add(call.id);
               ownStep(call);
             },
@@ -4528,6 +4783,9 @@ async function executeRunInner(
                 !conflictingStarts.has(call.id)
               )
                 startedNow.delete(call.id);
+              if (finishedIds.has(call.id) || (startedNames.has(call.id) && startedNames.get(call.id) !== call.name))
+                conflictingNativeStarts = true;
+              finishedIds.add(call.id);
               executedNow.push(call);
               // A brain that tells its calls only once they ended (Codex, an older runner) says the step now.
               if (!stepTold.delete(call.id)) ownStep(call);
@@ -4693,7 +4951,12 @@ async function executeRunInner(
           const executed = await executedSince(db, run.id, turnStepSeq, [...executedNow, ...startedNow.values()]);
           // A recorded gateway intent without a successful result may have produced an effect even if it returned
           // an error. Never resume the interrupted turn or fall back until the effect has been reconciled.
-          if (executed.some((call) => call.uncertain)) {
+          const machineId = turnPlan.session?.machineId;
+          // A foreground quota cut with uncertain effects is durably held by waitForUsage below. Other uncertain
+          // interruptions retain the existing failure path until their own durable recovery is implemented.
+          const quotaHold =
+            machineId && !run.background && error instanceof BrainFailure && error.code === "plan_limit";
+          if (executed.some((call) => call.uncertain) && !quotaHold) {
             const failure =
               error instanceof BrainFailure
                 ? { code: error.code, message: error.message }
@@ -4707,7 +4970,6 @@ async function executeRunInner(
             );
           }
           // The computer dropped mid-turn: the turn resumes there when it is back (its session keeps what it did).
-          const machineId = turnPlan.session?.machineId;
           if (
             machineId &&
             error instanceof BrainFailure &&
@@ -4733,11 +4995,19 @@ async function executeRunInner(
           // The plan refused the rest of a turn that worked (the runner says so; an older one is taken as having
           // worked): never ended there nor handed to the API, which can't see what it did. It waits for the plan and
           // the same session finishes the turn.
+          const uncertainPlanCut =
+            error instanceof BrainFailure &&
+            error.code === "plan_limit" &&
+            (executed.some((call) => call.uncertain) ||
+              conflictingNativeStarts ||
+              stepTold.size > 0 ||
+              executedNow.some((call) => !call.result || call.result.isError === true) ||
+              (await uncertainGatewayCallsSince(db, run.id, turnStepSeq, executedNow).catch(() => true)));
           if (
             machineId &&
             error instanceof BrainFailure &&
             error.code === "plan_limit" &&
-            (error.worked !== false || executed.length > 0)
+            (error.worked !== false || executed.length > 0 || uncertainPlanCut)
           ) {
             const prev = transcript.interruptedTurn;
             transcript.interruptedTurn = {
@@ -4746,7 +5016,12 @@ async function executeRunInner(
               drops: prev?.drops ?? 0,
               cause: "plan_limit",
             };
-            return waitForUsage({ code: "plan_limit", message: error.message, ...(await refusalOf(machineId, error)) });
+            return waitForUsage({
+              code: "plan_limit",
+              message: error.message,
+              ...(uncertainPlanCut ? { effectUnknown: true } : {}),
+              ...(await refusalOf(machineId, error)),
+            });
           }
           // The right hand's CLI killed at a tool of its own (ADR 0137 §4): nothing of that turn is posted, only its
           // DM's line (`brainUnavailable`), whatever it did through the bridge before.
@@ -6112,6 +6387,52 @@ async function lastStepSeq(db: Executor, runId: string): Promise<number> {
     .from(schema.agentRunSteps)
     .where(eq(schema.agentRunSteps.runId, runId));
   return Number(row?.seq ?? 0);
+}
+
+/** Positive evidence only: unmatched, duplicate, malformed or errored gateway records are not safe to replay. */
+async function uncertainGatewayCallsSince(
+  db: Executor,
+  runId: string,
+  fromSeq: number,
+  reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
+): Promise<boolean> {
+  const rows = await db
+    .select({ kind: agentRunSteps.kind, data: agentRunSteps.data })
+    .from(agentRunSteps)
+    .where(
+      and(
+        eq(agentRunSteps.runId, runId),
+        inArray(agentRunSteps.kind, ["tool_call", "tool_result"]),
+        sql`${agentRunSteps.seq} > ${fromSeq}`,
+      ),
+    )
+    .orderBy(agentRunSteps.seq)
+    .limit(513);
+  // A partial record can never prove absence of uncertainty.
+  if (rows.length > 512 || reported.length > 512) return true;
+  const calls = new Map<string, { name: string; input: unknown; result: boolean }>();
+  for (const row of rows) {
+    const id = row.data.toolUseId;
+    const name = row.data.name;
+    if (typeof id !== "string" || !id || typeof name !== "string" || !name) return true;
+    if (row.kind === "tool_call") {
+      if (calls.has(id)) return true;
+      calls.set(id, { name, input: row.data.input, result: false });
+    } else {
+      const call = calls.get(id);
+      if (!call || call.name !== name || call.result || row.data.isError !== false) return true;
+      call.result = true;
+    }
+  }
+  const seen = new Set<string>();
+  for (const call of reported) {
+    if (!call.id || !call.name || seen.has(call.id) || !call.result || call.result.isError === true) return true;
+    seen.add(call.id);
+    const durable = calls.get(call.id);
+    if (durable && (durable.name !== call.name || JSON.stringify(durable.input) !== JSON.stringify(call.input)))
+      return true;
+  }
+  return [...calls.values()].some((call) => !call.result);
 }
 
 /**

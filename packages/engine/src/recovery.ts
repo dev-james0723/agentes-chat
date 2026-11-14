@@ -151,6 +151,7 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "waiting_input"),
+        sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
         inArray(sql<string>`${agentRuns.transcript}->'waitingForBrain'->>'code'`, [...USAGE_WAIT_CODES]),
         sql`${agentRuns.transcript}->'waitingForBrain'->>'waitId' is not null`,
         sql`(${agentRuns.transcript}->'waitingForBrain'->>'until')::timestamptz < ${cutoff.toISOString()}::timestamptz`,
