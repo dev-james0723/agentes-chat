@@ -23,7 +23,7 @@ export const sharedBudgetPools = pgTable(
     approvalUntil: timestamp({ withTimezone: true }).notNull(),
     approvedBy: text().notNull(),
     approvalRef: text().notNull(),
-    /** Canonical provider-issued identity, independently qualified by the trusted transport. */
+    /** Canonical billing namespace (not execution provider), account and pool, attested by trusted transport. */
     upstreamProvider: text(),
     upstreamAccount: text(),
     upstreamPool: text(),

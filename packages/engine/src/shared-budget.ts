@@ -7,11 +7,12 @@ import { canonicalJson } from "./tools/json-schema";
 /** Only trusted server code may provide a transport that actually enforces its per-call maximum upstream.
  * No production transport is registered by this candidate. Estimates or catalog prices are not a hard cap. */
 export interface SharedBudgetTransport {
-  /** Trusted adapter resolves a previously verified canonical account/pool for this exact credential and endpoint.
+  /** Trusted adapter resolves a previously verified canonical billing namespace/account/pool for this credential.
+   * Namespace identifies the upstream billing authority, independently of execution provider or adapter.
    * No production adapter exists in this candidate. Returning null or an unknown identity denies dispatch. */
   identify(
     binding: Readonly<{ provider: string; credentialId: string; credentialVersion: string }>,
-  ): Promise<{ account: string; pool: string } | null>;
+  ): Promise<{ namespace: string; account: string; pool: string } | null>;
   /** Trusted adapter validates exact request context, capabilities and provider-specific constraints. */
   qualifies(request: Readonly<ModelRequest>): boolean;
   bound(request: ModelRequest): number | null;
@@ -148,14 +149,18 @@ export async function withSharedBudget(
   );
   if (
     !identity ||
+    !identity.namespace?.trim() ||
     !identity.account?.trim() ||
     !identity.pool?.trim() ||
+    identity.namespace !== identity.namespace.trim() ||
     identity.account !== identity.account.trim() ||
     identity.pool !== identity.pool.trim() ||
+    identity.namespace.length > 256 ||
     identity.account.length > 256 ||
     identity.pool.length > 256
   )
     throw new SharedBudgetAdmissionError("verified upstream identity unavailable");
+  const identityNamespace = identity.namespace;
   const identityAccount = identity.account;
   const identityPool = identity.pool;
   // This candidate has no qualified image/PDF, opaque-history or structured-output routes.
@@ -248,7 +253,7 @@ export async function withSharedBudget(
       .for("update");
     if (
       !pool ||
-      pool.upstreamProvider !== input.providerId ||
+      pool.upstreamProvider !== identityNamespace ||
       pool.upstreamAccount !== identityAccount ||
       pool.upstreamPool !== identityPool ||
       pool.paused ||

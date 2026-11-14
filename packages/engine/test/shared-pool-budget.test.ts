@@ -72,7 +72,7 @@ async function enablePool(ceilingNanoUsd: number) {
       approvalUntil: new Date(at + 3600_000),
       approvedBy: "fixture-owner",
       approvalRef: "fixture-only",
-      upstreamProvider: "anthropic",
+      upstreamProvider: "billing:synthetic",
       upstreamAccount: "acct:fixture",
       upstreamPool: "billing:fixture",
       ceilingNanoUsd,
@@ -155,6 +155,36 @@ const summaryCall = (gateway: ReturnType<typeof createModelGateway>) =>
     maxTokens: 10,
   });
 
+for (const kind of ["stream", "complete"] as const) {
+  test(`required ${kind} never makes an unbudgeted countTokens call after partial failure`, async () => {
+    f = await setup({ reply: () => ({ chunks: ["abc"], failMidStream: { inputTokens: null } }) });
+    await enablePool(10);
+    const gateway = createModelGateway({
+      db: f.db,
+      keyWrappers: [f.keyWrapper],
+      platformCredentials: noPlatformCredentials,
+      providers: { anthropic: f.provider },
+      sharedBudgetRequired: true,
+      sharedBudgetTransports: {
+        anthropic: {
+          identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
+          qualifies: () => true,
+          bound: () => 10,
+          stream: (provider, request, opts) => provider.stream(request, opts),
+        },
+      },
+    });
+    await expect(kind === "stream" ? agentCall(gateway) : summaryCall(gateway)).rejects.toThrow();
+    expect(f.provider.calls).toHaveLength(1);
+    expect(f.provider.countCalls).toHaveLength(0);
+    const records = await f.db.select().from(schema.usageRecords);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.partial).toBe(true);
+    expect(records[0]?.inputTokens).toBeGreaterThan(0);
+    expect(await f.db.select().from(schema.sharedBudgetReservations)).toMatchObject([{ state: "held" }]);
+  });
+}
+
 test("agent and summary calls atomically share one pool and settle observed cost", async () => {
   f = await setup();
   const pool = await enablePool(10);
@@ -168,7 +198,7 @@ test("agent and summary calls atomically share one pool and settle observed cost
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (provider, req, opts) => {
@@ -204,7 +234,7 @@ test("unknown or failed cost remains durably reserved after gateway recreation",
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async () => {
@@ -233,7 +263,7 @@ test("reported cost beyond the promised bound pauses the pool", async () => {
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (provider, req, opts) => ({ ...(await provider.stream(req, opts)), costNanoUsd: 11 }),
@@ -265,7 +295,7 @@ test("missing upstream hard cap or classification cannot be mistaken for free us
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => p.stream(r, o),
@@ -300,7 +330,7 @@ test("unverified approval reference cannot authorize spending", async () => {
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => p.stream(r, o),
@@ -322,7 +352,7 @@ test("changed route scope, pending decision or expired decision deny before disp
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => p.stream(r, o),
@@ -361,7 +391,7 @@ test("unqualified returned model is rejected and its cost remains held", async (
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), model: "different-model", costNanoUsd: 1 }),
@@ -433,7 +463,7 @@ test("approval identity, action hash and pool ceiling cannot be changed or reuse
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => p.stream(r, o),
@@ -538,7 +568,7 @@ test("rotating a credential in place invalidates its previously approved route",
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
@@ -561,13 +591,13 @@ test("a duplicate canonical upstream pool cannot acquire a second budget ceiling
     approvedBy: pool.approvedBy,
     approvalRef: pool.approvalRef,
     ceilingNanoUsd: 10,
-    upstreamProvider: "anthropic",
+    upstreamProvider: "billing:synthetic",
     upstreamAccount: "acct:fixture",
     upstreamPool: "billing:fixture",
   };
   await f.db
     .update(schema.sharedBudgetPools)
-    .set({ upstreamProvider: "anthropic", upstreamAccount: "acct:fixture", upstreamPool: "billing:fixture" } as never)
+    .set({ upstreamProvider: "billing:synthetic", upstreamAccount: "acct:fixture", upstreamPool: "billing:fixture" } as never)
     .where(eq(schema.sharedBudgetPools.id, pool.id));
   await expect(
     f.db
@@ -596,7 +626,7 @@ test("credential rotated after resolution is rejected under its database row loc
               apiKey: "sk-ant-replacement-key",
             });
           }
-          return { account: "acct:fixture", pool: "billing:fixture" };
+          return { namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" };
         },
         qualifies: () => true,
         bound: () => 10,
@@ -620,7 +650,7 @@ test("mismatched upstream identity rejects before provider dispatch", async () =
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "different-account", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "different-account", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
@@ -643,7 +673,7 @@ test("unqualified model output is not streamed to the consumer", async () => {
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => {
@@ -678,7 +708,7 @@ test("images, opaque history and structured output remain unqualified", async ()
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
@@ -782,7 +812,7 @@ test("two distinct credentials for the same verified upstream pool share one ato
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => {
@@ -813,6 +843,114 @@ test("two distinct credentials for the same verified upstream pool share one ato
   expect(after).toMatchObject({ spentNanoUsd: 4, heldNanoUsd: 0 });
 });
 
+test("two execution providers mapped to one verified billing namespace share one atomic ceiling", async () => {
+  f = await setup();
+  const pool = await enablePool(10);
+  const credential2 = await createCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, {
+    provider: "gemini",
+    label: "second",
+    apiKey: "AQ.synthetic-second-key",
+  });
+  const agent2 = await createAgent(
+    f.db,
+    f.owner.id,
+    f.org.id,
+    { name: "Second", handle: "second", role: "Developer", instructions: "Test", credentialId: credential2.id },
+    { model: "gemini-4-argon" },
+  );
+  const [row2] = await f.db
+    .select()
+    .from(schema.providerCredentials)
+    .where(eq(schema.providerCredentials.id, credential2.id));
+  if (!row2) throw new Error("missing credential");
+  const at = Date.now();
+  await f.db.insert(schema.sharedBudgetRoutes).values({
+    orgId: f.org.id,
+    poolId: pool.id,
+    provider: "gemini",
+    credentialId: credential2.id,
+    credentialVersion: credentialVersion(row2),
+    model: "gemini-4-argon",
+    subject: `agent:${agent2.id}`,
+    dataClass: "fixture",
+    supportsTools: false,
+    maxPromptBytes: 100000,
+    evidenceRef: "synthetic-test-only",
+    verifiedAt: new Date(at - 1000),
+    validUntil: new Date(at + 3600000),
+    enabled: true,
+  });
+  const routes = await f.db
+    .select()
+    .from(schema.sharedBudgetRoutes)
+    .where(eq(schema.sharedBudgetRoutes.poolId, pool.id));
+  const params = sharedBudgetApprovalParams(pool, routes);
+  const [approval] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.orgId, f.org.id));
+  if (!approval) throw new Error("missing fixture approval");
+  await f.db
+    .update(schema.approvals)
+    .set({ params, actionHash: sharedBudgetApprovalHash(params) })
+    .where(eq(schema.approvals.id, approval.id));
+  const gate = Promise.withResolvers<void>();
+  let started = 0;
+  const gateway = createModelGateway({
+    db: f.db,
+    keyWrappers: [f.keyWrapper],
+    platformCredentials: noPlatformCredentials,
+    providers: { anthropic: f.provider, gemini: f.provider },
+    sharedBudgetRequired: true,
+    sharedBudgetTransports: {
+      anthropic: {
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => {
+          started++;
+          await gate.promise;
+          return { ...(await p.stream(r, o)), costNanoUsd: 0 };
+        },
+      },
+      gemini: {
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
+        qualifies: () => true,
+        bound: () => 10,
+        stream: async (p, r, o) => {
+          started++;
+          await gate.promise;
+          return { ...(await p.stream(r, o)), costNanoUsd: 0 };
+        },
+      },
+    },
+  });
+  const other = gateway.stream({
+    orgId: f.org.id,
+    agentId: agent2.id,
+    dataClass: "fixture",
+    system: "sys",
+    messages: [{ role: "user", content: "hello" }],
+    maxTokens: 10,
+    onDelta: () => {},
+  });
+  const pending = Promise.allSettled([agentCall(gateway), other]);
+  await Bun.sleep(120);
+  gate.resolve();
+  const results = await pending;
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+  const rejected = results.find((r) => r.status === "rejected");
+  expect(rejected && rejected.status === "rejected" ? String(rejected.reason) : "").toContain("shared budget");
+  expect(started).toBe(1);
+  // The loser must be independently admissible when capacity is free, proving that rejection was not a bad route.
+  await (results[0]?.status === "rejected" ? agentCall(gateway) : gateway.stream({
+    orgId: f.org.id, agentId: agent2.id, dataClass: "fixture", system: "sys",
+    messages: [{ role: "user", content: "hello" }], maxTokens: 10, onDelta: () => {},
+  }));
+  expect(started).toBe(2);
+  const [after] = await f.db.select().from(schema.sharedBudgetPools).where(eq(schema.sharedBudgetPools.id, pool.id));
+  expect(after).toMatchObject({ spentNanoUsd: 0, heldNanoUsd: 0 });
+});
+
+
 test("admission snapshots the exact request and identity lookup receives no key or callback", async () => {
   f = await setup();
   await enablePool(10);
@@ -830,7 +968,7 @@ test("admission snapshots the exact request and identity lookup receives no key 
         identify: async (o) => {
           messages[0]!.content = "mutated after resolution";
           expect(Object.keys(o).sort()).toEqual(["credentialId", "credentialVersion", "provider"]);
-          return { account: "acct:fixture", pool: "billing:fixture" };
+          return { namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" };
         },
         qualifies: (r) => r.messages[0]?.content === "qualified original",
         bound: () => 10,
@@ -865,7 +1003,7 @@ test("qualification cannot mutate the request model after snapshot", async () =>
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ account: "acct:fixture", pool: "billing:fixture" }),
+        identify: async () => ({ namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" }),
         qualifies: (r) => {
           (r as { model: string }).model = "other-model";
           return true;
@@ -901,7 +1039,7 @@ test("endpoint changed after resolution invalidates the credential before dispat
               })
               .where(eq(schema.providerCredentials.id, f.credential.id));
           }
-          return { account: "acct:fixture", pool: "billing:fixture" };
+          return { namespace: "billing:synthetic", account: "acct:fixture", pool: "billing:fixture" };
         },
         qualifies: () => true,
         bound: () => 10,

@@ -384,10 +384,14 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (!p) return null;
     let inputTokens = p.inputTokens;
     if (inputTokens === null) {
-      try {
-        inputTokens = provider.countTokens ? await provider.countTokens(request, key) : null;
-      } catch {
-        inputTokens = null;
+      // Provider token counters can make network calls with the prompt; required mode has no separately
+      // qualified or budgeted counting route. Keep its existing local estimate and do not dispatch one.
+      if (!sharedBudgetRequired) {
+        try {
+          inputTokens = provider.countTokens ? await provider.countTokens(request, key) : null;
+        } catch {
+          inputTokens = null;
+        }
       }
       inputTokens ??= estimateTokens(promptChars(request));
     }
