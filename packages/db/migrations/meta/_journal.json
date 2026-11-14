@@ -1877,6 +1877,13 @@
       "when": 1794745400007,
       "tag": "0269_bridge_effect_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 270,
+      "version": "7",
+      "when": 1794745400008,
+      "tag": "0270_skill_read_activations",
+      "breakpoints": true
     }
   ]
 }

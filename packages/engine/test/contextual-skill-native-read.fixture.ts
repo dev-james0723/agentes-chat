@@ -109,8 +109,9 @@ export async function nativePublishedReadFixture(
   }
 }
 
-/** TEST ONLY: isolated PGlite DDL. Never called by native runtime; schema owner holds MIG0269. */
+/** Migration 0270 creates `skill_read_activations`; every B2 test first proves the migrated table is there. */
 export async function installNativeSkillReadTestSchema(db: Database) {
-  const { NATIVE_SKILL_READ_ACTIVATIONS_DRAFT_SQL } = await import("../src/contextual-skill-native-read-store");
-  await db.execute(sql.raw(NATIVE_SKILL_READ_ACTIVATIONS_DRAFT_SQL));
+  const r = (await db.execute(sql`select to_regclass('public.skill_read_activations')::text as t`)) as unknown;
+  const rows = (Array.isArray(r) ? r : (r as { rows: { t: string | null }[] }).rows) as { t: string | null }[];
+  if (rows[0]?.t !== "skill_read_activations") throw new Error("Migration 0270 skill_read_activations is missing");
 }

@@ -631,3 +631,38 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("real PostgreSQL concurrency", (
       expect(JSON.stringify(after)).not.toContain(p.body);
     });
 });
+
+test("migration 0270 enforces the one-shot activation constraints", async () => {
+  await installNativeSkillReadTestSchema(f.db);
+  const row = async (over: Record<string, unknown> = {}) => {
+    const v = {
+      id: crypto.randomUUID(),
+      toolUseId: "constraint-probe",
+      usedCount: 0,
+      state: "issued",
+      completedAt: null as Date | null,
+      resultHash: null as string | null,
+      ...over,
+    };
+    await f.db.execute(sql`insert into skill_read_activations
+      (id, org_id, agent_id, run_id, server_step_id, tool_use_id, binding_hash, skill_id, skill_version, content_hash,
+       purpose_hash, source_proof_hash, surface_hash, envelope, issued_at, expires_at, used_count, state, completed_at, result_hash)
+      values (${v.id}::uuid, ${ctx.orgId}::uuid, ${ctx.agentId}::uuid, ${ctx.runId}::uuid, ${crypto.randomUUID()}::uuid,
+       ${v.toolUseId}, 'b', ${skillId}::uuid, 1, 'c', 'p', 's', 'f', '{}'::jsonb, now(), now() + interval '1 minute',
+       ${v.usedCount}, ${v.state}, ${v.completedAt}, ${v.resultHash})`);
+  };
+  await row();
+  await expect(row()).rejects.toThrow();
+  await expect(row({ toolUseId: "used-twice", usedCount: 2 })).rejects.toThrow();
+  await expect(row({ toolUseId: "completed-without-receipt", state: "completed", usedCount: 1 })).rejects.toThrow();
+  await expect(
+    row({ toolUseId: "wrong-result", state: "completed", usedCount: 1, completedAt: new Date(), resultHash: "x" }),
+  ).rejects.toThrow();
+  await row({
+    toolUseId: "valid-completed",
+    state: "completed",
+    usedCount: 1,
+    completedAt: new Date(),
+    resultHash: "c",
+  });
+});

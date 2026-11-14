@@ -1,4 +1,5 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents";
 import { users } from "./auth";
 import { organizations } from "./tenancy";
@@ -167,4 +168,50 @@ export const agentSkills = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.agentId, t.skillId), index().on(t.orgId)],
+);
+
+/**
+ * One-shot activation of a canary-scoped native skill read (WP3-B2, task 148). The engine issues and claims a row
+ * inside one locked transaction (`contextual-skill-native-read-store.ts`), so no `issued` row outlives it: a
+ * completed row is the receipt that exactly one verified body was released. Hashes only; never skill content.
+ */
+export const skillReadActivations = pgTable(
+  "skill_read_activations",
+  {
+    id: uuid().primaryKey(),
+    orgId: uuid().notNull(),
+    agentId: uuid().notNull(),
+    runId: uuid().notNull(),
+    serverStepId: uuid().notNull(),
+    toolUseId: text().notNull(),
+    bindingHash: text().notNull(),
+    skillId: uuid().notNull(),
+    skillVersion: integer().notNull(),
+    contentHash: text().notNull(),
+    purposeHash: text().notNull(),
+    sourceProofHash: text().notNull(),
+    surfaceHash: text().notNull(),
+    envelope: jsonb().notNull(),
+    issuedAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    revokedAt: timestamp({ withTimezone: true }),
+    usedCount: integer().notNull().default(0),
+    state: text().notNull().default("issued"),
+    completedAt: timestamp({ withTimezone: true }),
+    resultHash: text(),
+  },
+  (t) => [
+    unique().on(t.orgId, t.runId, t.toolUseId),
+    check(
+      "skill_read_activations_expiry",
+      sql`${t.expiresAt} > ${t.issuedAt} and ${t.expiresAt} <= ${t.issuedAt} + interval '5 minutes'`,
+    ),
+    check("skill_read_activations_used_count", sql`${t.usedCount} in (0, 1)`),
+    check("skill_read_activations_skill_version", sql`${t.skillVersion} > 0`),
+    check(
+      "skill_read_activations_state",
+      sql`(${t.state} = 'issued' and ${t.usedCount} = 0 and ${t.completedAt} is null and ${t.resultHash} is null)
+        or (${t.state} = 'completed' and ${t.usedCount} = 1 and ${t.completedAt} is not null and ${t.resultHash} = ${t.contentHash})`,
+    ),
+  ],
 );

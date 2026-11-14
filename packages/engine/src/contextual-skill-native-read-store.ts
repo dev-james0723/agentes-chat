@@ -33,21 +33,6 @@ function recordedNativeReadInput(tool: "load_skill" | "read_skill_file", raw: un
   return { name: input.name, ...(tool === "read_skill_file" ? { path: input.path } : {}) };
 }
 const digest = (v: unknown) => sha256(canonicalJson(v));
-/** DRAFT MIG0269 contract. The schema owner must review/port; never installed by this module. */
-export const NATIVE_SKILL_READ_ACTIVATIONS_DRAFT_SQL = `create table skill_read_activations (
- id uuid primary key, org_id uuid not null, agent_id uuid not null, run_id uuid not null,
- server_step_id uuid not null, tool_use_id text not null, binding_hash text not null,
- skill_id uuid not null, skill_version integer not null, content_hash text not null,
- purpose_hash text not null, source_proof_hash text not null, surface_hash text not null,
- envelope jsonb not null, issued_at timestamptz not null, expires_at timestamptz not null,
- revoked_at timestamptz, used_count integer not null default 0, state text not null default 'issued',
- completed_at timestamptz, result_hash text,
- unique(org_id, run_id, tool_use_id),
- check(expires_at > issued_at and expires_at <= issued_at + interval '5 minutes'),
- check(used_count in (0,1)), check(skill_version > 0),
- check((state = 'issued' and used_count = 0 and completed_at is null and result_hash is null)
-    or (state = 'completed' and used_count = 1 and completed_at is not null and result_hash = content_hash))
-)`;
 export interface NativeSkillReadReceipt {
   activationId: string;
   runId: string;
