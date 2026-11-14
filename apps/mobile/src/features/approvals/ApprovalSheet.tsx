@@ -91,7 +91,11 @@ export function ApprovalSheet({
   const [reason, setReason] = useState("");
   const [always, setAlways] = useState(false);
   const a = approval.data
-    ? publicationPreview(approval.data, approval.data, approval.isSuccess && !approval.isFetching && !approval.isError)
+    ? publicationPreview(
+        approval.data,
+        approval.data,
+        approval.isSuccess && approval.fetchStatus === "idle" && !approval.isError,
+      )
     : undefined;
   const nameOf = useConnectorNamer({ connector: a?.connector ?? null });
   const agent = a ? dir.agentById.get(a.agentId) : undefined;
@@ -340,7 +344,7 @@ export function ApprovalSheet({
                 )}
               </View>
             </View>
-          ) : (
+          ) : a.publicationRequired && a.canCancel ? null : (
             <Text variant="small" tone="muted" style={styles.note}>
               {owner ? t("mobile.approval.onlyOwner", { name: owner }) : t("mobile.approval.onlyAdmins")}
             </Text>
@@ -373,6 +377,15 @@ export function ApprovalSheet({
             {aheadEndLine(t, a) ?? t(`mobile.approval.status.${a.status === "pending" ? "expired" : a.status}`)}
           </Text>
         )}
+        {pending && a.publicationRequired && a.canCancel ? (
+          <Button
+            variant="secondary"
+            wide
+            label={t("privatePublication.withdraw")}
+            loading={cancelAhead.pending}
+            onPress={() => cancelAhead.cancel(a.id, onClose)}
+          />
+        ) : null}
       </>
     );
   }

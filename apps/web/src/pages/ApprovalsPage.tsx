@@ -243,7 +243,7 @@ export function ApprovalsPage() {
     ? publicationPreview(
         selectedSummary,
         selectedDetail.data,
-        selectedDetail.isSuccess && !selectedDetail.isFetching && !selectedDetail.isError,
+        selectedDetail.isSuccess && selectedDetail.fetchStatus === "idle" && !selectedDetail.isError,
       )
     : null;
   const cardOf = new Map(approvalCards(shownOpen).flatMap((items) => items.map((a) => [a.id, items] as const)));
@@ -1596,7 +1596,7 @@ export function ApprovalDetailsDialog({ approvalId, onClose }: { approvalId: str
   const [refusing, setRefusing] = useState(false);
   const raw = detail.data;
   const approval = raw
-    ? publicationPreview(raw, raw, detail.isSuccess && !detail.isFetching && !detail.isError)
+    ? publicationPreview(raw, raw, detail.isSuccess && detail.fetchStatus === "idle" && !detail.isError)
     : undefined;
   if (!approval)
     return (
@@ -1715,7 +1715,7 @@ function Outcome({ approval: a, agent }: { approval: Approval; agent: Agent | un
   const name = agent?.name ?? t("channel.unknownAgent");
   const g = agentGrammar(name);
   const p = approvalPhase(a);
-  if (p === "waiting") return null;
+  if (p === "waiting") return a.publicationRequired && a.canCancel ? <CancelAhead id={a.id} /> : null;
   const who =
     a.decidedByUserId === me.user.id
       ? t("approvals.panel.youLower")
