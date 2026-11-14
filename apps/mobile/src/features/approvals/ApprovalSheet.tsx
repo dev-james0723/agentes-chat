@@ -1,4 +1,5 @@
 import { useApproval, useChannels, useDecideApproval } from "@agenteschat/client";
+import { publicationPreview } from "@agenteschat/client/lib/approval-card";
 import { aheadPhase } from "@agenteschat/client/lib/approval-kind";
 import { approvalEffects } from "@agenteschat/client/lib/approval-review";
 import {
@@ -89,7 +90,9 @@ export function ApprovalSheet({
   const [refusing, setRefusing] = useState(startRefusing);
   const [reason, setReason] = useState("");
   const [always, setAlways] = useState(false);
-  const a = approval.data;
+  const a = approval.data
+    ? publicationPreview(approval.data, approval.data, approval.isSuccess && !approval.isFetching && !approval.isError)
+    : undefined;
   const nameOf = useConnectorNamer({ connector: a?.connector ?? null });
   const agent = a ? dir.agentById.get(a.agentId) : undefined;
   const name = agent?.name ?? "";
@@ -100,11 +103,17 @@ export function ApprovalSheet({
 
   /** `withAlways`: "Aprovar sempre", this one and the agent's next ones of its kind. */
   const done = (decision: "approve" | "refuse", withAlways = false) => {
-    if (!a) return;
+    if (
+      !a ||
+      (a.publicationRequired &&
+        (!a.canDecide || !a.publication?.baseCurrent || approval.isFetching || approval.isError))
+    )
+      return;
     decide.mutate(
       {
         id: a.id,
         decision,
+        ...(a.publicationRequired ? { publicationFingerprint: a.publication!.fingerprint } : {}),
         ...(withAlways ? { always: true } : {}),
         ...(decision === "refuse" && reason.trim() ? { reason: reason.trim() } : {}),
       },
@@ -227,6 +236,35 @@ export function ApprovalSheet({
       <>
         {who}
         <ApprovalAheadLine approval={a} />
+        {a.publicationRequired ? (
+          <View style={styles.who}>
+            <Text variant="body" style={styles.semibold}>
+              {t("privatePublication.destination")}
+            </Text>
+            <Text variant="small">{t("privatePublication.warning")}</Text>
+            {a.publication ? (
+              <>
+                {!a.publication.baseCurrent && a.status === "pending" ? (
+                  <Text>{t("privatePublication.stale")}</Text>
+                ) : null}
+                <Text selectable accessibilityLabel={t("privatePublication.body")}>
+                  {a.publication.body}
+                </Text>
+              </>
+            ) : (
+              <Text>{t(approval.isError ? "privatePublication.failed" : "privatePublication.loading")}</Text>
+            )}
+            {approval.isError ? (
+              <Button
+                variant="secondary"
+                label={t("common.retry")}
+                onPress={() => {
+                  void approval.refetch();
+                }}
+              />
+            ) : null}
+          </View>
+        ) : null}
         {a.email ? <ApprovalEmailLetter email={a.email} full /> : null}
         <View>
           <GroupedHeader>{t("mobile.approval.sheet.request")}</GroupedHeader>
@@ -286,7 +324,13 @@ export function ApprovalSheet({
                   <Button
                     variant="primary"
                     wide
-                    label={approvalAction(a) === "draft" ? t("approval.approve.draft") : t("mobile.approval.approve")}
+                    label={
+                      a.publicationRequired
+                        ? t("privatePublication.approve")
+                        : approvalAction(a) === "draft"
+                          ? t("approval.approve.draft")
+                          : t("mobile.approval.approve")
+                    }
                     loading={decide.isPending}
                     onPress={() => done("approve", always)}
                   />
@@ -298,6 +342,14 @@ export function ApprovalSheet({
               {owner ? t("mobile.approval.onlyOwner", { name: owner }) : t("mobile.approval.onlyAdmins")}
             </Text>
           )
+        ) : a.publicationRequired && a.canCancel ? (
+          <Button
+            variant="secondary"
+            wide
+            label={t("privatePublication.withdraw")}
+            loading={cancelAhead.pending}
+            onPress={() => cancelAhead.cancel(a.id, onClose)}
+          />
         ) : aheadPhase(a) === "scheduled" && runAt ? (
           <>
             <Text variant="small" tone="muted" style={styles.note}>

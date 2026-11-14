@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "审核私密草稿的共享",
+    "destination": "目标：组织技能库",
+    "warning": "能读取此技能的人将看到这份草稿的完整内容。",
+    "approve": "仅共享此版本一次",
+    "loading": "正在加载受保护的预览…",
+    "failed": "无法验证受保护的预览。请重新打开以重试。",
+    "stale": "此技能已更改。请发起新的共享请求。",
+    "body": "技能完整正文",
+    "review": "审核私密草稿",
+    "withdraw": "撤回共享批准"
+  },
   "app": {
     "name": "agentes"
   },

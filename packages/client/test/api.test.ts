@@ -214,6 +214,22 @@ describe("HTTP client: approvals, connectors, scopes (phases 2 and 3)", () => {
     expect(calls[2]?.init.body).toBe('{"reason":"Precisa de revisão"}');
   });
 
+  test("private publication decisions send the exact protected fingerprint without a remembered rule", async () => {
+    const fingerprint = "a".repeat(64);
+    const { fetch, calls } = fakeFetch({
+      [`POST ${org}/approvals/a1/approve`]: { status: 200, body: { id: "a1", status: "approved" } },
+      [`POST ${org}/approvals/a1/refuse`]: { status: 200, body: { id: "a1", status: "refused" } },
+    });
+    const api = createHttpApi({ fetch });
+    await api.approvals.approve("o1", "a1", undefined, undefined, undefined, fingerprint);
+    await api.approvals.refuse("o1", "a1", "Keep private", undefined, fingerprint);
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ publicationFingerprint: fingerprint });
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual({
+      reason: "Keep private",
+      publicationFingerprint: fingerprint,
+    });
+  });
+
   test("Aprovar sempre: approve with `always`, the agent's rules, removing one", async () => {
     const rule = { id: "r1", connectionId: "c1", server: "Composio", tool: "close_ticket", action: "" };
     const { fetch, calls } = fakeFetch({

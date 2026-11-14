@@ -1,4 +1,34 @@
 {
+  "privatePublication.title": {
+    "value": "Review sharing a private draft"
+  },
+  "privatePublication.destination": {
+    "value": "Destination: organization skill library"
+  },
+  "privatePublication.warning": {
+    "value": "People who can read this skill will see this complete draft."
+  },
+  "privatePublication.approve": {
+    "value": "Share this exact version once"
+  },
+  "privatePublication.loading": {
+    "value": "Loading the protected preview…"
+  },
+  "privatePublication.failed": {
+    "value": "The protected preview could not be verified. Open it again to retry."
+  },
+  "privatePublication.stale": {
+    "value": "This skill changed. Ask for a new sharing request."
+  },
+  "privatePublication.body": {
+    "value": "Complete skill body"
+  },
+  "privatePublication.review": {
+    "value": "Review private draft"
+  },
+  "privatePublication.withdraw": {
+    "value": "Withdraw sharing approval"
+  },
   "app.name": {
     "value": "agentes"
   },

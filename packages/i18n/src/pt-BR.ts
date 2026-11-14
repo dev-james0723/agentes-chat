@@ -8,6 +8,19 @@ import type { LocaleStrings } from "./plurals";
  */
 export const ptBR = {
   app: { name: "agentes" },
+  privatePublication: {
+    title: "Revisar compartilhamento de rascunho privado",
+    destination: "Destino: biblioteca de habilidades da organização",
+    warning: "Quem pode ler esta habilidade verá este rascunho completo.",
+    approve: "Compartilhar esta versão uma vez",
+    loading: "Carregando a prévia protegida…",
+    failed: "Não foi possível verificar a prévia protegida. Abra novamente para tentar.",
+    stale: "Esta habilidade mudou. Peça um novo pedido de compartilhamento.",
+    body: "Texto completo da habilidade",
+    review: "Revisar rascunho privado",
+    withdraw: "Retirar aprovação de compartilhamento",
+  },
+
   common: {
     close: "Fechar",
     joinSentences: "{{a}} {{b}}",

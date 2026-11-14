@@ -1,6 +1,7 @@
 import type { Agent, Approval, ConnectorDef } from "@agenteschat/client";
 import {
   sendHelpers,
+  useApproval,
   useApprovals,
   useApprovalsDeciding,
   useCatalog,
@@ -18,6 +19,7 @@ import {
   approveAlwaysAlso,
   approveAlwaysOn,
   cardDeadline,
+  publicationPreview,
   runKeys,
 } from "@agenteschat/client/lib/approval-card";
 import { aheadPhase, approveAlwaysOffered } from "@agenteschat/client/lib/approval-kind";
@@ -93,6 +95,7 @@ import {
 } from "@/components/ApprovalItem";
 import { ApprovalsTabs } from "@/components/ApprovalsTabs";
 import { ConnectorIcon } from "@/components/ConnectorCatalog";
+import { DetailsLink } from "@/components/details-link";
 import { EmailLetter } from "@/components/EmailLetter";
 import { HelpLink } from "@/components/HelpLink";
 import { ErrorState, LoadingCards } from "@/components/Loading";
@@ -234,7 +237,15 @@ export function ApprovalsPage() {
   // The rows in the order shown; the open one (`?open=<id>`), else the first, is the request beside the list.
   const order = [...shownOpen, ...(filter === "pending" ? shownDecided.slice(0, 3) : shownDecided)].map((a) => a.id);
   const selectedId = openId && order.includes(openId) ? openId : (order[0] ?? null);
-  const selected = all.find((a) => a.id === selectedId) ?? null;
+  const selectedSummary = all.find((a) => a.id === selectedId) ?? null;
+  const selectedDetail = useApproval(org.id, selectedId ?? "", !!selectedSummary?.publicationRequired);
+  const selected = selectedSummary
+    ? publicationPreview(
+        selectedSummary,
+        selectedDetail.data,
+        selectedDetail.isSuccess && !selectedDetail.isFetching && !selectedDetail.isError,
+      )
+    : null;
   const cardOf = new Map(approvalCards(shownOpen).flatMap((items) => items.map((a) => [a.id, items] as const)));
   // A newly opened request starts at its top, not where the last one was scrolled to: in its own column on a wide
   // window, in the page under the list on a narrow one.
@@ -497,7 +508,15 @@ export function ApprovalsPage() {
                 aria-label={approvalTitle(t, selected)}
               >
                 <ReviewHead approval={selected} channel={channelName(selected.channelId)} />
-                <ReviewBody key={selected.id} approval={selected} channel={channelName(selected.channelId)} />
+                <ReviewBody
+                  key={selected.id}
+                  approval={selected}
+                  channel={channelName(selected.channelId)}
+                  previewError={selectedDetail.isError}
+                  reload={() => {
+                    void selectedDetail.refetch();
+                  }}
+                />
                 <DecisionBar
                   approval={selected}
                   refusing={refusing === selected.id}
@@ -691,9 +710,20 @@ export function ApproveButton({ approval, block, tip }: { approval: Approval; bl
   const { t } = useTranslation();
   const { org } = useOrg();
   const decide = useDecideApproval(org.id);
+  if (approval.publicationRequired && !approval.publication)
+    return (
+      <DetailsLink item={{ kind: "approval", id: approval.id }} className="ap-link">
+        {t("privatePublication.review")}
+      </DetailsLink>
+    );
+  if (approval.publicationRequired && (!approval.canDecide || !approval.publication?.baseCurrent)) return null;
   return (
     <HoldToApprove
-      label={t(`approval.approve.${approvalAction(approval)}`)}
+      label={
+        approval.publicationRequired
+          ? t("privatePublication.approve")
+          : t(`approval.approve.${approvalAction(approval)}`)
+      }
       high={approvalRisk(approval) === "high"}
       block={block}
       id={approval.id}
@@ -702,7 +732,14 @@ export function ApproveButton({ approval, block, tip }: { approval: Approval; bl
       onGo={(el) => {
         // Approved: a burst of the agent's pixels from its avatar.
         const burst = prepareBurst(el);
-        decide.mutate({ id: approval.id, decision: "approve" }, { onSuccess: burst });
+        decide.mutate(
+          {
+            id: approval.id,
+            decision: "approve",
+            ...(approval.publicationRequired ? { publicationFingerprint: approval.publication!.fingerprint } : {}),
+          },
+          { onSuccess: burst },
+        );
       }}
     />
   );
@@ -888,9 +925,15 @@ export function RefuseBox({ approval, agent, onCancel }: { approval: Approval; a
   useEffect(() => ref.current?.focus(), []);
   const send = () =>
     decide.mutate(
-      { id: approval.id, decision: "refuse", reason: reason.trim() || undefined },
+      {
+        id: approval.id,
+        decision: "refuse",
+        reason: reason.trim() || undefined,
+        ...(approval.publicationRequired ? { publicationFingerprint: approval.publication?.fingerprint } : {}),
+      },
       { onSuccess: () => toast.show(t("approvals.refused", { name: g.name }), "info") },
     );
+  if (approval.publicationRequired && (!approval.canDecide || !approval.publication)) return null;
   return (
     <div className="ap-refuse">
       <Locked when={decide.isPending}>
@@ -1138,7 +1181,17 @@ function UndoChip({ approval: a }: { approval: Approval }) {
  * decided, why the agent asks, what it will write (an email as the email, a long text as it will read, else its
  * values), and how it got there (the run's steps as a track, unfolding into the reply's tool block).
  */
-function ReviewBody({ approval: a, channel }: { approval: Approval; channel: string }) {
+function ReviewBody({
+  approval: a,
+  channel,
+  previewError,
+  reload,
+}: {
+  approval: Approval;
+  channel: string;
+  previewError?: boolean;
+  reload?: () => void;
+}) {
   const { t, i18n } = useTranslation();
   const { org } = useOrg();
   const dir = useDirectory(org.id);
@@ -1245,6 +1298,30 @@ function ReviewBody({ approval: a, channel }: { approval: Approval; channel: str
   const durationMs = around ? workFromSteps(around.before, run.data?.run).durationMs : null;
   const long = (text?.text.length ?? 0) > TEXT_FOLD || (text?.text.split("\n").length ?? 0) > 6;
 
+  if (a.publicationRequired)
+    return (
+      <div className="ap-review__body">
+        <Outcome approval={a} agent={agent} />
+        <Card className="ap-review__card">
+          <CardHeader icon="approve" title={t("privatePublication.title")} />
+          {a.publication ? (
+            <>
+              <p>{t("privatePublication.destination")}</p>
+              <p>{t("privatePublication.warning")}</p>
+              {!a.publication.baseCurrent && a.status === "pending" && (
+                <p role="status">{t("privatePublication.stale")}</p>
+              )}
+              <section aria-label={t("privatePublication.body")}>
+                <pre className="ap-code ap-publication-body">{a.publication.body}</pre>
+              </section>
+            </>
+          ) : (
+            <p role="status">{t(previewError ? "privatePublication.failed" : "privatePublication.loading")}</p>
+          )}
+          {previewError && reload && <Button onClick={reload}>{t("common.retry")}</Button>}
+        </Card>
+      </div>
+    );
   return (
     <div className="ap-review__body">
       <FactStrip facts={facts} className="ap-review__facts" />
@@ -1510,15 +1587,34 @@ function AskAgain({ approval, agent }: { approval: Approval; agent: Agent | unde
 /** A request's details over whatever page is open (`DetailsHost`): a routine's run, an audit row. */
 export function ApprovalDetailsDialog({ approvalId, onClose }: { approvalId: string; onClose: () => void }) {
   const { org } = useOrg();
-  const approvals = useApprovals(org.id);
+  const { t } = useTranslation();
+  const detail = useApproval(org.id, approvalId);
   const channels = useChannels(org.id);
   const [refusing, setRefusing] = useState(false);
-  const all = approvals.data ?? [];
-  const approval = all.find((a) => a.id === approvalId);
-  useEffect(() => {
-    if (approvals.isSuccess && !approval) onClose();
-  }, [approvals.isSuccess, approval, onClose]);
-  if (!approval) return null;
+  const raw = detail.data;
+  const approval = raw
+    ? publicationPreview(raw, raw, detail.isSuccess && !detail.isFetching && !detail.isError)
+    : undefined;
+  if (!approval)
+    return (
+      <DetailsDialog
+        open
+        onOpenChange={(o) => !o && onClose()}
+        title={t("privatePublication.title")}
+        closeLabel={t("common.close")}
+      >
+        <p role="status">{t(detail.isError ? "privatePublication.failed" : "privatePublication.loading")}</p>
+        {detail.isError && (
+          <Button
+            onClick={() => {
+              void detail.refetch();
+            }}
+          >
+            {t("common.retry")}
+          </Button>
+        )}
+      </DetailsDialog>
+    );
   return (
     <ApprovalDetails
       approval={approval}
@@ -1527,6 +1623,10 @@ export function ApprovalDetailsDialog({ approvalId, onClose }: { approvalId: str
       onRefuse={() => setRefusing(true)}
       onCancelRefuse={() => setRefusing(false)}
       onClose={onClose}
+      previewError={detail.isError}
+      reload={() => {
+        void detail.refetch();
+      }}
     />
   );
 }
@@ -1539,6 +1639,8 @@ function ApprovalDetails({
   onRefuse,
   onCancelRefuse,
   onClose,
+  previewError,
+  reload,
 }: {
   approval: Approval;
   channel: string;
@@ -1546,6 +1648,8 @@ function ApprovalDetails({
   onRefuse: () => void;
   onCancelRefuse: () => void;
   onClose: () => void;
+  previewError?: boolean;
+  reload?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { org } = useOrg();
@@ -1593,7 +1697,7 @@ function ApprovalDetails({
       }
       footer={<DecisionBar approval={a} refusing={refusing} onRefuse={onRefuse} onCancelRefuse={onCancelRefuse} />}
     >
-      <ReviewBody approval={a} channel={channel} />
+      <ReviewBody approval={a} channel={channel} previewError={previewError} reload={reload} />
     </DetailsDialog>
   );
 }
@@ -1644,7 +1748,7 @@ function Outcome({ approval: a, agent }: { approval: Approval; agent: Agent | un
                       : (aheadEndLine(t, a) ?? t("approvals.canceledLine")),
                   ];
   const action =
-    p === "scheduled" && a.canCancel ? (
+    (p === "scheduled" || a.publicationRequired) && a.canCancel ? (
       <CancelAhead id={a.id} />
     ) : p === "expired" && aheadPhase(a) !== "lapsed" ? (
       <AskAgain approval={a} agent={agent} />

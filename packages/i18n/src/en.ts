@@ -8,6 +8,19 @@ import type { Widen } from "./widen";
  */
 export const en = {
   app: { name: "agentes" },
+  privatePublication: {
+    title: "Review sharing a private draft",
+    destination: "Destination: organization skill library",
+    warning: "People who can read this skill will see this complete draft.",
+    approve: "Share this exact version once",
+    loading: "Loading the protected preview…",
+    failed: "The protected preview could not be verified. Open it again to retry.",
+    stale: "This skill changed. Ask for a new sharing request.",
+    body: "Complete skill body",
+    review: "Review private draft",
+    withdraw: "Withdraw sharing approval",
+  },
+
   common: {
     close: "Close",
     joinSentences: "{{a}} {{b}}",

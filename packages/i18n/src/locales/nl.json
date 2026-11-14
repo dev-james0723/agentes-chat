@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Delen van een privéconcept beoordelen",
+    "destination": "Bestemming: vaardighedenbibliotheek van de organisatie",
+    "warning": "Iedereen die deze vaardigheid mag lezen, ziet dit volledige concept.",
+    "approve": "Deze versie eenmalig delen",
+    "loading": "Beveiligd voorbeeld laden…",
+    "failed": "Het beveiligde voorbeeld kon niet worden geverifieerd. Open het opnieuw om het nogmaals te proberen.",
+    "stale": "Deze vaardigheid is gewijzigd. Vraag een nieuw deelverzoek aan.",
+    "body": "Volledige tekst van de vaardigheid",
+    "review": "Privéconcept beoordelen",
+    "withdraw": "Goedkeuring voor delen intrekken"
+  },
   "app": {
     "name": "agentes"
   },

@@ -1923,6 +1923,17 @@ export type ApprovalStatus = "pending" | "approved" | "refused" | "expired" | "c
 /** A sensitive action waiting for a person (apps/server/src/routes/app/approvals.ts). */
 export interface Approval {
   id: string;
+  /** Private publication summaries contain no draft. Only the protected owner GET supplies `publication`. */
+  publicationRequired?: true;
+  publication?: {
+    fingerprint: string;
+    destination: "organization_skill_library";
+    skillId: string;
+    baseVersion: number;
+    body: string;
+    bodyHash: string;
+    baseCurrent: boolean;
+  };
   /** Null when a mission's executor asked (`missionId`). */
   runId: string | null;
   /** A mission's executor asked (ADR 0029). */

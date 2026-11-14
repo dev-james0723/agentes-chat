@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Freigabe eines privaten Entwurfs prüfen",
+    "destination": "Ziel: Skill-Bibliothek der Organisation",
+    "warning": "Wer diesen Skill lesen darf, sieht diesen vollständigen Entwurf.",
+    "approve": "Diese Version einmalig teilen",
+    "loading": "Geschützte Vorschau wird geladen…",
+    "failed": "Die geschützte Vorschau konnte nicht geprüft werden. Öffne sie erneut.",
+    "stale": "Dieser Skill wurde geändert. Fordere eine neue Freigabeanfrage an.",
+    "body": "Vollständiger Skill-Text",
+    "review": "Privaten Entwurf prüfen",
+    "withdraw": "Freigabe zurückziehen"
+  },
   "app": {
     "name": "agentes"
   },

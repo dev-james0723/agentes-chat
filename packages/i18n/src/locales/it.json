@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Verifica la condivisione di una bozza privata",
+    "destination": "Destinazione: raccolta delle competenze dell’organizzazione",
+    "warning": "Chi può leggere questa competenza vedrà questa bozza completa.",
+    "approve": "Condividi questa versione una sola volta",
+    "loading": "Caricamento dell’anteprima protetta…",
+    "failed": "Impossibile verificare l’anteprima protetta. Riaprila per riprovare.",
+    "stale": "Questa competenza è cambiata. Richiedi una nuova richiesta di condivisione.",
+    "body": "Testo completo della competenza",
+    "review": "Verifica la bozza privata",
+    "withdraw": "Ritira l’approvazione alla condivisione"
+  },
   "app": {
     "name": "agentes"
   },

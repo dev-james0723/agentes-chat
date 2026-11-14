@@ -54,8 +54,9 @@ export function sqlReadsTarget(action: string | undefined): string | null {
  * too. "Sempre nesta rotina" reaches a routine's own job: the server left merges, deploys, payments and deletions
  * out of that one.
  */
-export const approveAlwaysOffered = (a: Pick<Approval, "status" | "canDecide" | "approveAlways">) =>
-  a.status === "pending" && a.canDecide && Boolean(a.approveAlways);
+export const approveAlwaysOffered = (
+  a: Pick<Approval, "status" | "canDecide" | "approveAlways" | "publicationRequired">,
+) => a.status === "pending" && a.canDecide && !a.publicationRequired && Boolean(a.approveAlways);
 
 /**
  * Where an action prepared ahead (`runAt`, `schedule_action`) stands: waiting for a person (`asking`), approved and

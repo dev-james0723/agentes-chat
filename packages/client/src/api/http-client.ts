@@ -1085,13 +1085,22 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       list: async (orgId, filter = {}) =>
         (await request<{ approvals: Approval[] }>(`${org(orgId)}/approvals`, { query: filter })).approvals,
       get: (orgId, id) => request<Approval>(`${org(orgId)}/approvals/${enc(id)}`),
-      approve: (orgId, id, reason, always, via) =>
+      approve: (orgId, id, reason, always, via, publicationFingerprint) =>
         request<Approval>(`${org(orgId)}/approvals/${enc(id)}/approve`, {
-          json: { ...(reason ? { reason } : {}), ...(always ? { always: true } : {}), ...(via ? { via } : {}) },
+          json: {
+            ...(reason ? { reason } : {}),
+            ...(always ? { always: true } : {}),
+            ...(via ? { via } : {}),
+            ...(publicationFingerprint ? { publicationFingerprint } : {}),
+          },
         }),
-      refuse: (orgId, id, reason, via) =>
+      refuse: (orgId, id, reason, via, publicationFingerprint) =>
         request<Approval>(`${org(orgId)}/approvals/${enc(id)}/refuse`, {
-          json: { ...(reason ? { reason } : {}), ...(via ? { via } : {}) },
+          json: {
+            ...(reason ? { reason } : {}),
+            ...(via ? { via } : {}),
+            ...(publicationFingerprint ? { publicationFingerprint } : {}),
+          },
         }),
       cancel: (orgId, id) => request<Approval>(`${org(orgId)}/approvals/${enc(id)}/cancel`, { json: {} }),
       decideMany: (orgId, input) =>

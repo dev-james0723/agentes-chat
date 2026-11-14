@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Revisar el uso compartido de un borrador privado",
+    "destination": "Destino: biblioteca de habilidades de la organización",
+    "warning": "Quienes puedan leer esta habilidad verán este borrador completo.",
+    "approve": "Compartir esta versión una sola vez",
+    "loading": "Cargando la vista previa protegida…",
+    "failed": "No se pudo verificar la vista previa protegida. Ábrela de nuevo para reintentar.",
+    "stale": "Esta habilidad cambió. Solicita una nueva petición para compartirla.",
+    "body": "Texto completo de la habilidad",
+    "review": "Revisar borrador privado",
+    "withdraw": "Retirar aprobación para compartir"
+  },
   "app": {
     "name": "agentes"
   },

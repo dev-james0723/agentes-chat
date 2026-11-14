@@ -958,8 +958,21 @@ export interface ApiClient {
     get(orgId: string, approvalId: string): Promise<Approval>;
     /** `always`: also approve this kind for good (409 `approval.always_unavailable` where it isn't offered). */
     /** `via`: the right hand's approvals card it was decided from (the audit's "via", ADR 0137 §4). */
-    approve(orgId: string, approvalId: string, reason?: string, always?: boolean, via?: string): Promise<Approval>;
-    refuse(orgId: string, approvalId: string, reason?: string, via?: string): Promise<Approval>;
+    approve(
+      orgId: string,
+      approvalId: string,
+      reason?: string,
+      always?: boolean,
+      via?: string,
+      publicationFingerprint?: string,
+    ): Promise<Approval>;
+    refuse(
+      orgId: string,
+      approvalId: string,
+      reason?: string,
+      via?: string,
+      publicationFingerprint?: string,
+    ): Promise<Approval>;
     /** Withdraws an action approved ahead before its time: its routine's run won't do it. */
     cancel(orgId: string, approvalId: string): Promise<Approval>;
     /** A card's "Aprovar tudo" / "Agora não para todos": exactly these ids; `skipped` the ones not decided. */
