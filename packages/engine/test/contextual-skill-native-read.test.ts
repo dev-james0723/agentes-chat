@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { and, countQueries, type Database, eq, schema } from "@agenteschat/db";
+import { and, countQueries, type Database, eq, schema, sql } from "@agenteschat/db";
 import { createSkillToolSource, decideApproval, postPersonMessage, saveSkill } from "../src";
 import { runAuthorityById } from "../src/authority";
 import { addRunStep } from "../src/runs";
@@ -521,3 +521,44 @@ for (const variant of ["threadRoot", "trigger"] as const) {
     expect(skill?.useCount).toBe(0);
   });
 }
+
+test("no reusable activation ever persists: issue and claim are one transaction, so revoke hooks have nothing to revoke", async () => {
+  await f.close();
+  const p = await nativePublishedReadFixture();
+  f = p.f;
+  ctx = p.ctx;
+  skillId = p.selected.skillId;
+  await installNativeSkillReadTestSchema(f.db);
+  const states = async () => {
+    const r = (await f.db.execute(
+      sql`select state, count(*)::int as n from skill_read_activations group by state`,
+    )) as unknown;
+    const rows = (Array.isArray(r) ? r : (r as { rows: { state: string; n: number }[] }).rows) as {
+      state: string;
+      n: number;
+    }[];
+    return Object.fromEntries(rows.map((x) => [x.state, Number(x.n)]));
+  };
+  const gateway = createToolGateway({
+    sources: sources(),
+    nativeSkillReads: { canary: [{ agentId: ctx.agentId, runId: ctx.runId, skillId, operation: "load_skill" }] },
+  });
+  const call = { name: "load_skill", input: { name: p.name }, toolUseId: crypto.randomUUID() };
+  const ok = await gateway.invoke(ctx, call);
+  expect(JSON.stringify(ok)).toContain(p.body);
+  await gateway.invoke(ctx, call);
+  await f.db
+    .update(schema.agentSkills)
+    .set({ enabled: false })
+    .where(and(eq(schema.agentSkills.agentId, ctx.agentId), eq(schema.agentSkills.skillId, skillId)));
+  const refused = await gateway.invoke(ctx, { ...call, toolUseId: crypto.randomUUID() });
+  expect(JSON.stringify(refused)).not.toContain(p.body);
+  await f.db
+    .update(schema.agentSkills)
+    .set({ enabled: true })
+    .where(and(eq(schema.agentSkills.agentId, ctx.agentId), eq(schema.agentSkills.skillId, skillId)));
+  await f.db.update(schema.agentRuns).set({ status: "canceled" }).where(eq(schema.agentRuns.id, ctx.runId));
+  const ended = await gateway.invoke(ctx, { ...call, toolUseId: crypto.randomUUID() });
+  expect(JSON.stringify(ended)).not.toContain(p.body);
+  expect(await states()).toEqual({ completed: 1 });
+});
