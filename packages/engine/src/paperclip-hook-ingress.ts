@@ -4,6 +4,7 @@ import { z } from "zod";
 import { routineHookToken, sha256 } from "./crypto";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { requirePermission } from "./organizations";
+import { PAPERCLIP_RECEIPT_STATUS_CONTRACT, paperclipReceiptExecutionStatus } from "./paperclip-receipt-status";
 import { nativeHash } from "./paperclip-routine-state";
 import {
   assertPaperclipMappingSupported,
@@ -195,12 +196,17 @@ type ReceiptView = ReturnType<typeof view>;
 export type PaperclipHookAnswer =
   | Refusal
   | { status: 202; receipt: ReceiptView }
-  | { status: 200; receipt: ReceiptView | null };
+  | { status: 200; receipt: ReceiptView | null }
+  | {
+      status: 200;
+      contract: typeof PAPERCLIP_RECEIPT_STATUS_CONTRACT;
+      execution: Awaited<ReturnType<typeof paperclipReceiptExecutionStatus>>;
+    };
 
 /** No native accept/24-hour merge: the existing durable receipt transaction is the only dispatch path. */
 export async function receivePaperclipRoutineHook(
   deps: PaperclipHookDeps,
-  operation: "invocations" | "lookup",
+  operation: "invocations" | "lookup" | "status",
   input: { token: string; headers: Headers; method: string; read: (maxBytes: number) => Promise<Uint8Array | null> },
 ): Promise<PaperclipHookAnswer> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(input.token)) return { status: 404, code: "not_found" };
@@ -308,6 +314,12 @@ export async function receivePaperclipRoutineHook(
       ...scoped,
       idempotencyKey: value.idempotencyKey,
     });
+    if (operation === "status")
+      return {
+        status: 200,
+        contract: PAPERCLIP_RECEIPT_STATUS_CONTRACT,
+        execution: receipt ? await paperclipReceiptExecutionStatus(tx, m, native, receipt.id) : null,
+      };
     return { status: 200, receipt: receipt ? view(m, receipt) : null };
   });
 }

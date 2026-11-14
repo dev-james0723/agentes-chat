@@ -90,7 +90,7 @@ export function registerWebhookReceiver(api: OpenAPIHono, deps: AppDeps) {
  */
 export function registerRoutineHooks(api: OpenAPIHono, deps: AppDeps) {
   const hookDeps = routineHookDeps(deps);
-  for (const operation of ["invocations", "lookup"] as const) {
+  for (const operation of ["invocations", "lookup", "status"] as const) {
     api.all(`/hooks/:token/paperclip/${operation}`, async (c) => {
       const ip = requestLimitIp(c.req.raw.headers, deps.config.TRUSTED_PROXIES);
       if (!(await deps.adapters.rateLimiter.consume(`routine-hook-ip:${ip}`, HOOK_LIMIT_PER_IP)).allowed) {
@@ -127,6 +127,8 @@ export function registerRoutineHooks(api: OpenAPIHono, deps: AppDeps) {
         deps.wakeWorkers?.();
         return c.json(answer.receipt, 202);
       }
+      if ("execution" in answer)
+        return c.json({ contract: answer.contract, backend: "agents_chat", execution: answer.execution }, 200);
       return c.json({ backend: "agents_chat", receipt: answer.receipt }, 200);
     });
   }
