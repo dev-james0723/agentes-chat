@@ -24,6 +24,7 @@ import { approvalCardVia } from "./card-via";
 import { CONNECTOR_CATALOG } from "./connectors/catalog";
 import { learnFromRefusal } from "./context/feedback";
 import type { MemoryJudging } from "./context/items";
+import { sha256 } from "./crypto";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 import { publishChannelEvent, publishUserEvent } from "./events";
 import { type MailPreview, parseMailDetail, withoutReplyPrefix } from "./mail/preview";
@@ -32,6 +33,15 @@ import { can, type Membership, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
 import { quietEnd, withMootRequest } from "./parked-asks";
 import { maySql, type RolePermission } from "./permissions";
+import {
+  isNativePrivatePublication,
+  isPrivatePublication,
+  mayViewPrivatePublication,
+  PRIVATE_PUBLICATION_TITLE,
+  privatePublicationBinding,
+  privatePublicationSql,
+  requirePrivatePublicationDecision,
+} from "./private-skill-publication";
 import { accountInUse } from "./standing";
 import { taskReaderSql } from "./task-access";
 import { AHEAD_GRACE_MS, type Approval } from "./tools/gateway";
@@ -65,6 +75,16 @@ export interface ApprovalEmail extends MailPreview {
 }
 
 export interface ApprovalView {
+  publicationRequired?: true;
+  publication?: {
+    fingerprint: string;
+    destination: "organization_skill_library";
+    skillId: string;
+    baseVersion: number;
+    body: string;
+    bodyHash: string;
+    baseCurrent: boolean;
+  };
   id: string;
   /** Null for an approval a mission's executor asked (`missionId`). */
   runId: string | null;
@@ -343,6 +363,7 @@ export async function openApprovalCard(
         eq(approvals.status, "pending"),
         gt(approvals.expiresAt, now),
         ne(approvals.id, at.exceptId),
+        sql`not ${privatePublicationSql()}`,
         eq(messages.channelId, at.channelId),
         or(
           eq(approvals.threadRootId, at.threadRootId),
@@ -359,9 +380,10 @@ export async function openApprovalCard(
 
 /** Views with their context (connector, issue); `trail` only when asked (one approval's details). */
 async function viewsOf(db: Database, rows: Approval[], canDecide: (row: Approval) => boolean, trail = false) {
+  const ordinary = rows.filter((row) => !isPrivatePublication(row));
   const [contexts, cardThreads] = await Promise.all([
-    approvalContexts(db, rows).catch(() => new Map<string, ApprovalContext>()),
-    approvalCardThreads(db, rows).catch(() => new Map<string, string | null>()),
+    approvalContexts(db, ordinary).catch(() => new Map<string, ApprovalContext>()),
+    approvalCardThreads(db, ordinary).catch(() => new Map<string, string | null>()),
   ]);
   return rows.map((r) => {
     const { trail: steps, ...context } = contexts.get(r.id) ?? {
@@ -397,11 +419,12 @@ export const approvalView = (a: Approval, canDecide = false): ApprovalView => ({
   messageId: a.messageId,
   tool: a.tool,
   scope: a.scope,
-  title: a.title,
-  detail: a.detail,
-  params: a.params,
+  title: isPrivatePublication(a) ? PRIVATE_PUBLICATION_TITLE : a.title,
+  detail: isPrivatePublication(a) ? "" : a.detail,
+  params: isPrivatePublication(a) ? {} : a.params,
+  ...(isPrivatePublication(a) ? { publicationRequired: true as const } : {}),
   kind: a.tool,
-  titleParams: scalarParams(a.params),
+  titleParams: isPrivatePublication(a) ? {} : scalarParams(a.params),
   status: a.status,
   expiresAt: a.expiresAt.toISOString(),
   createdAt: a.createdAt.toISOString(),
@@ -409,18 +432,18 @@ export const approvalView = (a: Approval, canDecide = false): ApprovalView => ({
   decidedForUserId: a.decidedForUserId ?? null,
   decidedAt: a.decidedAt ? a.decidedAt.toISOString() : null,
   supersededById: a.supersededById ?? null,
-  reason: a.reason,
+  reason: isPrivatePublication(a) ? null : a.reason,
   canDecide: canDecide && a.status === "pending",
   ownerUserId: a.ownerUserId,
   executedAt: a.executedAt ? a.executedAt.toISOString() : null,
-  result: resultOf(a),
+  result: isPrivatePublication(a) ? null : resultOf(a),
   connector: null,
   connectorAccount: null,
   email: null,
-  why: a.why.trim() || null,
-  origin: approvalOriginOf(a.origin),
+  why: isPrivatePublication(a) ? null : a.why.trim() || null,
+  origin: isPrivatePublication(a) ? null : approvalOriginOf(a.origin),
   issue: null,
-  approveAlways: alwaysKindOf(a),
+  approveAlways: isPrivatePublication(a) ? null : alwaysKindOf(a),
   runAt: a.runAt ? a.runAt.toISOString() : null,
   routineId: a.routineId,
   canCancel: canDecide && aheadLive(a) && a.status === "approved",
@@ -472,6 +495,7 @@ export function decides(
   membership: Pick<Membership, "permissions"> | null,
 ) {
   const named = approval.approvers;
+  if (isPrivatePublication(approval)) return approval.ownerUserId === actorId && can(membership, "manage_agents");
   if (named?.required) return named.userIds.includes(actorId);
   if (decidingKeys(approval).every((key) => can(membership, key))) return true;
   if (named?.requestedBy === actorId && !named.requesterDecides) return false;
@@ -480,7 +504,7 @@ export function decides(
 }
 
 /** `decides` as SQL over `approvals` (the sidebar's count). */
-export const decidableBySql = (actorId: string) => sql`(case
+const ordinaryDecidableBySql = (actorId: string) => sql`(case
   when coalesce((${approvals.approvers} ->> 'required')::boolean, false)
     then ${approvals.approvers} -> 'userIds' @> to_jsonb(${actorId}::text)
   when ${approvals.tool} = ${REQUEST_PERMISSION_TOOL}
@@ -495,6 +519,10 @@ export const decidableBySql = (actorId: string) => sql`(case
   else ${approvals.ownerUserId} is not distinct from ${actorId} end or ${coveredBySql(actorId)})`;
 
 /** `coveredFor` as SQL: someone `actorId` covers now is asked this approval personally (ADR 0139). */
+export const decidableBySql = (actorId: string) => sql`(case when ${privatePublicationSql()} then
+  false
+  else ${ordinaryDecidableBySql(actorId)} end)`;
+
 const coveredBySql = (actorId: string) => sql`(not coalesce((${approvals.approvers} ->> 'required')::boolean, false)
   and ${approvals.tool} <> ${REQUEST_PERMISSION_TOOL}
   and ${approvals.requestedByUserId} is distinct from ${actorId}
@@ -548,6 +576,10 @@ type Askable = Pick<Approval, "orgId" | "ownerUserId"> &
  * `required` its people: only them. `notified`: who is told (inbox, push, email), `notifiedIds`.
  */
 export async function approverIds(db: Database, approval: Askable, notified = false) {
+  if (isPrivatePublication(approval))
+    return approval.ownerUserId && (await mayViewPrivatePublication(db, approval as Approval, approval.ownerUserId))
+      ? [approval.ownerUserId]
+      : [];
   const keys = decidingKeys({ tool: approval.tool ?? "", params: approval.params ?? {} });
   const members = await db
     .select({
@@ -782,6 +814,15 @@ export async function publishApproval(
   type: "approval.created" | "approval.decided",
 ) {
   const [view = approvalView(approval)] = await viewsOf(deps.db, [approval], () => false);
+  if (isPrivatePublication(approval)) {
+    for (const userId of await approverIds(deps.db, approval))
+      await publishUserEvent(deps.pubsub, approval.orgId, userId, {
+        type,
+        approval: { ...view, canDecide: approval.status === "pending" },
+      });
+    if (type === "approval.decided") await resolveApprovalNotifications(deps, approval);
+    return;
+  }
   await publishChannelEvent(deps.pubsub, { type, channelId: approval.channelId, approval: view });
   const deciders = await approverIds(deps.db, approval);
   for (const userId of deciders) {
@@ -827,7 +868,13 @@ export async function decideApproval(
   orgId: string,
   approvalId: string,
   /** `via`: the card message it was decided from (the audit's "via", `approvalCardVia`). */
-  input: { decision: "approve" | "refuse"; reason?: string; always?: boolean; via?: string },
+  input: {
+    decision: "approve" | "refuse";
+    reason?: string;
+    always?: boolean;
+    via?: string;
+    publicationFingerprint?: string;
+  },
 ): Promise<ApprovalView> {
   const { db } = deps;
   const at = deps.now?.() ?? new Date();
@@ -837,6 +884,10 @@ export async function decideApproval(
     .where(and(eq(approvals.id, approvalId), eq(approvals.orgId, orgId)));
   if (!current) throw new NotFoundError("Approval not found");
   const membership = await requirePermission(db, actorId, current.orgId, "read");
+  if (isNativePrivatePublication(current)) {
+    if (input.always) throw new ConflictError("Sharing is approved once only.");
+    await requirePrivatePublicationDecision(db, current, actorId, input.publicationFingerprint);
+  }
   const direct = decides(current, actorId, membership);
   const forUserId = direct ? null : coveredFor(current, actorId, await activeCoversTo(db, orgId, actorId, at));
   if (!direct && !forUserId) {
@@ -864,6 +915,8 @@ export async function decideApproval(
 
   const outcome = await db.transaction(async (tx) => {
     const [row] = await tx.select().from(approvals).where(eq(approvals.id, approvalId)).for("update");
+    if (row && isNativePrivatePublication(row))
+      await requirePrivatePublicationDecision(tx as unknown as Database, row, actorId, input.publicationFingerprint);
     if (row?.status !== "pending") return { error: "This request was already decided" as const };
     const expired = row.expiresAt <= at;
     const [updated] = await tx
@@ -918,7 +971,8 @@ export async function decideApproval(
   if (outcome.row) await publishApproval(deps, outcome.row, "approval.decided");
   if (outcome.error || !outcome.row) throw new ConflictError(outcome.error ?? "approval vanished");
   // A refusal (with its reason) becomes an outcome and a lesson for the agent.
-  if (outcome.row.status === "refused") await learnFromRefusal(deps, outcome.row).catch(() => null);
+  if (outcome.row.status === "refused" && !isPrivatePublication(outcome.row))
+    await learnFromRefusal(deps, outcome.row).catch(() => null);
   // The person who decided may decide it: an action they approved ahead, they may still withdraw.
   const [view = approvalView(outcome.row, true)] = await viewsOf(db, [outcome.row], () => true);
   return view;
@@ -944,7 +998,8 @@ export async function decideApprovals(
   const membership = await requirePermission(db, actorId, orgId, "read");
   const covers = await activeCoversTo(db, orgId, actorId, at);
   const forUserOf = (r: Approval) => (decides(r, actorId, membership) ? null : coveredFor(r, actorId, covers));
-  const allowed = (r: Approval) => decides(r, actorId, membership) || forUserOf(r) !== null;
+  const allowed = (r: Approval) =>
+    !isPrivatePublication(r) && (decides(r, actorId, membership) || forUserOf(r) !== null);
   const decided = await db.transaction(async (tx) => {
     const rows = ids.length
       ? await tx
@@ -1012,6 +1067,7 @@ function auditDecision(
   always: (RememberedKind & { connectionId: string | null }) | null = null,
   via: string | null = null,
 ) {
+  if (isPrivatePublication(row)) return Promise.resolve();
   return recordAudit(tx, {
     orgId: row.orgId,
     actor: personId ? { type: "person", id: personId } : { type: "system", id: null },
@@ -1021,7 +1077,7 @@ function auditDecision(
       tool: row.tool,
       agentId: row.agentId,
       title: row.title,
-      ...(row.reason ? { reason: row.reason } : {}),
+      ...(row.reason && !isPrivatePublication(row) ? { reason: row.reason } : {}),
       ...(always ? { always } : {}),
       ...(via ? { via } : {}),
     },
@@ -1041,7 +1097,15 @@ export async function expireApprovals(deps: { db: Database; pubsub: PubSub }, no
     const rows = await tx
       .update(approvals)
       .set({ status: "expired" })
-      .where(and(eq(approvals.status, "pending"), lt(approvals.expiresAt, now)))
+      .where(
+        and(
+          or(
+            eq(approvals.status, "pending"),
+            and(privatePublicationSql(), eq(approvals.status, "approved"), isNull(approvals.executedAt)),
+          ),
+          lt(approvals.expiresAt, now),
+        ),
+      )
       .returning();
     for (const row of rows) {
       await enqueueResume(tx, row);
@@ -1166,6 +1230,38 @@ export async function cancelAheadApproval(
   orgId: string,
   approvalId: string,
 ): Promise<ApprovalView> {
+  const [native] = await deps.db
+    .select()
+    .from(approvals)
+    .where(and(eq(approvals.id, approvalId), eq(approvals.orgId, orgId)));
+  if (native && isPrivatePublication(native)) {
+    if (!(await mayViewPrivatePublication(deps.db, native, actorId))) throw new NotFoundError("Approval not found");
+    const ended = await deps.db.transaction(async (tx) => {
+      if (native.runId) await tx.select().from(agentRuns).where(eq(agentRuns.id, native.runId)).for("update");
+      const [row] = await tx.select().from(approvals).where(eq(approvals.id, native.id)).for("update");
+      if (
+        !row ||
+        row.executedAt ||
+        !["pending", "approved"].includes(row.status) ||
+        !(await mayViewPrivatePublication(tx as unknown as Database, row, actorId))
+      )
+        throw new ConflictError("This sharing request already ran or ended");
+      const [changed] = await tx
+        .update(approvals)
+        .set({
+          status: "canceled",
+          decidedByUserId: actorId,
+          decidedAt: new Date(),
+          reason: "Sharing request withdrawn.",
+        })
+        .where(eq(approvals.id, row.id))
+        .returning();
+      await enqueueResume(tx, row);
+      return changed!;
+    });
+    await publishApproval(deps, ended, "approval.decided");
+    return approvalView(ended);
+  }
   const current = await cancelableAhead(deps.db, actorId, orgId, approvalId);
   const [ended] = await withdrawAhead(deps, eq(approvals.id, current.id), actorId, true);
   if (!ended) throw new ConflictError("This action already ran or ended", "approval.not_cancelable");
@@ -1285,12 +1381,16 @@ export async function listApprovals(
         options.agentId ? eq(approvals.agentId, options.agentId) : undefined,
         options.messageId ? eq(approvals.messageId, options.messageId) : undefined,
         admin ? undefined : seenBy(db, orgId, actorId),
+        or(sql`not ${privatePublicationSql()}`, eq(approvals.ownerUserId, actorId)),
       ),
     )
     .orderBy(desc(approvals.createdAt))
     .limit(Math.min(options.limit ?? 100, 500));
   const covers = await activeCoversTo(db, orgId, actorId);
-  return viewsOf(db, rows, (r) => decides(r, actorId, membership) || coveredFor(r, actorId, covers) !== null);
+  const visible: Approval[] = [];
+  for (const row of rows)
+    if (!isPrivatePublication(row) || (await mayViewPrivatePublication(db, row, actorId))) visible.push(row);
+  return viewsOf(db, visible, (r) => decides(r, actorId, membership) || coveredFor(r, actorId, covers) !== null);
 }
 
 export async function getApproval(db: Database, actorId: string, orgId: string, approvalId: string) {
@@ -1300,6 +1400,34 @@ export async function getApproval(db: Database, actorId: string, orgId: string, 
     .where(and(eq(approvals.id, approvalId), eq(approvals.orgId, orgId)));
   const row = list[0];
   if (!row) throw new NotFoundError("Approval not found");
+  if (isPrivatePublication(row)) {
+    await requirePermission(db, actorId, orgId, "read");
+    const bound = await privatePublicationBinding(db, row, actorId, false);
+    if (!bound) throw new NotFoundError("Approval not found");
+    const p = bound.envelope;
+    return {
+      ...approvalView(
+        row,
+        row.status === "pending" &&
+          row.expiresAt > new Date() &&
+          bound.facts.skill.version === p.publication.baseVersion &&
+          sha256(bound.facts.skill.body) === p.publication.baseHash,
+      ),
+      canCancel: !row.executedAt && ["pending", "approved"].includes(row.status),
+      trail: [],
+      publication: {
+        fingerprint: row.actionHash,
+        destination: "organization_skill_library" as const,
+        skillId: p.publication.skillId,
+        baseVersion: p.publication.baseVersion,
+        body: p.input.body,
+        bodyHash: sha256(p.input.body),
+        baseCurrent:
+          bound.facts.skill.version === p.publication.baseVersion &&
+          sha256(bound.facts.skill.body) === p.publication.baseHash,
+      },
+    };
+  }
   const visible = (await listApprovals(db, actorId, orgId, { agentId: row.agentId, limit: 500 })).find(
     (a) => a.id === row.id,
   );
@@ -1314,6 +1442,6 @@ export async function pendingApprovalCounts(db: Database, orgId: string) {
     .select({ agentId: approvals.agentId, handle: agents.handle, pending: sql<number>`count(*)::int` })
     .from(approvals)
     .innerJoin(agents, eq(agents.id, approvals.agentId))
-    .where(and(eq(approvals.orgId, orgId), eq(approvals.status, "pending")))
+    .where(and(eq(approvals.orgId, orgId), eq(approvals.status, "pending"), sql`not ${privatePublicationSql()}`))
     .groupBy(approvals.agentId, agents.handle);
 }

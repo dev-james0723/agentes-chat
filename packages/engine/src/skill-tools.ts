@@ -13,6 +13,7 @@ import { cutText, formatBytes } from "./format";
 import type { Judge } from "./judge";
 import { insertMessage, messageView } from "./messages";
 import { can, getMembership } from "./organizations";
+import { privatePublicationFailure, registerNativeSkillUpdater } from "./private-skill-publication";
 import { personBehindCall } from "./requester";
 import { bodyCode } from "./run-tools";
 import { type SandboxDeps, withSandbox } from "./sandbox";
@@ -331,6 +332,7 @@ export function createSkillToolSource(
             `${why} (${change.proposalIds.join(", ")}): someone who manages agents accepts it on the card under your reply.${waits} Use your fix in this turn.`,
           );
         } catch (error) {
+          if (ctx.privatePublicationApprovalId) return privatePublicationFailure(ctx);
           return failed(error);
         }
       },
@@ -559,5 +561,6 @@ export function createSkillToolSource(
       },
     },
   ];
+  for (const tool of tools) if (tool.name === "update_skill") registerNativeSkillUpdater(tool);
   return { name: "skills", tools: async () => tools };
 }

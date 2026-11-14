@@ -53,6 +53,8 @@ export interface ToolContext {
    * when its command policy would hold it. Never set from a call's input.
    */
   approved?: boolean;
+  /** Native exact-disclosure resume only; downstream reloads and claims the DB row. Never model input. */
+  privatePublicationApprovalId?: string;
   /**
    * Set by the gateway for our own tools, never a connected server's (`schedule_action`): asks a person now to
    * approve one exact call for a routine's run later, after every check that call meets then (ADR 0015, ahead).

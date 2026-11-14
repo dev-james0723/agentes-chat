@@ -103,24 +103,26 @@ export async function agentWorkForViewer(
           file: { id: f.id, kind: f.kind, title: f.title, channelId: f.channelId, threadId: f.threadId },
         }),
       ),
-    ...approvals.flatMap((a): ForYouItem[] => {
-      const waiting = a.status === "pending" && a.canDecide && new Date(a.expiresAt).getTime() > now.getTime();
-      if (!waiting && a.decidedByUserId !== viewerId) return [];
-      return [
-        {
-          type: "approval",
-          at: waiting ? a.createdAt : (a.decidedAt ?? a.createdAt),
-          approval: {
-            id: a.id,
-            title: a.title,
-            status: a.status,
-            channelId: a.channelId,
-            threadId: a.threadId,
-            waitingOnYou: waiting,
+    ...approvals
+      .filter((a) => !a.publicationRequired)
+      .flatMap((a): ForYouItem[] => {
+        const waiting = a.status === "pending" && a.canDecide && new Date(a.expiresAt).getTime() > now.getTime();
+        if (!waiting && a.decidedByUserId !== viewerId) return [];
+        return [
+          {
+            type: "approval",
+            at: waiting ? a.createdAt : (a.decidedAt ?? a.createdAt),
+            approval: {
+              id: a.id,
+              title: a.title,
+              status: a.status,
+              channelId: a.channelId,
+              threadId: a.threadId,
+              waitingOnYou: waiting,
+            },
           },
-        },
-      ];
-    }),
+        ];
+      }),
   ];
   items.sort((a, b) => b.at.localeCompare(a.at));
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();

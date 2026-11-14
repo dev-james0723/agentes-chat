@@ -70,6 +70,18 @@ export const Approval = z
     title: z.string().openapi({ example: "Merge PR #42 into main" }),
     detail: z.string(),
     params: z.record(z.string(), z.unknown()).openapi({ description: "Exactly what will run if approved." }),
+    publicationRequired: z.literal(true).optional(),
+    publication: z
+      .object({
+        fingerprint: z.string(),
+        destination: z.literal("organization_skill_library"),
+        skillId: z.string(),
+        baseVersion: z.number(),
+        body: z.string(),
+        bodyHash: z.string(),
+        baseCurrent: z.boolean(),
+      })
+      .optional(),
     status: z.enum(["pending", "approved", "refused", "expired", "canceled"]),
     expiresAt: z.string(),
     createdAt: z.string(),
@@ -193,7 +205,14 @@ const ApprovalParams = OrgParams.extend({ approvalId: z.uuid() });
 const AgentParams = OrgParams.extend({ agentId: z.uuid() });
 /** The card it was decided from, for the audit's "via" (ADR 0137 §4): ignored unless that card lists it. */
 const Via = z.uuid().optional().openapi({ description: "The right hand's approvals card it was decided from." });
-const Decision = z.object({ reason: z.string().max(1000).optional(), via: Via });
+const Decision = z.object({
+  reason: z.string().max(1000).optional(),
+  via: Via,
+  publicationFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+});
 const Approve = Decision.extend({
   always: z.boolean().optional().openapi({
     description:
@@ -312,7 +331,8 @@ export function approvalRoutes(deps: AppDeps) {
       }),
       async (c) => {
         const { orgId, approvalId } = c.req.valid("param");
-        const input: { reason?: string; always?: boolean; via?: string } = c.req.valid("json");
+        const input: { reason?: string; always?: boolean; via?: string; publicationFingerprint?: string } =
+          c.req.valid("json");
         const view = await decideApproval(
           {
             db,
@@ -322,7 +342,13 @@ export function approvalRoutes(deps: AppDeps) {
           c.get("user").id,
           orgId,
           approvalId,
-          { decision, reason: input.reason, always: decision === "approve" && input.always === true, via: input.via },
+          {
+            decision,
+            reason: input.reason,
+            always: decision === "approve" && input.always === true,
+            via: input.via,
+            publicationFingerprint: input.publicationFingerprint,
+          },
         );
         deps.wakeWorkers?.();
         return c.json(view, 200);

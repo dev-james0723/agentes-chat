@@ -34,6 +34,16 @@ import { isUnexpectedError, ToolOffError } from "../errors";
 import { cutMarked, cutText, pgSafeJson, pgSafeText } from "../format";
 import { mergeReposOfCall, recordMergeDone, reposOfGithubCall } from "../git/repos";
 import { recordRead } from "../outbound";
+import {
+  classifySkillPublication,
+  isNativePublicationReader,
+  isNativeSkillUpdater,
+  isPrivatePublication,
+  issuePrivatePublication,
+  PRIVATE_PUBLICATION_DEFER,
+  PRIVATE_PUBLICATION_TITLE,
+  privatePublicationBinding,
+} from "../private-skill-publication";
 import { routineCreatorOf } from "../requester";
 import { isRightHandId, RIGHT_HAND_NO_COMPUTER } from "../right-hand";
 import type { RoutineBrief } from "../routine-brief";
@@ -1049,15 +1059,23 @@ export function createToolGateway(deps: {
       let tool = unknownInDirectory ? undefined : (all.get(call.name) ?? directoryTool);
       const alias = tool && !tool.connectionId ? INPUT_ALIASES.get(tool.name) : undefined;
       if (alias) call = { ...call, input: alias(call.input) };
+      const publication =
+        tool?.name === "update_skill" && tool.scope === "skills:read" && !tool.connectionId
+          ? isNativeSkillUpdater(tool)
+            ? await classifySkillPublication({ ...ctx, toolUseId: call.toolUseId }, call.input)
+            : { kind: "defer" as const }
+          : null;
+      const privateCall = publication !== null && publication.kind !== "ordinary";
+      const recordedInput = privateCall ? {} : call.input;
       // What the live chip shows (the short label of a built-in tool, never a connector's input; the app and its
       // service): the chat's line of this call says the same after the run. A permission check also keeps its
       // command, masked, to open.
-      const detail = toolDetail(call.name, call.input);
-      const command = toolCommand(call.name, call.input);
+      const detail = privateCall ? PRIVATE_PUBLICATION_TITLE : toolDetail(call.name, call.input);
+      const command = privateCall ? null : toolCommand(call.name, call.input);
       await record(ctx.db, step, "tool_call", {
         toolUseId: call.toolUseId,
         name: call.name,
-        input: call.input,
+        input: recordedInput,
         ...(detail ? { detail } : {}),
         ...(command ? { command } : {}),
         ...(tool?.connectorLabel ? { connector: tool.connectorLabel } : {}),
@@ -1084,7 +1102,7 @@ export function createToolGateway(deps: {
           about?: ToolCallSubject | null;
         } = {},
       ) => {
-        if (!tool) return Promise.resolve();
+        if (!tool || privateCall) return Promise.resolve();
         const kind = toolKind(tool).kind;
         if (!auditsCall(kind, tool, outcome)) return Promise.resolve();
         return recordToolCall(ctx.db, {
@@ -1096,8 +1114,8 @@ export function createToolGateway(deps: {
           tool: tool.name,
           kind,
           connector: tool.connectorLabel ?? null,
-          title: callTitle(tool, call.input),
-          input: call.input,
+          title: privateCall ? PRIVATE_PUBLICATION_TITLE : callTitle(tool, call.input),
+          input: recordedInput,
           outcome,
           approvalRules: approvedBy,
           unasked: unasked && outcome !== "refused",
@@ -1111,8 +1129,11 @@ export function createToolGateway(deps: {
       const finish = async (output: ToolOutput, outcome?: AuditOutcome, ran = false) => {
         // A result read from outside marks the run (`runReadOutside`, ADR 0117), an error too: its text came from there.
         const outside = ran && tool && readsOutsideText(tool, output) ? { outside: true } : null;
-        const data = output.data || outside ? { ...output.data, ...outside } : null;
-        recordRead(ctx.runId, call.name, output.content, output.data, call.input);
+        const { publicationSource, ...plainData } = output.data ?? {};
+        // Only the actual native reader may attest which source revision it delivered. Connected output is data.
+        const source = tool && isNativePublicationReader(tool) && publicationSource ? { publicationSource } : {};
+        const data = output.data || outside ? { ...plainData, ...source, ...outside } : null;
+        recordRead(ctx.runId, call.name, output.content, output.data, recordedInput);
         await record(ctx.db, step, "tool_result", {
           toolUseId: call.toolUseId,
           name: call.name,
@@ -1178,6 +1199,32 @@ export function createToolGateway(deps: {
       // A call that asks a person says why (shown on its card); the tool itself never sees it. It is
       // asked for last: a call refused for any other reason (its input, a repository outside the agent's
       // list) gets that reason first.
+      if (privateCall) {
+        if (
+          publication?.kind !== "private" ||
+          validateJson(tool.inputSchema, call.input).length ||
+          !(await checkToolCall(tool, call.input, ctx)).ok
+        )
+          return finish(
+            { content: PRIVATE_PUBLICATION_DEFER, isError: true, data: { refusal: "private_publication" } },
+            "refused",
+          );
+        try {
+          const approval = await issuePrivatePublication({ ...ctx, toolUseId: call.toolUseId }, call.input, now());
+          await record(ctx.db, step, "approval", {
+            approvalId: approval.id,
+            toolUseId: call.toolUseId,
+            title: PRIVATE_PUBLICATION_TITLE,
+          });
+          return { type: "approval", approval };
+        } catch {
+          // A failed insert may contain SQL parameters. Never place its private draft in a run error or audit.
+          return finish(
+            { content: PRIVATE_PUBLICATION_DEFER, isError: true, data: { refusal: "private_publication" } },
+            "refused",
+          );
+        }
+      }
       const never = unaskedAtNever(level, tool, authority);
       const wouldAsk = needsApproval(tool, decision) || asksWithWhy(tool, call.input);
       unasked = never && wouldAsk;
@@ -1527,6 +1574,44 @@ export function createToolGateway(deps: {
      * ahead waits for its time instead: the routine's run then does it (`aheadFor`), and this run hears when.
      */
     async executeApproved(ctx: ToolContext, approval: Approval): Promise<ToolOutput> {
+      if (isPrivatePublication(approval)) {
+        const [row] = await ctx.db
+          .select()
+          .from(approvals)
+          .where(
+            and(
+              eq(approvals.id, approval.id),
+              eq(approvals.orgId, ctx.orgId),
+              eq(approvals.runId, ctx.runId),
+              eq(approvals.agentId, ctx.agentId),
+            ),
+          );
+        if (!row || !isPrivatePublication(row) || row.status !== "approved")
+          return { content: "This sharing request was not approved.", isError: true };
+        if (
+          row.channelId !== ctx.channelId ||
+          row.threadRootId !== ctx.threadRootId ||
+          (row.params as { publication?: { triggerMessageId?: string } }).publication?.triggerMessageId !==
+            ctx.triggerMessageId
+        )
+          return { content: PRIVATE_PUBLICATION_DEFER, isError: true };
+        if (row.executedAt) return ranBefore(row);
+        if (
+          row.expiresAt <= now() ||
+          row.decidedByUserId !== row.ownerUserId ||
+          row.decidedForUserId ||
+          !(await privatePublicationBinding(ctx.db, row))
+        )
+          return { content: PRIVATE_PUBLICATION_DEFER, isError: true };
+        const tool = (await allTools(ctx)).get(row.tool);
+        if (!tool || !isNativeSkillUpdater(tool) || tool.connectionId || tool.scope !== "skills:read")
+          return { content: PRIVATE_PUBLICATION_DEFER, isError: true };
+        return run(tool, (row.params as { input: Record<string, unknown> }).input, {
+          ...ctx,
+          toolUseId: row.toolUseId,
+          privatePublicationApprovalId: row.id,
+        });
+      }
       const runAt = approval.runAt;
       if (approval.status === "approved" && runAt) return { content: await aheadNote(ctx, { ...approval, runAt }) };
       return runApproved(ctx, approval, approval.toolUseId);

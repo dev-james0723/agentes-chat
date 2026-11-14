@@ -30,6 +30,7 @@ import {
   mediaSettingsFrom,
 } from "./media";
 import { can, lockOrgMembers, requireActiveMembership, requirePermission } from "./organizations";
+import { privatePublicationPendingCount, privatePublicationSql } from "./private-skill-publication";
 import { isRightHand, rightHandPermanent } from "./right-hand";
 import {
   agentBudgetsThisMonth,
@@ -316,7 +317,7 @@ export async function orgOverview(db: Database, actorId: string, orgId: string, 
     agents: agentCount?.n ?? 0,
     /** This month's spend of the workspace's agents over the sum of their budgets (no money). */
     budgetUsedPercent: await workspaceBudgetPercent(db, orgId, now),
-    approvalsWaitingForMe: pending?.n ?? 0,
+    approvalsWaitingForMe: (pending?.n ?? 0) + (await privatePublicationPendingCount(db, orgId, actorId)),
     proposalsWaitingForMe: await proposalsWaitingFor(db, actorId, orgId),
   };
 }
@@ -351,7 +352,14 @@ export async function agentDetail(db: Database, actorId: string, orgId: string, 
   const [pending] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(approvals)
-    .where(and(eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
+    .where(
+      and(
+        eq(approvals.orgId, orgId),
+        eq(approvals.agentId, agentId),
+        eq(approvals.status, "pending"),
+        sql`not ${privatePublicationSql()}`,
+      ),
+    );
   const channelsOf = await listAgentChannels(db, actorId, orgId, agentId);
   const budget = await agentBudgetState(db, orgId, agentId, now);
   const budgetNanoUsd = await effectiveAgentBudget(db, agent);

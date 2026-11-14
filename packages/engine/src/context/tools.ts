@@ -32,6 +32,7 @@ import { announceMessageMemories } from "../message-memories";
 import { quietNoticeSql } from "../notices";
 import { can, getMembership } from "../organizations";
 import { personWords, runReadOutsideById, UNASKED_DESTINATION, unaskedDestination } from "../outside";
+import { publicationItemHash, registerNativePublicationReader } from "../private-skill-publication";
 import { personBehindCall, wikiActorOfCall } from "../requester";
 import { isRightHandId, rightHandReader } from "../right-hand";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
@@ -506,7 +507,10 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
             ),
           ...srcOutcomes.map((o) => `source outcome ${o.id}: ${o.polarity} ${o.kind} ${o.subject} ${o.summary}`),
         ];
-        return { content: lines.join("\n") };
+        return {
+          content: lines.join("\n"),
+          data: { publicationSource: { id: item.id, hash: publicationItemHash(item) } },
+        };
       },
     },
     {
@@ -1005,7 +1009,14 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
     },
   ];
   // A personal workspace (ADR 0159): the same memory, about one person and their life rather than a company.
-  return { name: "context", tools: async (ctx) => inWorkspaceWords(ctx.db, ctx.orgId, tools, personalWords(tools)) };
+  return {
+    name: "context",
+    tools: async (ctx) => {
+      const listed = await inWorkspaceWords(ctx.db, ctx.orgId, tools, personalWords(tools));
+      for (const tool of listed) if (tool.name === EXPAND_TOOL) registerNativePublicationReader(tool);
+      return listed;
+    },
+  };
 }
 
 /** Who accepts a row the person who asked can't, for the agent to tell them (`deciders` in proposals.ts). */

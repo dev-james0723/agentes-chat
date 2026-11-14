@@ -21,6 +21,7 @@ import { isAgentOnlyDm } from "./dms";
 import { publishChannelEvent } from "./events";
 import { cutText } from "./format";
 import type { Message } from "./messages";
+import { privatePublicationSql } from "./private-skill-publication";
 import { stripSentinel } from "./reply-policy";
 import { holdsMessages } from "./run-hold";
 import { inChannelRun } from "./run-scope";
@@ -226,6 +227,7 @@ export async function heldHere(
         eq(approvals.agentId, run.agentId),
         eq(approvals.channelId, run.channelId),
         eq(approvals.status, "pending"),
+        sql`not ${privatePublicationSql()}`,
         ne(agentRuns.id, run.id),
         eq(agentRuns.status, "waiting_approval"),
         or(

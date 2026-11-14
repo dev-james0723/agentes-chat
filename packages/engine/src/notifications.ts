@@ -24,6 +24,7 @@ import { cutText } from "./format";
 import type { PreviewMeta } from "./message-preview";
 import { noticeOn, noticePrefsOf, readNoticePrefs } from "./notice-prefs";
 import { listMemberships, requirePermission } from "./organizations";
+import { privatePublicationSql } from "./private-skill-publication";
 import { enqueuePush } from "./push";
 import type { ApprovalOrigin } from "./tools/run-policy";
 
@@ -1029,7 +1030,12 @@ function stillDecides(orgId: string, userId: string): SQL {
 }
 
 /** Rows the inbox may show: a `connector_tool_changed` row asks for a review that no longer exists. */
-const listed = ne(notifications.kind, "connector_tool_changed");
+const listed = and(
+  ne(notifications.kind, "connector_tool_changed"),
+  sql`not (${notifications.kind}='approval' and exists(
+  select 1 from ${schema.approvals} where ${schema.approvals.orgId}=${notifications.orgId}
+  and ${schema.approvals.id}::text=${notifications.source}->>'approvalId' and ${privatePublicationSql()}))`,
+);
 
 /** Not done, not snoozed into the future, and still the person's to see. */
 function visible(orgId: string, userId: string, now: Date): SQL {

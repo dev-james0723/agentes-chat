@@ -13,6 +13,7 @@ import { voiceOf } from "./message-preview";
 import { type NoticePrefs, noticeOn, readNoticePrefs } from "./notice-prefs";
 import type { NotificationActor, NotificationLatest, NotificationSource } from "./notifications";
 import { enqueue } from "./outbox";
+import { isPrivatePublication } from "./private-skill-publication";
 import { type PushTextInput, pushLocale, renderPush } from "./push-messages";
 import { accountClosed } from "./standing";
 import { isPersonalWorkspace } from "./workspace-mode";
@@ -400,9 +401,10 @@ export async function deliverPush(
   let highRisk = false;
   if (row.kind === "approval" && source.approvalId) {
     const [approval] = await db
-      .select({ tool: approvals.tool, scope: approvals.scope })
+      .select({ tool: approvals.tool, scope: approvals.scope, params: approvals.params })
       .from(approvals)
       .where(and(eq(approvals.orgId, row.orgId), eq(approvals.id, source.approvalId)));
+    if (approval && isPrivatePublication(approval)) return none;
     highRisk = approval ? approvalIsHighRisk(approval) : true;
   }
   const data: Record<string, unknown> = { orgId: row.orgId, kind: row.kind, notificationId: row.id };

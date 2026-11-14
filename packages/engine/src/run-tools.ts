@@ -16,6 +16,11 @@ import { insertMessage, type Message, messageView } from "./messages";
 import { notifyMissionApproval } from "./mission-tools";
 import { notifyQuestion } from "./notification-producers";
 import {
+  isFreshPublicationCapture,
+  isPrivatePublication,
+  PRIVATE_PUBLICATION_TITLE,
+} from "./private-skill-publication";
+import {
   type AgentQuestionRow,
   ASK_USER_TOOL,
   impliedAddressee,
@@ -373,8 +378,17 @@ async function recordBridgeEffects(
  * drop ones kept since. The row's value stays as it is.
  */
 export function storedTranscript(t: object): SQL {
-  const { [BRIDGE_EFFECTS]: _kept, ...rest } = t as Record<string, unknown>;
-  return sql`(${pgSafeStringify(rest)}::jsonb || jsonb_strip_nulls(jsonb_build_object(${BRIDGE_EFFECTS}::text, ${agentRuns.transcript} -> ${BRIDGE_EFFECTS}::text)))`;
+  const { [BRIDGE_EFFECTS]: _kept, publicationCapture, metadata: _metadata, ...rest } = t as Record<string, unknown>;
+  // Row-owned metadata can be updated concurrently by wait/resume controllers. Never replay an in-memory copy.
+  // A native fresh context initializes coverage only before any system transcript exists. Current invalidation wins.
+  const initial = isFreshPublicationCapture(publicationCapture) ? pgSafeStringify(publicationCapture) : "null";
+  return sql`(${pgSafeStringify(rest)}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+    ${BRIDGE_EFFECTS}::text, ${agentRuns.transcript} -> ${BRIDGE_EFFECTS}::text,
+    'metadata', ${agentRuns.transcript}->'metadata',
+    'publicationCapture', case
+      when coalesce(${agentRuns.transcript},'{}'::jsonb) ? 'publicationCapture' then ${agentRuns.transcript}->'publicationCapture'
+      when not (coalesce(${agentRuns.transcript},'{}'::jsonb) ? 'system') then ${initial}::jsonb
+      else null end)))`;
 }
 
 /** Takes (and clears) the side effects the bridge kept for this run (`recordBridgeEffects`). */
@@ -503,16 +517,19 @@ export async function invokeWithChip(
   // is the computer's permission check, which only exists on the bridge: its line says the command it checked.
   const screen = screenTool(use.name)?.tool;
   const prompt = use.name === PERMISSION_TOOL;
-  const detail = screen
-    ? toolDetail(screen, input)
-    : prompt
-      ? toolDetail(use.name, input)
-      : builtIn
-        ? (toolDetail(use.name, input) ??
-          (await artifactToolDetail(deps.db, ctx.orgId, ctx.channelId, use.name, input).catch(() => undefined)))
-        : undefined;
-  const code = builtIn ? toolCode(use.name, input) : undefined;
-  const command = toolCommand(use.name, input);
+  const detail =
+    shownName === "update_skill"
+      ? PRIVATE_PUBLICATION_TITLE
+      : screen
+        ? toolDetail(screen, input)
+        : prompt
+          ? toolDetail(use.name, input)
+          : builtIn
+            ? (toolDetail(use.name, input) ??
+              (await artifactToolDetail(deps.db, ctx.orgId, ctx.channelId, use.name, input).catch(() => undefined)))
+            : undefined;
+  const code = shownName === "update_skill" ? undefined : builtIn ? toolCode(use.name, input) : undefined;
+  const command = shownName === "update_skill" ? undefined : toolCommand(use.name, input);
   // The agent's line follows what it does now (ADR 0084 §10), beside the call, never in its way.
   if (def) void followWork(deps, ctx, def).catch(() => {});
   const said = takeStepWords(where.runId);
@@ -520,7 +537,7 @@ export async function invokeWithChip(
     type: "agent.tool",
     ...where,
     tool: shownName,
-    ...(said ? { said } : {}),
+    ...(said && shownName !== "update_skill" ? { said } : {}),
     ...(connector ? { connector } : {}),
     ...(def?.service ? { service: def.service } : {}),
     ...(def?.serviceIcon ? { serviceIcon: def.serviceIcon } : {}),
@@ -958,6 +975,21 @@ export async function postPauseCards(tx: Executor, run: AgentRun, requests: Paus
   }
 
   for (const approval of requests.approvals) {
+    if (isPrivatePublication(approval)) {
+      if (approval.channelId !== run.channelId) throw new Error("Private sharing audience changed");
+      const message = await card(
+        { channelId: approval.channelId, threadId: approval.threadRootId },
+        PRIVATE_PUBLICATION_TITLE,
+        { ...bodyCode("approval_request", { title: PRIVATE_PUBLICATION_TITLE }), approvalId: approval.id },
+      );
+      const [linked] = await tx
+        .update(approvals)
+        .set({ messageId: message.id })
+        .where(eq(approvals.id, approval.id))
+        .returning();
+      out.approvals.push(linked ?? approval);
+      continue;
+    }
     const meta = {
       ...bodyCode("approval_request", { title: approval.title }),
       approvalId: approval.id,
@@ -1010,7 +1042,8 @@ export async function publishPauseCards(deps: { db: Database; pubsub?: PubSub },
     for (const card of posted.approvals) {
       await publishApproval({ db, pubsub }, card, "approval.created");
       // A mission's approval (agent mode): its owner hears it waits.
-      if (card.missionId) await notifyMissionApproval({ db, pubsub }, card).catch(() => undefined);
+      if (card.missionId && !isPrivatePublication(card))
+        await notifyMissionApproval({ db, pubsub }, card).catch(() => undefined);
     }
   }
   for (const old of posted.superseded) await publishApproval({ db, pubsub }, old, "approval.decided").catch(() => {});

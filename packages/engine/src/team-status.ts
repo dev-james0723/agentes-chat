@@ -193,7 +193,7 @@ export async function teamStatus(
         const seenHere = reads.has(r.channel_id);
         return `- @${handle.get(r.agent_id)}: ${r[key]}${seenHere ? where(r.channel_id) : " somewhere this person can't see"}`;
       });
-  const waiting = approvals.filter((a) => a.canDecide);
+  const waiting = approvals.filter((a) => !a.publicationRequired && a.canDecide);
   const asked = await forThem(questions.map((q) => q.runId));
   const needs = [
     waiting.length ? `- ${waiting.length} approvals: offer_approvals shows them` : "",

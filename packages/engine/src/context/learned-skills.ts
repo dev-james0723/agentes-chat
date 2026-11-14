@@ -22,6 +22,12 @@ import type { Judge } from "../judge";
 import { notifySkillUpdate } from "../notification-producers";
 import { requirePermission } from "../organizations";
 import { enqueue } from "../outbox";
+import {
+  claimPrivatePublication,
+  classifySkillPublication,
+  PRIVATE_PUBLICATION_DEFER,
+  preflightPrivatePublication,
+} from "../private-skill-publication";
 import { restoreSkillSnapshot, type SkillSnapshot } from "../skill-updates";
 import {
   agentSkillByName,
@@ -167,6 +173,17 @@ export async function changeSkillAsAgent(
   asked?: { person: string | null; decides: boolean },
 ): Promise<SkillChange> {
   const name = slug.trim().toLowerCase();
+  const publicationCtx = ctx as ToolContext;
+  if (!publicationCtx.privatePublicationApprovalId) {
+    const input =
+      typeof change === "string"
+        ? { name, body: change }
+        : { name, ...change, ...(!change.files?.length ? { files: undefined } : {}) };
+    if ((await classifySkillPublication(publicationCtx, input)).kind !== "ordinary")
+      throw new ForbiddenError(PRIVATE_PUBLICATION_DEFER);
+  } else {
+    await preflightPrivatePublication(publicationCtx, name, typeof change === "string" ? change : change.body);
+  }
   const { body: rawBody, files = [] } = typeof change === "string" ? { body: change } : change;
   const edits = files.map((e) => ({ ...e, path: cleanSkillPath(e.path.trim()) }));
   const text = rawBody?.trim();
@@ -176,8 +193,9 @@ export async function changeSkillAsAgent(
     if (looksLikeSecret(t)) throw new ValidationError("This looks like a credential, so it can't go in a skill.");
   const reads = await readsInRun(ctx, name);
   if (!reads.loaded) throw new ValidationError(`Load the skill ${name} with load_skill first, then change it.`);
-  const skill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, name);
-  if (!skill) throw new NotFoundError(`No skill named ${name} is enabled for you.`);
+  const foundSkill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, name);
+  if (!foundSkill) throw new NotFoundError(`No skill named ${name} is enabled for you.`);
+  let skill: SkillRow = foundSkill;
   const own = skill.origin === "agent";
   if (own) {
     if (skill.ownerAgentId !== ctx.agentId) throw new ForbiddenError("That skill belongs to another agent.");
@@ -223,7 +241,7 @@ export async function changeSkillAsAgent(
   const why =
     trust === "low"
       ? "outside"
-      : own || asked?.decides
+      : own || asked?.decides || publicationCtx.privatePublicationApprovalId
         ? undefined
         : skill.locked
           ? "locked"
@@ -243,6 +261,11 @@ export async function changeSkillAsAgent(
     const blobs = deps.blobs && textFiles.length > 0 ? await pinBlobs(deps.blobs, ctx.orgId) : deps.blobs;
     next = await ctx.db.transaction(async (tx) => {
       const db = tx as unknown as Database;
+      if (publicationCtx.privatePublicationApprovalId) {
+        if (trust !== "high" || edits.length) throw new ForbiddenError(PRIVATE_PUBLICATION_DEFER);
+        skill = await claimPrivatePublication(db, publicationCtx, skill!.id, text!);
+        await assertSkillChangeRoom(db, ctx, skill.id);
+      }
       const row = await writeSkillChange({ db, blobs }, skill, {
         body: bodyChanged ? (text as string) : skill.body,
         files: textFiles.map((f) => ({ path: f.path, data: new TextEncoder().encode(f.content) })),
@@ -271,6 +294,11 @@ export async function changeSkillAsAgent(
         })
         .where(eq(skills.id, skill.id))
         .returning();
+      if (publicationCtx.privatePublicationApprovalId)
+        await db
+          .update(schema.approvals)
+          .set({ result: { content: "The exact approved skill draft was published.", data: { version: row.version } } })
+          .where(eq(schema.approvals.id, publicationCtx.privatePublicationApprovalId));
       return marked ?? row;
     });
     if (!own && deps.pubsub)

@@ -46,6 +46,12 @@ import { handoffGuidance, noticeForOthers, noticeText } from "./notices";
 import { openRequestsBlock, openRequestsOf } from "./open-requests";
 import { paperclipTaskReference } from "./paperclip-routine-state";
 import { parkedOnBlock } from "./parked-asks";
+import {
+  capturePublicationContext,
+  type PublicationCapture,
+  publicationConfigurationHash,
+  publicationMessageHash,
+} from "./private-skill-publication";
 import { reachNote, reachOf } from "./reach";
 import {
   answersForEveryone,
@@ -528,6 +534,7 @@ export async function teammatesNowAgain(
 }
 
 export interface RunContext {
+  publicationCapture: PublicationCapture;
   system: ContextBlock[];
   messages: ModelMessage[];
   stats: { historyMessages: number; systemChars: number; truncated: boolean };
@@ -963,17 +970,15 @@ export async function buildRunContext(
     .filter((m) => m.agentId && referencedIds.includes(m.agentId))
     .map((m) => `@${m.agentHandle}`);
   // The rest of the org's agents: channel members are described in "Where you are".
+  // Reporting handles/roles are org configuration, not task text (reporting.ts linePrompt).
+  const teamLine = options.team
+    ? linePrompt(
+        teamRows.filter((a) => a.id === agent.id || canTalkTo(a, requester, viaAgent(talks))),
+        agent.id,
+      )
+    : "";
   const team = options.team
-    ? [
-        teamPrompt(teamRows, agent.id, requester, here, talks, personal),
-        linePrompt(
-          // Its line as this person may know it: an agent they can't talk to stays out, as in "# Your team".
-          teamRows.filter((a) => a.id === agent.id || canTalkTo(a, requester, viaAgent(talks))),
-          agent.id,
-        ),
-      ]
-        .filter(Boolean)
-        .join("\n\n")
+    ? [teamPrompt(teamRows, agent.id, requester, here, talks, personal), teamLine].filter(Boolean).join("\n\n")
     : "";
   const memberList = members
     .map((m) =>
@@ -1018,6 +1023,7 @@ export async function buildRunContext(
   // Most stable first, so prompt-cache prefixes are shared: the rules are the same for every agent with the same
   // tools, the organization's block for every agent of the organization (a breakpoint after it, token-trim B5),
   // the agent's block per agent.
+  let publicationUnqualified = false;
   const system: ContextBlock[] = [
     {
       text: [
@@ -1158,8 +1164,9 @@ export async function buildRunContext(
     ...(briefing ? await briefing.then((text) => (text ? [{ conversation: true, text }] : [])) : []),
     ...(issueBrief ? [{ conversation: true, text: issueBrief }] : []),
     ...(machineAccess
-      ? await machineAccess.then((a) =>
-          a
+      ? await machineAccess.then((a) => {
+          if (a) publicationUnqualified = true;
+          return a
             ? [
                 { text: machineAccessText(a) },
                 // Cursor's, Grok's and Antigravity's sandboxes (ADR 0114, 0142, 0143) and OpenCode's permissions (ADR
@@ -1177,14 +1184,21 @@ export async function buildRunContext(
                   ? [{ text: containersText(a.name) }]
                   : []),
               ]
-            : [],
-        )
+            : [];
+        })
       : []),
-    ...(await heldSecrets.then((rows) => (rows.length > 0 ? [{ text: heldSecretsText(rows) }] : []))),
+    ...(await heldSecrets.then((rows) => {
+      if (rows.length) publicationUnqualified = true;
+      return rows.length > 0 ? [{ text: heldSecretsText(rows) }] : [];
+    })),
     ...(otherDevices
-      ? await otherDevices.then((d) =>
-          d && (d.computers.length > 0 || d.phones.length > 0) ? [{ text: devicesText(d) }] : [],
-        )
+      ? await otherDevices.then((d) => {
+          if (d && (d.computers.length > 0 || d.phones.length > 0)) {
+            publicationUnqualified = true;
+            return [{ text: devicesText(d) }];
+          }
+          return [];
+        })
       : []),
     // A routine's background run (ADR 0053 §4): its routine and what people said where it reports.
     ...(routine
@@ -1277,6 +1291,28 @@ export async function buildRunContext(
   const systemChars = system.reduce((n, b) => n + b.text.length, 0);
 
   return {
+    publicationCapture: capturePublicationContext({
+      complete:
+        !range &&
+        !threadInfo?.missionId &&
+        !teamMemory &&
+        !rightHand &&
+        !issueBrief &&
+        !briefing &&
+        !publicationUnqualified &&
+        origins.size === 0 &&
+        !run.background &&
+        !run.workId &&
+        thread.length < options.maxMessages &&
+        !history.some(
+          (m) => Object.keys(m.meta).some((key) => key !== "referencedAgentIds") || mediaOf(m.meta) !== null,
+        ) &&
+        !system.some((b) => b.found && !b.teammates),
+      channelId: channel.id,
+      triggerMessageId: trigger.id,
+      configurationHash: publicationConfigurationHash(org, agent),
+      sources: history.map((m) => ({ id: m.id, hash: publicationMessageHash(m) })),
+    }),
     system,
     messages: toTurns(history, agent.id, names, trigger.id, {
       origins,

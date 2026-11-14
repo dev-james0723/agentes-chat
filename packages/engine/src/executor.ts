@@ -256,6 +256,7 @@ import { enqueue, PermanentJobError } from "./outbox";
 import { type OutsideMemo, personWords, runReadOutside } from "./outside";
 import { paperclipProjectBrain } from "./paperclip-project-runtime";
 import { assertPersonUnderLimit } from "./person-usage";
+import { capturePublicationContext } from "./private-skill-publication";
 import { createProfiler, type StageTiming } from "./profile";
 import { ASK_USER_TOOL, QUESTION_MAX_CHARS, questionResult } from "./questions";
 import {
@@ -541,6 +542,9 @@ export type RunExecutorDeps = EngineDeps;
  * and prompt caches stay valid.
  */
 export interface Transcript {
+  /** Row-owned controller metadata. storedTranscript preserves the current DB value, never this stale copy. */
+  metadata?: Record<string, unknown>;
+  publicationCapture?: import("./private-skill-publication").PublicationCapture;
   /** A host ACP call lost its delivery result: carried across fresh turns until explicitly reconciled. */
   hostAcpUncertain?: { runId: string; turn: number; message: string };
   system: SystemBlock[];
@@ -1336,7 +1340,12 @@ async function executeRunInner(
     await announceConsultationChange({ db, pubsub: deps.pubsub }, run).catch(() => {});
   }
   // Declared before `finished`: the early endings (standing, archived, no AI) read it before any turn.
-  let transcript = run.transcript as unknown as Transcript | null;
+  const storedContext = run.transcript as unknown as Partial<Transcript> | null;
+  // A controller may park metadata before the first context exists. It cannot stand in for model/source history.
+  let transcript: Transcript | null =
+    storedContext && Array.isArray(storedContext.system) && Array.isArray(storedContext.messages)
+      ? (storedContext as Transcript)
+      : null;
   /** Who thinks for this run (set before the first turn). */
   let brainPlan: BrainPlan | null = null;
   /** How its last turn ended (`decideTurnEnd`); every other way to `done` is recorded as `ended` (I2). */
@@ -2370,6 +2379,16 @@ async function executeRunInner(
     };
     later(() => addRunStep(db, run, "context", stats));
     transcript = {
+      publicationCapture: capturePublicationContext({
+        ...context.publicationCapture,
+        complete:
+          context.publicationCapture.complete &&
+          pending.length === 0 &&
+          !repositories &&
+          !browsers &&
+          granted.every((tool) => !tool.connectionId) &&
+          !system.some((b) => !context.system.includes(b) && (b.found || b.conversation)),
+      }),
       // What doesn't change during the run first (prompt cache), the per-turn blocks last.
       system: stableFirst(system),
       messages: context.messages,
