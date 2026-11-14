@@ -212,6 +212,16 @@ test("hello: Claude organization observation is whitelisted without email or tok
   );
 });
 
+test("failed Claude auth status cannot claim an active login", async () => {
+  expect(
+    await claudeAuth(() => ({
+      status: 1,
+      stdout: line({ loggedIn: true, authMethod: "claude.ai", orgId: "11111111-2222-4333-8444-555555555555" }),
+    })),
+  ).toEqual({});
+  expect(await claudeAuth(() => ({ status: 1, stdout: line({ loggedIn: false }) }))).toEqual({ loggedIn: false });
+});
+
 test("hello: Claude Code's login state travels (never anything else from auth status)", async () => {
   expect(
     parseExecutors({ claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai", plan: "max", email: "a@b" } }),

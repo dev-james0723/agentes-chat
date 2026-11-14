@@ -297,6 +297,7 @@ export async function claudeAuth(
     if (r.error) return missing(r) ? {} : null;
     const json = JSON.parse(r.stdout.trim() || "null") as Record<string, unknown> | null;
     if (!json || typeof json !== "object") return r.status !== 0 ? { loggedIn: false } : {};
+    if (r.status !== 0) return json.loggedIn === false ? { loggedIn: false } : {};
     const authMethod = word(json.authMethod);
     const plan = claudePlan(json.subscriptionType, tier);
     const claudeOrgId =
