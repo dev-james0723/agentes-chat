@@ -1428,8 +1428,11 @@ async function applyAgentBrain(
     account !== agent.brainAccountId ||
     fallback !== agent.brainFallback ||
     (extraUsage && !agent.brainExtraUsage)
-  )
-    await wakeAgentUsageWaits(deps.db, orgId, agentId).catch(() => null);
+  ) {
+    // A swallowed SQL error aborts the guarded outer transaction: never return a view that did not commit.
+    if (guarded) await wakeAgentUsageWaits(deps.db, orgId, agentId);
+    else await wakeAgentUsageWaits(deps.db, orgId, agentId).catch(() => null);
+  }
   // The account's `usedBy` changed with it.
   // The right hand's row is on no computer: shown as its settings see it again.
   const shown = rightHand ? await settingsAgent(deps.db, saved, userId) : saved;

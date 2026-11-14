@@ -1,6 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { ACCOUNTS_PROTOCOL } from "@agenteschat/adapters";
-import { eq, schema } from "@agenteschat/db";
+import { eq, schema, sql } from "@agenteschat/db";
 import { ConflictError, ForbiddenError, getAgentBrain, setAgentBrain } from "../src";
 import { caches } from "../src/cache";
 import { addMember, type Fixture, setup } from "./fixtures";
@@ -274,4 +274,88 @@ test("guarded Codex to API to controlled Codex to exact original settings keeps 
   expect(afterConfig).toEqual(beforeConfig);
   expect(after.defaults).toEqual(before.defaults);
   expect(f.provider.calls).toHaveLength(0);
+});
+
+test("a real SQL failure in guarded wake cannot return a success view for rolled-back settings", async () => {
+  await world();
+  const expectedConfigHash = await token();
+  const before = await state();
+  let injected = 0;
+  const wrap = (db: import("@agenteschat/db").Database): import("@agenteschat/db").Database =>
+    new Proxy(db, {
+      get(target, key) {
+        if (key === "transaction")
+          return (body: (tx: import("@agenteschat/db").Database) => Promise<unknown>) =>
+            target.transaction((tx) => body(wrap(tx as unknown as import("@agenteschat/db").Database)));
+        if (key === "select")
+          return (fields: unknown) => {
+            if (fields && typeof fields === "object" && "waitId" in fields && "since" in fields) {
+              return {
+                from(table: unknown) {
+                  expect(table).toBe(schema.agentRuns);
+                  return {
+                    where() {
+                      return {
+                        async limit() {
+                          injected++;
+                          return target.execute(sql`select 1 / 0 as synthetic_guarded_wake_failure`);
+                        },
+                      };
+                    },
+                  };
+                },
+              };
+            }
+            return target.select(fields as never);
+          };
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  const invalidations = spyOn(caches.agents, "delete");
+  try {
+    await expect(
+      change({ expectedConfigHash, fallback: false }, wrap(f.db), f.owner.id, { remember: true }),
+    ).rejects.toThrow();
+    expect(injected).toBe(1);
+    expect(await state()).toEqual(before);
+    expect(invalidations).not.toHaveBeenCalled();
+  } finally {
+    invalidations.mockRestore();
+  }
+});
+
+test("omitted legacy update retains its late wake best-effort catch", async () => {
+  await world();
+  let injected = 0;
+  const db = new Proxy(f.db, {
+    get(target, key) {
+      if (key === "select")
+        return (fields: unknown) => {
+          if (fields && typeof fields === "object" && "waitId" in fields && "since" in fields) {
+            return {
+              from() {
+                return {
+                  where() {
+                    return {
+                      async limit() {
+                        injected++;
+                        return target.execute(sql`select 1 / 0 as synthetic_legacy_wake_failure`);
+                      },
+                    };
+                  },
+                };
+              },
+            };
+          }
+          return target.select(fields as never);
+        };
+      const value = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const result = await change({ fallback: false }, db);
+  expect(injected).toBe(1);
+  expect(result.fallback).toBe(false);
+  expect((await state()).agent[0]?.brainFallback).toBe(false);
 });
