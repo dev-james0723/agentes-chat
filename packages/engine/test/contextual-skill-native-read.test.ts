@@ -500,3 +500,24 @@ for (const changed of [false, true]) {
     }
   });
 }
+
+for (const variant of ["threadRoot", "trigger"] as const) {
+  test(`mint-time binding failure in canary scope stays closed: ${variant}`, async () => {
+    const drift = {
+      ...ctx,
+      ...(variant === "threadRoot" ? { threadRootId: crypto.randomUUID() } : { triggerMessageId: crypto.randomUUID() }),
+    };
+    const gateway = createToolGateway({
+      sources: sources(),
+      nativeSkillReads: { canary: [{ agentId: ctx.agentId, runId: ctx.runId, skillId, operation: "load_skill" }] },
+    });
+    const out = await gateway.invoke(drift, {
+      name: "load_skill",
+      input: { name: "b2-native-fixture" },
+      toolUseId: crypto.randomUUID(),
+    });
+    const [skill] = await f.db.select().from(schema.skills).where(eq(schema.skills.id, skillId));
+    expect(JSON.stringify(out)).not.toContain(PRIVATE_BODY);
+    expect(skill?.useCount).toBe(0);
+  });
+}
