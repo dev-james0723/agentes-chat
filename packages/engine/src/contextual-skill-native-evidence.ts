@@ -43,6 +43,8 @@ export interface NativeSkillPreview {
   authority: false;
   canExecute: false;
   readiness: "metadata_only";
+  visibilityEvidence: "unverified" | "native_assignment_and_caller_reach";
+  sourceContextPrivacy: "unverified";
   modelCalls: 0;
   capturedAt: number | null;
   expiresAt: number | null;
@@ -51,7 +53,8 @@ export interface NativeSkillPreview {
 
 /**
  * Explicit, unregistered read-only preview. No hook, activation issuer/store/CAS/use claim, model or skill load.
- * Current native readers check visibility and assignment. A result is not a permission grant or atomic snapshot.
+ * Native assignment/caller reach is observed; source-context audience/provenance safety remains unverified.
+ * A result is not a permission grant, private-source disclosure verdict or atomic snapshot.
  * Native DB/listing IO retains its existing driver/caller cancellation/timeout contracts; no global IO bound claimed.
  */
 export async function previewNativeSkills(
@@ -68,6 +71,8 @@ export async function previewNativeSkills(
     authority: false,
     canExecute: false,
     readiness: "metadata_only",
+    visibilityEvidence: "unverified",
+    sourceContextPrivacy: "unverified",
     modelCalls: 0,
     capturedAt: null,
     expiresAt: null,
@@ -195,6 +200,8 @@ export async function previewNativeSkills(
       authority: false,
       canExecute: false,
       readiness: "metadata_only",
+      visibilityEvidence: "native_assignment_and_caller_reach",
+      sourceContextPrivacy: "unverified",
       modelCalls: 0,
       capturedAt: started,
       expiresAt: started + OBSERVATION_MS,

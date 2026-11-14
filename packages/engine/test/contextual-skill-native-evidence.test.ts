@@ -315,3 +315,22 @@ test("explicit preview issues only reads and records its own query overhead sepa
     `WP3_B1_EXPLICIT_PREVIEW_NATIVE_READ_STATEMENTS=${queries.length}; listing=existing fixture gateway; not foreground per-turn cost`,
   );
 });
+
+test("native assignment visibility and metadata claims do not establish private-source audience safety", async () => {
+  await f.db
+    .update(schema.skills)
+    .set({
+      metadata: { sourceContext: "PRIVATE_CONTEXT", audience: "restricted", privacyVerified: true, authority: true },
+    })
+    .where(eq(schema.skills.id, skillId));
+  const result = await preview();
+  expect(result).toMatchObject({
+    status: "preview_only",
+    visibilityEvidence: "native_assignment_and_caller_reach",
+    sourceContextPrivacy: "unverified",
+    activation: "unverified",
+    authority: false,
+    canExecute: false,
+  });
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_CONTEXT");
+});
