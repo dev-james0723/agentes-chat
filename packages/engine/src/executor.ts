@@ -3519,7 +3519,9 @@ async function executeRunInner(
           proof.observedAt >= at - 300_000 &&
           proof.validUntil > at &&
           proof.validUntil <= proof.observedAt + 300_000 &&
-          status?.executors?.claude?.authMethod === "cli_login" &&
+          // `executors.claude` comes from the CLI's auth status (`claude.ai`); `cli_login` is an account mode.
+          status?.executors?.claude?.loggedIn === true &&
+          status?.executors?.claude?.authMethod === "claude.ai" &&
           !computerBrainUnavailable("claude_code", machineId, status, at, undefined, owns, usage, proof.model)
         ) {
           const sessionId = Bun.randomUUIDv7();

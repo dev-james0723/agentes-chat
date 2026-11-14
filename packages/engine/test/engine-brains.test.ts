@@ -5216,7 +5216,7 @@ test("a verified pre-start Codex quota handoff continues the same run on a fresh
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },
@@ -5392,7 +5392,7 @@ test.each([true, false])(
             pairedByUserId: f.owner.id,
             executors: {
               codex: { version: "0.163.0" },
-              claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+              claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
               detectedAt: new Date().toISOString(),
             },
           }),
@@ -5511,7 +5511,7 @@ test("a parked reserve run reselects an alternate after its wait", async () => {
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },
@@ -5652,7 +5652,7 @@ test("a parked reserve run stays queued on unknown stale source telemetry", asyn
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },
@@ -5803,7 +5803,7 @@ test("a failed reserve state write rolls back its scheduled wake", async () => {
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },
@@ -5924,7 +5924,7 @@ test("a parked reserve run stays queued when the next worker has no qualifier", 
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },
@@ -6060,7 +6060,7 @@ test("a parked reserve run never uses legacy fallback when the source is offline
       protocol: MACHINE_PROTOCOL_VERSION,
       pairedByUserId: f.owner.id,
       executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "cli_login", plan: "ultra" },
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
         codex: { version: "0.163.0" },
         detectedAt: new Date().toISOString(),
       },

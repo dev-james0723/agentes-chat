@@ -1861,6 +1861,8 @@ export interface RunnerExecutorInfo {
   /** Protocol 8, `claude` only: how it is logged in (`claude.ai`, `api_key`…) and the plan (`pro`, `max`, `ultra`…). */
   authMethod?: string;
   plan?: string;
+  /** Observed Claude organization UUID; not an account epoch or spending authorization. */
+  claudeOrgId?: string;
   /**
    * Protocol 36, `cursor`: the models its sign-in lists (`agent models`), and which its plan includes when the CLI
    * says. Protocol 39, `opencode`: the models `opencode models` lists (`provider/model`), `free` on OpenCode's free tier.
@@ -3347,12 +3349,21 @@ export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerIn
     if (!isObject(e) || !isString(e.version)) continue;
     const authMethod = word(e.authMethod);
     const plan = word(e.plan);
+    const claudeOrgId =
+      name === "claude" &&
+      e.loggedIn === true &&
+      authMethod === "claude.ai" &&
+      typeof e.claudeOrgId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e.claudeOrgId)
+        ? e.claudeOrgId.toLowerCase()
+        : undefined;
     out[name] = {
       version: e.version.replace(/\s+/g, " ").trim().slice(0, 80),
       ...(name === "antigravity" && e.hostAuth === true ? { hostAuth: true as const } : {}),
       ...(typeof e.loggedIn === "boolean" ? { loggedIn: e.loggedIn } : {}),
       ...(authMethod ? { authMethod } : {}),
       ...(plan ? { plan } : {}),
+      ...(claudeOrgId ? { claudeOrgId } : {}),
     };
     const models = name === "claude" || name === "codex" ? [] : parseCursorModels(e.models);
     if (models.length) out[name] = { ...out[name], models } as RunnerExecutorInfo;

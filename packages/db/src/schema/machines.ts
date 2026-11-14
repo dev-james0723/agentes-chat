@@ -45,7 +45,7 @@ export interface MachinePlanUsage {
  */
 export interface MachineExecutors {
   /** `loggedIn`/`authMethod`/`plan`: from `claude auth status` (protocol 8; absent = unknown). */
-  claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string };
+  claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string; claudeOrgId?: string };
   codex?: { version: string };
   /** Cursor's CLI (protocol 36, ADR 0114) and the models its sign-in lists; `inPlan`: the CLI said the plan includes it. */
   cursor?: { version: string; models?: { id: string; label?: string; inPlan?: boolean }[] };

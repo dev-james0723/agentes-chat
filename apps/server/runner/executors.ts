@@ -284,13 +284,14 @@ export function claudeKeptPlan(configDir: string): string | undefined {
 /**
  * Protocol 8: whether Claude Code is logged in (`claude auth status --json`:
  * `loggedIn`, `authMethod`, `subscriptionType`, the plan as `claudePlan` names
- * it). Only these three leave the machine (never the email or the
- * organization). Unknown on any failure; null when the CLI couldn't answer (timed out, failed to start).
+ * it). A validated organization UUID may also leave the machine; email and credentials never do.
+ * This is an observation, not a billing authorization or a stable login epoch.
+ * Unknown on any failure; null when the CLI couldn't answer (timed out, failed to start).
  */
 export async function claudeAuth(
   run: Run = defaultRun,
   tier: () => unknown = () => claudeTier(process.env.CLAUDE_CONFIG_DIR || homedir(), true),
-): Promise<{ loggedIn?: boolean; authMethod?: string; plan?: string } | null> {
+): Promise<{ loggedIn?: boolean; authMethod?: string; plan?: string; claudeOrgId?: string } | null> {
   try {
     const r = await run("claude", ["auth", "status", "--json"]);
     if (r.error) return missing(r) ? {} : null;
@@ -298,10 +299,19 @@ export async function claudeAuth(
     if (!json || typeof json !== "object") return r.status !== 0 ? { loggedIn: false } : {};
     const authMethod = word(json.authMethod);
     const plan = claudePlan(json.subscriptionType, tier);
+    const claudeOrgId =
+      r.status === 0 &&
+      json.loggedIn === true &&
+      authMethod === "claude.ai" &&
+      typeof json.orgId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(json.orgId)
+        ? json.orgId.toLowerCase()
+        : undefined;
     return {
       ...(typeof json.loggedIn === "boolean" ? { loggedIn: json.loggedIn } : {}),
       ...(authMethod ? { authMethod } : {}),
       ...(plan ? { plan } : {}),
+      ...(claudeOrgId ? { claudeOrgId } : {}),
     };
   } catch {
     return {};

@@ -125,6 +125,93 @@ test("protocol 8: brain.turn requests and brain frames parse; bad events are dro
   expect(done({ initMs: 5 })).toEqual({ type: "brain.event", runId: RUN(1), event: { type: "done", text: "ok" } });
 });
 
+test("hello: Claude organization observation is whitelisted without email or tokens", async () => {
+  const claudeOrgId = "11111111-2222-4333-8444-555555555555";
+  const auth = () => ({
+    status: 0,
+    stdout: line({
+      loggedIn: true,
+      authMethod: "claude.ai",
+      subscriptionType: "max",
+      orgId: claudeOrgId,
+      email: "private@example.test",
+      token: "secret-fixture",
+    }),
+  });
+  expect(await claudeAuth(auth, () => undefined)).toEqual({
+    loggedIn: true,
+    authMethod: "claude.ai",
+    plan: "max",
+    claudeOrgId,
+  });
+  expect(
+    parseExecutors({
+      claude: {
+        version: "2.1",
+        loggedIn: true,
+        authMethod: "claude.ai",
+        claudeOrgId,
+        email: "private@example.test",
+        token: "secret-fixture",
+      },
+    }),
+  ).toEqual({ claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai", claudeOrgId } });
+  expect(
+    parseRunnerFrame(
+      line({
+        type: "executors.changed",
+        executors: {
+          claude: {
+            version: "2.1",
+            loggedIn: true,
+            authMethod: "claude.ai",
+            claudeOrgId,
+            email: "private@example.test",
+            token: "secret-fixture",
+          },
+        },
+      }),
+    ),
+  ).toEqual({
+    type: "executors.changed",
+    executors: {
+      claude: {
+        version: "2.1",
+        loggedIn: true,
+        authMethod: "claude.ai",
+        claudeOrgId,
+      },
+    },
+  });
+  expect(
+    parseExecutors({
+      claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai", claudeOrgId: "private@example.test" },
+      codex: { version: "2.1", claudeOrgId },
+    }),
+  ).toEqual({ claude: { version: "2.1", loggedIn: true, authMethod: "claude.ai" }, codex: { version: "2.1" } });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: false, authMethod: "claude.ai", orgId: claudeOrgId }),
+    })),
+  ).toEqual({ loggedIn: false, authMethod: "claude.ai" });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: true, authMethod: "api_key", orgId: claudeOrgId }),
+    })),
+  ).toEqual({ loggedIn: true, authMethod: "api_key" });
+  expect(
+    await claudeAuth(() => ({
+      status: 0,
+      stdout: line({ loggedIn: true, authMethod: "claude.ai", orgId: "private@example.test" }),
+    })),
+  ).toEqual({ loggedIn: true, authMethod: "claude.ai" });
+  expect(parseExecutors({ claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai", claudeOrgId } })).toEqual(
+    { claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai" } },
+  );
+});
+
 test("hello: Claude Code's login state travels (never anything else from auth status)", async () => {
   expect(
     parseExecutors({ claude: { version: "2.1", loggedIn: false, authMethod: "claude.ai", plan: "max", email: "a@b" } }),
