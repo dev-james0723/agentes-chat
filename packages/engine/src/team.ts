@@ -544,7 +544,12 @@ export function createFindAgentToolSource(
             return output(withoutCandidates);
           }
           const candidateIds = candidates.map((a) => a.id);
-          const [current, currentTalks, currentReadiness, currentStatuses] = await Promise.all([
+          const [currentReadiness, currentStatuses] = await Promise.all([
+            agentAiStates({ db, ...deps.ai }, ctx.orgId, candidateIds),
+            loadAgentStatuses(db, ctx.orgId, new Date(), candidateIds),
+          ]);
+          // Read candidate/caller authority only after asynchronous readiness/status has settled.
+          const [current, currentTalks] = await Promise.all([
             db
               .select(TEAM_COLUMNS)
               .from(agents)
@@ -556,8 +561,6 @@ export function createFindAgentToolSource(
                 ),
               ),
             speakerFor(db, ctx.orgId, person),
-            agentAiStates({ db, ...deps.ai }, ctx.orgId, candidateIds),
-            loadAgentStatuses(db, ctx.orgId, new Date(), candidateIds),
           ]);
           // Check actor/cancellation again after the native asynchronous checks.
           if (ctx.signal?.aborted) return output(abstain("insufficient_scope", "canceled"));

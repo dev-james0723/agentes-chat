@@ -739,3 +739,34 @@ test("bare mention task query is rejected before native reads without changing q
   expect((await r.invoke({ query: "@" })).data?.delegation).toBeUndefined();
   expect(r.requests).toHaveLength(0);
 });
+
+test("candidate rows are refreshed after final asynchronous readiness settles", async () => {
+  const r = await routingFixture();
+  r.choose(r.alpha.id);
+  const old = f.gateway.hasModelCredential.bind(f.gateway);
+  let mutated = false;
+  r.during(async () => {
+    f.gateway.hasModelCredential = async (agent) => {
+      const ready = await old(agent);
+      if (!mutated) {
+        mutated = true;
+        await f.db
+          .update(schema.agents)
+          .set({ audienceMode: "owner", ownerUserId: null, consultable: false })
+          .where(eq(schema.agents.id, r.alpha.id));
+      }
+      return ready;
+    };
+  });
+  const out = await r.invoke({
+    task: "Implement bounded design",
+    purpose: "implementer",
+    departmentId: r.department.id,
+  });
+  expect(mutated).toBe(true);
+  expect(r.requests).toHaveLength(1);
+  expect(out.data?.delegation).toMatchObject({ status: "no_candidates", decisionCalls: 1 });
+  expect(out.data?.delegation).not.toHaveProperty("receipt");
+  expect(JSON.stringify(out)).not.toContain(r.alpha.id);
+  expect(JSON.stringify(out)).not.toContain(r.alpha.handle);
+});
