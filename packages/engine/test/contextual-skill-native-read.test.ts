@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { and, countQueries, type Database, eq, schema, sql } from "@agenteschat/db";
 import { createSkillToolSource, decideApproval, postPersonMessage, saveSkill } from "../src";
 import { runAuthorityById } from "../src/authority";
@@ -561,4 +561,73 @@ test("no reusable activation ever persists: issue and claim are one transaction,
   const ended = await gateway.invoke(ctx, { ...call, toolUseId: crypto.randomUUID() });
   expect(JSON.stringify(ended)).not.toContain(p.body);
   expect(await states()).toEqual({ completed: 1 });
+});
+
+// Locks between connections: a real server only (`TEST_DATABASE_URL`); PGlite serializes everything on one connection.
+describe.skipIf(!process.env.TEST_DATABASE_URL)("real PostgreSQL concurrency", () => {
+  const begin = async () => {
+    await f.close();
+    const p = await nativePublishedReadFixture();
+    f = p.f;
+    ctx = p.ctx;
+    skillId = p.selected.skillId;
+    await installNativeSkillReadTestSchema(f.db);
+    const gateway = createToolGateway({
+      sources: sources(),
+      nativeSkillReads: { canary: [{ agentId: ctx.agentId, runId: ctx.runId, skillId, operation: "load_skill" }] },
+    });
+    const useCount = async () =>
+      (await f.db.select().from(schema.skills).where(eq(schema.skills.id, skillId)))[0]?.useCount ?? -1;
+    const states = async () => {
+      const r = (await f.db.execute(
+        sql`select state, count(*)::int as n from skill_read_activations group by state`,
+      )) as unknown;
+      const rows = (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as { state: string; n: number }[];
+      return Object.fromEntries(rows.map((x) => [x.state, Number(x.n)]));
+    };
+    const read = (toolUseId: string) => gateway.invoke(ctx, { name: "load_skill", input: { name: p.name }, toolUseId });
+    return { p, read, useCount, states };
+  };
+
+  test("concurrent duplicate deliveries of one logical read release the body exactly once", async () => {
+    const { p, read, useCount, states } = await begin();
+    const before = await useCount();
+    const id = crypto.randomUUID();
+    const outs = await Promise.all([read(id), read(id), read(id), read(id)]);
+    expect(outs.filter((o) => JSON.stringify(o).includes(p.body))).toHaveLength(1);
+    expect(await useCount()).toBe(before + 1);
+    expect(await states()).toEqual({ completed: 1 });
+  });
+
+  test("independent reads overlap on separate connections without deadlock and each count once", async () => {
+    const { p, read, useCount, states } = await begin();
+    const before = await useCount();
+    const outs = await Promise.all([0, 1, 2, 3].map(() => read(crypto.randomUUID())));
+    const released = outs.filter((o) => JSON.stringify(o).includes(p.body)).length;
+    expect(released).toBe(4);
+    expect(await useCount()).toBe(before + 4);
+    expect(await states()).toEqual({ completed: 4 });
+  });
+
+  // Staggered so claims land on both sides of the revoke commit; the delays only shift timing, the asserted
+  // invariant (released bodies = completed claims = counted uses, none after the revoke) must hold at every one.
+  for (const delayMs of [0, 40, 80, 160, 320])
+    test(`reads racing an assignment revoke on another connection never over-release or miscount (+${delayMs}ms)`, async () => {
+      const { p, read, useCount, states } = await begin();
+      const before = await useCount();
+      const revoke = Bun.sleep(delayMs).then(() =>
+        f.db
+          .update(schema.agentSkills)
+          .set({ enabled: false })
+          .where(and(eq(schema.agentSkills.agentId, ctx.agentId), eq(schema.agentSkills.skillId, skillId))),
+      );
+      const [outs] = await Promise.all([Promise.all([0, 1, 2, 3].map(() => read(crypto.randomUUID()))), revoke]);
+      const released = outs.filter((o) => JSON.stringify(o).includes(p.body)).length;
+      if (process.env.B2_RACE_TRACE) console.log(`RACE +${delayMs}ms released=${released}`);
+      expect(await useCount()).toBe(before + released);
+      expect((await states()).completed ?? 0).toBe(released);
+      expect((await states()).issued ?? 0).toBe(0);
+      const after = await read(crypto.randomUUID());
+      expect(JSON.stringify(after)).not.toContain(p.body);
+    });
 });

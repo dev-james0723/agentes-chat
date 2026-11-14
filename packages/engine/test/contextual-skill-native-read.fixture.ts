@@ -13,6 +13,16 @@ import { sha256 } from "../src/crypto";
 import type { ToolContext } from "../src/tools/types";
 import { setup } from "./fixtures";
 
+/**
+ * On a real server (`TEST_DATABASE_URL`) SQL-stamped jobs carry the server clock while a claim compares them with
+ * this process's clock; a few ms of skew made one immediate drain claim nothing. A fresh small lead per batch keeps
+ * jobs the run itself enqueues mid-drain claimable; delayed jobs (seconds out) still wait.
+ */
+async function drainNow(f: Awaited<ReturnType<typeof setup>>) {
+  for (let i = 0; i < 100; i++)
+    if ((await drainOutbox(f.db, f.handlers, { now: new Date(Date.now() + 250), maxBatches: 1 })) === 0) return;
+}
+
 /** Real native executor -> private preview -> exact owner decision -> transactional native publication. Fake inference only. */
 export async function nativePublishedReadFixture(
   options: { publicationResult?: Record<string, unknown>; publicationExpected?: boolean } = {},
@@ -43,7 +53,7 @@ export async function nativePublishedReadFixture(
     await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, dm.id, {
       body: "@dev improve privately. Do not publish without my separate sharing decision.",
     });
-    await drainOutbox(f.db, f.handlers);
+    await drainNow(f);
     const [approval] = await f.db.select().from(schema.approvals);
     if (!approval) throw new Error("Native private approval was not issued");
     if (options.publicationResult !== undefined)
@@ -56,7 +66,7 @@ export async function nativePublishedReadFixture(
       decision: "approve",
       publicationFingerprint: preview.publication!.fingerprint,
     });
-    await drainOutbox(f.db, f.handlers);
+    await drainNow(f);
     const [published] = await f.db.select().from(schema.skills).where(eq(schema.skills.id, skill.id));
     const [executed] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, approval.id));
     if (!published || !executed) throw new Error("Native publication rows disappeared");
