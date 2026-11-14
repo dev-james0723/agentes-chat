@@ -186,17 +186,98 @@ async function registry(
   }
   throw new Error("MCP pagination limit exceeded");
 }
+/** Closed diagnostics describe the CURRENT failing attempt, never all effects in a turn. */
+const HOST_ACP_DIAGNOSTICS = {
+  invalid_json: ["intent", "invalid_json", "current_attempt_not_dispatched", "Model did not return a JSON intent"],
+  invalid_shape: ["intent", "invalid_shape", "current_attempt_not_dispatched", "Invalid model intent"],
+  invalid_arguments: [
+    "intent",
+    "invalid_arguments",
+    "current_attempt_not_dispatched",
+    "Tool not offered or invalid arguments",
+  ],
+  tool_unoffered: [
+    "intent",
+    "tool_unoffered",
+    "current_attempt_not_dispatched",
+    "Tool not offered or invalid arguments",
+  ],
+  schema_changed: ["registry", "schema_changed", "current_attempt_not_dispatched", "MCP tool schema changed"],
+  authorization_ended: ["authorization", "ended", "current_attempt_unknown", "Host ACP authorization ended"],
+  canceled: ["authorization", "canceled", "current_attempt_unknown", "Host ACP turn canceled"],
+  transport_request_failed: ["transport", "request_failed", "current_attempt_unknown", "ACP request failed"],
+  transport_closed: ["transport", "closed", "current_attempt_unknown", "ACP transport closed"],
+  transport_send_failed: ["transport", "send_failed", "current_attempt_unknown", "ACP transport failed"],
+  transport_timeout: ["transport", "timeout", "current_attempt_unknown", "ACP request timed out"],
+  prompt_incomplete: ["prompt", "incomplete", "current_attempt_unknown", "ACP turn incomplete"],
+  admission_failed: ["admission", "refused", "current_attempt_not_dispatched", "ACP admission failed"],
+  runner_home_invalid: ["admission", "invalid_root", "current_attempt_not_dispatched", "Runner home outside host home"],
+  protocol_unsupported: [
+    "transport",
+    "protocol_unsupported",
+    "current_attempt_not_dispatched",
+    "ACP protocol unsupported",
+  ],
+  session_missing: ["transport", "session_missing", "current_attempt_not_dispatched", "ACP session missing"],
+  model_unconfirmed: [
+    "model",
+    "selection_unconfirmed",
+    "current_attempt_not_dispatched",
+    "ACP model selection unconfirmed",
+  ],
+  model_unavailable: ["model", "unavailable", "current_attempt_not_dispatched", "ACP model unavailable"],
+  model_high_unconfirmed: [
+    "model",
+    "selection_unconfirmed",
+    "current_attempt_not_dispatched",
+    "Exact Argon High model selection could not be verified from the CLI response.",
+  ],
+  model_output_limit: ["intent", "output_limit", "current_attempt_not_dispatched", "Model output too large"],
+  context_limit: ["context", "limit", "current_attempt_unknown", "ACP tool context too large"],
+  result_invalid: ["result", "invalid_shape", "current_attempt_completed", "MCP tool result unsupported"],
+  foreground_bound: [
+    "intent",
+    "foreground_bound",
+    "current_attempt_not_dispatched",
+    `Foreground execution is bounded to ${HOST_ACP_FOREGROUND_SECONDS}s; split the work into bounded phases before dispatch.`,
+  ],
+  bounded_arguments_invalid: [
+    "intent",
+    "invalid_arguments",
+    "current_attempt_not_dispatched",
+    "Bounded execution arguments invalid",
+  ],
+} as const;
+type HostAcpFailureKind = keyof typeof HOST_ACP_DIAGNOSTICS;
+
+/** Constructed only at native throw sites; no vendor/model payload becomes a diagnostic field. */
+export class HostAcpFailure extends Error {
+  constructor(readonly kind: HostAcpFailureKind) {
+    super(HOST_ACP_DIAGNOSTICS[kind]?.[3] ?? "Host ACP stopped");
+  }
+}
+
+/** Existing wire message/cliErrorWords preserve this bounded tuple; arbitrary new wire fields do not. */
+export function hostAcpDiagnostic(error: unknown): string {
+  const fixed =
+    error instanceof HostAcpFailure && typeof error.kind === "string" && Object.hasOwn(HOST_ACP_DIAGNOSTICS, error.kind)
+      ? HOST_ACP_DIAGNOSTICS[error.kind]
+      : undefined;
+  const [stage, cause, effect] = fixed ?? ["unknown", "unexpected", "current_attempt_unknown"];
+  return `ACPdiag/v1 stage=${stage} cause=${cause} effect=${effect}. Turn stopped; inspect native receipts; no replay.`;
+}
+
 function parseIntent(
   raw: string,
 ): { type: "final"; text: string } | { type: "tool_call"; name: string; arguments: Record<string, unknown> } {
-  if (Buffer.byteLength(raw) > 100_000) throw new Error("Model output too large");
+  if (Buffer.byteLength(raw) > 100_000) throw new HostAcpFailure("model_output_limit");
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new Error("Model did not return a JSON intent");
+    throw new HostAcpFailure("invalid_json");
   }
-  if (!object(value)) throw new Error("Invalid model intent");
+  if (!object(value)) throw new HostAcpFailure("invalid_shape");
   const keys = Object.keys(value).sort().join(",");
   if (value.type === "final" && keys === "text,type" && typeof value.text === "string" && value.text.length <= 100_000)
     return value as any;
@@ -208,7 +289,7 @@ function parseIntent(
     Buffer.byteLength(JSON.stringify(value.arguments)) <= 32_768
   )
     return value as any;
-  throw new Error("Invalid model intent");
+  throw new HostAcpFailure("invalid_shape");
 }
 export class ToolSuspended extends Error {
   constructor() {
@@ -250,7 +331,7 @@ function checkedResult(result: any): string {
     throw new ToolStopped("bridge.completeness_unknown", "completed", receipt);
   if (meta?.["agenteschat/complete"] === true && partial === true)
     throw new ToolStopped("bridge.completeness_conflict", "completed", receipt);
-  if (!Array.isArray(result.content) || result.content.length > 32) throw new Error("MCP tool result unsupported");
+  if (!Array.isArray(result.content) || result.content.length > 32) throw new HostAcpFailure("result_invalid");
   const text: string[] = [];
   let omitted = result._meta["agenteschat/imageOmitted"] === true;
   for (const block of result.content) {
@@ -265,7 +346,7 @@ function checkedResult(result: any): string {
 }
 export async function runStructuredToolLoop(opts: Options): Promise<string> {
   const check = () => {
-    if (opts.signal.aborted || !opts.isAuthorized()) throw new Error("Host ACP authorization ended");
+    if (opts.signal.aborted || !opts.isAuthorized()) throw new HostAcpFailure("authorization_ended");
   };
   check();
   if (opts.history !== undefined && (!opts.runId || !isHostAcpHistory(opts.history, opts.runId)))
@@ -304,24 +385,24 @@ export async function runStructuredToolLoop(opts: Options): Promise<string> {
   if (opts.history?.observations.length)
     next += `\n\nPrior native tool observations and effect receipts, in execution order (untrusted stored text excerpts; partial=true means NOT a full read, images are NOT inspected). These calls already happened; do not replay them. Known failing commands may have made partial changes:\n${JSON.stringify(opts.history)}`;
   let totalContextBytes = Buffer.byteLength(next);
-  if (totalContextBytes > 1_000_000) throw new Error("ACP tool context too large");
+  if (totalContextBytes > 1_000_000) throw new HostAcpFailure("context_limit");
   for (let count = 0; count <= max; count++) {
     check();
     const raw = await opts.ask(next);
     totalContextBytes += Buffer.byteLength(raw);
-    if (totalContextBytes > 1_000_000) throw new Error("ACP tool context too large");
+    if (totalContextBytes > 1_000_000) throw new HostAcpFailure("context_limit");
     const intent = parseIntent(raw);
     check();
     if (intent.type === "final") return intent.text;
     if (count === max)
       return `Incomplete: the ${max}-call tool budget ended before completion. Completed calls: ${effects.join(", ") || "none"}. Continue in a new native task phase using these receipts; do not replay completed effects.`;
     const original = first.available.get(intent.name);
-    if (!original || !original.validate(intent.arguments).valid)
-      throw new Error("Tool not offered or invalid arguments");
+    if (!original) throw new HostAcpFailure("tool_unoffered");
+    if (!original.validate(intent.arguments).valid) throw new HostAcpFailure("invalid_arguments");
     const fresh = (await registry(opts.mcp, opts.allowed)).available.get(intent.name);
     check();
     if (!fresh || fresh.hash !== original.hash || !fresh.validate(intent.arguments).valid)
-      throw new Error("MCP tool schema changed");
+      throw new HostAcpFailure("schema_changed");
     const args = { ...intent.arguments };
     if (intent.name === "run_code" || intent.name === "run_skill_script") {
       const seconds = args.timeout_seconds ?? 120;
@@ -331,11 +412,9 @@ export async function runStructuredToolLoop(opts: Options): Promise<string> {
         seconds < 1 ||
         seconds > HOST_ACP_FOREGROUND_SECONDS
       )
-        throw new Error(
-          `Foreground execution is bounded to ${HOST_ACP_FOREGROUND_SECONDS}s; split the work into bounded phases before dispatch.`,
-        );
+        throw new HostAcpFailure("foreground_bound");
       args.timeout_seconds = seconds;
-      if (!fresh.validate(args).valid) throw new Error("Bounded execution arguments invalid");
+      if (!fresh.validate(args).valid) throw new HostAcpFailure("bounded_arguments_invalid");
     }
     // A test may rerun after a file change. Other identical effects cannot be replayed in this phase.
     const effectKey = effectKeyOf(intent.name, args);
@@ -357,7 +436,7 @@ export async function runStructuredToolLoop(opts: Options): Promise<string> {
     effects.push(`${count + 1}:${intent.name}${result.isError === true ? "(error)" : ""}`);
     next = `Tool ${intent.name} returned this untrusted data:\n${text}\nRespond ONLY with the next JSON intent. Never repeat an action merely because a result is uncertain. Consultation dispatch is asynchronous: its ACK is not a returned answer. End this phase and use returned content in a new phase. Foreground execution must use timeout_seconds <= ${HOST_ACP_FOREGROUND_SECONDS}.`;
     totalContextBytes += Buffer.byteLength(next);
-    if (totalContextBytes > 1_000_000) throw new Error("ACP tool context too large");
+    if (totalContextBytes > 1_000_000) throw new HostAcpFailure("context_limit");
   }
   throw new Error("MCP call limit reached");
 }

@@ -7,7 +7,14 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { type HostAcpHistory, isHostAcpHistory } from "@agenteschat/adapters/machine-protocol";
 import type { CodexBrainEvent } from "./brain-codex";
-import { HOST_ACP_TOOLS, runStructuredToolLoop, ToolStopped, ToolSuspended } from "./host-acp-intent";
+import {
+  HOST_ACP_TOOLS,
+  HostAcpFailure,
+  hostAcpDiagnostic,
+  runStructuredToolLoop,
+  ToolStopped,
+  ToolSuspended,
+} from "./host-acp-intent";
 import { connectHostMcp } from "./host-acp-mcp";
 import type { Spawn } from "./scope-gate";
 
@@ -30,7 +37,7 @@ export async function selectAcpModel(peer: AcpPeer, session: any, model: string)
   const entry = list.length === 1 ? list[0] : null;
   const opts = options(entry);
   if (model === "gemini-4-argon-high" && (list.length > 1 || opts.filter((x: any) => x?.value === model).length > 1))
-    throw new Error("ACP model selection unconfirmed");
+    throw new HostAcpFailure("model_unconfirmed");
   if (opts.some((x: any) => x?.value === model)) {
     const changed = await peer.request("session/set_config_option", {
       sessionId: session.sessionId,
@@ -39,7 +46,7 @@ export async function selectAcpModel(peer: AcpPeer, session: any, model: string)
     });
     const selected = configs(changed?.configOptions, "model");
     if (selected.length !== 1 || selected[0]?.id !== entry.id || selected[0]?.currentValue !== model)
-      throw new Error("ACP model selection unconfirmed");
+      throw new HostAcpFailure("model_unconfirmed");
     return { selectionMode: "config_readback" as const, selectedModel: model };
   }
   // The installed CLI exposes Argon High as a base model plus a separate thinking setting.
@@ -60,7 +67,7 @@ export async function selectAcpModel(peer: AcpPeer, session: any, model: string)
       opts.filter((x: any) => x?.value === "gemini-4-argon").length !== 1 ||
       options(thought).filter((x: any) => x?.value === "high").length !== 1
     )
-      throw new Error("ACP model selection unconfirmed");
+      throw new HostAcpFailure("model_unconfirmed");
     await peer.request("session/set_config_option", {
       sessionId: session.sessionId,
       configId: entry.id,
@@ -81,18 +88,17 @@ export async function selectAcpModel(peer: AcpPeer, session: any, model: string)
       base[0]?.currentValue !== "gemini-4-argon" ||
       high[0]?.currentValue !== "high"
     )
-      throw new Error("ACP model selection unconfirmed");
+      throw new HostAcpFailure("model_unconfirmed");
     return { selectionMode: "config_pair_readback" as const, selectedModel: "gemini-4-argon", thoughtLevel: "high" };
   }
   const legacy = session?.models;
   if (!Array.isArray(legacy?.availableModels) || !legacy.availableModels.some((x: any) => x?.modelId === model))
-    throw new Error("ACP model unavailable");
+    throw new HostAcpFailure("model_unavailable");
   if (model === "gemini-4-argon-high" && legacy.availableModels.filter((x: any) => x?.modelId === model).length !== 1)
-    throw new Error("ACP model selection unconfirmed");
+    throw new HostAcpFailure("model_unconfirmed");
   if (legacy.currentModelId === model) return { selectionMode: "session_readback" as const, selectedModel: model };
   const result = await peer.request("session/set_model", { sessionId: session.sessionId, modelId: model });
-  if (!result || typeof result !== "object" || Array.isArray(result))
-    throw new Error("ACP model selection unconfirmed");
+  if (!result || typeof result !== "object" || Array.isArray(result)) throw new HostAcpFailure("model_unconfirmed");
   return { selectionMode: "ack_only" as const, selectedModel: null };
 }
 
@@ -109,17 +115,17 @@ class Peer {
   text = "";
   constructor(private child: ChildProcess) {}
   send(v: unknown) {
-    if (!this.child.stdin?.writable) throw new Error("ACP transport closed");
+    if (!this.child.stdin?.writable) throw new HostAcpFailure("transport_closed");
     this.child.stdin.write(JSON.stringify(v) + "\n");
   }
   request(method: string, params: unknown): Promise<any> {
-    if (this.closed) return Promise.reject(new Error("ACP transport closed"));
+    if (this.closed) return Promise.reject(new HostAcpFailure("transport_closed"));
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
         () => {
           this.pending.delete(id);
-          reject(new Error("ACP request timed out"));
+          reject(new HostAcpFailure("transport_timeout"));
         },
         method === "session/prompt" ? 900_000 : 90_000,
       );
@@ -129,7 +135,7 @@ class Peer {
       } catch {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(new Error("ACP transport failed"));
+        reject(new HostAcpFailure("transport_send_failed"));
       }
     });
   }
@@ -179,7 +185,8 @@ class Peer {
         if (!p) return this.close();
         clearTimeout(p.timer);
         this.pending.delete(msg.id);
-        if (msg.error || !msg.result || typeof msg.result !== "object") p.reject(new Error("ACP request failed"));
+        if (msg.error || !msg.result || typeof msg.result !== "object")
+          p.reject(new HostAcpFailure("transport_request_failed"));
         else p.resolve(msg.result);
       }
     }
@@ -197,7 +204,7 @@ class Peer {
     this.closed = true;
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
-      p.reject(new Error("ACP transport closed"));
+      p.reject(new HostAcpFailure("transport_closed"));
     }
     this.pending.clear();
   }
@@ -286,14 +293,14 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
       input.signal.aborted ||
       !input.isAuthorized()
     )
-      throw new Error("ACP admission failed");
+      throw new HostAcpFailure("admission_failed");
     const uncertain = input.hostAcpHistory?.observations.find((o) => o.state === "unknown");
     if (uncertain) throw new ToolStopped("bridge.history_unknown", "unknown", uncertain.callId);
     const hostHome = realpathSync(os.homedir());
     const root = realpathSync(input.runnerHome);
     const under = path.relative(hostHome, root);
     if (!under || under === ".." || under.startsWith(`..${path.sep}`) || path.isAbsolute(under))
-      throw new Error("Runner home outside host home");
+      throw new HostAcpFailure("runner_home_invalid");
     scratch = mkdtempSync(path.join(root, "host-acp-"));
     const gemini = path.join(scratch, "gemini");
     const settingsDir = path.join(gemini, "antigravity-cli");
@@ -365,13 +372,13 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
         clientCapabilities: {},
         clientInfo: { name: "agenteschat", version: "0.1" },
       });
-      if (init.protocolVersion !== 1) throw new Error("ACP protocol unsupported");
+      if (init.protocolVersion !== 1) throw new HostAcpFailure("protocol_unsupported");
       const session = await peer.request("session/new", { cwd: input.cwd, mcpServers: [] });
-      if (typeof session.sessionId !== "string" || !session.sessionId) throw new Error("ACP session missing");
+      if (typeof session.sessionId !== "string" || !session.sessionId) throw new HostAcpFailure("session_missing");
       peer.sessionId = session.sessionId;
       const selection = await selectAcpModel(peer, session, input.model);
       if (input.model === "gemini-4-argon-high" && selection.selectionMode === "ack_only")
-        throw new Error("Exact Argon High model selection could not be verified from the CLI response.");
+        throw new HostAcpFailure("model_high_unconfirmed");
       // A diagnostic readback, not a model-authored claim or an app tool dispatch.
       // The engine validates this envelope and durably records a context step before work accounting.
       if (selection.selectionMode !== "ack_only")
@@ -391,7 +398,7 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
             }),
           },
         });
-      if (!input.isAuthorized()) throw new Error("ACP authorization revoked");
+      if (!input.isAuthorized()) throw new HostAcpFailure("authorization_ended");
       mcpClient = await (input.connectMcp ?? connectHostMcp)({
         ...input.mcp,
         runnerHome: root,
@@ -416,7 +423,7 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
               sessionId: turnPeer.sessionId,
               prompt: [{ type: "text", text }],
             });
-            if (result.stopReason !== "end_turn" || input.signal.aborted) throw new Error("ACP turn incomplete");
+            if (result.stopReason !== "end_turn" || input.signal.aborted) throw new HostAcpFailure("prompt_incomplete");
             return turnPeer.text;
           },
         });
@@ -434,18 +441,14 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
     if (error instanceof ToolStopped) {
       failReason = error.message;
       deliveryUnknown = error.effect === "unknown";
-    } else if (error instanceof Error && /delivery unknown/.test(error.message))
+    } else if (error instanceof HostAcpFailure) failReason = hostAcpDiagnostic(error);
+    else if (error instanceof Error && /delivery unknown/.test(error.message))
       failReason = "A tool call's delivery is unknown. It was not retried; check its result before trying again.";
     else if (error instanceof Error && /image or non-text/.test(error.message))
       failReason = "This tool returned an image or other content the agent cannot read yet.";
     else if (error instanceof Error && /run-state capability unavailable/.test(error.message))
       failReason = "This computer's app bridge is too old to safely run tools.";
-    else if (
-      error instanceof Error &&
-      /Foreground execution|Bounded execution|tool context too large/.test(error.message)
-    )
-      failReason = error.message;
-    else if (error instanceof Error && /Exact Argon High/.test(error.message)) failReason = error.message;
+    else failReason = hostAcpDiagnostic(error);
   } finally {
     mcpAbort.abort();
     await mcpClient?.close().catch(() => undefined);
@@ -466,6 +469,15 @@ export async function runHostAcpTurn(input: HostAcpTurn): Promise<void> {
       retryable: false,
     });
   } else if (resultText === undefined || input.signal.aborted || !input.isAuthorized()) {
+    // Cancellation can arrive during cleanup after a result; never describe the whole turn as effect-free.
+    if (failReason === "The host Antigravity ACP turn could not complete.")
+      failReason = hostAcpDiagnostic(
+        input.signal.aborted
+          ? new HostAcpFailure("canceled")
+          : !input.isAuthorized()
+            ? new HostAcpFailure("authorization_ended")
+            : undefined,
+      );
     input.emit({
       type: "error",
       code: deliveryUnknown ? "antigravity_delivery_unknown" : "antigravity_failed",
