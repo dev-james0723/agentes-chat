@@ -142,12 +142,17 @@ test("real zero is valid; requested alias and resolved version stay distinct", a
 
 test("the existing delegation tool can persist a receipt without leaking raw judgment inputs", async () => {
   const { judge } = jev({ delegate: { choice: "qa", confidence: 0.9 } });
-  const result = await chooseDelegate(judge, { orgId: "o", agentId: "a", runId: "r" }, "private synthetic summary", [
-    { id: "qa", handle: "qa", name: "QA", role: "review", can: "read", presence: "busy" },
-  ]);
+  const result = await chooseDelegate(
+    judge,
+    { orgId: "o", agentId: "a", runId: "r" },
+    "private synthetic summary",
+    [{ id: "qa", handle: "qa", name: "QA", role: "review", can: "read", presence: "busy" }],
+    "implementer",
+  );
   expect(result).toMatchObject({
     status: "recommended",
     receipt: {
+      policyVersion: "delegate/2",
       judgment: {
         kind: "agent_delegation",
         requestedModel: "jev-latest",

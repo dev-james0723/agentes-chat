@@ -10,7 +10,13 @@ import { BROWSER_SCOPE, DESKTOP_SCOPE } from "./browser/types";
 import { caches } from "./cache";
 import { capabilityKeys, summarizeScopes } from "./capabilities";
 import { channelAudienceSql } from "./channels";
-import { chooseDelegate } from "./delegation-choice";
+import {
+  chooseDelegate,
+  DELEGATION_PURPOSES,
+  type DelegateChoice,
+  delegationScope,
+  readDelegationIntent,
+} from "./delegation-choice";
 import { agentDesktopUseStatus } from "./desktop/status";
 import { cutText, editDistance } from "./format";
 import type { Judge } from "./judge";
@@ -126,27 +132,30 @@ type Teammate = Pick<
   | "brain"
   | "autonomyBrakes"
   | "reportsToAgentId"
->;
+> & { groupId?: string | null };
+
+const TEAM_COLUMNS = {
+  id: agents.id,
+  name: agents.name,
+  handle: agents.handle,
+  role: agents.role,
+  instructions: agents.instructions,
+  ownerUserId: agents.ownerUserId,
+  audienceMode: agents.audienceMode,
+  audienceUserIds: agents.audienceUserIds,
+  audienceRoleIds: agents.audienceRoleIds,
+  consultable: agents.consultable,
+  brain: agents.brain,
+  autonomyBrakes: agents.autonomyBrakes,
+  reportsToAgentId: agents.reportsToAgentId,
+  groupId: agents.groupId,
+};
 
 /** The org's active agents, oldest first (per-process cache; agent writes drop it). */
 export function loadTeam(db: Database, orgId: string): Promise<Teammate[]> {
   return caches.agents.getOrLoad(`${orgId}:team`, () =>
     db
-      .select({
-        id: agents.id,
-        name: agents.name,
-        handle: agents.handle,
-        role: agents.role,
-        instructions: agents.instructions,
-        ownerUserId: agents.ownerUserId,
-        audienceMode: agents.audienceMode,
-        audienceUserIds: agents.audienceUserIds,
-        audienceRoleIds: agents.audienceRoleIds,
-        consultable: agents.consultable,
-        brain: agents.brain,
-        autonomyBrakes: agents.autonomyBrakes,
-        reportsToAgentId: agents.reportsToAgentId,
-      })
+      .select(TEAM_COLUMNS)
       .from(agents)
       .where(and(eq(agents.orgId, orgId), isNull(agents.archivedAt)))
       .orderBy(asc(agents.createdAt)),
@@ -314,7 +323,7 @@ const words = (s: string) =>
 /** `find_agent` as a personal workspace's agents read it (ADR 0159). */
 const FIND_AGENT_PERSONAL = {
   [FIND_AGENT_TOOL]:
-    "Find this person's other agents and their live capabilities. For a delegation decision, pass `task`: the configured Jev decision model recommends one authorized, AI-ready candidate and returns a receipt without starting work. Send only a short task summary, never secrets or source code. `query` alone searches names and roles. A recommendation does not replace a person's explicit assignee or approvals; recheck readiness and ownership before delegation.",
+    "Find this person's agents. Query alone searches metadata. With task, supply purpose and an exact current handle/targetAgentId or native departmentId. Fill known intent from the task; incomplete intent returns structured clarification. Exact targets use rules and scoped shortlists may get Jev advice. Required exact tools without authoritative availability stay unknown. Role, confidence and readiness are not verified task fitness or review independence. Send only a short non-secret summary; no work or authority is granted. Recheck ownership/readiness/approvals before dispatch.",
 };
 
 /**
@@ -329,12 +338,35 @@ export function createFindAgentToolSource(
   const tool: ToolDefinition = {
     name: FIND_AGENT_TOOL,
     description:
-      "Find the organization's other agents and their live capabilities. For a delegation decision, pass `task`: the workspace's Jev decision model recommends one authorized, AI-ready candidate and returns an explicit receipt, without starting work. Send only a short task summary, never secrets or source code. `query` alone searches names and roles; leave it empty to list agents. A recommendation does not replace a person's explicit assignee or approvals. Recheck readiness and ownership before assigning or asking one.",
+      "Find agents. Query alone searches names and roles. With task, supply purpose and an exact current handle/targetAgentId or native departmentId. Resolve known task intent yourself; incomplete intent returns structured clarification, not an automatic request to the person. Exact targets use rules; an eligible department shortlist may get Jev advice. Required exact tools lacking authoritative availability remain unknown. Role, department, confidence and readiness do not prove task fitness or independent review. Send only a short non-secret task summary. This starts no work and grants no authority; dispatch still rechecks ownership, readiness and approvals.",
     scope: "",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", maxLength: 200, description: "What you need, e.g. 'staging deploy' or 'invoices'." },
+        purpose: {
+          enum: [...DELEGATION_PURPOSES],
+          description:
+            "Which responsibility is being selected; separate who was addressed from delivery owner, department coordinator, implementer and reviewer.",
+        },
+        departmentId: {
+          type: "string",
+          format: "uuid",
+          description: "Existing native department ID, not a role title or its human lead.",
+        },
+        targetAgentId: {
+          type: "string",
+          format: "uuid",
+          description: "An exact existing agent ID. Selection still checks native reach/readiness.",
+        },
+        requiredTools: {
+          type: "array",
+          maxItems: 8,
+          uniqueItems: true,
+          items: { type: "string", pattern: "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$" },
+          description:
+            "Hard exact-tool needs. Without an authoritative candidate tool-availability contract these return unknown, not an inferred grant.",
+        },
         task: {
           type: "string",
           minLength: 1,
@@ -346,34 +378,101 @@ export function createFindAgentToolSource(
       additionalProperties: false,
     },
     describe: (input) => ({
-      title: typeof input.task === "string" ? "Jev delegation decision" : "Find agents",
+      title: typeof input.task === "string" ? "Delegate selection" : "Find agents",
       detail: String(input.task ?? input.query ?? ""),
     }),
     async execute(input, ctx) {
       const { db } = ctx;
+      const output = (decision: DelegateChoice) => ({
+        content:
+          decision.status === "recommended"
+            ? `${decision.by === "rules" ? "Explicit target" : "Jev suggests"} @${decision.handle} (agent ${decision.agentId}) for ${decision.purpose}. Task fitness and review independence are unverified. This starts no work and grants no authority; recheck ownership, readiness and approvals before dispatch.`
+            : decision.status === "insufficient_scope"
+              ? `Delegate selection needs more scope: ${decision.reason}. Fill the missing selection fields from the current task; use query-only lookup when needed. No agent selected and no decision-model call made.`
+              : `Delegate selection result: ${decision.status}. No agent selected; no work started. Do not substitute a model or agent on failure.`,
+        ...(["unavailable", "invalid", "invalid_input"].includes(decision.status) ? { isError: true } : {}),
+        data: { delegation: decision },
+      });
+      const parsed = typeof input.task === "string" ? readDelegationIntent(input) : undefined;
+      if (parsed && "decision" in parsed) return output(parsed.decision);
+      if (typeof input.task === "string" && (!input.task.trim() || input.task.length > 1200))
+        return output(delegationScope("invalid_task"));
       const person = await personBehindCall(ctx);
       const talks = await speakerFor(db, ctx.orgId, person);
       const allTeam = await loadTeam(db, ctx.orgId);
       const team = allTeam.filter((a) => a.id !== ctx.agentId && canTalkTo(a, person, viaAgent(talks)));
       if (typeof input.task === "string") {
-        if (!deps.judge || !deps.ai) {
-          return {
-            content: "Jev delegation is unavailable; no recommendation was made. Do not claim Jev selected an agent.",
-            isError: true,
-            data: { delegation: { status: "unavailable", by: "jev" } },
-          };
+        if (!parsed || !("intent" in parsed)) return output(delegationScope("selection_purpose_required"));
+        const intent = parsed.intent;
+        const facts = {
+          purpose: intent.purpose,
+          taskFit: "unverified" as const,
+          independence: "not_evaluated" as const,
+        };
+        const noCandidates = (): DelegateChoice => ({
+          status: "no_candidates",
+          by: "rules",
+          ...facts,
+          decisionCalls: 0,
+        });
+        let callable = teammatesFor(allTeam, ctx.agentId, person, new Set(), talks);
+        let targetId = intent.targetAgentId;
+        const query = typeof input.query === "string" ? input.query.trim().replace(/^@/, "").toLowerCase() : "";
+        if (query) {
+          const exact = callable.filter((a) => a.handle.toLowerCase() === query);
+          if (exact.length !== 1) return output(delegationScope("exact_target_required", intent.purpose));
+          if (targetId && targetId !== exact[0]?.id)
+            return output(delegationScope("target_identity_conflict", intent.purpose));
+          targetId = exact[0]?.id;
         }
-        const callable = teammatesFor(allTeam, ctx.agentId, person, new Set(), talks);
+        callable = callable.filter(
+          (a) => (!targetId || a.id === targetId) && (!intent.departmentId || a.groupId === intent.departmentId),
+        );
+        if (!callable.length) return output(noCandidates());
+        if (callable.length > 8) return output(delegationScope("shortlist_too_large", intent.purpose));
+        if (!deps.ai)
+          return output({
+            status: "unavailable",
+            by: "rules",
+            ...facts,
+            decisionCalls: 0,
+            reason: "readiness_unavailable",
+          });
         const ids = callable.map((a) => a.id);
         const [scopes, statuses, readiness] = await Promise.all([
           rosterScopeNames(db, deps.machines, ctx.orgId, ids),
           loadAgentStatuses(db, ctx.orgId, new Date(), ids),
           agentAiStates({ db, ...deps.ai }, ctx.orgId, ids),
         ]);
+        if (ctx.signal?.aborted) return output(delegationScope("canceled", intent.purpose));
+        if ((await personBehindCall(ctx)) !== person)
+          return output(delegationScope("requester_changed", intent.purpose));
+        if (person) {
+          try {
+            await requirePermission(db, person, ctx.orgId, "read");
+          } catch {
+            return output(delegationScope("requester_unavailable", intent.purpose));
+          }
+        }
+        // Explicit lookup only: bounded fresh rows and requester reach, after asynchronous readiness checks.
+        // Keep inLine's existing permission semantics; it is not semantic task fitness.
+        const [fresh, freshTalks] = await Promise.all([
+          db
+            .select(TEAM_COLUMNS)
+            .from(agents)
+            .where(
+              and(eq(agents.orgId, ctx.orgId), inArray(agents.id, [ctx.agentId, ...ids]), isNull(agents.archivedAt)),
+            ),
+          speakerFor(db, ctx.orgId, person),
+        ]);
+        if (!fresh.some((a) => a.id === ctx.agentId)) return output(noCandidates());
         const statusOf = new Map(statuses.map((s) => [s.agentId, s]));
-        const candidates = callable
+        const candidates = teammatesFor(fresh, ctx.agentId, person, new Set(), freshTalks)
           .filter(
             (a) =>
+              ids.includes(a.id) &&
+              (!targetId || a.id === targetId) &&
+              (!intent.departmentId || a.groupId === intent.departmentId) &&
               readiness.get(a.id)?.state === "ready" &&
               !["offline", "out"].includes(statusOf.get(a.id)?.presence ?? "offline"),
           )
@@ -382,25 +481,40 @@ export function createFindAgentToolSource(
             handle: a.handle,
             name: a.name,
             role: a.role,
+            departmentId: a.groupId ?? null,
             can: summarizeScopes(scopes.filter((s) => s.agentId === a.id).map((s) => s.scope)),
             presence: statusOf.get(a.id)?.presence ?? "unknown",
           }));
-        const decision = await chooseDelegate(
-          deps.judge,
-          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
-          input.task,
-          candidates,
+        if (!candidates.length) return output(noCandidates());
+        if (targetId) {
+          const found = candidates.find((a) => a.id === targetId);
+          if (!found) return output(noCandidates());
+          return output({
+            status: "recommended",
+            by: "rules",
+            ...facts,
+            decisionCalls: 0,
+            agentId: found.id,
+            handle: found.handle,
+            receipt: {
+              candidateIds: [found.id],
+              policyVersion: "delegate/2",
+              approval: "not_evaluated",
+              capacityLease: "not_reserved",
+              dispatch: "not_requested",
+            },
+          });
+        }
+        if (!deps.judge) return output({ status: "unavailable", by: "rules", ...facts, decisionCalls: 0 });
+        return output(
+          await chooseDelegate(
+            deps.judge,
+            { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
+            input.task,
+            candidates,
+            intent.purpose,
+          ),
         );
-        return {
-          content:
-            decision.status === "recommended"
-              ? `Jev recommends @${decision.handle} (agent ${decision.agentId}). This starts no work and grants no authority. Recheck task ownership, readiness and approval requirements before delegating.`
-              : `Jev delegation result: ${decision.status}. No agent was selected and no work was started. Do not silently substitute a decision model or claim Jev chose someone.`,
-          ...(decision.status === "unavailable" || decision.status === "invalid" || decision.status === "invalid_input"
-            ? { isError: true }
-            : {}),
-          data: { delegation: decision },
-        };
       }
       const query = words(String(input.query ?? ""));
       const scored = team
