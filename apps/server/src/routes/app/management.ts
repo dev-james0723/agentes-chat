@@ -358,6 +358,32 @@ const Run = z
     inputTokens: z.number().openapi({ description: "Every input token, cache included." }),
     cachedTokens: z.number().openapi({ description: "How much of `inputTokens` was read from the prompt cache." }),
     outputTokens: z.number(),
+    usageBreakdown: z
+      .object({
+        scope: z.literal("all_run_usage_records"),
+        inputScope: z.literal("cache_inclusive"),
+        cachedScope: z.literal("cache_read_subset"),
+        messageScope: z.literal("agent_non_web"),
+        counterSource: z.literal("recorded_may_include_estimates"),
+        costScope: z.literal("not_exposed_not_actual_cash"),
+        byKind: z.array(
+          z.object({
+            kind: z.string(),
+            providerScope: z.enum(["web", "non_web"]),
+            records: z.number(),
+            partialRecords: z.number(),
+            inputTokens: z.number(),
+            cachedTokens: z.number(),
+            outputTokens: z.number(),
+            costNanoUsd: z.null(),
+          }),
+        ),
+      })
+      .optional()
+      .openapi({
+        description:
+          "Readable single-run detail only. Recorded counters across all kinds; input includes cache. Agent/non-web groups match the message token scope. Records are not underlying provider calls. Money is not exposed; null cost is unknown/not furnished, never zero cash.",
+      }),
     createdAt: z.string(),
     finishedAt: z.string().nullable(),
     repo: z.string().nullable().openapi({ description: "GitHub repository it worked in (owner/name)." }),
