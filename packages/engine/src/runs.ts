@@ -536,7 +536,7 @@ export async function addRunStep(
       })
       .onConflictDoNothing()
       .returning({ id: agentRunSteps.id });
-    if (added.length > 0) return;
+    if (added[0]) return added[0].id;
   }
   throw new Error(`No free step number on run ${run.id}`);
 }

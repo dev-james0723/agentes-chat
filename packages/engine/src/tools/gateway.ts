@@ -28,6 +28,16 @@ import { actionLevel, nameWords, openEnded } from "../connectors/classify";
 import { missingConnectors, type ServerCatalog } from "../connectors/listing";
 import { answersAgentsOnly, consultationOrigin } from "../consultations";
 import { recordOutcome } from "../context/outcomes";
+import {
+  beginNativeSkillRead,
+  completeNativeSkillRead,
+  finalizeNativeSkillRead,
+  type NativeSkillReadCall,
+  type NativeSkillReadConfig,
+  nativeSkillReadPending,
+  nativeSkillReadTargeted,
+  refuseNativeSkillRead,
+} from "../contextual-skill-native-read";
 import { sha256 } from "../crypto";
 import { provenReadOnly } from "../databases/guard";
 import { isUnexpectedError, ToolOffError } from "../errors";
@@ -500,6 +510,8 @@ const readsOutsideText = (tool: ToolDefinition, output: ToolOutput) =>
 
 export function createToolGateway(deps: {
   sources: ToolSource[];
+  /** Source-only scoped pilot: absent means legacy behavior. Never a model tool argument. */
+  nativeSkillReads?: NativeSkillReadConfig;
   now?: () => Date;
   /** What this server can connect: `find_tools` names each connector a search asks for that the agent lacks. */
   catalog?: ServerCatalog;
@@ -631,6 +643,15 @@ export function createToolGateway(deps: {
     const done = startInFlight(`tool ${tool.name}`, ctx.runId);
     try {
       const output = await tool.execute(input, ctx);
+      if (
+        nativeSkillReadPending(ctx) &&
+        (output.outcome ||
+          output.images?.length ||
+          output.waitForAnswer ||
+          output.waitForApproval ||
+          output.waitForSecret)
+      )
+        return refuseNativeSkillRead(ctx);
       if (output.outcome) {
         await recordOutcome(ctx.db, {
           orgId: ctx.orgId,
@@ -644,11 +665,17 @@ export function createToolGateway(deps: {
       }
       // A NUL or a lone surrogate (a binary printed by a command) would make every save of this result fail.
       const text = pgSafeText(output.content);
+      const suffix = text.length > MAX_RESULT_CHARS ? "\n[truncated]" : null;
       const capped = {
         ...output,
-        content: text.length > MAX_RESULT_CHARS ? `${cutText(text, MAX_RESULT_CHARS)}\n[truncated]` : text,
+        content: suffix ? `${cutText(text, MAX_RESULT_CHARS)}${suffix}` : text,
         ...(output.resultTruncated === true || text.length > MAX_RESULT_CHARS ? { resultTruncated: true } : {}),
       };
+      finalizeNativeSkillRead(ctx, output, capped, {
+        suffix,
+        sanitized: text !== output.content,
+        gatewayTruncated: suffix !== null,
+      });
       return tool.external ? { ...capped, content: wrapExternal(tool.name, capped.content) } : capped;
     } catch (error) {
       const message = pgSafeText(error instanceof Error ? error.message : String(error));
@@ -905,7 +932,14 @@ export function createToolGateway(deps: {
    */
   async function runApproved(ctx: ToolContext, approval: Approval, toolUseId: string): Promise<ToolOutput> {
     if (approval.status !== "approved") return { content: "This action was not approved", isError: true };
-    if (approval.executedAt) return ranBefore(approval);
+    if (approval.executedAt) {
+      if (deps.nativeSkillReads) {
+        const tool = (await allTools(ctx)).get(approval.tool);
+        if (tool && (await nativeSkillReadTargeted(ctx, tool, approval.params, deps.nativeSkillReads)))
+          return { content: "This scoped read was already attempted. No content was replayed.", isError: true };
+      }
+      return ranBefore(approval);
+    }
     const expected = actionHash({
       tool: approval.tool,
       scope: approval.scope,
@@ -950,7 +984,37 @@ export function createToolGateway(deps: {
         }
         return ranBefore(row ?? approval);
       }
-      output = await run(tool, approval.params, { ...ctx, toolUseId, approved: true }, 1);
+      const runCtx: ToolContext = { ...ctx, toolUseId, approved: true };
+      if (
+        deps.nativeSkillReads &&
+        (await nativeSkillReadTargeted(runCtx, tool, approval.params, deps.nativeSkillReads))
+      ) {
+        const [step] = await ctx.db
+          .select({ id: schema.agentRunSteps.id })
+          .from(schema.agentRunSteps)
+          .where(
+            and(
+              eq(schema.agentRunSteps.orgId, ctx.orgId),
+              eq(schema.agentRunSteps.runId, ctx.runId),
+              eq(schema.agentRunSteps.kind, "tool_call"),
+              sql`${schema.agentRunSteps.data}->>'toolUseId' = ${toolUseId}`,
+              sql`${schema.agentRunSteps.data}->>'name' = ${tool.name}`,
+            ),
+          )
+          .orderBy(schema.agentRunSteps.seq)
+          .limit(1);
+        const nativeCall = await beginNativeSkillRead(
+          runCtx,
+          tool,
+          step?.id,
+          approval.params,
+          deps.nativeSkillReads,
+          await authorityOf(runCtx),
+        );
+        output = nativeCall
+          ? await completeNativeSkillRead(runCtx, nativeCall, await run(tool, approval.params, runCtx, 1))
+          : refuseNativeSkillRead(runCtx);
+      } else output = await run(tool, approval.params, runCtx, 1);
       outside = readsOutsideText(tool, output);
       // Team actions (ADR 0064): what a person approved and went out is the team's too.
       if (isOutsideTool(tool) && !output.isError) {
@@ -1054,8 +1118,8 @@ export function createToolGateway(deps: {
       const viaDirectory = call !== requested;
       const step = { id: ctx.runId, orgId: ctx.orgId };
       // A mission task's call through the bridge has no run (ADR 0032): nothing to record steps on.
-      const record: typeof addRunStep = (db, run, kind, data) =>
-        ctx.runId ? addRunStep(db, run, kind, data) : Promise.resolve();
+      const record = (...args: Parameters<typeof addRunStep>) =>
+        ctx.runId ? addRunStep(...args) : Promise.resolve(undefined);
       let tool = unknownInDirectory ? undefined : (all.get(call.name) ?? directoryTool);
       const alias = tool && !tool.connectionId ? INPUT_ALIASES.get(tool.name) : undefined;
       if (alias) call = { ...call, input: alias(call.input) };
@@ -1072,7 +1136,7 @@ export function createToolGateway(deps: {
       // command, masked, to open.
       const detail = privateCall ? PRIVATE_PUBLICATION_TITLE : toolDetail(call.name, call.input);
       const command = privateCall ? null : toolCommand(call.name, call.input);
-      await record(ctx.db, step, "tool_call", {
+      const toolCallStepId = await record(ctx.db, step, "tool_call", {
         toolUseId: call.toolUseId,
         name: call.name,
         input: recordedInput,
@@ -1126,7 +1190,13 @@ export function createToolGateway(deps: {
        * `outcome`: what the audit says; none for a call that never really was one (a malformed input). `ran`: the
        * tool itself answered (not a gateway refusal).
        */
+      let nativeReadCall: NativeSkillReadCall | null = null;
+      let nativeReadContext: ToolContext | undefined;
       const finish = async (output: ToolOutput, outcome?: AuditOutcome, ran = false) => {
+        if (nativeReadCall && nativeReadContext && ran) {
+          output = await completeNativeSkillRead(nativeReadContext, nativeReadCall, output);
+          if (output.isError) outcome = "failed";
+        }
         // A result read from outside marks the run (`runReadOutside`, ADR 0117), an error too: its text came from there.
         const outside = ran && tool && readsOutsideText(tool, output) ? { outside: true } : null;
         const { publicationSource, ...plainData } = output.data ?? {};
@@ -1507,6 +1577,19 @@ export function createToolGateway(deps: {
         return askPerson(why, own ?? remember);
       }
       const runCtx: ToolContext = { ...ctx, toolUseId: call.toolUseId };
+      if (deps.nativeSkillReads) {
+        nativeReadCall = await beginNativeSkillRead(
+          runCtx,
+          tool,
+          toolCallStepId,
+          call.input,
+          deps.nativeSkillReads,
+          authority,
+        );
+        if (!nativeReadCall && (await nativeSkillReadTargeted(runCtx, tool, call.input, deps.nativeSkillReads)))
+          return finish(refuseNativeSkillRead(runCtx), "failed");
+        nativeReadContext = runCtx;
+      }
       // Our own tools only (`schedule_action`), never a connected server's.
       if (!tool.connectionId) runCtx.prepareAhead = (request) => prepareAhead(runCtx, authority, request);
       let output = withRepo(await run(tool, call.input, runCtx));

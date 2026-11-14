@@ -16,8 +16,10 @@ import {
   sql,
 } from "@agenteschat/db";
 import { recordAgentActions } from "../agent-actions";
+import { NATIVE_PUBLICATION_EXECUTION } from "../contextual-skill-native-read-proof";
 import { runCalls } from "../continuation";
-import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
+import { sha256 } from "../crypto";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors";
 import type { Judge } from "../judge";
 import { notifySkillUpdate } from "../notification-producers";
 import { requirePermission } from "../organizations";
@@ -271,7 +273,7 @@ export async function changeSkillAsAgent(
         files: textFiles.map((f) => ({ path: f.path, data: new TextEncoder().encode(f.content) })),
       });
       const before = snapshotOf(skill);
-      await recordAgentActions(db, ctx, [
+      const actionIds = await recordAgentActions(db, ctx, [
         {
           kind: "skill.updated",
           target: { type: "skill", id: skill.id, title: skill.name },
@@ -294,11 +296,68 @@ export async function changeSkillAsAgent(
         })
         .where(eq(skills.id, skill.id))
         .returning();
-      if (publicationCtx.privatePublicationApprovalId)
+      if (publicationCtx.privatePublicationApprovalId) {
+        const [approval] = await db
+          .select()
+          .from(schema.approvals)
+          .where(
+            and(
+              eq(schema.approvals.orgId, ctx.orgId),
+              eq(schema.approvals.id, publicationCtx.privatePublicationApprovalId),
+            ),
+          );
+        const actionId = actionIds[0];
+        const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+        const result = approval?.result;
+        if (
+          !approval ||
+          !actionId ||
+          (result !== null && !plain(result)) ||
+          (result?.data !== undefined && !plain(result.data)) ||
+          (plain(result?.data) && Object.hasOwn(result.data, "nativePublicationExecution"))
+        )
+          throw new ConflictError("The native publication execution cannot be linked safely.");
+        const data = plain(result?.data) ? result.data : {};
+        if (data.version !== undefined && data.version !== row.version)
+          throw new ConflictError("The native publication result belongs to another version.");
+        const execution = {
+          contract: NATIVE_PUBLICATION_EXECUTION,
+          approvalId: approval.id,
+          actionId,
+          orgId: ctx.orgId,
+          agentId: ctx.agentId,
+          runId: ctx.runId,
+          toolUseId: approval.toolUseId,
+          skillId: row.id,
+          version: row.version,
+          bodyHash: sha256(row.body),
+        };
+        // Private linkage is bookkeeping, never public action.params. Both writes roll back with publication.
+        const linked = await db
+          .update(agentActions)
+          .set({
+            state: sql`jsonb_set(${agentActions.state}, '{nativePublicationExecution}', ${JSON.stringify(execution)}::jsonb)`,
+          })
+          .where(
+            and(
+              eq(agentActions.id, actionId),
+              eq(agentActions.orgId, ctx.orgId),
+              sql`NOT (${agentActions.state} ? 'nativePublicationExecution')`,
+            ),
+          )
+          .returning({ id: agentActions.id });
+        if (linked.length !== 1) throw new ConflictError("The native publication execution cannot be linked safely.");
         await db
           .update(schema.approvals)
-          .set({ result: { content: "The exact approved skill draft was published.", data: { version: row.version } } })
-          .where(eq(schema.approvals.id, publicationCtx.privatePublicationApprovalId));
+          .set({
+            result: {
+              ...result,
+              content: result?.content ?? "The exact approved skill draft was published.",
+              data: { ...data, version: row.version, nativePublicationExecution: execution },
+            },
+          })
+          .where(and(eq(schema.approvals.orgId, ctx.orgId), eq(schema.approvals.id, approval.id)));
+      }
       return marked ?? row;
     });
     if (!own && deps.pubsub)

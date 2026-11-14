@@ -7,6 +7,12 @@ import { cardPlace } from "./consultations";
 import { learnTrust, ownWords } from "./context/learn";
 import { changeSkillAsAgent } from "./context/learned-skills";
 import { memoryResult } from "./context/tools";
+import {
+  nativeSkillReadScoped,
+  prepareNativeSkillRead,
+  refuseNativeSkillRead,
+  registerNativeSkillReadTool,
+} from "./contextual-skill-native-read";
 import { publishMessageCreated } from "./events";
 import { copyToComputer, type StoredFile } from "./file-pulls";
 import { cutText, formatBytes } from "./format";
@@ -168,16 +174,36 @@ export function createSkillToolSource(
         try {
           const skill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, str(input.name));
           if (!skill) return notYours(ctx, str(input.name));
-          // Use keeps an agent-made skill from being archived for disuse (ADR 0120).
-          await ctx.db
-            .update(schema.skills)
-            .set({ useCount: sql`${schema.skills.useCount} + 1`, lastUsedAt: new Date() })
-            .where(eq(schema.skills.id, skill.id));
-          const list = skillFileList(await skillFilesOf(ctx.db, skill));
-          return {
+          const scoped = nativeSkillReadScoped(ctx, skill.id, "load_skill");
+          // Legacy reads retain their existing telemetry; opted-in reads count only in the claim transaction.
+          if (!scoped)
+            await ctx.db
+              .update(schema.skills)
+              .set({ useCount: sql`${schema.skills.useCount} + 1`, lastUsedAt: new Date() })
+              .where(eq(schema.skills.id, skill.id));
+          const files = await skillFilesOf(ctx.db, skill);
+          const list = skillFileList(files);
+          const output = {
             content: `Skill "${skill.name}" (v${skill.version}) loaded.\n\n${skill.body}\n\nFiles (read with read_skill_file):\n${list}`,
             data: { skill: { id: skill.id, name: skill.name, version: skill.version } },
           };
+          return scoped
+            ? prepareNativeSkillRead(ctx, {
+                selected: {
+                  orgId: ctx.orgId,
+                  skillId: skill.id,
+                  version: skill.version,
+                  operation: "load_skill",
+                  path: null,
+                  mime: null,
+                },
+                output,
+                rawSelectedBytes: new TextEncoder().encode(skill.body),
+                listing: list,
+                readerTruncated: false,
+                omitted: files.length > LISTED_FILES,
+              })
+            : output;
         } catch (error) {
           return failed(error);
         }
@@ -202,11 +228,31 @@ export function createSkillToolSource(
           const skill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, str(input.name));
           if (!skill) return notYours(ctx, str(input.name));
           const path = str(input.path);
+          const operation = path.endsWith("/") ? "folder_listing" : "stored_text";
+          const scoped = nativeSkillReadScoped(ctx, skill.id, operation);
           if (path.endsWith("/")) {
             const prefix = path === "./" ? "" : path;
             const inside = (await skillFilesOf(ctx.db, skill)).filter((f) => f.path.startsWith(prefix));
             const list = inside.map((f) => f.path).join("\n");
-            return { content: cutText(list, SKILL_LIMITS.fileReadChars) || `No files in ${path}` };
+            const shown = cutText(list, SKILL_LIMITS.fileReadChars);
+            const output = { content: shown || `No files in ${path}` };
+            return scoped
+              ? prepareNativeSkillRead(ctx, {
+                  selected: {
+                    orgId: ctx.orgId,
+                    skillId: skill.id,
+                    version: skill.version,
+                    operation,
+                    path,
+                    mime: null,
+                  },
+                  output,
+                  rawSelectedBytes: null,
+                  listing: shown,
+                  readerTruncated: list.length > SKILL_LIMITS.fileReadChars,
+                  omitted: false,
+                })
+              : output;
           }
           const file = await skillFile(deps, skill, path);
           if (file.text) {
@@ -215,8 +261,26 @@ export function createSkillToolSource(
               text.length > SKILL_LIMITS.fileReadChars
                 ? `${cutText(text, SKILL_LIMITS.fileReadChars)}\n[truncated]`
                 : text;
-            return { content: `${skill.name}/${path}:\n${shown}` };
+            const output = { content: `${skill.name}/${path}:\n${shown}` };
+            return scoped
+              ? prepareNativeSkillRead(ctx, {
+                  selected: {
+                    orgId: ctx.orgId,
+                    skillId: skill.id,
+                    version: skill.version,
+                    operation,
+                    path,
+                    mime: file.mime,
+                  },
+                  output,
+                  rawSelectedBytes: file.data,
+                  listing: null,
+                  readerTruncated: text.length > SKILL_LIMITS.fileReadChars,
+                  omitted: false,
+                })
+              : output;
           }
+          if (scoped) return refuseNativeSkillRead(ctx);
           const about = `${skill.name}/${path} (${file.mime}, ${formatBytes(file.size)})`;
           // By its bytes: a model's API refuses an image sent under another type (a .png that is a JPEG).
           const image = sniffModelImage(file.data);
@@ -561,6 +625,9 @@ export function createSkillToolSource(
       },
     },
   ];
-  for (const tool of tools) if (tool.name === "update_skill") registerNativeSkillUpdater(tool);
+  for (const tool of tools) {
+    if (tool.name === "update_skill") registerNativeSkillUpdater(tool);
+    if (["load_skill", "read_skill_file"].includes(tool.name)) registerNativeSkillReadTool(tool);
+  }
   return { name: "skills", tools: async () => tools };
 }
