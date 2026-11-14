@@ -649,7 +649,7 @@ test("migration 0270 enforces the one-shot activation constraints", async () => 
        purpose_hash, source_proof_hash, surface_hash, envelope, issued_at, expires_at, used_count, state, completed_at, result_hash)
       values (${v.id}::uuid, ${ctx.orgId}::uuid, ${ctx.agentId}::uuid, ${ctx.runId}::uuid, ${crypto.randomUUID()}::uuid,
        ${v.toolUseId}, 'b', ${skillId}::uuid, 1, 'c', 'p', 's', 'f', '{}'::jsonb, now(), now() + interval '1 minute',
-       ${v.usedCount}, ${v.state}, ${v.completedAt}, ${v.resultHash})`);
+       ${v.usedCount}, ${v.state}, ${v.completedAt?.toISOString() ?? null}::timestamptz, ${v.resultHash})`);
   };
   await row();
   await expect(row()).rejects.toThrow();

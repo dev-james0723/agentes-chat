@@ -185,7 +185,7 @@ test.each(["revoked", "expired", "context-drift", "input-conflict"] as const)(
     if (mode === "revoked") await f.db.execute(sql`update skill_read_activations set revoked_at=clock_timestamp()`);
     if (mode === "expired")
       await f.db.execute(
-        sql`update skill_read_activations set issued_at=clock_timestamp()-interval '6 minutes', expires_at=clock_timestamp()-interval '1 minute'`,
+        sql`update skill_read_activations set issued_at=t.at-interval '6 minutes', expires_at=t.at-interval '1 minute' from (select clock_timestamp() as at) t`,
       );
     if (mode === "context-drift")
       await f.db.update(schema.agents).set({ audienceMode: "owner" }).where(eq(schema.agents.id, ctx.agentId));
