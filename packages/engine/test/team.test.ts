@@ -331,6 +331,7 @@ test("the roster reads a computer once, however many agents share it", async () 
 
 /** Native connected routing contract: disposable data, real gateway/ACL/readiness, fixed Judge (no provider). */
 async function routingFixture() {
+  let duringJudge: () => Promise<void> = async () => {};
   const requests: JudgeRequest[] = [];
   let choice = "";
   const source: import("../src/tools/types").ToolSource = {
@@ -342,6 +343,7 @@ async function routingFixture() {
           name: "offline",
           ask: async (request) => {
             requests.push(request);
+            await duringJudge();
             return { delegate: { choice, confidence: 0.88 } };
           },
         },
@@ -384,6 +386,9 @@ async function routingFixture() {
     department,
     requests,
     ctx,
+    during: (callback: () => Promise<void>) => {
+      duringJudge = callback;
+    },
     choose: (id: string) => {
       choice = id;
     },
@@ -661,4 +666,76 @@ test("explicit lookup overhead is measured separately from the unchanged normal-
   console.log(
     `ROUTING_EXPLICIT_NATIVE_STATEMENTS rules=${exact.queries} advisory=${advisory.queries}; fixture gateway audit included, not normal-turn cost or paid usage`,
   );
+});
+
+for (const change of ["membership", "audience", "autonomy", "cancel", "department", "readiness", "archived"] as const) {
+  test(`Judge settlement rechecks ${change} and discards stale evidence without another decision`, async () => {
+    const r = await routingFixture();
+    r.choose(r.alpha.id);
+    const controller = new AbortController();
+    const ctx = { ...r.ctx, signal: controller.signal };
+    r.during(async () => {
+      if (change === "membership")
+        await f.db.delete(schema.organizationMembers).where(eq(schema.organizationMembers.userId, f.owner.id));
+      if (change === "audience")
+        await f.db
+          .update(schema.agents)
+          .set({ audienceMode: "owner", ownerUserId: null, consultable: false })
+          .where(eq(schema.agents.id, r.alpha.id));
+      if (change === "autonomy")
+        await f.db
+          .update(schema.agents)
+          .set({ autonomyBrakes: { callAgents: "none" } })
+          .where(eq(schema.agents.id, f.agent.id));
+      if (change === "cancel") controller.abort();
+      if (change === "department")
+        await f.db.update(schema.agents).set({ groupId: null }).where(eq(schema.agents.id, r.alpha.id));
+      if (change === "readiness")
+        await f.db
+          .update(schema.agents)
+          .set({ brain: "claude_code", machineId: null, brainFallback: false })
+          .where(eq(schema.agents.id, r.alpha.id));
+      if (change === "archived")
+        await f.db.update(schema.agents).set({ archivedAt: new Date() }).where(eq(schema.agents.id, r.alpha.id));
+    });
+    if (!f.tools) throw Error("Fixture gateway missing");
+    const result = await f.tools.invoke(ctx, {
+      name: "find_agent",
+      input: { task: "Implement bounded design", purpose: "implementer", departmentId: r.department.id },
+      toolUseId: crypto.randomUUID(),
+    });
+    if (result.type !== "result") throw Error("Unexpected approval");
+    const out = result.output;
+    expect(out.data?.delegation).toMatchObject({
+      status: change === "membership" || change === "cancel" ? "insufficient_scope" : "no_candidates",
+      decisionCalls: 1,
+      taskFit: "unverified",
+      independence: "not_evaluated",
+    });
+    expect(r.requests).toHaveLength(1);
+    expect(out.data?.delegation).not.toHaveProperty("receipt");
+    expect(out.data?.delegation).not.toHaveProperty("agentId");
+    expect(JSON.stringify(out)).not.toContain(r.alpha.id);
+    expect(JSON.stringify(out)).not.toContain(r.alpha.handle);
+    expect(out.content).not.toContain("no decision-model call made");
+  });
+}
+
+test("bare mention task query is rejected before native reads without changing query-only lookup", async () => {
+  const r = await routingFixture();
+  const [tool] = await createFindAgentToolSource({ ai: { gateway: f.gateway } }).tools(r.ctx);
+  if (!tool) throw Error("fixture tool missing");
+  for (const query of ["@", " @ "]) {
+    const { result, queries } = await countQueries(() =>
+      tool.execute({ query, task: "Implement", purpose: "implementer" }, r.ctx),
+    );
+    expect(result.data?.delegation).toMatchObject({
+      status: "insufficient_scope",
+      decisionCalls: 0,
+      reason: "exact_target_required",
+    });
+    expect(queries).toBe(0);
+  }
+  expect((await r.invoke({ query: "@" })).data?.delegation).toBeUndefined();
+  expect(r.requests).toHaveLength(0);
 });

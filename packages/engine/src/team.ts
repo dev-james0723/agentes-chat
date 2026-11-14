@@ -388,7 +388,7 @@ export function createFindAgentToolSource(
           decision.status === "recommended"
             ? `${decision.by === "rules" ? "Explicit target" : "Jev suggests"} @${decision.handle} (agent ${decision.agentId}) for ${decision.purpose}. Task fitness and review independence are unverified. This starts no work and grants no authority; recheck ownership, readiness and approvals before dispatch.`
             : decision.status === "insufficient_scope"
-              ? `Delegate selection needs more scope: ${decision.reason}. Fill the missing selection fields from the current task; use query-only lookup when needed. No agent selected and no decision-model call made.`
+              ? `Delegate selection needs more scope: ${decision.reason}. Fill the missing selection fields from the current task; use query-only lookup when needed. No agent selected. ${decision.decisionCalls === 0 ? "No decision-model call made." : "One decision-model call was consumed; no retry or substitute was attempted."}`
               : `Delegate selection result: ${decision.status}. No agent selected; no work started. Do not substitute a model or agent on failure.`,
         ...(["unavailable", "invalid", "invalid_input"].includes(decision.status) ? { isError: true } : {}),
         data: { delegation: decision },
@@ -397,6 +397,17 @@ export function createFindAgentToolSource(
       if (parsed && "decision" in parsed) return output(parsed.decision);
       if (typeof input.task === "string" && (!input.task.trim() || input.task.length > 1200))
         return output(delegationScope("invalid_task"));
+      // A task mention must resolve to a nonempty exact identity before any native roster reads.
+      // Leave query-only metadata search semantics intact.
+      if (
+        typeof input.task === "string" &&
+        typeof input.query === "string" &&
+        input.query.trim() &&
+        !input.query.trim().replace(/^@/, "")
+      )
+        return output(
+          delegationScope("exact_target_required", parsed && "intent" in parsed ? parsed.intent.purpose : undefined),
+        );
       const person = await personBehindCall(ctx);
       const talks = await speakerFor(db, ctx.orgId, person);
       const allTeam = await loadTeam(db, ctx.orgId);
@@ -506,15 +517,71 @@ export function createFindAgentToolSource(
           });
         }
         if (!deps.judge) return output({ status: "unavailable", by: "rules", ...facts, decisionCalls: 0 });
-        return output(
-          await chooseDelegate(
-            deps.judge,
-            { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
-            input.task,
-            candidates,
-            intent.purpose,
-          ),
+        const decision = await chooseDelegate(
+          deps.judge,
+          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
+          input.task,
+          candidates,
+          intent.purpose,
         );
+        // Judge settlement is asynchronous: its eligible inputs are evidence, not current authority.
+        // Abstention discards the old receipt (including IDs/handles), but never resets consumed calls.
+        const abstain = (status: "insufficient_scope" | "no_candidates", reason: string): DelegateChoice => ({
+          status,
+          by: "rules",
+          ...facts,
+          decisionCalls: decision.decisionCalls,
+          reason,
+        });
+        try {
+          if (ctx.signal?.aborted) return output(abstain("insufficient_scope", "canceled"));
+          if ((await personBehindCall(ctx)) !== person)
+            return output(abstain("insufficient_scope", "requester_changed"));
+          if (person) await requirePermission(db, person, ctx.orgId, "read");
+          if (decision.status !== "recommended") {
+            // No recommendation needs its former shortlist disclosed in an error receipt.
+            const { receipt: _receipt, ...withoutCandidates } = decision;
+            return output(withoutCandidates);
+          }
+          const candidateIds = candidates.map((a) => a.id);
+          const [current, currentTalks, currentReadiness, currentStatuses] = await Promise.all([
+            db
+              .select(TEAM_COLUMNS)
+              .from(agents)
+              .where(
+                and(
+                  eq(agents.orgId, ctx.orgId),
+                  inArray(agents.id, [ctx.agentId, ...candidateIds]),
+                  isNull(agents.archivedAt),
+                ),
+              ),
+            speakerFor(db, ctx.orgId, person),
+            agentAiStates({ db, ...deps.ai }, ctx.orgId, candidateIds),
+            loadAgentStatuses(db, ctx.orgId, new Date(), candidateIds),
+          ]);
+          // Check actor/cancellation again after the native asynchronous checks.
+          if (ctx.signal?.aborted) return output(abstain("insufficient_scope", "canceled"));
+          if ((await personBehindCall(ctx)) !== person)
+            return output(abstain("insufficient_scope", "requester_changed"));
+          if (person) await requirePermission(db, person, ctx.orgId, "read");
+          const presence = new Map(currentStatuses.map((a) => [a.agentId, a.presence]));
+          const eligible = current.some((a) => a.id === ctx.agentId)
+            ? teammatesFor(current, ctx.agentId, person, new Set(), currentTalks).filter(
+                (a) =>
+                  candidateIds.includes(a.id) &&
+                  (!intent.departmentId || a.groupId === intent.departmentId) &&
+                  currentReadiness.get(a.id)?.state === "ready" &&
+                  !["offline", "out"].includes(presence.get(a.id) ?? "offline"),
+              )
+            : [];
+          const selected = eligible.find((a) => a.id === decision.agentId);
+          // Retaining the receipt also requires its entire original shortlist to remain disclosable/eligible.
+          if (!selected || eligible.length !== candidateIds.length)
+            return output(abstain("no_candidates", "eligibility_changed"));
+          return output({ ...decision, handle: selected.handle });
+        } catch {
+          return output(abstain("insufficient_scope", "requester_unavailable"));
+        }
       }
       const query = words(String(input.query ?? ""));
       const scored = team
