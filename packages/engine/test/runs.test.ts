@@ -110,6 +110,19 @@ describe("transitionRun", () => {
     });
   });
 
+  test("concurrent claims for one wait admit only one worker", async () => {
+    await transitionRun(f.db, runId, "queued", "running");
+    await transitionRun(f.db, runId, "running", "waiting_input", {
+      transcript: { waitingForBrain: { waitId: "same-wait" } },
+    });
+    const claims = await Promise.all([
+      transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "same-wait" }),
+      transitionRun(f.db, runId, "waiting_input", "running", {}, { waitId: "same-wait" }),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(claims.filter((claim) => claim === null)).toHaveLength(1);
+  });
+
   test("a wait claim matches the outage waitId and preserves brain-wait precedence", async () => {
     await transitionRun(f.db, runId, "queued", "running");
     await transitionRun(f.db, runId, "running", "waiting_input", {
