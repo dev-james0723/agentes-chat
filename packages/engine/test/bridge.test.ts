@@ -8,6 +8,7 @@ import {
   cancelRun,
   createJobHandlers,
   createMission,
+  createMissionEngine,
   createMissionRunToolSource,
   drainOutbox,
   grantScopes,
@@ -416,6 +417,38 @@ describe("runner MCP bridge (ADR 0032)", () => {
     const rows = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.runId, run.id));
     expect(rows.some((row) => row.effectEpochState === "open")).toBe(false);
     if (issued.status === "fulfilled") expect(rows[0]?.effectEpochState).toBe("closed_unknown");
+  });
+
+  test("mission thread cancellation retains an admitted bridge effect as unknown", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    const epochId = check.identity.bridgeEpochId;
+    expect(await admitBridgeEffect(f.db, run.id, epochId, "mission-in-flight")).toBe(true);
+    const engine = createMissionEngine({ db: f.db, pubsub: f.pubsub });
+    expect(
+      await engine.cancelRuns({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        channelId: run.channelId,
+        threadRootId: run.threadRootId,
+        actorId: f.owner.id,
+        reason: "synthetic mission stop",
+      }),
+    ).toContain(run.id);
+    await finishBridgeEffect(f.db, epochId, "mission-in-flight", false);
+    const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    const [epoch] = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.id, epochId));
+    expect(after?.status).toBe("canceled");
+    expect(after?.transcript).toHaveProperty("effectUncertain");
+    expect(epoch?.effectEpochState).toBe("closed_unknown");
   });
 
   test("older runners retain the native bridge's truncation and do not advertise typed state", async () => {
