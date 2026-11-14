@@ -1,5 +1,20 @@
 import type { BlobStoreResolver, PubSub } from "@agenteschat/adapters";
-import { and, type Database, desc, eq, gt, inArray, isNull, lt, or, rowsOf, schema, sql } from "@agenteschat/db";
+import {
+  and,
+  asc,
+  type Database,
+  desc,
+  type Executor,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  or,
+  rowsOf,
+  schema,
+  sql,
+} from "@agenteschat/db";
 import { recordAgentActions } from "../agent-actions";
 import { runCalls } from "../continuation";
 import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
@@ -349,6 +364,77 @@ const SKILL_SCHEMA = {
   additionalProperties: false,
 };
 
+/** Skills have no source-audience ACL. Only complete, currently public ordinary-channel sources may lose that
+ * boundary through automatic promotion (ADR 0188). Empty or missing provenance is not proof of public content. */
+async function publicPromotionNotes(db: Executor, orgId: string, notes: ContextItem[], lock = false) {
+  const sourceIds = [...new Set(notes.flatMap((n) => n.sourceIds))];
+  if (sourceIds.length === 0) return [];
+  const sourcesQuery = () =>
+    db
+      .select({ id: schema.messages.id, channelId: schema.messages.channelId })
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.orgId, orgId),
+          inArray(schema.messages.id, sourceIds),
+          isNull(schema.messages.deletedAt),
+        ),
+      )
+      .orderBy(asc(schema.messages.id));
+  const located = await sourcesQuery();
+  const channelIds = [...new Set([...notes.flatMap((n) => n.channelIds), ...located.map((m) => m.channelId)])];
+  if (channelIds.length === 0) return [];
+  const channelsQuery = db
+    .select()
+    .from(schema.channels)
+    .where(and(eq(schema.channels.orgId, orgId), inArray(schema.channels.id, channelIds)))
+    .orderBy(asc(schema.channels.id));
+  // Channel then message locks follow channel deletion's parent→child order. The second source read catches a
+  // moved/deleted source; share locks keep classification/deletion stable through this publication transaction.
+  const channels = await (lock ? channelsQuery.for("share") : channelsQuery);
+  const sources = lock ? await sourcesQuery().for("share") : located;
+  const publicChannels = new Set(
+    channels
+      .filter(
+        (c) =>
+          c.visibility === "public" &&
+          c.kind === "channel" &&
+          c.dmKey === null &&
+          c.audienceRoleIds.length === 0 &&
+          c.archivedAt === null,
+      )
+      .map((c) => c.id),
+  );
+  const bySource = new Map(sources.map((m) => [m.id, m.channelId]));
+  return notes.filter(
+    (n) =>
+      n.scopeType === "agent" &&
+      n.scopeId === n.agentId &&
+      n.sourceIds.length > 0 &&
+      n.channelIds.every((id) => publicChannels.has(id)) &&
+      n.sourceIds.every((id) => {
+        const channelId = bySource.get(id);
+        return channelId !== undefined && publicChannels.has(channelId);
+      }),
+  );
+}
+
+const promotionInput = (n: ContextItem) =>
+  JSON.stringify({
+    agentId: n.agentId,
+    scopeType: n.scopeType,
+    scopeId: n.scopeId,
+    title: n.title,
+    content: n.content,
+    subject: n.subjectKey,
+    trust: n.trust,
+    disputed: n.disputed,
+    recurrence: n.recurrence,
+    relevance: n.relevance,
+    sourceIds: [...n.sourceIds].sort(),
+    channelIds: [...n.channelIds].sort(),
+  });
+
 /**
  * How-tos reused enough become a skill of their agent (ADR 0120): a note with `recurrence` (plus 2 per positive
  * outcome of a run that used it) at least `skillAfter`, high trust, not disputed, relevant, and no negative outcome
@@ -358,7 +444,7 @@ const SKILL_SCHEMA = {
  */
 export async function promoteHowTos(deps: ContextDeps, orgId: string, skillAfter: number) {
   const { db } = deps;
-  const notes = await db
+  const candidates = await db
     .select()
     .from(contextItems)
     .where(
@@ -370,6 +456,8 @@ export async function promoteHowTos(deps: ContextDeps, orgId: string, skillAfter
         sql`${contextItems.agentId} is not null`,
       ),
     );
+  // Filter before clustering and before the summary call: a private sibling must not ride with a public note.
+  const notes = await publicPromotionNotes(db, orgId, candidates);
   if (notes.length === 0) return 0;
   const ids = sql.join(
     notes.map((n) => sql`${n.id}::uuid`),
@@ -478,7 +566,28 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
     )
     .orderBy(desc(contextUsage.createdAt))
     .limit(1);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    const current = await tx
+      .select()
+      .from(contextItems)
+      .where(
+        and(
+          eq(contextItems.orgId, orgId),
+          inArray(
+            contextItems.id,
+            cluster.map((n) => n.id),
+          ),
+        ),
+      )
+      .orderBy(asc(contextItems.id))
+      .for("update");
+    const before = new Map(cluster.map((n) => [n.id, promotionInput(n)]));
+    if (
+      current.length !== cluster.length ||
+      current.some((n) => n.status !== "active" || n.supersededBy || promotionInput(n) !== before.get(n.id))
+    )
+      return false;
+    if ((await publicPromotionNotes(tx, orgId, current, true)).length !== cluster.length) return false;
     const [skill] = await tx
       .insert(skills)
       .values({
@@ -525,8 +634,8 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
           },
         ],
       );
+    return true;
   });
-  return true;
 }
 
 /**
