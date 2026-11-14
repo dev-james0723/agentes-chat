@@ -105,6 +105,7 @@ import {
   isComputerBrain,
   type ToolResult,
 } from "./brains/types";
+import { closeBridgeEffectEpoch } from "./bridge-effect-epoch";
 import { agentBrowserProfiles } from "./browser/profiles";
 import { browsersPrompt } from "./browser/tools";
 import { BROWSER_SCOPE } from "./browser/types";
@@ -1180,10 +1181,19 @@ async function executeRunInner(
   // An already-held run never consumes a decision or starts a model turn. The transition CAS below repeats this
   // check atomically for queued/waiting runs; this read covers recovery of a row still marked running.
   const [effectHold] = await db
-    .select({ transcript: agentRuns.transcript })
+    .select({
+      transcript: agentRuns.transcript,
+      unsettledBridgeEpoch: sql<boolean>`exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
+      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+    })
     .from(agentRuns)
     .where(eq(agentRuns.id, runId));
-  if ((effectHold?.transcript as { effectUncertain?: unknown } | null)?.effectUncertain) return;
+  if (
+    effectHold?.unsettledBridgeEpoch ||
+    effectHold?.unsettledApproval ||
+    (effectHold?.transcript as { effectUncertain?: unknown } | null)?.effectUncertain
+  )
+    return;
   // A job for one wait for the computer (back, grace, plan reset, room): only while the run still waits on it.
   // Another job may have resumed it already; running it again would run the run twice.
   let askingForRoom = false;
@@ -2667,6 +2677,35 @@ async function executeRunInner(
           result = { content: output.content, isError: output.isError === true };
           // The approvals screen shows it ran (and what came back).
           const [ran] = await db.select().from(approvals).where(eq(approvals.id, approval.id));
+          if (!ran || (ran.executedAt && (ran.result as { isError?: unknown } | null)?.isError !== false)) {
+            transcript.effectUncertain = { runId: run.id, turn: run.turns, tools: [approval.tool] };
+            const note = await db.transaction(async (tx) => {
+              await addRunStep(tx, run, "error", {
+                reason: "approved_effect_unknown",
+                approvalId: approval.id,
+                tool: approval.tool,
+              });
+              const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+                transcript: storedTranscript(transcript),
+              });
+              if (!moved) throw new PermanentJobError("run changed before approved effect could be held");
+              if (run.background) return null;
+              return post(
+                tx,
+                replyThreadId,
+                "An approved action has an unknown outcome. This work is waiting for reconciliation before continuing.",
+                undefined,
+                undefined,
+                true,
+              );
+            });
+            if (note) {
+              const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+              if (view) await publishMessageCreated(deps.pubsub, view);
+            }
+            await finished("waiting_input");
+            return;
+          }
           if (ran) await publishApproval({ db, pubsub: deps.pubsub }, ran, "approval.decided").catch(() => {});
         } else if (approval?.status === "canceled" && approval.supersededById && mootText) {
           // Replaced by its newer request (`supersedeApprovals`): nothing was decided here.
@@ -4978,15 +5017,18 @@ async function executeRunInner(
         steerable: (steer) => live.steerable(steer),
       };
       const prompt = plan.kind === "model" ? triggerText : (nextPrompt ?? triggerText);
+      let bridgeEpochId: string | undefined;
       // A computer brain's turn: the transcript is saved (the bridge's pauses join it), and the turn's
       // tool token goes in `brain.turn.mcp.token` so the runner bridge maps its calls to this run.
       if (plan.kind !== "model") {
         await deferred;
+        bridgeEpochId = Bun.randomUUIDv7();
         turnToken.current = await issueRunToolToken(db, {
           orgId: run.orgId,
           agentId: run.agentId,
           machineId: plan.session?.machineId ?? agent.machineId ?? "",
           runId: run.id,
+          tokenId: bridgeEpochId,
         });
         transcript.turnPrompt = prompt;
         await saveTranscript(db, transcript);
@@ -5002,6 +5044,20 @@ async function executeRunInner(
       // A started native tool has an unknown effect until this turn reports a matching successful result. This is
       // in-memory evidence for the caught-turn path only; it does not fence a crash before this process records it.
       const startedNow = new Map<string, { id: string; name: string; input: unknown }>();
+      const stopOnClosedEpochHold = async (hold: { runId: string; turn: number; tools: string[] }, partial: string) => {
+        transcript.effectUncertain = hold;
+        const [row] = await db.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id));
+        if (row?.status === "canceled") return stopCanceled(deltas.text(), deltas.answer());
+        if (row?.status === "waiting_approval" || row?.status === "waiting_input")
+          return suspendedByBridge(row.status, partial, deltas.text() ? deltas.textBefore : undefined);
+        return interruptedAfterTools(
+          turnPlan.kind,
+          { code: "bridge_effect_unknown", message: "tool outcome unknown" },
+          hold.tools,
+          partial,
+          true,
+        );
+      };
       const holdUnknownWhileWaiting = async (pending: NonNullable<Transcript["pending"]>["calls"]) => {
         let unresolved: Awaited<ReturnType<typeof executedSince>>;
         try {
@@ -5293,8 +5349,18 @@ async function executeRunInner(
       } catch (error) {
         await deltas.flush();
         await deferred;
+        const epochHold = bridgeEpochId
+          ? await closeBridgeEffectEpoch(
+              db,
+              run.id,
+              bridgeEpochId,
+              turn,
+              [...startedNow.values()].map((c) => c.name),
+            )
+          : null;
         // Canceled mid-stream: the gateway recorded the usage so far; keep the text so far.
         if (await isCanceled()) return stopCanceled(deltas.text(), deltas.answer());
+        if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
         // Keep the sequence moving: a retried turn must not reuse numbers the app already saw (it drops them).
         if (error instanceof BrainFailure) {
           const cause = accountFailureCause(error.code, error.provider.cause);
@@ -5540,6 +5606,16 @@ async function executeRunInner(
       if (result.imagesLeftOut) transcript.filesTextOnly = true;
       if (result.timings) prof.brain.push(result.timings);
       await deferred;
+      const epochHold = bridgeEpochId
+        ? await closeBridgeEffectEpoch(
+            db,
+            run.id,
+            bridgeEpochId,
+            turn,
+            [...startedNow.values()].map((c) => c.name),
+          )
+        : null;
+      if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);
       // Side effects of the tools a computer brain ran through the bridge (cards, a `react`): for this reply.

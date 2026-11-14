@@ -76,6 +76,7 @@ import {
   taskManager,
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
+import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import { afterSteered } from "../src/steering";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
@@ -688,7 +689,7 @@ test("a gated call through the bridge leaves the run waiting; the decision resum
  * A connector call that asks a person every time, answering like a remote workbench that gave only a preview.
  * `external`: an MCP server's answer, which reaches the model inside `<external_data>`.
  */
-function workbench(options: { content?: string; external?: boolean } = {}) {
+function workbench(options: { content?: string; external?: boolean; error?: boolean } = {}) {
   const ran: Record<string, unknown>[] = [];
   const source: ToolSource = {
     name: "fake-workbench",
@@ -707,7 +708,10 @@ function workbench(options: { content?: string; external?: boolean } = {}) {
         },
         async execute(input) {
           ran.push(input);
-          return { content: options.content ?? "Response schema: {jobs: [...]} Data Preview: (2 rows hidden)" };
+          return {
+            content: options.content ?? "Response schema: {jobs: [...]} Data Preview: (2 rows hidden)",
+            ...(options.error ? { isError: true } : {}),
+          };
         },
       },
     ],
@@ -6087,4 +6091,117 @@ test("a parked reserve run never uses legacy fallback when the source is offline
     .from(schema.outbox)
     .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
   expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
+});
+
+test.each(["error", "done"] as const)(
+  "an admitted bridge effect before its tool step blocks %s completion",
+  async (ending) => {
+    let fallback = 0;
+    f = await setup({
+      reply: () => {
+        fallback++;
+        return { chunks: ["fallback"] };
+      },
+    });
+    await computerAgent(f);
+    const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+      const [token] = await f.db
+        .select()
+        .from(schema.runToolTokens)
+        .where(and(eq(schema.runToolTokens.runId, turn.runId), eq(schema.runToolTokens.effectEpochState, "open")));
+      if (!token || !(await admitBridgeEffect(f.db, turn.runId, token.id, "pre-step")))
+        throw new Error("failed to admit fixture effect");
+      if (ending === "error")
+        yield { type: "error", code: "executor_crashed", message: "connection lost", retryable: true };
+      else yield { type: "done", text: "done" };
+    });
+    const handlers = createJobHandlers({
+      ...f.jobDeps,
+      brains: { claude_code: () => brain },
+      machines: { status: async (id) => statusOf(id) },
+    });
+    await post(f, "@dev run the work");
+    await drainOutbox(f.db, handlers);
+    const [run] = await f.db.select().from(schema.agentRuns);
+    expect(run?.status).not.toBe("done");
+    expect(run?.transcript).toHaveProperty("effectUncertain");
+    expect(fallback).toBe(0);
+  },
+);
+
+test("an approved effect with an uncertain result stops before another model turn", async () => {
+  const bench = workbench({ content: "connection lost after effect", error: true });
+  f = await setup({ toolSources: [bench.source] });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "ci:run" }]);
+  const machineId = await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (n, turn) {
+    if (n > 0) {
+      yield { type: "done", text: "done" };
+      return;
+    }
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "relay-1",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+      },
+    );
+    yield { type: "done", text: "waiting" };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev run CI");
+  await drainOutbox(f.db, handlers);
+  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(bench.ran).toHaveLength(1);
+  expect(run?.status).toBe("waiting_input");
+  expect(run?.transcript).toHaveProperty("effectUncertain");
+  expect(seen).toHaveLength(1);
+});
+
+test("a claimed approval without a durable result is never replayed on resume", async () => {
+  const bench = workbench();
+  f = await setup({ toolSources: [bench.source] });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "ci:run" }]);
+  const machineId = await computerAgent(f);
+  const { brain, seen } = scriptedComputerBrain(async function* (_n, turn) {
+    await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      {
+        id: "relay-crash",
+        name: "ci_workbench",
+        input: { run: 42, why: WORKBENCH_WHY },
+      },
+    );
+    yield { type: "done", text: "waiting" };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev run CI");
+  await drainOutbox(f.db, handlers);
+  const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
+  if (!approval) throw new Error("expected pending approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval.id, { decision: "approve" });
+  await f.db
+    .update(schema.approvals)
+    .set({ executedAt: new Date(), result: null })
+    .where(eq(schema.approvals.id, approval.id));
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("waiting_approval");
+  expect(bench.ran).toHaveLength(0);
+  expect(seen).toHaveLength(1);
 });

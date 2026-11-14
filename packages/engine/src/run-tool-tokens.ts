@@ -22,6 +22,8 @@ export interface BridgeIdentity {
   runId: string;
   machineId: string;
   taskId?: string;
+  /** Server-side token row ID; only a run token participates in the bridge admission epoch. */
+  bridgeEpochId?: string;
 }
 
 export type RunToolTokenCheck =
@@ -44,18 +46,21 @@ export async function issueRunToolToken(
     taskId?: string | null;
     ttlMs?: number;
     now?: Date;
+    tokenId?: string;
   },
 ): Promise<string> {
   if (!input.runId && !input.taskId) throw new Error("A run tool token needs a run or a task");
   const token = `${RUN_TOOL_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
   const now = input.now ?? new Date();
   await db.insert(runToolTokens).values({
+    ...(input.tokenId ? { id: input.tokenId } : {}),
     orgId: input.orgId,
     agentId: input.agentId,
     machineId: input.machineId,
     runId: input.runId ?? null,
     taskId: input.taskId ?? null,
     tokenHash: sha256(token),
+    effectEpochState: input.taskId ? null : "open",
     expiresAt: new Date(
       now.getTime() + (input.ttlMs ?? (input.taskId ? TASK_TOOL_TOKEN_TTL_MS : RUN_TOOL_TOKEN_TTL_MS)),
     ),
@@ -114,7 +119,10 @@ export async function verifyRunToolToken(
     return refuse("bridge.run_waiting", "This run is waiting for a person: stop now and end your turn.");
   }
   if (run.status !== "running") return refuse("bridge.run_ended", "This run has ended: stop now.");
-  return { ok: true, identity: { orgId: row.orgId, agentId: row.agentId, runId: row.runId, machineId } };
+  return {
+    ok: true,
+    identity: { orgId: row.orgId, agentId: row.agentId, runId: row.runId, machineId, bridgeEpochId: row.id },
+  };
 }
 
 /** Revokes a run's (or a task's) tokens: call it when the run finishes or the task ends. */

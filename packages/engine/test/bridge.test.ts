@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { MCP_TOOLS_MAX, MISSION_MCP_TOOLS, type ServerFrame } from "@agenteschat/adapters";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import {
   answerQuestion,
   type Brain,
@@ -13,13 +13,16 @@ import {
   issueRunToolToken,
   type MachineHub,
   postPersonMessage,
+  recoverStaleRuns,
   revokeRunToolTokens,
   startSessionTask,
   type ToolDefinition,
   type ToolSource,
+  transitionRun,
   verifyRunToolToken,
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
+import { admitBridgeEffect, closeBridgeEffectEpoch, finishBridgeEffect } from "../src/bridge-effect-epoch";
 import { answerSteering, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 import { missionRunner, pairedMachine, RUNNER, type TaskStartRequest } from "./mission-helpers";
@@ -175,6 +178,206 @@ describe("runner MCP bridge (ADR 0032)", () => {
     await runner.hello(paired.token);
     return { gh, paired, runner };
   }
+
+  test("a closed bridge epoch refuses a late verified-token call before any effect", async () => {
+    const { paired, runner } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    await closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1);
+    const result = await runner.call(token, "github_get_pr", { repo: "a/b", pr: 3 });
+    expect(result).toMatchObject({ ok: false, error: { code: "bridge.effect_epoch_closed" } });
+  });
+
+  test("a completed bridge call closes without an unknown hold and permits approval resume", async () => {
+    const { paired, runner } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    expect((await runner.call(token, "github_get_pr", { repo: "a/b", pr: 3 })).ok).toBe(true);
+    await closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1);
+    await f.db.update(schema.agentRuns).set({ status: "waiting_approval" }).where(eq(schema.agentRuns.id, run.id));
+    expect(
+      await transitionRun(f.db, run.id, "waiting_approval", "running", { requireNoUnknownEffect: true }),
+    ).not.toBeNull();
+  });
+
+  test("a success-looking canceled bridge result without a killed receipt is unknown at close", async () => {
+    const maybe: ToolSource = {
+      name: "unknown-completion",
+      tools: async () => [
+        {
+          name: "uncertain_cancel",
+          description: "synthetic unconfirmed cancellation",
+          scope: "",
+          inputSchema: { type: "object", properties: {} },
+          execute: async () => ({ content: "canceled", data: { canceled: { killed: false } } }),
+        },
+      ],
+    };
+    f = await setup({ machines: true, toolSources: [maybe], reply: () => ({ chunks: ["ok"] }) });
+    const paired = await pairedMachine(f);
+    const runner = bridgeRunner(f.machineHub as MachineHub);
+    await runner.hello(paired.token);
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    await runner.call(token, "uncertain_cancel", {});
+    await closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1);
+    const [held] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    expect(held?.transcript).toHaveProperty("effectUncertain");
+  });
+
+  test("closing with an in-flight bridge call retains a durable unknown hold", async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const began = new Promise<void>((r) => {
+      entered = r;
+    });
+    const allowed = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow: ToolSource = {
+      name: "slow",
+      tools: async () => [
+        {
+          name: "slow_effect",
+          description: "synthetic effect",
+          scope: "",
+          inputSchema: { type: "object", properties: {} },
+          execute: async () => {
+            entered();
+            await allowed;
+            return { content: "done" };
+          },
+        },
+      ],
+    };
+    f = await setup({ machines: true, toolSources: [slow], reply: () => ({ chunks: ["ok"] }) });
+    const paired = await pairedMachine(f);
+    const runner = bridgeRunner(f.machineHub as MachineHub);
+    await runner.hello(paired.token);
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    const call = runner.call(token, "slow_effect", {});
+    await began;
+    await closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1);
+    const [held] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    expect(held?.transcript).toMatchObject({ effectUncertain: { tools: ["unresolved bridge effect"] } });
+    release();
+    await call;
+    const [after] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    expect(after?.transcript).toHaveProperty("effectUncertain");
+    const [epoch] = await f.db
+      .select()
+      .from(schema.runToolTokens)
+      .where(eq(schema.runToolTokens.id, check.identity.bridgeEpochId));
+    expect(epoch?.effectEpochState).toBe("closed_unknown");
+  });
+
+  test("a crashed open bridge epoch blocks approval resume and stale recovery", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    expect(await admitBridgeEffect(f.db, run.id, check.identity.bridgeEpochId, "crashed-call")).toBe(true);
+    await f.db.update(schema.agentRuns).set({ status: "waiting_approval" }).where(eq(schema.agentRuns.id, run.id));
+    expect(
+      await transitionRun(f.db, run.id, "waiting_approval", "running", { requireNoUnknownEffect: true }),
+    ).toBeNull();
+    await f.db
+      .update(schema.agentRuns)
+      .set({ status: "running", heartbeatAt: new Date(0) })
+      .where(eq(schema.agentRuns.id, run.id));
+    const recovered = await recoverStaleRuns({ db: f.db }, { now: new Date(), staleMs: 1 });
+    expect(recovered.resumed).not.toContain(run.id);
+    expect(recovered.failed).not.toContain(run.id);
+  });
+
+  test("close remains fenced if persisting the unknown hold fails", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    const epochId = check.identity.bridgeEpochId;
+    expect(await admitBridgeEffect(f.db, run.id, epochId, "unfinished")).toBe(true);
+    await f.db.execute(
+      sql`create function test_reject_effect_hold() returns trigger language plpgsql as $$ begin if new.transcript ? 'effectUncertain' then raise exception 'synthetic hold write failure'; end if; return new; end $$`,
+    );
+    await f.db.execute(
+      sql`create trigger test_reject_effect_hold before update on agent_runs for each row execute function test_reject_effect_hold()`,
+    );
+    await expect(closeBridgeEffectEpoch(f.db, run.id, epochId, 1)).rejects.toThrow();
+    await f.db.execute(sql`drop trigger test_reject_effect_hold on agent_runs`);
+    expect(await admitBridgeEffect(f.db, run.id, epochId, "late")).toBe(false);
+    await finishBridgeEffect(f.db, epochId, "unfinished", false);
+    const [epoch] = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.id, epochId));
+    expect(epoch?.effectEpochState).toBe("closed_unknown");
+    await expect(
+      issueRunToolToken(f.db, { orgId: f.org.id, agentId: f.agent.id, machineId: paired.machineId, runId: run.id }),
+    ).rejects.toThrow();
+    await f.db.update(schema.agentRuns).set({ status: "waiting_approval" }).where(eq(schema.agentRuns.id, run.id));
+    expect(
+      await transitionRun(f.db, run.id, "waiting_approval", "running", { requireNoUnknownEffect: true }),
+    ).toBeNull();
+  });
+
+  test("racing admission and close cannot admit an unrecorded bridge effect", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    const [admitted] = await Promise.all([
+      admitBridgeEffect(f.db, run.id, check.identity.bridgeEpochId, "racing-call"),
+      closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1),
+    ]);
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, run.id));
+    if (admitted) expect(row?.transcript).toHaveProperty("effectUncertain");
+    else expect(await admitBridgeEffect(f.db, run.id, check.identity.bridgeEpochId, "racing-call")).toBe(false);
+  });
 
   test("older runners retain the native bridge's truncation and do not advertise typed state", async () => {
     const { paired, runner } = await connected(63);

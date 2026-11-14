@@ -13,6 +13,7 @@ import { eq, schema } from "@agenteschat/db";
 import type { ToolImage } from "@agenteschat/providers";
 import { getAgentCached } from "./agents";
 import { recordAudit } from "./audit";
+import { admitBridgeEffect, finishBridgeEffect } from "./bridge-effect-epoch";
 import { getContextItems, personMayRead } from "./context/items";
 import { ValidationError } from "./errors";
 import { cutText } from "./format";
@@ -397,11 +398,26 @@ export async function handleMissionMcpCall(
   if (held) return refuse(held.code, held.message);
   const tools = id.taskId ? taskGatewayOf(deps) : (deps.tools ?? null);
   try {
+    if (
+      !id.taskId &&
+      (!id.bridgeEpochId || !(await admitBridgeEffect(deps.db, id.runId, id.bridgeEpochId, frame.callId)))
+    )
+      return refuse(
+        "bridge.effect_epoch_closed",
+        "This run cannot admit a new bridge effect; reconcile or start a new turn.",
+      );
     const out = await invokeToolForRun({ db: deps.db, pubsub: deps.pubsub, tools }, id, {
       id: frame.callId,
       name: frame.tool,
       input: frame.args,
     });
+    if (!id.taskId && id.bridgeEpochId)
+      await finishBridgeEffect(
+        deps.db,
+        id.bridgeEpochId,
+        frame.callId,
+        out.runState !== "completed" && out.runState !== "suspended",
+      );
     if (out.result.images && !isMcpResultMedia(out.result.images))
       return {
         ...refuse("bridge.media_rejected", "The action completed but its media output was rejected. Do not replay it."),
