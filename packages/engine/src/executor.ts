@@ -5417,6 +5417,9 @@ async function executeRunInner(
   }
 }
 
+// Result metadata stays with the original brain; the wrapper alone remains the execution path (ADR 0185).
+const brainResultSources = new WeakMap<Brain, Brain>();
+
 /** Builds the brain of this kind (`resolveBrain` picks it): a registered factory, else the built-in model brain. */
 function createBrain(
   deps: EngineDeps,
@@ -5443,7 +5446,9 @@ function createBrain(
     !["routineBrief", "routine", "viaRoutine", "background"].some((key) => key in meta)
   )
     return brain;
-  return paperclipProjectBrain({ db: deps.db, enabled: deps.paperclipCompatibilityEnabled }, brain);
+  const guarded = paperclipProjectBrain({ db: deps.db, enabled: deps.paperclipCompatibilityEnabled }, brain);
+  brainResultSources.set(guarded, brain);
+  return guarded;
 }
 
 function createUnboundBrain(
@@ -5756,8 +5761,9 @@ async function thinkOnce(
     }
   }
   if (text === null) throw new Error(`The ${brain.kind} brain ended the turn without an answer`);
-  if (brain instanceof ModelBrain && brain.last) {
-    const r = brain.last;
+  const resultSource = brainResultSources.get(brain) ?? brain;
+  if (resultSource instanceof ModelBrain && resultSource.last) {
+    const r = resultSource.last;
     return {
       content: r.content,
       stopReason: r.stopReason,
