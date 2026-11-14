@@ -3645,7 +3645,9 @@ async function executeRunInner(
           /^[A-Za-z0-9._:-]{1,128}$/.test(proof.evidence) &&
           proof.noPaidExtraUsage === true &&
           proof.noCredentialsInContext === true &&
-          targetReserve.state === "normal" &&
+          // Readings come from turns: a stale one is unknown. The subscription route has no paid extra usage, so an
+          // unknown window is tried (a full one refuses the turn and the task waits); only a fresh low reading skips it.
+          targetReserve.state !== "low" &&
           JSON.stringify(t.messages) === contextSnapshot &&
           JSON.stringify(context) === serializedContext &&
           Number.isSafeInteger(proof.observedAt) &&

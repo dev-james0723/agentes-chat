@@ -6335,7 +6335,7 @@ test("a quota cut after multiple turns preserves scoped portable source referenc
 });
 
 // Owner policy 2026-11-14: Codex at its limit continues mid-task on the computer's Claude Code subscription sign-in.
-async function midTaskQuotaFixture(o: { authMethod: string; goal: string }) {
+async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claudeUsed?: number; claudeAt?: string }) {
   let writes = 0;
   const source: ToolSource = {
     name: "synthetic-handoff",
@@ -6369,7 +6369,11 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string }) {
         ...machine.executors,
         ownUsage: {
           codex: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 60, resetsAt }] },
-          claude_code: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 13, resetsAt }] },
+          claude_code: {
+            source: "probe",
+            at: o.claudeAt ?? at,
+            windows: [{ kind: "seven_day", usedPercent: o.claudeUsed ?? 13, resetsAt }],
+          },
         },
       },
     })
@@ -6494,3 +6498,22 @@ test("quota qualifier refuses non-subscription Claude logins and credential text
   expect(hasCredentialText(`ghp_${"x".repeat(36)}`)).toBe(true);
   expect(hasCredentialText("plain progress text")).toBe(false);
 });
+
+test("quota policy: a stale Claude reading is tried; a fresh low one keeps the task waiting", async () => {
+  const stale = await midTaskQuotaFixture({
+    authMethod: "claude.ai",
+    goal: "@dev SYNTH_GOAL do step one then step two",
+    claudeAt: new Date(Date.now() - 14 * 3600_000).toISOString(),
+  });
+  expect(stale.claudeTurns).toHaveLength(1);
+  expect(stale.run?.status).toBe("done");
+  await f.close();
+  clearPlanLimits();
+  const low = await midTaskQuotaFixture({
+    authMethod: "claude.ai",
+    goal: "@dev SYNTH_GOAL do step one then step two",
+    claudeUsed: 97,
+  });
+  expect(low.claudeTurns).toHaveLength(0);
+  expect(low.run?.status).toBe("waiting_input");
+}, 60_000);
