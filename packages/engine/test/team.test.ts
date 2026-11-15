@@ -217,7 +217,12 @@ test("find_agent scoped task mode asks Jev with only accessible, unpaused, AI-re
       };
     },
   });
-  const qa = await addAgent("QA", "qa", "Independent reviewer", "Private instructions must not be sent to Jev");
+  const qa = await addAgent(
+    "QA",
+    "qa",
+    "Independent reviewer",
+    `Reviews changes independently. ${"x".repeat(400)}TAIL-NOT-SENT`,
+  );
   const paused = await addAgent("Paused", "paused", "Reviewer");
   await f.db.update(schema.agents).set({ operatorHoldAt: new Date() }).where(eq(schema.agents.id, paused.id));
   const hidden = await addAgent("Secret", "secret", "Reviewer");
@@ -251,7 +256,9 @@ test("find_agent scoped task mode asks Jev with only accessible, unpaused, AI-re
   expect(decisions[0]?.calibrated).toBe(true);
   expect(decisions[0]?.runId).toBeTruthy();
   expect(((decisions[0]?.state.candidates ?? []) as { id: string }[]).map((x) => x.id)).toEqual([qa.id]);
-  expect(JSON.stringify(decisions[0]?.state)).not.toContain("Private instructions");
+  // The same bounded description the router gives Jev (300 characters of instructions), never the rest.
+  expect(JSON.stringify(decisions[0]?.state)).toContain("Reviews changes independently.");
+  expect(JSON.stringify(decisions[0]?.state)).not.toContain("TAIL-NOT-SENT");
   expect(results[0]).toContain("Jev suggests @qa");
   expect(results[0]).toContain("This starts no work");
 });
@@ -401,14 +408,22 @@ async function routingFixture() {
   };
 }
 
-test("legacy task-only ambiguity returns machine clarification without Judge or candidate expansion", async () => {
+test("a task alone goes to Jev over every eligible agent, purpose defaulting to implementer", async () => {
   const r = await routingFixture();
-  const out = await r.invoke({ task: "Choose the accountable department coordinator for Save/keyboard focus" });
-  expect(out.data?.delegation).toMatchObject({
-    status: "insufficient_scope",
-    by: "rules",
-    reason: "selection_purpose_required",
-  });
+  const out = await r.invoke({ task: "Fix Save/keyboard focus" });
+  expect(out.data?.delegation).toMatchObject({ status: "recommended", by: "jev", purpose: "implementer" });
+  expect(r.requests).toHaveLength(1);
+  const ids = (r.requests[0]?.state as { candidates: { id: string }[] }).candidates.map((c) => c.id);
+  expect(ids).toEqual(expect.arrayContaining([r.manager.id, r.alpha.id, r.beta.id]));
+});
+
+test("a purpose that is not a known one is refused before any roster read or Jev call", async () => {
+  const r = await routingFixture();
+  // The gateway's input schema refuses it first; the handler would too (selection_purpose_required).
+  const out = await r.invoke({ task: "Fix", purpose: "boss" });
+  const status = (out.data?.delegation as { status?: string } | undefined)?.status;
+  expect(out.isError === true || status === "insufficient_scope").toBe(true);
+  expect(status).not.toBe("recommended");
   expect(r.requests).toHaveLength(0);
 });
 
@@ -457,15 +472,16 @@ test("explicit delivery owner stays a rules mapping, not a design-title remap", 
   expect(r.requests).toHaveLength(0);
 });
 
-test("a scoped coordinator request without a department is clarified, not sent to the whole roster", async () => {
+test("a coordinator request without a department lets Jev compare the whole eligible roster", async () => {
   const r = await routingFixture();
   expect(
-    (await r.invoke({ task: "Coordinate department", purpose: "department_coordinator" })).data?.delegation,
-  ).toMatchObject({ status: "insufficient_scope", reason: "department_or_target_required" });
-  expect(r.requests).toHaveLength(0);
+    (await r.invoke({ task: "Coordinate the design work", purpose: "department_coordinator" })).data?.delegation,
+  ).toMatchObject({ status: "recommended", by: "jev", purpose: "department_coordinator" });
+  expect(r.requests).toHaveLength(1);
+  expect((r.requests[0]?.state as { purpose: string }).purpose).toBe("department_coordinator");
 });
 
-test("hard tool needs without an authoritative candidate inventory remain unknown, never invented", async () => {
+test("needed tools are a hint for Jev, never a refusal", async () => {
   const r = await routingFixture();
   expect(
     (
@@ -476,8 +492,11 @@ test("hard tool needs without an authoritative candidate inventory remain unknow
         requiredTools: ["browser"],
       })
     ).data?.delegation,
-  ).toMatchObject({ status: "insufficient_scope", reason: "tool_availability_unverified" });
+  ).toMatchObject({ status: "recommended", by: "rules", agentId: r.alpha.id });
   expect(r.requests).toHaveLength(0);
+  await r.invoke({ task: "Use browser", purpose: "implementer", requiredTools: ["browser"] });
+  expect(r.requests).toHaveLength(1);
+  expect((r.requests[0]?.state as { tools_needed: string[] }).tools_needed).toEqual(["browser"]);
 });
 
 test("native autonomy denial still excludes an explicit target", async () => {
@@ -568,12 +587,15 @@ test("an exact target in another department does not silently switch to a matchi
   expect(r.requests).toHaveLength(0);
 });
 
-test("fuzzy query plus task asks the agent to supply an exact target or department, not a first lexical winner", async () => {
+test("a fuzzy query with a task is a hint for Jev, not a first lexical winner", async () => {
   const r = await routingFixture();
   expect(
     (await r.invoke({ query: "design specialist please", task: "Implement", purpose: "implementer" })).data?.delegation,
-  ).toMatchObject({ status: "insufficient_scope", reason: "exact_target_required" });
-  expect(r.requests).toHaveLength(0);
+  ).toMatchObject({ status: "recommended", by: "jev" });
+  expect(r.requests).toHaveLength(1);
+  const state = r.requests[0]?.state as { caller_hint: string; candidates: unknown[] };
+  expect(state.caller_hint).toBe("design specialist please");
+  expect(state.candidates.length).toBeGreaterThan(1);
 });
 
 test("query-only native search remains metadata-only and zero Judge", async () => {
@@ -628,7 +650,9 @@ test("missing-intent native handler does no roster/readiness SQL and no Judge wo
   const r = await routingFixture();
   const [tool] = await createFindAgentToolSource({ ai: { gateway: f.gateway } }).tools(r.ctx);
   if (!tool) throw Error("fixture tool missing");
-  const { queries } = await countQueries(() => tool.execute({ task: "Coordinate unknown department" }, r.ctx));
+  const { queries } = await countQueries(() =>
+    tool.execute({ task: "Coordinate unknown department", purpose: "not-a-purpose" }, r.ctx),
+  );
   expect(queries).toBe(0);
   expect(r.requests).toHaveLength(0);
 });

@@ -15,6 +15,7 @@ import {
   DELEGATION_PURPOSES,
   type DelegateChoice,
   delegationScope,
+  MAX_DELEGATE_CANDIDATES,
   readDelegationIntent,
 } from "./delegation-choice";
 import { agentDesktopUseStatus } from "./desktop/status";
@@ -323,7 +324,7 @@ const words = (s: string) =>
 /** `find_agent` as a personal workspace's agents read it (ADR 0159). */
 const FIND_AGENT_PERSONAL = {
   [FIND_AGENT_TOOL]:
-    "Find this person's agents. Query alone searches metadata. With task, supply purpose and an exact current handle/targetAgentId or native departmentId. Fill known intent from the task; incomplete intent returns structured clarification. Exact targets use rules and scoped shortlists may get Jev advice. Required exact tools without authoritative availability stay unknown. Role, confidence and readiness are not verified task fitness or review independence. Send only a short non-secret summary; no work or authority is granted. Recheck ownership/readiness/approvals before dispatch.",
+    "Find this person's agents. Query alone searches names and roles. With task, Jev picks the best-placed agent among those you may reach and that are ready: give a short non-secret task summary and, when you know it, the purpose (default implementer). An exact handle or targetAgentId picks that agent; a departmentId narrows the choice; anything else in query is a hint. The pick is advice: it starts no work and grants no authority.",
 };
 
 /**
@@ -338,7 +339,7 @@ export function createFindAgentToolSource(
   const tool: ToolDefinition = {
     name: FIND_AGENT_TOOL,
     description:
-      "Find agents. Query alone searches names and roles. With task, supply purpose and an exact current handle/targetAgentId or native departmentId. Resolve known task intent yourself; incomplete intent returns structured clarification, not an automatic request to the person. Exact targets use rules; an eligible department shortlist may get Jev advice. Required exact tools lacking authoritative availability remain unknown. Role, department, confidence and readiness do not prove task fitness or independent review. Send only a short non-secret task summary. This starts no work and grants no authority; dispatch still rechecks ownership, readiness and approvals.",
+      "Find agents. Query alone searches names and roles. With task, Jev picks the best-placed agent among those you may reach and that are ready: give a short non-secret task summary and, when you know it, the purpose (default implementer; use independent_reviewer for a review so the author is not picked by habit). An exact handle or targetAgentId picks that agent; a departmentId narrows the choice; anything else in query, and requiredTools, are hints for Jev. The pick is advice: it starts no work and grants no authority.",
     scope: "",
     inputSchema: {
       type: "object",
@@ -347,7 +348,7 @@ export function createFindAgentToolSource(
         purpose: {
           enum: [...DELEGATION_PURPOSES],
           description:
-            "Which responsibility is being selected; separate who was addressed from delivery owner, department coordinator, implementer and reviewer.",
+            "Which responsibility is being selected (default implementer): delivery owner, department coordinator, implementer or independent reviewer.",
         },
         departmentId: {
           type: "string",
@@ -364,8 +365,7 @@ export function createFindAgentToolSource(
           maxItems: 8,
           uniqueItems: true,
           items: { type: "string", pattern: "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$" },
-          description:
-            "Hard exact-tool needs. Without an authoritative candidate tool-availability contract these return unknown, not an inferred grant.",
+          description: "Tools the work needs, as a hint for Jev's choice. Not checked against what each agent can use.",
         },
         task: {
           type: "string",
@@ -429,18 +429,20 @@ export function createFindAgentToolSource(
         let callable = teammatesFor(allTeam, ctx.agentId, person, new Set(), talks);
         let targetId = intent.targetAgentId;
         const query = typeof input.query === "string" ? input.query.trim().replace(/^@/, "").toLowerCase() : "";
-        if (query) {
-          const exact = callable.filter((a) => a.handle.toLowerCase() === query);
-          if (exact.length !== 1) return output(delegationScope("exact_target_required", intent.purpose));
+        // An exact handle names the target; any other description is only a hint for Jev.
+        const exact = query ? callable.filter((a) => a.handle.toLowerCase() === query) : [];
+        if (exact.length === 1) {
           if (targetId && targetId !== exact[0]?.id)
             return output(delegationScope("target_identity_conflict", intent.purpose));
           targetId = exact[0]?.id;
         }
+        const hint = exact.length === 1 ? undefined : (input.query as string | undefined)?.trim() || undefined;
         callable = callable.filter(
           (a) => (!targetId || a.id === targetId) && (!intent.departmentId || a.groupId === intent.departmentId),
         );
         if (!callable.length) return output(noCandidates());
-        if (callable.length > 8) return output(delegationScope("shortlist_too_large", intent.purpose));
+        if (callable.length > MAX_DELEGATE_CANDIDATES)
+          return output(delegationScope("shortlist_too_large", intent.purpose));
         if (!deps.ai)
           return output({
             status: "unavailable",
@@ -492,6 +494,7 @@ export function createFindAgentToolSource(
             handle: a.handle,
             name: a.name,
             role: a.role,
+            about: cutText(a.instructions ?? "", 300),
             departmentId: a.groupId ?? null,
             can: summarizeScopes(scopes.filter((s) => s.agentId === a.id).map((s) => s.scope)),
             presence: statusOf.get(a.id)?.presence ?? "unknown",
@@ -523,6 +526,7 @@ export function createFindAgentToolSource(
           input.task,
           candidates,
           intent.purpose,
+          { query: hint, requiredTools: intent.requiredTools },
         );
         // Judge settlement is asynchronous: its eligible inputs are evidence, not current authority.
         // Abstention discards the old receipt (including IDs/handles), but never resets consumed calls.
