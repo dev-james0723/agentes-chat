@@ -436,6 +436,47 @@ const {
 } = schema;
 /** A bridged call can land a moment after the text the brain streamed before it: its text up to this much later counts as before. */
 const ASKED_GRACE_MS = 250;
+/**
+ * A computer brain told to stop and end its turn after a bridged call paused the run (a question, an approval)
+ * that keeps going instead (Grok kept polling for minutes): its turn is cut this long after the pause was seen.
+ */
+export const BRIDGED_PAUSE_GRACE_MS = 30_000;
+
+/**
+ * Watches a computer turn for a bridged pause (`suspendRunForTool` moved the run to `waiting_*`) and aborts the
+ * turn once the run has stayed paused for `graceMs`. The cut turn ends on the existing paused-run path
+ * (`suspendedByBridge`), so the person's decision resumes it at once rather than when the brain gives up.
+ */
+export function watchBridgedPause(db: Database, runId: string, graceMs: number) {
+  const controller = new AbortController();
+  let pausedSince: number | null = null;
+  let checking = false;
+  const check = async () => {
+    if (checking || controller.signal.aborted) return;
+    checking = true;
+    try {
+      const [row] = await db.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, runId));
+      if (row?.status !== "waiting_input" && row?.status !== "waiting_approval") {
+        pausedSince = null;
+        return;
+      }
+      pausedSince ??= Date.now();
+      if (Date.now() - pausedSince >= graceMs) {
+        clearInterval(timer);
+        controller.abort(new Error("bridged_pause_cut"));
+      }
+    } catch {
+      // A failed read leaves the turn alone: the brain's own end (or its cut) still applies.
+    } finally {
+      checking = false;
+    }
+  };
+  const timer = setInterval(() => void check(), Math.max(50, Math.min(5_000, Math.floor(graceMs / 2))));
+  return {
+    signal: controller.signal,
+    stop: () => clearInterval(timer),
+  };
+}
 /** How much of each decided call's result a run is reminded of when it ended its turn on the decision. */
 const DECIDED_LINE_MAX = 2000;
 /** How many apps a reply's `meta.work.calls` names: its closed block stacks only a few logos. */
@@ -691,6 +732,8 @@ export interface EngineDeps {
   computerWakeWaitMs?: number;
   /** How long a computer turn is still read after its plan's `limit` event (default `PLAN_LIMIT_GRACE_MS`). */
   planLimitGraceMs?: number;
+  /** How long a computer turn still runs after a bridged call paused the run (default `BRIDGED_PAUSE_GRACE_MS`). */
+  bridgedPauseGraceMs?: number;
   /**
    * Tools on demand (ADR 0043): each run lists the core tools and the groups the
    * judge (`context.judge`) expects it to need; the rest go behind
@@ -5447,8 +5490,17 @@ async function executeRunInner(
         unregisterTurnAbort(run.id, turnAbort);
         continue;
       }
+      // A computer brain that keeps going after a bridged pause told it to end its turn is cut after a grace.
+      const pauseCut =
+        plan.kind !== "model"
+          ? watchBridgedPause(db, run.id, deps.bridgedPauseGraceMs ?? BRIDGED_PAUSE_GRACE_MS)
+          : null;
       const io: BrainIO = {
-        signal: turnAbort ? AbortSignal.any([signal, turnAbort.signal]) : signal,
+        signal: turnAbort
+          ? AbortSignal.any([signal, turnAbort.signal])
+          : pauseCut
+            ? AbortSignal.any([signal, pauseCut.signal])
+            : signal,
         // Brains that run a tool inline (not by yielding `tool_call`). The model brain doesn't; computer
         // brains go through the runner bridge. Both take the bridge's path: a gated call suspends the run,
         // side effects wait for the end of the turn (`takeBridgeEffects`).
@@ -6051,6 +6103,7 @@ async function executeRunInner(
         await addRunStep(db, run, "error", { reason: "transient", message: String(error), willRetry: true });
         throw error;
       } finally {
+        pauseCut?.stop();
         if (turnAbort) unregisterTurnAbort(run.id, turnAbort);
         // A turn ended on the computer and its memory is free: the next in its line asks now.
         const ranOn = turnPlan.kind !== "model" ? (turnPlan.session?.machineId ?? agent.machineId) : null;
