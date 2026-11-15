@@ -530,9 +530,10 @@ export function quotaReserveOf(
     return unknown;
   const at = Date.parse(usage.at);
   if (!Number.isFinite(at) || at > now) return unknown;
-  // Usage in a window only grows until it resets: an old reading still proves "low" while its window has not reset,
-  // but cannot prove room.
-  const stale = now - at > maxAgeMs;
+  // An old reading proves nothing. Usage can go down inside a window (Claude's "reset for free", usage bought), and a
+  // pool held "low" by an old reading gets no turn, so the reading is never replaced: the pool stays shut until the
+  // window resets. Unknown is tried; a plan that is really full refuses that turn and the task waits or moves on.
+  if (now - at > maxAgeMs) return unknown;
   const windows = usage.windows.filter(
     (w) =>
       ["five_hour", "seven_day", "monthly"].includes(w.kind) &&
@@ -543,7 +544,6 @@ export function quotaReserveOf(
   );
   if (!windows.length) return unknown;
   const top = windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
-  if (stale && (top.usedPercent < thresholdPercent || !top.resetsAt)) return unknown;
   return {
     state: top.usedPercent >= thresholdPercent ? "low" : "normal",
     thresholdPercent,

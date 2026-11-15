@@ -1187,6 +1187,13 @@ export const WRAP_UP_NOTE =
 const ACCOUNT_REFUSALS = new Set([401, 402, 403, 429]);
 
 /**
+ * A computer brain's failure that says the account has nothing left to spend (HTTP 402, "usage balance exhausted"):
+ * the plan's refusal in other words. Grok Build reports it as a plain failure, not as a limit.
+ */
+export const balanceRefusal = (message: string): boolean =>
+  /\bstatus 402\b|\b402 Payment Required\b|usage balance exhausted/i.test(message);
+
+/**
  * What a conversation run near its cap reads once: where it stands, so the person can let it go on
  * (Continuar).
  */
@@ -7307,6 +7314,9 @@ async function thinkOnce(
       if (limit) throw limitFailure(event.message, event.worked);
       if (event.code === "claude_failed" && untouched && hooks.refusedByPlan?.(event.message))
         throw limitFailure(event.message, false);
+      // Out of balance is the plan's limit whenever in the turn it is said: the words are the provider's, and the
+      // handoff to a plan with room reads `worked` to know whether calls already ran.
+      if (balanceRefusal(event.message)) throw limitFailure(event.message, event.worked ?? !untouched);
       throw new BrainFailure(
         event.code,
         event.message,
