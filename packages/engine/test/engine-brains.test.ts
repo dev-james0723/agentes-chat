@@ -93,6 +93,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "../src/errors";
+import { balanceRefusal } from "../src/executor";
 import { afterSteered } from "../src/steering";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
@@ -958,10 +959,19 @@ test("a computer brain that keeps going after asking through the bridge is cut a
         {
           id: "ask-1",
           name: "ask_user",
-          input: { why: "I need a person's answer before I go on: this decides what I change next.", question: "Ship it?" },
+          input: {
+            why: "I need a person's answer before I go on: this decides what I change next.",
+            question: "Ship it?",
+          },
         },
       );
-      yield { type: "tool_call", id: "native-ask-1", name: "ask_user", input: {}, executed: { content: result.content } };
+      yield {
+        type: "tool_call",
+        id: "native-ask-1",
+        name: "ask_user",
+        input: {},
+        executed: { content: result.content },
+      };
       // Told to stop and end its turn, it polls on instead (what Grok did in production) until the turn is cut.
       const started = Date.now();
       while (!io.signal.aborted && Date.now() - started < 10_000) await Bun.sleep(20);
@@ -6075,7 +6085,9 @@ test("quota policy: two tasks switching in one conversation post one notice", as
   expect(r.notices).toHaveLength(1);
 }, 90_000);
 
-test("quota reserve: an old reading still proves low until its window resets, but never proves room", async () => {
+test("quota reserve: an old reading proves neither low nor room", async () => {
+  // 2026-11-15: a 14-hour-old Claude reading of 93% kept every Claude agent off Claude while the plan stood at 51%
+  // (Claude's "reset for free" gives usage back). No turn ran on Claude, so the reading was never replaced.
   f = await setup();
   const pool = { machineId: "m", kind: "codex" as const, accountId: null };
   const old = new Date(Date.now() - 14 * 3600_000).toISOString();
@@ -6091,10 +6103,36 @@ test("quota reserve: an old reading still proves low until its window resets, bu
       pool,
       { thresholdPercent: 85 },
     ).state;
-  expect(read(98, future)).toBe("low");
+  expect(read(98, future)).toBe("unknown");
   expect(read(40, future)).toBe("unknown");
+  const fresh = (used: number) =>
+    quotaReserveOf(
+      {
+        source: "turn",
+        at: new Date().toISOString(),
+        windows: [{ kind: "seven_day", usedPercent: used, resetsAt: future }],
+      } as never,
+      pool,
+      { thresholdPercent: 85 },
+    ).state;
+  expect(fresh(98)).toBe("low");
+  expect(fresh(40)).toBe("normal");
   expect(read(98, past)).toBe("unknown");
   expect(read(98)).toBe("unknown");
+});
+
+test("a computer brain's 'balance exhausted' refusal is the plan's limit, not an outage", async () => {
+  f = await setup();
+  // 2026-11-15 19:36 UTC, as Grok Build said it; the run was parked as provider_outage and no other plan took over.
+  expect(
+    balanceRefusal(
+      'Internal error: {\n "message": "API error (status 402 Payment Required): Grok Build usage balance exhausted",\n "http_status": 402\n}',
+    ),
+  ).toBe(true);
+  expect(balanceRefusal("API error (status 402 Payment Required)")).toBe(true);
+  expect(balanceRefusal("API error (status 500): upstream connect error")).toBe(false);
+  expect(balanceRefusal("exit code 402")).toBe(false);
+  expect(balanceRefusal("")).toBe(false);
 });
 
 test("only a local model endpoint counts as the free last-resort route", async () => {
