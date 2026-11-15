@@ -1,5 +1,6 @@
 import { vaultRule, vaultRuleLabel } from "@agenteschat/adapters";
 import { eq, schema } from "@agenteschat/db";
+import { refusalData } from "../errors";
 import { cutText } from "../format";
 import { VAULT_LIST_TOOL, VAULT_READ_SCOPE, VAULT_SAVE_TOOL, VAULT_WRITE_SCOPE } from "../tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -25,7 +26,6 @@ import {
   vaultPlaceName,
   vaultRefusalOutput,
 } from "./index";
-import { refusalData } from "../errors";
 
 /**
  * The Vault as tools (ADR 0144): what people saved for the agent, found before it asks them (`vault_list`), and the

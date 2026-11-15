@@ -6,6 +6,7 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
+import { refusalData } from "./errors";
 import { projectByName } from "./issue-projects";
 import {
   askAgentToImplement,
@@ -33,7 +34,6 @@ import { type Audience, audienceOfConversation } from "./task-access";
 import { ensureTaskConversation } from "./task-conversation";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { untrustedBlock } from "./untrusted";
-import { refusalData } from "./errors";
 
 export const UPDATE_ISSUE_TOOL = "update_issue";
 

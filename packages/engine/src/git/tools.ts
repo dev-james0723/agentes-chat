@@ -2,6 +2,7 @@ import type { PubSub } from "@agenteschat/adapters";
 import { getAgentCached } from "../agents";
 import { connectorScope } from "../connectors/catalog";
 import { activeConnections, type ConnectorDeps } from "../connectors/connections";
+import { refusalData } from "../errors";
 import { publishChannelEvent } from "../events";
 import { computerPreparing } from "../machine-provisioning";
 import { missionOfRun } from "../mission-context";
@@ -28,7 +29,6 @@ import { recordGitHubItem } from "./github-events";
 import { cloneOnMachine } from "./machine";
 import { parseRepo } from "./repos";
 import { signatureLine, signedBody } from "./signature";
-import { refusalData } from "../errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);

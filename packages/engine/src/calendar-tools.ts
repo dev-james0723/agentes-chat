@@ -7,9 +7,9 @@ import {
   proposeCalendarEvent,
   resolveParticipants,
 } from "./calendar";
+import { refusalData } from "./errors";
 import { agentSearchChannels } from "./search";
 import type { ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
-import { refusalData } from "./errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({

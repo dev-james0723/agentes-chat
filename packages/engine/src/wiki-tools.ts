@@ -1,6 +1,7 @@
 import { type ActionRecord, actWithUndo } from "./agent-actions";
 import { getAgentCached } from "./agents";
 import { agentRoom } from "./artifacts";
+import { refusalData } from "./errors";
 import { cutText } from "./format";
 import { can, getMembership } from "./organizations";
 import { chosenAudience, personBehindCall, routineCreatorOfCall, visibleToField, wikiActorOfCall } from "./requester";
@@ -20,7 +21,6 @@ import {
 } from "./wiki";
 import { RESTRICTED_HERE, sendHeldToDm } from "./wiki-dm";
 import { inWorkspaceWords } from "./workspace-mode";
-import { refusalData } from "./errors";
 
 /** `search_wiki` as a personal workspace's agents read it (ADR 0159). */
 const WIKI_PERSONAL = {

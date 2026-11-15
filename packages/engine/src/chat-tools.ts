@@ -5,6 +5,7 @@ import { recordAudit } from "./audit";
 import { answersAgentsOnly } from "./consultations";
 import { addAgentReaction, isValidReaction, normalizeReaction } from "./context/feedback";
 import { openPersonAgentDm } from "./dms";
+import { refusalData } from "./errors";
 import { publishMessageCreated } from "./events";
 import { cutText } from "./format";
 import type { GifMedia } from "./media";
@@ -31,7 +32,6 @@ import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tool
 import { withWikiLinks } from "./wiki-links";
 import { movableRun, moveRun } from "./works";
 import { inWorkspaceWords } from "./workspace-mode";
-import { refusalData } from "./errors";
 
 export const POST_MESSAGE_TOOL = "post_message";
 export const SEND_DM_TOOL = "send_dm";

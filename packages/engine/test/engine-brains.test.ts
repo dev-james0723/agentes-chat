@@ -83,6 +83,7 @@ import {
   thinkerIsLocal,
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
+import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import {
   ConflictError,
   ForbiddenError,
@@ -92,7 +93,6 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "../src/errors";
-import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import { afterSteered } from "../src/steering";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
@@ -6324,7 +6324,9 @@ test("a check refusal is a known bridge outcome whatever its code, from any tool
   // Max's Mission run, 2026-11-15: update_plan refused with ForbiddenError code `mission.not_allowed` next to a
   // request_approval pause. The code was not on the list, so the approved run stayed held ("unresolved bridge effect").
   const failed = (error: unknown) => ({ content: "Failed: x", isError: true as const, ...refusalData(error) });
-  expect(knownBridgeResult(failed(new ForbiddenError("Only the mission's owner can", "mission.not_allowed")))).toBe(true);
+  expect(knownBridgeResult(failed(new ForbiddenError("Only the mission's owner can", "mission.not_allowed")))).toBe(
+    true,
+  );
   expect(knownBridgeResult(failed(new ValidationError("The folder must be inside", "mission.bad_folder")))).toBe(true);
   expect(knownBridgeResult(failed(new NotFoundError("No such task")))).toBe(true);
   expect(knownBridgeResult(failed(new UnauthorizedError("Sign in again")))).toBe(true);

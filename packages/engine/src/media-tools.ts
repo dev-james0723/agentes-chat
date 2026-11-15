@@ -3,6 +3,7 @@ import { and, desc, type Executor, eq, gt, isNull, or, schema, sql } from "@agen
 import { channelSkip, MEDIA_GIF_PICK_FROM, MEDIA_GIF_SEARCH_LIMIT, pickGifIndex, withTimeout } from "./agent-media";
 import { getAgentCached } from "./agents";
 import { getChannelCached } from "./context";
+import { refusalData } from "./errors";
 import { publishMessageCreated } from "./events";
 import {
   type GifMedia,
@@ -20,7 +21,6 @@ import {
 import { insertMessage, messageView } from "./messages";
 import { replyThreadOf } from "./runs";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
-import { refusalData } from "./errors";
 
 /**
  * The agent's own GIF and sticker tools (ADR 0091, addendum 2026-10-31): `send_gif` and `send_sticker`, for when

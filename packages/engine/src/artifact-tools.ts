@@ -18,12 +18,12 @@ import {
   tableToCsv,
   updateArtifact,
 } from "./artifacts";
+import { refusalData } from "./errors";
 import type { ModelFile } from "./file-reader";
 import { personBehindCall } from "./requester";
 import { replyThreadOf } from "./runs";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { neutralizeUntrusted, untrustedBlock } from "./untrusted";
-import { refusalData } from "./errors";
 
 const MAX_READ_CHARS = 40_000;
 

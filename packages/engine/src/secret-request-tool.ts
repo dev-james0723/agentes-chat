@@ -1,6 +1,7 @@
 import { isReservedSecretName, type PubSub } from "@agenteschat/adapters";
 import { and, eq, gt, isNull, ne, or, schema, sql } from "@agenteschat/db";
 import { recordAudit } from "./audit";
+import { refusalData } from "./errors";
 import { isAbsoluteMachinePath, pathInOwnFolder } from "./machine-access";
 import { type ComputerHandle, requireComputerManager } from "./sandbox";
 import {
@@ -14,7 +15,6 @@ import {
   supersedeOlderSecretRequests,
 } from "./secrets";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./tools/types";
-import { refusalData } from "./errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 

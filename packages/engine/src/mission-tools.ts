@@ -3,6 +3,7 @@ import { and, eq, inArray, schema } from "@agenteschat/db";
 import { getAgentCached } from "./agents";
 import { recordAudit } from "./audit";
 import { getChannelCached } from "./context";
+import { refusalData } from "./errors";
 import { publishUserEvent } from "./events";
 import { cutText } from "./format";
 import { taskRequester } from "./machine-tasks";
@@ -31,7 +32,6 @@ import { replyThreadOf } from "./runs";
 import { SANDBOX_SCOPE } from "./sandbox";
 import { grantedScopeKeys, grantKey, toolAllowScope } from "./tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
-import { refusalData } from "./errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({

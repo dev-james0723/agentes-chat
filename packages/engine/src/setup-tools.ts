@@ -27,6 +27,7 @@ import { cardPlace, NO_PERSON_READS } from "./consultations";
 import { ownWords } from "./context/learn";
 import { decideProposal, proposeSettings, type SettingsProposalCard } from "./context/proposals";
 import type { ContextDeps } from "./context/summaries";
+import { refusalData } from "./errors";
 import { publishMessageCreated } from "./events";
 import { firstOf } from "./format";
 import { insertMessage, messageView } from "./messages";
@@ -53,7 +54,6 @@ import {
   workspaceActionTool,
 } from "./workspace-actions";
 import { isPersonalWorkspace } from "./workspace-mode";
-import { refusalData } from "./errors";
 
 const { agentActions, agentRuns, channels, machineAccounts, messages, orgRoles, skills } = schema;
 

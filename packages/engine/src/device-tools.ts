@@ -28,6 +28,7 @@ import {
 } from "./device-resolve";
 import { type DeviceWaitReason, startDeviceWait } from "./device-waits";
 import { type MachinePhoneRow, phoneHolder, phoneStoppedBy, phoneTargetOf } from "./devices";
+import { refusalData } from "./errors";
 import { copyToComputer } from "./file-pulls";
 import { formatBytes } from "./format";
 import { fullMachinePath } from "./machine-access";
@@ -41,7 +42,6 @@ import { SANDBOX_SCOPE, truncateOutput, withConnectedMachine } from "./sandbox";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { untrustedBlock } from "./untrusted";
 import { shareSavedFile } from "./uploads";
-import { refusalData } from "./errors";
 
 const { machinePhones } = schema;
 
