@@ -196,6 +196,19 @@ export function brainModelForTier(kind: BrainKind, tier: ModelTier): string | un
   return undefined;
 }
 
+/**
+ * The model a run continues on when its plan ran out and another subscription takes it (quota handoff). `top` is the
+ * configured strongest model of that route (`QUOTA_HANDOFF_*_MODEL`): only work the judge called large gets it.
+ * Everyday work, and a run the judge never read, takes the next one down; small work the one after. Never the
+ * smallest (see above: it misses tools in a long list).
+ */
+export function handoffModel(kind: BrainKind, top: string, tier: ModelTier | undefined): string {
+  if (tier === "large") return top;
+  if (kind === "claude_code") return tier === "small" ? "sonnet" : "opus";
+  if (kind === "codex") return modelForTier("openai", "medium") ?? top;
+  return top;
+}
+
 /** What auto sets for a run with this plan. */
 export interface AutoApplied {
   /** The API model, when the agent's model is `auto` (the model brain, and a fallback to it). */

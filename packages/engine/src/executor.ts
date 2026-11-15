@@ -58,6 +58,7 @@ import {
   autoWanted,
   chooseAutoModel,
   fallbackChoice,
+  handoffModel,
   inMission,
   needsAutoChoice,
   orgAutoModels,
@@ -3801,6 +3802,8 @@ async function executeRunInner(
             proof.validUntil > proof.observedAt + 300_000
           )
             continue;
+          // The judge's reading of this run (`autoModel`) picks the route's model: the top one only for large work.
+          proof.model = handoffModel(kind, proof.model, t.autoModel?.tier);
           const target: BrainPlan | null = await resolveBrain(
             { db, machines: deps.machines },
             {
