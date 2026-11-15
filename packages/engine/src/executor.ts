@@ -268,6 +268,7 @@ import {
   quotaContinuityValue,
   readQuotaContinuity,
 } from "./quota-continuity";
+import { planAccountFor } from "./quota-qualifier";
 import {
   endsWithSentinel,
   isSentinelOnly,
@@ -875,6 +876,8 @@ export interface Transcript {
     sourceKind: BrainKind;
     sourceSessionId: string;
     targetKind: QuotaHandoffKind;
+    /** The machine account the target signs in with (absent: the computer's own sign-in, or an older record). */
+    targetAccountId?: string | null;
     targetSessionId: string;
     machineId: string;
     model: string;
@@ -3188,9 +3191,42 @@ async function executeRunInner(
       } as ContextBlock,
     ];
   }
-  // A restarted or paused cross-harness continuation needs fresh route/effect reconciliation. Never guess that
-  // a native session can be replayed by a new owner; leave the task durably held until that flow exists.
-  if (transcript.quotaCliHandoff) {
+  // A cross-harness continuation that paused (room, an approval, an answer) or restarted goes on with the route it
+  // moved to, in that route's own session. Only an unknown effect, a checkpoint hold or a route that cannot be
+  // resolved keeps it held for reconciliation; a source native session is never replayed.
+  const resumedHandoff =
+    transcript.quotaCliHandoff &&
+    !transcript.effectUncertain &&
+    !transcript.continuityCheckpoint &&
+    isHandoffKind(transcript.quotaCliHandoff.targetKind) &&
+    run.brainSessionId === transcript.quotaCliHandoff.targetSessionId
+      ? await (async () => {
+          const h = transcript.quotaCliHandoff as NonNullable<Transcript["quotaCliHandoff"]>;
+          const accountId =
+            h.targetAccountId !== undefined
+              ? h.targetAccountId
+              : h.targetKind === "grok"
+                ? await planAccountFor(db, run.orgId, h.machineId, "grok").catch(() => null)
+                : null;
+          const resumed = await resolveBrain(
+            { db, machines: deps.machines },
+            {
+              ...agent,
+              brain: h.targetKind,
+              brainModel: h.model,
+              brainAccountId: accountId,
+              brainAccountLentBy: null,
+              brainExtraUsage: false,
+            } as Agent,
+            run,
+            replyThreadId ?? run.channelId,
+            { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
+          ).catch(() => null);
+          return resumed && resumed.kind === h.targetKind && !resumed.missionId ? resumed : null;
+        })()
+      : null;
+  if (resumedHandoff) brainPlan = resumedHandoff;
+  else if (transcript.quotaCliHandoff) {
     const h = transcript.quotaCliHandoff;
     transcript.continuityCheckpoint = {
       schema: "quota-cut-checkpoint/1",
@@ -3767,6 +3803,7 @@ async function executeRunInner(
             sourceKind: from,
             sourceSessionId: session.id,
             targetKind: kind,
+            targetAccountId: proof.accountId ?? null,
             targetSessionId: sessionId,
             machineId,
             model: proof.model,
@@ -4983,20 +5020,11 @@ async function executeRunInner(
     if (reserveHandled === "canceled") return stopCanceled("");
     if (reserveHandled === "waited" || reserveHandled === "failed") return;
     if (reserveHandled === "no") {
+      // Owner policy 2026-11-14: a reserve reading is not exhaustion. With no qualified alternate the task keeps
+      // working on its own plan (its real limit still parks it), and its next turn refreshes the reading.
       const used = samePool && reserve?.state === "low" ? reserve.usedPercent : reservePending?.usedPercent;
-      if (used === undefined || (!reservePending && !reserve))
-        throw new PermanentJobError("missing reserve observation");
-      (transcript as Transcript).quotaReservePending =
-        !reservePending && reserve
-          ? { usedPercent: used, observedAt: reserve.observedAt, pool: reserve.pool }
-          : reservePending;
-      return waitForUsage({
-        code: "usage_pause",
-        reserve: true,
-        message: "The account reached its configured reserve; no qualified alternate is currently available.",
-        ...(samePool && reserve?.state === "low" && reserve.resetsAt ? { resetsAt: reserve.resetsAt } : {}),
-        pause: { source: "plan", used },
-      });
+      delete (transcript as Transcript).quotaReservePending;
+      await addRunStep(db, run, "context", { quotaReserveContinues: { usedPercent: used ?? null } });
     }
   }
   if (plan.unavailable) {

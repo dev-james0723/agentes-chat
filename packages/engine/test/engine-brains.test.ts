@@ -5442,692 +5442,6 @@ test.each([true, false])(
   },
 );
 
-test("a parked reserve run reselects an alternate after its wait", async () => {
-  f = await setup({ skillTools: true });
-  const machineId = await computerAgent(f, {
-    brain: "codex",
-    ownerUserId: f.owner.id,
-    brainExtraUsage: false,
-    instructions: "SYNTH_AGENT_INSTRUCTIONS",
-  });
-  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
-  if (!machine) throw new Error("missing machine");
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  const [skill] = await f.db
-    .insert(schema.skills)
-    .values({
-      orgId: f.org.id,
-      slug: "synthetic-skill",
-      name: "SYNTH_SKILL_NAME",
-      description: "SYNTH_SKILL_DESCRIPTION",
-      body: "SYNTH_SKILL_BODY",
-      source: "manual",
-    })
-    .returning();
-  if (!skill) throw new Error("missing skill");
-  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
-  await f.db.insert(schema.contextItems).values({
-    orgId: f.org.id,
-    agentId: f.agent.id,
-    kind: "note",
-    scopeType: "agent",
-    scopeId: f.agent.id,
-    content: "SYNTH_MEMORY_SENTINEL",
-    pinned: true,
-  });
-  const sourceTurns: BrainTurn[] = [],
-    targetTurns: BrainTurn[] = [];
-  const source: Brain = {
-    kind: "codex",
-    async *run(turn) {
-      sourceTurns.push(turn);
-      yield { type: "done", text: "wrong" };
-    },
-  };
-  const target: Brain = {
-    kind: "claude_code",
-    async *run(turn) {
-      targetTurns.push(turn);
-      yield { type: "done", text: "synthetic Claude continued" };
-    },
-  };
-  const status = (id: string) =>
-    statusOf(id, {
-      protocol: MACHINE_PROTOCOL_VERSION,
-      pairedByUserId: f.owner.id,
-      executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
-        codex: { version: "0.163.0" },
-        detectedAt: new Date().toISOString(),
-      },
-    });
-  let eligible = false;
-  const handlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-    ...{
-      quotaCliContinuation: {
-        qualify: async (r: { machineId: string }) =>
-          eligible
-            ? {
-                targetKind: "claude_code",
-                machineId: r.machineId,
-                model: "claude-fable-5-2",
-                sourcePool: "synthetic-codex",
-                targetPool: "synthetic-claude",
-                noPaidExtraUsage: true as const,
-                noCredentialsInContext: true as const,
-                evidence: "synthetic-only",
-                observedAt: Date.now(),
-                validUntil: Date.now() + 60_000,
-              }
-            : null,
-      },
-    },
-  });
-  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
-  await post(f, "@dev retain this synthetic goal");
-  await drainOutbox(f.db, handlers);
-  const [parked] = await f.db.select().from(schema.agentRuns);
-  expect(parked?.status).toBe("waiting_input");
-  expect(sourceTurns).toHaveLength(0);
-  eligible = true;
-  await f.db
-    .update(schema.outbox)
-    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  await drainOutbox(f.db, handlers);
-  const [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.id).toBe(parked?.id);
-  expect(sourceTurns).toHaveLength(0);
-  expect(targetTurns).toHaveLength(1);
-  expect(run?.status).toBe("done");
-  expect(targetTurns[0]?.runId).toBe(run?.id);
-  expect(targetTurns[0]?.agentId).toBe(f.agent.id);
-  expect(targetTurns[0]?.session?.resume).toBe(false);
-  const sent = JSON.stringify(targetTurns[0]);
-  expect(sent).toContain("retain this synthetic goal");
-  expect(sent).toContain("SYNTH_PRIOR_MESSAGE");
-  expect(sent).toContain("SYNTH_PROGRESS");
-  expect(sent).toContain("SYNTH_AGENT_INSTRUCTIONS");
-  expect(sent).toContain("SYNTH_SKILL_NAME");
-  expect(targetTurns[0]?.tools.map((tool) => tool.name)).toContain("load_skill");
-  expect(sent).toContain("SYNTH_MEMORY_SENTINEL");
-  const handoff = (run?.transcript as { quotaCliHandoff?: { sourceSessionId: string; targetSessionId: string } })
-    ?.quotaCliHandoff;
-  expect(handoff?.sourceSessionId).not.toBe(handoff?.targetSessionId);
-  expect(targetTurns[0]?.session?.id).toBe(handoff?.targetSessionId);
-  expect(run?.transcript).toMatchObject({
-    quotaCliHandoff: { disposition: "CONTINUE", sourceKind: "codex", targetKind: "claude_code" },
-  });
-});
-
-test("a parked reserve run stays queued on unknown stale source telemetry", async () => {
-  f = await setup({ skillTools: true });
-  const machineId = await computerAgent(f, {
-    brain: "codex",
-    ownerUserId: f.owner.id,
-    brainExtraUsage: false,
-    instructions: "SYNTH_AGENT_INSTRUCTIONS",
-  });
-  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
-  if (!machine) throw new Error("missing machine");
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  const [skill] = await f.db
-    .insert(schema.skills)
-    .values({
-      orgId: f.org.id,
-      slug: "synthetic-skill",
-      name: "SYNTH_SKILL_NAME",
-      description: "SYNTH_SKILL_DESCRIPTION",
-      body: "SYNTH_SKILL_BODY",
-      source: "manual",
-    })
-    .returning();
-  if (!skill) throw new Error("missing skill");
-  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
-  await f.db.insert(schema.contextItems).values({
-    orgId: f.org.id,
-    agentId: f.agent.id,
-    kind: "note",
-    scopeType: "agent",
-    scopeId: f.agent.id,
-    content: "SYNTH_MEMORY_SENTINEL",
-    pinned: true,
-  });
-  const sourceTurns: BrainTurn[] = [],
-    targetTurns: BrainTurn[] = [];
-  const source: Brain = {
-    kind: "codex",
-    async *run(turn) {
-      sourceTurns.push(turn);
-      yield { type: "done", text: "wrong" };
-    },
-  };
-  const target: Brain = {
-    kind: "claude_code",
-    async *run(turn) {
-      targetTurns.push(turn);
-      yield { type: "done", text: "synthetic Claude continued" };
-    },
-  };
-  const status = (id: string) =>
-    statusOf(id, {
-      protocol: MACHINE_PROTOCOL_VERSION,
-      pairedByUserId: f.owner.id,
-      executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
-        codex: { version: "0.163.0" },
-        detectedAt: new Date().toISOString(),
-      },
-    });
-  const eligible = false;
-  const handlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-    ...{
-      quotaCliContinuation: {
-        qualify: async (r: { machineId: string }) =>
-          eligible
-            ? {
-                targetKind: "claude_code",
-                machineId: r.machineId,
-                model: "claude-fable-5-2",
-                sourcePool: "synthetic-codex",
-                targetPool: "synthetic-claude",
-                noPaidExtraUsage: true as const,
-                noCredentialsInContext: true as const,
-                evidence: "synthetic-only",
-                observedAt: Date.now(),
-                validUntil: Date.now() + 60_000,
-              }
-            : null,
-      },
-    },
-  });
-  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
-  await post(f, "@dev retain this synthetic goal");
-  await drainOutbox(f.db, handlers);
-  const [parked] = await f.db.select().from(schema.agentRuns);
-  expect(parked?.status).toBe("waiting_input");
-  expect(sourceTurns).toHaveLength(0);
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date(Date.now() - 3_600_000).toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94 }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13 }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  await f.db
-    .update(schema.outbox)
-    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  await drainOutbox(f.db, handlers);
-  const [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.id).toBe(parked?.id);
-  expect(sourceTurns).toHaveLength(0);
-  expect(targetTurns).toHaveLength(0);
-  expect(run?.status).toBe("waiting_input");
-  expect(run?.transcript).toMatchObject({
-    quotaReservePending: { usedPercent: 94 },
-    waitingForBrain: { code: "usage_pause" },
-  });
-  const jobs = await f.db
-    .select()
-    .from(schema.outbox)
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
-});
-
-test("a failed reserve state write rolls back its scheduled wake", async () => {
-  f = await setup({ skillTools: true });
-  const machineId = await computerAgent(f, {
-    brain: "codex",
-    ownerUserId: f.owner.id,
-    brainExtraUsage: false,
-    instructions: "SYNTH_AGENT_INSTRUCTIONS",
-  });
-  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
-  if (!machine) throw new Error("missing machine");
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  const [skill] = await f.db
-    .insert(schema.skills)
-    .values({
-      orgId: f.org.id,
-      slug: "synthetic-skill",
-      name: "SYNTH_SKILL_NAME",
-      description: "SYNTH_SKILL_DESCRIPTION",
-      body: "SYNTH_SKILL_BODY",
-      source: "manual",
-    })
-    .returning();
-  if (!skill) throw new Error("missing skill");
-  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
-  await f.db.insert(schema.contextItems).values({
-    orgId: f.org.id,
-    agentId: f.agent.id,
-    kind: "note",
-    scopeType: "agent",
-    scopeId: f.agent.id,
-    content: "SYNTH_MEMORY_SENTINEL",
-    pinned: true,
-  });
-  const sourceTurns: BrainTurn[] = [],
-    targetTurns: BrainTurn[] = [];
-  const source: Brain = {
-    kind: "codex",
-    async *run(turn) {
-      sourceTurns.push(turn);
-      yield { type: "done", text: "wrong" };
-    },
-  };
-  const target: Brain = {
-    kind: "claude_code",
-    async *run(turn) {
-      targetTurns.push(turn);
-      yield { type: "done", text: "synthetic Claude continued" };
-    },
-  };
-  const status = (id: string) =>
-    statusOf(id, {
-      protocol: MACHINE_PROTOCOL_VERSION,
-      pairedByUserId: f.owner.id,
-      executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
-        codex: { version: "0.163.0" },
-        detectedAt: new Date().toISOString(),
-      },
-    });
-  const eligible = false;
-  const handlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-    ...{
-      quotaCliContinuation: {
-        qualify: async (r: { machineId: string }) =>
-          eligible
-            ? {
-                targetKind: "claude_code",
-                machineId: r.machineId,
-                model: "claude-fable-5-2",
-                sourcePool: "synthetic-codex",
-                targetPool: "synthetic-claude",
-                noPaidExtraUsage: true as const,
-                noCredentialsInContext: true as const,
-                evidence: "synthetic-only",
-                observedAt: Date.now(),
-                validUntil: Date.now() + 60_000,
-              }
-            : null,
-      },
-    },
-  });
-  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
-  await post(f, "@dev retain this synthetic goal");
-  await f.db.execute(
-    sql`create function fail_reserve_wait() returns trigger language plpgsql as $$ begin if new.status = 'waiting_input' then raise exception 'synthetic wait-write failure'; end if; return new; end $$`,
-  );
-  await f.db.execute(
-    sql`create trigger synthetic_fail_reserve_wait before update on agent_runs for each row execute function fail_reserve_wait()`,
-  );
-  await drainOutbox(f.db, handlers);
-  const [parked] = await f.db.select().from(schema.agentRuns);
-  expect(parked?.status).not.toBe("waiting_input");
-  expect(sourceTurns).toHaveLength(0);
-  expect(targetTurns).toHaveLength(0);
-  const jobs = await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"));
-  expect(jobs.some((job) => job.dedupeKey?.includes(":usage:"))).toBe(false);
-});
-
-test("a parked reserve run stays queued when the next worker has no qualifier", async () => {
-  f = await setup({ skillTools: true });
-  const machineId = await computerAgent(f, {
-    brain: "codex",
-    ownerUserId: f.owner.id,
-    brainExtraUsage: false,
-    instructions: "SYNTH_AGENT_INSTRUCTIONS",
-  });
-  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
-  if (!machine) throw new Error("missing machine");
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  const [skill] = await f.db
-    .insert(schema.skills)
-    .values({
-      orgId: f.org.id,
-      slug: "synthetic-skill",
-      name: "SYNTH_SKILL_NAME",
-      description: "SYNTH_SKILL_DESCRIPTION",
-      body: "SYNTH_SKILL_BODY",
-      source: "manual",
-    })
-    .returning();
-  if (!skill) throw new Error("missing skill");
-  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
-  await f.db.insert(schema.contextItems).values({
-    orgId: f.org.id,
-    agentId: f.agent.id,
-    kind: "note",
-    scopeType: "agent",
-    scopeId: f.agent.id,
-    content: "SYNTH_MEMORY_SENTINEL",
-    pinned: true,
-  });
-  const sourceTurns: BrainTurn[] = [],
-    targetTurns: BrainTurn[] = [];
-  const source: Brain = {
-    kind: "codex",
-    async *run(turn) {
-      sourceTurns.push(turn);
-      yield { type: "done", text: "wrong" };
-    },
-  };
-  const target: Brain = {
-    kind: "claude_code",
-    async *run(turn) {
-      targetTurns.push(turn);
-      yield { type: "done", text: "synthetic Claude continued" };
-    },
-  };
-  const status = (id: string) =>
-    statusOf(id, {
-      protocol: MACHINE_PROTOCOL_VERSION,
-      pairedByUserId: f.owner.id,
-      executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
-        codex: { version: "0.163.0" },
-        detectedAt: new Date().toISOString(),
-      },
-    });
-  const eligible = false;
-  const handlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-    ...{
-      quotaCliContinuation: {
-        qualify: async (r: { machineId: string }) =>
-          eligible
-            ? {
-                targetKind: "claude_code",
-                machineId: r.machineId,
-                model: "claude-fable-5-2",
-                sourcePool: "synthetic-codex",
-                targetPool: "synthetic-claude",
-                noPaidExtraUsage: true as const,
-                noCredentialsInContext: true as const,
-                evidence: "synthetic-only",
-                observedAt: Date.now(),
-                validUntil: Date.now() + 60_000,
-              }
-            : null,
-      },
-    },
-  });
-  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
-  await post(f, "@dev retain this synthetic goal");
-  await drainOutbox(f.db, handlers);
-  const [parked] = await f.db.select().from(schema.agentRuns);
-  expect(parked?.status).toBe("waiting_input");
-  expect(sourceTurns).toHaveLength(0);
-  const disabledHandlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-  });
-  await f.db
-    .update(schema.outbox)
-    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  await drainOutbox(f.db, disabledHandlers);
-  const [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.id).toBe(parked?.id);
-  expect(sourceTurns).toHaveLength(0);
-  expect(targetTurns).toHaveLength(0);
-  expect(run?.status).toBe("waiting_input");
-  expect(run?.transcript).toMatchObject({
-    quotaReservePending: { usedPercent: 94 },
-    waitingForBrain: { code: "usage_pause" },
-  });
-  const jobs = await f.db
-    .select()
-    .from(schema.outbox)
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
-});
-
-test("a parked reserve run never uses legacy fallback when the source is offline", async () => {
-  f = await setup({ skillTools: true });
-  const machineId = await computerAgent(f, {
-    brain: "codex",
-    ownerUserId: f.owner.id,
-    brainExtraUsage: false,
-    instructions: "SYNTH_AGENT_INSTRUCTIONS",
-  });
-  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
-  if (!machine) throw new Error("missing machine");
-  await f.db
-    .update(schema.machines)
-    .set({
-      executors: {
-        ...machine.executors,
-        ownUsage: {
-          codex: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 94, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-          claude_code: {
-            source: "probe",
-            at: new Date().toISOString(),
-            windows: [{ kind: "seven_day", usedPercent: 13, resetsAt: new Date(Date.now() + 3600_000).toISOString() }],
-          },
-        },
-      },
-    })
-    .where(eq(schema.machines.id, machineId));
-  const [skill] = await f.db
-    .insert(schema.skills)
-    .values({
-      orgId: f.org.id,
-      slug: "synthetic-skill",
-      name: "SYNTH_SKILL_NAME",
-      description: "SYNTH_SKILL_DESCRIPTION",
-      body: "SYNTH_SKILL_BODY",
-      source: "manual",
-    })
-    .returning();
-  if (!skill) throw new Error("missing skill");
-  await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "skills:read" }]);
-  await f.db.insert(schema.contextItems).values({
-    orgId: f.org.id,
-    agentId: f.agent.id,
-    kind: "note",
-    scopeType: "agent",
-    scopeId: f.agent.id,
-    content: "SYNTH_MEMORY_SENTINEL",
-    pinned: true,
-  });
-  const sourceTurns: BrainTurn[] = [],
-    targetTurns: BrainTurn[] = [];
-  const source: Brain = {
-    kind: "codex",
-    async *run(turn) {
-      sourceTurns.push(turn);
-      yield { type: "done", text: "wrong" };
-    },
-  };
-  const target: Brain = {
-    kind: "claude_code",
-    async *run(turn) {
-      targetTurns.push(turn);
-      yield { type: "done", text: "synthetic Claude continued" };
-    },
-  };
-  const status = (id: string) =>
-    statusOf(id, {
-      protocol: MACHINE_PROTOCOL_VERSION,
-      pairedByUserId: f.owner.id,
-      executors: {
-        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
-        codex: { version: "0.163.0" },
-        detectedAt: new Date().toISOString(),
-      },
-    });
-  const eligible = false;
-  const handlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => status(id) },
-    ...{
-      quotaCliContinuation: {
-        qualify: async (r: { machineId: string }) =>
-          eligible
-            ? {
-                targetKind: "claude_code",
-                machineId: r.machineId,
-                model: "claude-fable-5-2",
-                sourcePool: "synthetic-codex",
-                targetPool: "synthetic-claude",
-                noPaidExtraUsage: true as const,
-                noCredentialsInContext: true as const,
-                evidence: "synthetic-only",
-                observedAt: Date.now(),
-                validUntil: Date.now() + 60_000,
-              }
-            : null,
-      },
-    },
-  });
-  await post(f, "SYNTH_PRIOR_MESSAGE; SYNTH_PROGRESS checkpoint completed step one");
-  await post(f, "@dev retain this synthetic goal");
-  await drainOutbox(f.db, handlers);
-  const [parked] = await f.db.select().from(schema.agentRuns);
-  expect(parked?.status).toBe("waiting_input");
-  expect(sourceTurns).toHaveLength(0);
-  const disabledHandlers = createJobHandlers({
-    ...f.jobDeps,
-    brains: { codex: () => source, claude_code: () => target },
-    machines: { status: async (id) => ({ ...status(id), online: false }) },
-    quotaCliContinuation: { qualify: async () => null },
-  });
-  await f.db
-    .update(schema.outbox)
-    .set({ nextAttemptAt: new Date(Date.now() - 1000) })
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  await drainOutbox(f.db, disabledHandlers);
-  const [run] = await f.db.select().from(schema.agentRuns);
-  expect(run?.id).toBe(parked?.id);
-  expect(sourceTurns).toHaveLength(0);
-  expect(targetTurns).toHaveLength(0);
-  expect(run?.status).toBe("waiting_input");
-  expect(run?.transcript).toMatchObject({
-    quotaReservePending: { usedPercent: 94 },
-    waitingForBrain: { code: "usage_pause" },
-  });
-  const jobs = await f.db
-    .select()
-    .from(schema.outbox)
-    .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-  expect(jobs.some((job) => job.payload.runId === run?.id && typeof job.payload.wait === "string")).toBe(true);
-});
-
 test.each(["error", "done"] as const)(
   "an admitted bridge effect before its tool step blocks %s completion",
   async (ending) => {
@@ -6747,3 +6061,134 @@ test("only a local model endpoint counts as the free last-resort route", async (
   expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://localhost:1", "openai") })).toBe(false);
   expect(await thinkerIsLocal(f.db, { credentialId: null })).toBe(false);
 });
+
+async function reserveFixture(o: {
+  codexOnline: boolean;
+  qualify: boolean;
+  targetFirst?: BrainEvent[];
+  sourceLimit?: boolean;
+}) {
+  f = await setup();
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    brainExtraUsage: false,
+    brainFallback: Boolean(o.sourceLimit),
+  });
+  const at = new Date().toISOString();
+  const resetsAt = new Date(Date.now() + 3600_000).toISOString();
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine?.executors,
+        ownUsage: {
+          codex: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 94, resetsAt }] },
+          claude_code: { source: "probe", at, windows: [{ kind: "seven_day", usedPercent: 13, resetsAt }] },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const sourceTurns: BrainTurn[] = [];
+  const targetTurns: BrainTurn[] = [];
+  const source: Brain = {
+    kind: "codex",
+    async *run(turn) {
+      sourceTurns.push(turn);
+      if (o.sourceLimit)
+        yield { type: "error", code: "plan_limit", message: "synthetic limit", retryable: true, worked: false };
+      else yield { type: "done", text: "Codex kept working." };
+    },
+  };
+  const target: Brain = {
+    kind: "claude_code",
+    async *run(turn) {
+      targetTurns.push(turn);
+      if (targetTurns.length === 1 && o.targetFirst) yield* o.targetFirst;
+      else yield { type: "done", text: "Claude continued." };
+    },
+  };
+  const status = (id: string) => ({
+    ...statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        detectedAt: new Date().toISOString(),
+      },
+    }),
+    ...(o.codexOnline ? {} : { online: false }),
+  });
+  const machines = { status: async (id: string) => status(id) };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => source, claude_code: () => target },
+    machines,
+    quotaCliContinuation: o.qualify
+      ? createQuotaCliQualifier({
+          db: f.db,
+          machines,
+          models: { claude_code: "claude-fable-5-2" },
+          targets: ["claude_code"],
+        })
+      : { qualify: async () => null },
+  } as Parameters<typeof createJobHandlers>[0]);
+  return { handlers, sourceTurns, targetTurns };
+}
+
+test("quota policy: a reserve with no qualified alternate keeps working on its own plan", async () => {
+  const r = await reserveFixture({ codexOnline: true, qualify: false });
+  await post(f, "@dev keep going");
+  await drainOutbox(f.db, r.handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("done");
+  expect(run?.brain).toBe("codex");
+  expect(r.sourceTurns).toHaveLength(1);
+  expect(r.targetTurns).toHaveLength(0);
+  const steps = await f.db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run?.id ?? ""));
+  expect(steps.some((step) => (step.data as Record<string, unknown>).quotaReserveContinues)).toBe(true);
+  expect(steps.some((step) => (step.data as Record<string, unknown>).reason === "usage_wait")).toBe(false);
+}, 30_000);
+
+test("quota policy: a plan cut with no qualified route never falls back to a paid model brain", async () => {
+  const r = await reserveFixture({ codexOnline: true, qualify: false, sourceLimit: true });
+  await post(f, "@dev keep going");
+  await drainOutbox(f.db, r.handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.brain).not.toBe("model");
+  expect(run?.status).not.toBe("done");
+  expect(r.targetTurns).toHaveLength(0);
+}, 30_000);
+
+test("quota policy: a run that pauses after its handoff resumes on the route it moved to", async () => {
+  // Max's case: right after the handoff the target computer has no room ("busy"); the retry resumes the run.
+  const r = await reserveFixture({
+    codexOnline: true,
+    qualify: true,
+    targetFirst: [{ type: "error", code: "busy", message: "Waiting in line for the computer.", retryable: true }],
+  });
+  await post(f, "@dev pick an option and continue");
+  await drainOutbox(f.db, r.handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.brain).toBe("claude_code");
+  expect(parked?.status).not.toBe("done");
+  const handoff = (parked?.transcript as { quotaCliHandoff?: { targetSessionId: string } })?.quotaCliHandoff;
+  expect(handoff).toBeTruthy();
+  for (let i = 1; i <= 3; i++) await drainOutbox(f.db, r.handlers, { now: new Date(Date.now() + i * 10 * 60_000) });
+  const [run] = await f.db.select().from(schema.agentRuns);
+  const steps = await f.db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run?.id ?? ""));
+  expect(
+    steps.some((step) => (step.data as Record<string, unknown>).reason === "quota_handoff_reconciliation_required"),
+  ).toBe(false);
+  expect(run?.status).toBe("done");
+  expect(r.sourceTurns).toHaveLength(0);
+  expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
+  expect(r.targetTurns.at(-1)?.session?.id).toBe(handoff?.targetSessionId);
+}, 60_000);

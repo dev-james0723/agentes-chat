@@ -30,7 +30,7 @@ const VALID_MS = 240_000;
 const SAFE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 /** The plan account the organization's agents on this kind and computer already think with, if it is a plan login. */
-async function planAccountFor(
+export async function planAccountFor(
   db: Executor,
   orgId: string,
   machineId: string,
