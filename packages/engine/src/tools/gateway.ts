@@ -1223,8 +1223,10 @@ export function createToolGateway(deps: {
         return { type: "result" as const, output, ...(autoApproved ? { autoApproved } : {}) };
       };
 
-      if (unknownInDirectory) return finish({ content: unknownInDirectory, isError: true });
-      if (!tool) return finish({ content: `Unknown tool ${call.name}`, isError: true });
+      // Refused before anything ran: a known outcome for a computer brain's turn (`knownBridgeResult`).
+      if (unknownInDirectory)
+        return finish({ content: unknownInDirectory, isError: true, data: { code: "tool.unknown" } });
+      if (!tool) return finish({ content: `Unknown tool ${call.name}`, isError: true, data: { code: "tool.unknown" } });
       // A tool that runs other actions (Composio's executor): a call whose actions all only read is the
       // connection's read, when the agent may read the connection. Everything below then sees a read.
       if (tool.actions && tool.readScope) {

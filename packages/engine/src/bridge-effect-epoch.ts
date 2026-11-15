@@ -85,13 +85,20 @@ export async function closeBridgeEffectEpoch(
   epochId: string,
   turn: number,
   nativeUnknown: string[] = [],
+  /**
+   * The brain ended the turn itself: every call it made returned a result to it (an error it read and went on
+   * from, like a browser action that timed out), so a receipted `unknown` call holds nothing; nothing will replay
+   * it. A call the server never finished (`in_flight`) still holds.
+   */
+  turnCompleted = false,
 ): Promise<{ runId: string; turn: number; tools: string[] } | null> {
+  const settled = turnCompleted ? ["completed", "unknown"] : ["completed"];
   // Closing admission and recording uncertainty happen in that order. If the marker write fails, the durable
   // closed_unknown state still blocks resumption; late receipts cannot silently clear it.
   const [closed] = await db
     .update(runToolTokens)
     .set({
-      effectEpochState: sql`case when ${nativeUnknown.length > 0} or exists (select 1 from jsonb_each(${runToolTokens.effectCalls}) as effect where effect.value->>'state' is distinct from 'completed') then 'closed_unknown' else 'closed' end`,
+      effectEpochState: sql`case when ${nativeUnknown.length > 0} or exists (select 1 from jsonb_each(${runToolTokens.effectCalls}) as effect where effect.value->>'state' is distinct from 'completed' and (not ${turnCompleted} or effect.value->>'state' is distinct from 'unknown')) then 'closed_unknown' else 'closed' end`,
     })
     .where(
       and(eq(runToolTokens.id, epochId), eq(runToolTokens.runId, runId), eq(runToolTokens.effectEpochState, "open")),
@@ -99,7 +106,7 @@ export async function closeBridgeEffectEpoch(
     .returning({ calls: runToolTokens.effectCalls, state: runToolTokens.effectEpochState });
   if (!closed) throw new Error("bridge effect epoch not open");
   const calls = closed.calls as Record<string, { state?: unknown }>;
-  const bridgeUnknown = Object.values(calls).some((call) => call.state !== "completed");
+  const bridgeUnknown = Object.values(calls).some((call) => !settled.includes(String(call.state)));
   if (closed.state === "closed_unknown") {
     const marker = {
       runId,

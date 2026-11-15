@@ -361,6 +361,7 @@ test("a big connector's directory takes the prefix its tools have; the names it 
   expect(await call("use_tool", { tool: "vega_crm_obter_tickets", arguments: {} })).toEqual({
     content: "Unknown tool use_tool. The exact name is vega_crm_use_tool.",
     isError: true,
+    data: { code: "tool.unknown" },
   });
 });
 
@@ -370,18 +371,25 @@ test("a name one word away gets the exact one, and what runs it", async () => {
     content:
       "Unknown tool vega_listar_departamentos. The exact name is vega_crm_listar_departamentos (run it with vega_crm_use_tool).",
     isError: true,
+    data: { code: "tool.unknown" },
   });
   expect(await call("vega_crm_use_tool", { tool: "vega_listar_departamentos", arguments: {} })).toEqual({
     content:
       'No Vega CRM tool named "vega_listar_departamentos". The exact name is vega_crm_listar_departamentos (run it with vega_crm_use_tool).',
     isError: true,
+    data: { code: "tool.unknown" },
   });
   // Nothing close: where to look.
   expect(await call("vega_crm_use_tool", { tool: "pausar", arguments: {} })).toEqual({
     content: 'No Vega CRM tool named "pausar". Find the exact name with vega_crm_find_tools.',
     isError: true,
+    data: { code: "tool.unknown" },
   });
-  expect(await call("rm_rf", {})).toEqual({ content: "Unknown tool rm_rf", isError: true });
+  expect(await call("rm_rf", {})).toEqual({
+    content: "Unknown tool rm_rf",
+    isError: true,
+    data: { code: "tool.unknown" },
+  });
 });
 
 test("a write tool with read access is refused plainly: it exists, who can change the access", async () => {
