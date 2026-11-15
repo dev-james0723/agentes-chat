@@ -7414,7 +7414,7 @@ function canonicalToolInput(value: unknown): string | null {
   }
 }
 
-async function executedSince(
+export async function executedSince(
   db: Executor,
   runId: string,
   fromSeq: number,
@@ -7437,7 +7437,16 @@ async function executedSince(
       ),
     )
     .orderBy(schema.agentRunSteps.seq);
-  type Evidence = { name: string; label: string; input: unknown; intents: number; results: number; conflict: boolean };
+  type Evidence = {
+    name: string;
+    label: string;
+    input: unknown;
+    intents: number;
+    results: number;
+    conflict: boolean;
+    /** The pause the server recorded as this call's result (a question or decision waiting for a person). */
+    pauseId?: string;
+  };
   const calls = new Map<string, Evidence>();
   for (const { kind, data } of steps) {
     const id = typeof data.toolUseId === "string" ? data.toolUseId : null;
@@ -7468,6 +7477,9 @@ async function executedSince(
       input: previous?.input,
       intents: previous?.intents ?? 0,
       results: (previous?.results ?? 0) + 1,
+      ...(typeof (data.data as { pause?: { id?: unknown } } | undefined)?.pause?.id === "string"
+        ? { pauseId: (data.data as { pause: { id: string } }).pause.id }
+        : {}),
       conflict:
         previous?.conflict === true ||
         !previous ||
@@ -7526,14 +7538,22 @@ async function executedSince(
           sameInput
         );
       });
+    // A settled turn: the server itself recorded this call once, with the very pause the run waits on as its result
+    // (a mission's ask_decision). That is the pending request, not an unknown effect.
+    const serverRecordedPause =
+      settled &&
+      !!c &&
+      !!pendingId &&
+      c.intents === 1 &&
+      c.results === 1 &&
+      c.pauseId === pendingId &&
+      c.name === p.name &&
+      reports.every((r) => r.name === p.name && r.result?.isError !== true);
     if (
       uniquePending &&
       c &&
-      !c.conflict &&
-      c.intents === 1 &&
-      c.results === 0 &&
       c.name === p.name &&
-      consistentReport
+      ((!c.conflict && c.intents === 1 && c.results === 0 && consistentReport) || serverRecordedPause)
     ) {
       evidence.delete(p.toolUseId);
     } else {

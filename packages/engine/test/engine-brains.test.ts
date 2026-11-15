@@ -6,7 +6,7 @@ import {
   MACHINE_PROTOCOL_VERSION,
   orgTopic,
 } from "@agenteschat/adapters";
-import { and, eq, schema, sql } from "@agenteschat/db";
+import { and, desc, eq, schema, sql } from "@agenteschat/db";
 import { systemText } from "@agenteschat/providers";
 import {
   activeRunsIn,
@@ -43,6 +43,7 @@ import {
   drainOutbox,
   enableOperatorEvents,
   enqueue,
+  executedSince,
   executeToolForRun,
   getMessage,
   grantScopes,
@@ -6239,4 +6240,60 @@ test("a turn that asks a person after a failed command waits for the answer with
     .from(schema.agentRunSteps)
     .where(eq(schema.agentRunSteps.runId, run?.id ?? ""));
   expect(steps.some((step) => (step.data as Record<string, unknown>).reason === "effect_unknown_waiting")).toBe(false);
+}, 30_000);
+
+test("a mission's ask_decision recorded with its own pause is the pending request, not an unknown effect", async () => {
+  // Mission 01a1dd54's steps: the server records ask_decision once, its result the pause the run waits on.
+  f = await setup();
+  const machineId = await computerAgent(f);
+  const { brain } = scriptedComputerBrain(() => [{ type: "done", text: "ok" }]);
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev start");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  if (!run) throw new Error("missing run");
+  const [last] = await f.db
+    .select({ seq: schema.agentRunSteps.seq })
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run.id))
+    .orderBy(desc(schema.agentRunSteps.seq))
+    .limit(1);
+  const from = last?.seq ?? 0;
+  const ref = { orgId: run.orgId, id: run.id };
+  const input = { question: "Which format?", options: ["A", "B"] };
+  await addRunStep(f.db, ref, "tool_call", { name: "update_plan", toolUseId: "plan-1", input: {} });
+  await addRunStep(f.db, ref, "tool_result", {
+    name: "update_plan",
+    toolUseId: "plan-1",
+    content: "ok",
+    isError: false,
+  });
+  await addRunStep(f.db, ref, "tool_call", { name: "ask_decision", toolUseId: "dec-1", input });
+  await addRunStep(f.db, ref, "tool_result", {
+    name: "ask_decision",
+    toolUseId: "dec-1",
+    content: "Recorded.",
+    isError: false,
+    data: { pause: { id: "wait-1", kind: "input" } },
+  });
+  const pending = [{ name: "ask_decision", toolUseId: "dec-1", waitId: "wait-1", bridged: true }] as never;
+  const settled = await executedSince(f.db, run.id, from, [], pending, true);
+  expect(settled.filter((c) => c.uncertain)).toEqual([]);
+  // A cut turn keeps the same evidence unknown.
+  const cut = await executedSince(f.db, run.id, from, [], pending, false);
+  expect(cut.some((c) => c.uncertain && c.name === "ask_decision")).toBe(true);
+  // Another wait's pause is not this request.
+  const other = await executedSince(
+    f.db,
+    run.id,
+    from,
+    [],
+    [{ name: "ask_decision", toolUseId: "dec-1", waitId: "wait-2", bridged: true }] as never,
+    true,
+  );
+  expect(other.some((c) => c.uncertain && c.name === "ask_decision")).toBe(true);
 }, 30_000);
