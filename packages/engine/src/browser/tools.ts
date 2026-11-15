@@ -1483,7 +1483,7 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
       async (input, ctx) => {
         const url = str(input.url).trim();
         if (!/^https?:\/\//i.test(url))
-          return { content: "Give a full web address starting with https://.", isError: true };
+          return { content: "Give a full web address starting with https://.", isError: true, data: { refusedByCheck: "invalid_request" } };
         if (input.viewport === undefined) return plan(ctx, [{ do: "open", url }]);
         const args = viewportArgs(input.viewport);
         if (!args) return { content: VIEWPORT_HELP, isError: true };
@@ -1539,7 +1539,7 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
         else if (action === "open") {
           const url = str(input.url).trim();
           if (url && !/^https?:\/\//i.test(url)) {
-            return Promise.resolve({ content: "Give a full web address starting with https://.", isError: true });
+            return Promise.resolve({ content: "Give a full web address starting with https://.", isError: true, data: { refusedByCheck: "invalid_request" } });
           }
           const refused = url ? await outboundRefusal(ctx, url) : null;
           if (refused) return refused;

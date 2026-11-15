@@ -327,6 +327,56 @@ describe("runner MCP bridge (ADR 0032)", () => {
     expect(recovered.failed).not.toContain(run.id);
   });
 
+  test("a completed turn settles a call that returned an error to the brain; one never finished still holds", async () => {
+    const { paired } = await connected();
+    const epochFor = async (runId: string) => {
+      const token = await issueRunToolToken(f.db, {
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        machineId: paired.machineId,
+        runId,
+      });
+      const check = await verifyRunToolToken(f.db, paired.machineId, token);
+      if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+      return check.identity.bridgeEpochId;
+    };
+    const stateOf = async (id: string) =>
+      (await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.id, id)))[0]?.effectEpochState;
+
+    // A browser action that timed out: its error went back to the brain, which went on and ended its turn.
+    const done = await runningRun();
+    const doneEpoch = await epochFor(done.id);
+    expect(await admitBridgeEffect(f.db, done.id, doneEpoch, "timed-out-fill")).toBe(true);
+    await finishBridgeEffect(f.db, doneEpoch, "timed-out-fill", true);
+    expect(await admitBridgeEffect(f.db, done.id, doneEpoch, "fine")).toBe(true);
+    await finishBridgeEffect(f.db, doneEpoch, "fine", false);
+    expect(await closeBridgeEffectEpoch(f.db, done.id, doneEpoch, 1, [], true)).toBeNull();
+    expect(await stateOf(doneEpoch)).toBe("closed");
+    const [settled] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, done.id));
+    expect(settled?.transcript ?? {}).not.toHaveProperty("effectUncertain");
+
+    // The same call in a cut turn still holds.
+    await f.db.update(schema.agentRuns).set({ status: "done" }).where(eq(schema.agentRuns.id, done.id));
+    const cut = await runningRun();
+    const cutEpoch = await epochFor(cut.id);
+    expect(await admitBridgeEffect(f.db, cut.id, cutEpoch, "timed-out-fill")).toBe(true);
+    await finishBridgeEffect(f.db, cutEpoch, "timed-out-fill", true);
+    expect(await closeBridgeEffectEpoch(f.db, cut.id, cutEpoch, 1)).toMatchObject({
+      tools: ["unresolved bridge effect"],
+    });
+    expect(await stateOf(cutEpoch)).toBe("closed_unknown");
+
+    // A call the server never finished holds even when the brain ended its turn.
+    await f.db.update(schema.agentRuns).set({ status: "done" }).where(eq(schema.agentRuns.id, cut.id));
+    const open = await runningRun();
+    const openEpoch = await epochFor(open.id);
+    expect(await admitBridgeEffect(f.db, open.id, openEpoch, "in-flight")).toBe(true);
+    expect(await closeBridgeEffectEpoch(f.db, open.id, openEpoch, 1, [], true)).toMatchObject({
+      tools: ["unresolved bridge effect"],
+    });
+    expect(await stateOf(openEpoch)).toBe("closed_unknown");
+  });
+
   test("close remains fenced if persisting the unknown hold fails", async () => {
     const { paired } = await connected();
     const run = await runningRun();
