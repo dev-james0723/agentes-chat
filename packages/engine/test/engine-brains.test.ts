@@ -82,6 +82,7 @@ import {
   taskManager,
   thinkerIsLocal,
 } from "../src";
+import { handoffModel } from "../src/auto-model";
 import { computerPrompt } from "../src/brains/prompt";
 import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import {
@@ -5842,7 +5843,8 @@ test("quota policy: Codex refused mid-task hands the same run to Claude, keeps i
       disposition: "CONTINUE",
       sourceKind: "codex",
       targetKind: "claude_code",
-      model: "claude-fable-5-2",
+      // The judge never read this run, so it is everyday work: not the route's top model (`handoffModel`).
+      model: "opus",
     },
   });
 }, 30_000);
@@ -6119,6 +6121,22 @@ test("quota reserve: an old reading proves neither low nor room", async () => {
   expect(fresh(40)).toBe("normal");
   expect(read(98, past)).toBe("unknown");
   expect(read(98)).toBe("unknown");
+});
+
+test("a quota handoff takes the top model only for work the judge called large", async () => {
+  f = await setup();
+  // James, 2026-11-15: every run that moved from Grok to Claude ran on Fable, whatever the task.
+  expect(handoffModel("claude_code", "claude-fable-5-2", "large")).toBe("claude-fable-5-2");
+  expect(handoffModel("claude_code", "claude-fable-5-2", "medium")).toBe("opus");
+  expect(handoffModel("claude_code", "claude-fable-5-2", "small")).toBe("sonnet");
+  // No choice on the run (the judge never ran for it): everyday work.
+  expect(handoffModel("claude_code", "claude-fable-5-2", undefined)).toBe("opus");
+  expect(handoffModel("codex", "gpt-6.1-sol", "large")).toBe("gpt-6.1-sol");
+  const everyday = handoffModel("codex", "gpt-6.1-sol", "medium");
+  expect(everyday).toBe(handoffModel("codex", "gpt-6.1-sol", "small"));
+  expect(everyday).toBe(handoffModel("codex", "gpt-6.1-sol", undefined));
+  // Grok Build has one model here.
+  expect(handoffModel("grok", "grok-4.7", "small")).toBe("grok-4.7");
 });
 
 test("a computer brain's 'balance exhausted' refusal is the plan's limit, not an outage", async () => {
