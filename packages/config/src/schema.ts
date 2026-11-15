@@ -413,7 +413,7 @@ export const envVars = {
     section: "Agents",
   },
   QUOTA_RESERVE_PERCENT: {
-    schema: z.coerce.number().int().min(1).max(100).default(90),
+    schema: z.coerce.number().int().min(1).max(100).default(85),
     description: "Account-wide usage percentage at which a fresh observation signals low capacity for routing.",
     section: "Agents",
   },
@@ -426,8 +426,41 @@ export const envVars = {
       "Owner-approved quota continuity: a Codex agent near or at its plan limit continues on the computer's Claude Code subscription sign-in, with one notice in the task.",
     section: "Agents",
   },
+  QUOTA_HANDOFF_TARGETS: {
+    schema: z
+      .string()
+      .default("claude_code,grok,codex")
+      .transform((v) =>
+        v
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x): x is "claude_code" | "grok" | "codex" => ["claude_code", "grok", "codex"].includes(x)),
+      ),
+    description:
+      "Subscription routes a quota handoff may use, in preference order for ties (the least used goes first).",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_GROK_MODEL: {
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("grok-4.7"),
+    description: "Grok model a quota handoff runs on.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_CODEX_MODEL: {
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("gpt-6.1-sol"),
+    description: "Codex model a quota handoff runs on.",
+    section: "Agents",
+  },
   QUOTA_HANDOFF_CLAUDE_MODEL: {
-    schema: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).default("claude-fable-5-2"),
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("claude-fable-5-2"),
     description: "Claude Code model a quota handoff runs on.",
     section: "Agents",
   },

@@ -1,6 +1,4 @@
 import { afterEach, expect, test } from "bun:test";
-import { createQuotaCliQualifier, hasCredentialText } from "../src/quota-qualifier";
-import { QUOTA_HANDOFF_RESUME_PROMPT } from "../src/executor";
 import {
   ACCOUNTS_PROTOCOL,
   CODEX_WINDOWS_PROTOCOL,
@@ -39,6 +37,7 @@ import {
   createCredential,
   createJobHandlers,
   createMissionEngine,
+  createQuotaCliQualifier,
   decideApproval,
   drainLocalRuns,
   drainOutbox,
@@ -47,6 +46,7 @@ import {
   executeToolForRun,
   getMessage,
   grantScopes,
+  hasCredentialText,
   insertMessage,
   invokeToolForRun,
   listApprovals,
@@ -62,7 +62,9 @@ import {
   OUTAGE_PARK,
   openDm,
   postPersonMessage,
+  QUOTA_HANDOFF_RESUME_PROMPT,
   queueOnRun,
+  quotaReserveOf,
   receiptsFor,
   recoverStaleRuns,
   resetAccountFailures,
@@ -76,6 +78,7 @@ import {
   statusReply,
   type ToolSource,
   taskManager,
+  thinkerIsLocal,
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
 import { admitBridgeEffect } from "../src/bridge-effect-epoch";
@@ -5352,7 +5355,7 @@ test("resolveBrain without a machines adapter does not load stored plan usage", 
 });
 
 test.each([true, false])(
-  "reserve fallback does not hand a previous Codex session to another harness; usage recorded: %s",
+  "a follow-up whose Codex session was shared moves to a new Claude session carrying the conversation; usage recorded: %s",
   async (recordUsage) => {
     f = await setup();
     const machineId = await computerAgent(f, { brain: "codex", brainExtraUsage: false });
@@ -5425,17 +5428,17 @@ test.each([true, false])(
       threadId: first.id,
     });
     await drainOutbox(f.db, handlers);
+    // Owner policy 2026-11-14: the Codex native session is never handed over; a new Claude session reads the
+    // conversation from the portable record instead.
     expect(sourceTurns).toHaveLength(1);
-    expect(targetTurns).toHaveLength(0);
+    expect(targetTurns).toHaveLength(1);
     const rows = await f.db.select().from(schema.agentRuns);
-    const waiting = rows.find((row) => row.status === "waiting_input");
-    expect(waiting?.transcript).toMatchObject({ waitingForBrain: { code: "usage_pause", source: "plan" } });
-    expect(waiting?.transcript).toHaveProperty("messages");
-    const jobs = await f.db
-      .select()
-      .from(schema.outbox)
-      .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
-    expect(jobs.some((job) => job.payload.runId === waiting?.id && typeof job.payload.wait === "string")).toBe(true);
+    const firstRun = rows.find((row) => row.triggerMessageId === first.id);
+    const moved = rows.find((row) => row.id !== firstRun?.id);
+    expect(moved?.brain).toBe("claude_code");
+    expect(targetTurns[0]?.session?.resume).toBe(false);
+    expect(targetTurns[0]?.session?.id).not.toBe(firstRun?.brainSessionId);
+    expect(JSON.stringify(targetTurns[0])).toContain("synthetic first");
   },
 );
 
@@ -6284,8 +6287,13 @@ test("a quota cut after multiple turns preserves scoped portable source referenc
       turns++;
       if (turns === 1) {
         await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: [hiddenMemory?.id] });
-        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", { memoryItems: Array(5000).fill(hiddenMemory?.id) });
-        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "tool_result", { toolUseId: "large-result", payload: "x".repeat(2_000_000) });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "context", {
+          memoryItems: Array(5000).fill(hiddenMemory?.id),
+        });
+        await addRunStep(f.db, { orgId: turn.orgId, id: turn.runId }, "tool_result", {
+          toolUseId: "large-result",
+          payload: "x".repeat(2_000_000),
+        });
       }
       const id = `checkpoint-${turns}`;
       const result = await executeToolForRun(
@@ -6391,7 +6399,8 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claude
         );
         yield { type: "tool_call", id: "w-1", name: "handoff_write", input: {}, executed: result };
         yield { type: "done", text: "Step one done; vou continuar." };
-      } else yield { type: "error", code: "plan_limit", message: "synthetic Codex limit", retryable: true, worked: false };
+      } else
+        yield { type: "error", code: "plan_limit", message: "synthetic Codex limit", retryable: true, worked: false };
     },
   };
   const claudeTurns: BrainTurn[] = [];
@@ -6417,12 +6426,17 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claude
     ...f.jobDeps,
     brains: { codex: () => codex, claude_code: () => claude },
     machines,
-    quotaCliContinuation: createQuotaCliQualifier({ machines, model: "claude-fable-5-2" }),
+    quotaCliContinuation: createQuotaCliQualifier({
+      db: f.db,
+      machines,
+      models: { claude_code: "claude-fable-5-2" },
+      targets: ["claude_code"],
+    }),
   } as Parameters<typeof createJobHandlers>[0]);
   await post(f, o.goal);
   await drainOutbox(f.db, handlers);
   const [run] = await f.db.select().from(schema.agentRuns);
-  const notices = (await timeline(f)).filter((m) => m.body.includes("switched this task to Claude Code"));
+  const notices = (await timeline(f)).filter((m) => m.body.includes("this task switched to"));
   return { run, codexTurns: () => codexTurns, claudeTurns, writes: () => writes, notices };
 }
 
@@ -6444,7 +6458,12 @@ test("quota policy: Codex refused mid-task hands the same run to Claude, keeps i
   expect(sent).toContain(QUOTA_HANDOFF_RESUME_PROMPT.slice(0, 60));
   expect(r.notices).toHaveLength(1);
   expect(r.run?.transcript).toMatchObject({
-    quotaCliHandoff: { disposition: "CONTINUE", sourceKind: "codex", targetKind: "claude_code", model: "claude-fable-5-2" },
+    quotaCliHandoff: {
+      disposition: "CONTINUE",
+      sourceKind: "codex",
+      targetKind: "claude_code",
+      model: "claude-fable-5-2",
+    },
   });
 }, 30_000);
 
@@ -6478,6 +6497,7 @@ test("quota qualifier refuses non-subscription Claude logins and credential text
     machineId: "m",
     sourceKind: "codex" as const,
     sourceAccountId: null,
+    targetKind: "claude_code" as const,
     requiredTools: [],
     context: { system: [], messages: [] },
   };
@@ -6487,7 +6507,7 @@ test("quota qualifier refuses non-subscription Claude logins and credential text
         status: async (id: string) =>
           statusOf(id, { executors: { claude: { version: "x", loggedIn, authMethod }, detectedAt: "" } }),
       },
-      model: "claude-fable-5-2",
+      models: { claude_code: "claude-fable-5-2" },
     });
   expect(await q("claude.ai").qualify(base)).toMatchObject({ targetKind: "claude_code", noPaidExtraUsage: true });
   expect(await q("api_key").qualify(base)).toBeNull();
@@ -6495,6 +6515,7 @@ test("quota qualifier refuses non-subscription Claude logins and credential text
   expect(await q(undefined).qualify(base)).toBeNull();
   expect(await q("claude.ai", false).qualify(base)).toBeNull();
   expect(await q("claude.ai").qualify({ ...base, sourceKind: "claude_code" })).toBeNull();
+  expect(await q("claude.ai").qualify({ ...base, targetKind: "grok" })).toBeNull();
   expect(hasCredentialText(`ghp_${"x".repeat(36)}`)).toBe(true);
   expect(hasCredentialText("plain progress text")).toBe(false);
 });
@@ -6525,7 +6546,13 @@ test("a completed turn whose native command failed, or whose result was not rela
     n === 0
       ? [
           { type: "tool_started", id: "bash-1", name: "Bash" },
-          { type: "tool_call", id: "bash-1", name: "Bash", input: { command: "npm test" }, executed: { content: "1 failing", isError: true } },
+          {
+            type: "tool_call",
+            id: "bash-1",
+            name: "Bash",
+            input: { command: "npm test" },
+            executed: { content: "1 failing", isError: true },
+          },
           { type: "tool_started", id: "bash-2", name: "Bash" },
           { type: "done", text: "Tests ran: 1 failing, details above." },
         ]
@@ -6543,3 +6570,180 @@ test("a completed turn whose native command failed, or whose result was not rela
   expect((run?.transcript as { effectUncertain?: unknown } | undefined)?.effectUncertain ?? null).toBeNull();
   expect((await timeline(f)).some((m) => m.body.includes("Tests ran: 1 failing"))).toBe(true);
 }, 30_000);
+
+// Owner policy 2026-11-14, phase 2: any qualified subscription route stands in, the least used first, told once.
+async function fleetQuotaFixture(o: {
+  source: "codex" | "claude_code" | "grok";
+  used: { codex: number; claude_code: number; grok: number };
+  goals?: string[];
+}) {
+  f = await setup({
+    judge: (kind, _id, state) =>
+      kind === "follow_through" ? (String(state.reply).includes("vou") ? "continue" : "done") : undefined,
+  });
+  const machineId = await computerAgent(f, { brain: o.source, brainExtraUsage: false });
+  const at = new Date().toISOString();
+  const resetsAt = new Date(Date.now() + 3600_000).toISOString();
+  const usage = (used: number) => ({
+    source: "probe" as const,
+    at,
+    windows: [{ kind: "seven_day" as const, usedPercent: used, resetsAt }],
+  });
+  const GROK = Bun.randomUUIDv7();
+  await f.db.insert(schema.machineAccounts).values({
+    id: GROK,
+    orgId: f.org.id,
+    machineId,
+    kind: "grok",
+    label: "SuperGrok",
+    status: "active",
+    authMethod: "cli_login",
+    createdBy: f.owner.id,
+    usage: usage(o.used.grok),
+  } as typeof schema.machineAccounts.$inferInsert);
+  const peer = await createAgent(
+    f.db,
+    f.owner.id,
+    f.org.id,
+    {
+      name: "Gus",
+      handle: "gus",
+      role: "QA",
+      instructions: "",
+      credentialId: f.credential.id,
+    },
+    { model: "claude-sonnet-5-5" },
+  );
+  await f.db
+    .update(schema.agents)
+    .set({ machineId, brain: "grok", brainAccountId: GROK })
+    .where(eq(schema.agents.id, peer.id));
+  if (o.source === "grok")
+    await f.db.update(schema.agents).set({ brainAccountId: GROK }).where(eq(schema.agents.id, f.agent.id));
+  const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ...machine?.executors,
+        ownUsage: { codex: usage(o.used.codex), claude_code: usage(o.used.claude_code) },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  const turns: Record<string, BrainTurn[]> = { codex: [], claude_code: [], grok: [] };
+  let sourceTurns = 0;
+  const make = (kind: "codex" | "claude_code" | "grok"): Brain => ({
+    kind,
+    async *run(turn) {
+      turns[kind]?.push(turn);
+      if (kind === o.source) {
+        sourceTurns++;
+        if (sourceTurns === 1) yield { type: "done", text: "Step one done; vou continuar." };
+        else yield { type: "error", code: "plan_limit", message: "synthetic limit", retryable: true, worked: false };
+      } else yield { type: "done", text: `${kind} finished the remaining step.` };
+    },
+  });
+  const status = (id: string) =>
+    statusOf(id, {
+      protocol: MACHINE_PROTOCOL_VERSION,
+      pairedByUserId: f.owner.id,
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, authMethod: "claude.ai", plan: "ultra" },
+        codex: { version: "0.163.0" },
+        grok: { version: "1.0.70" },
+        ownUsage: { codex: usage(o.used.codex), claude_code: usage(o.used.claude_code) },
+        detectedAt: new Date().toISOString(),
+      } as MachineStatus["executors"],
+    });
+  const machines = { status: async (id: string) => status(id) };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { codex: () => make("codex"), claude_code: () => make("claude_code"), grok: () => make("grok") },
+    machines,
+    quotaCliContinuation: createQuotaCliQualifier({
+      db: f.db,
+      machines,
+      models: { claude_code: "claude-fable-5-2", grok: "grok-4.7", codex: "gpt-6.1-sol" },
+    }),
+  } as Parameters<typeof createJobHandlers>[0]);
+  for (const goal of o.goals ?? ["@dev SYNTH_GOAL step one then step two"]) {
+    await post(f, goal);
+    await drainOutbox(f.db, handlers);
+  }
+  const runs = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.agentId, f.agent.id));
+  const notices = (await timeline(f)).filter((m) => m.body.includes("this task switched to"));
+  return { runs, turns, notices, GROK };
+}
+
+test("quota policy: a Claude agent at its limit continues on Grok's plan login mid-task", async () => {
+  const r = await fleetQuotaFixture({ source: "claude_code", used: { codex: 98, claude_code: 60, grok: 20 } });
+  expect(r.turns.grok).toHaveLength(1);
+  expect(r.turns.codex).toHaveLength(0);
+  expect(r.runs[0]?.status).toBe("done");
+  expect(r.runs[0]?.brain).toBe("grok");
+  expect(r.turns.grok?.[0]?.account?.id ?? (r.turns.grok?.[0] as { account?: string })?.account).toBeTruthy();
+  expect(JSON.stringify(r.turns.grok?.[0])).toContain("SYNTH_GOAL");
+  expect(r.notices).toHaveLength(1);
+}, 60_000);
+
+test("quota policy: the least used qualified route is chosen", async () => {
+  const toGrok = await fleetQuotaFixture({ source: "codex", used: { codex: 98, claude_code: 70, grok: 20 } });
+  expect(toGrok.runs[0]?.brain).toBe("grok");
+  await f.close();
+  clearPlanLimits();
+  const toClaude = await fleetQuotaFixture({ source: "codex", used: { codex: 98, claude_code: 10, grok: 40 } });
+  expect(toClaude.runs[0]?.brain).toBe("claude_code");
+}, 90_000);
+
+test("quota policy: two tasks switching in one conversation post one notice", async () => {
+  const r = await fleetQuotaFixture({
+    source: "codex",
+    used: { codex: 98, claude_code: 10, grok: 40 },
+    goals: ["@dev SYNTH_GOAL first task, step one then two", "@dev SYNTH_GOAL second task"],
+  });
+  expect(r.runs.filter((run) => run.brain === "claude_code").length).toBe(2);
+  expect(r.notices).toHaveLength(1);
+}, 90_000);
+
+test("quota reserve: an old reading still proves low until its window resets, but never proves room", async () => {
+  f = await setup();
+  const pool = { machineId: "m", kind: "codex" as const, accountId: null };
+  const old = new Date(Date.now() - 14 * 3600_000).toISOString();
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const read = (used: number, resetsAt?: string) =>
+    quotaReserveOf(
+      {
+        source: "turn",
+        at: old,
+        windows: [{ kind: "seven_day", usedPercent: used, ...(resetsAt ? { resetsAt } : {}) }],
+      } as never,
+      pool,
+      { thresholdPercent: 85 },
+    ).state;
+  expect(read(98, future)).toBe("low");
+  expect(read(40, future)).toBe("unknown");
+  expect(read(98, past)).toBe("unknown");
+  expect(read(98)).toBe("unknown");
+});
+
+test("only a local model endpoint counts as the free last-resort route", async () => {
+  f = await setup();
+  const mk = async (endpoint: string, provider = "custom") => {
+    const [row] = await f.db
+      .insert(schema.providerCredentials)
+      .values({
+        ...(await f.db.select().from(schema.providerCredentials).limit(1))[0],
+        id: Bun.randomUUIDv7(),
+        provider,
+        options: { endpoint },
+      } as never)
+      .returning();
+    return row?.id ?? null;
+  };
+  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://host.docker.internal:11434/v1") })).toBe(true);
+  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://localhost:11434/v1") })).toBe(true);
+  expect(await thinkerIsLocal(f.db, { credentialId: await mk("https://api.example.com/v1") })).toBe(false);
+  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://localhost:1", "openai") })).toBe(false);
+  expect(await thinkerIsLocal(f.db, { credentialId: null })).toBe(false);
+});

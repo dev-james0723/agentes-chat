@@ -529,7 +529,10 @@ export function quotaReserveOf(
   )
     return unknown;
   const at = Date.parse(usage.at);
-  if (!Number.isFinite(at) || at > now || now - at > maxAgeMs) return unknown;
+  if (!Number.isFinite(at) || at > now) return unknown;
+  // Usage in a window only grows until it resets: an old reading still proves "low" while its window has not reset,
+  // but cannot prove room.
+  const stale = now - at > maxAgeMs;
   const windows = usage.windows.filter(
     (w) =>
       ["five_hour", "seven_day", "monthly"].includes(w.kind) &&
@@ -540,6 +543,7 @@ export function quotaReserveOf(
   );
   if (!windows.length) return unknown;
   const top = windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+  if (stale && (top.usedPercent < thresholdPercent || !top.resetsAt)) return unknown;
   return {
     state: top.usedPercent >= thresholdPercent ? "low" : "normal",
     thresholdPercent,

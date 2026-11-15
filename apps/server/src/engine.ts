@@ -66,6 +66,7 @@ import {
   createModelGateway,
   createPassToolSource,
   createPermissionToolSource,
+  createQuotaCliQualifier,
   createReactToolSource,
   createReleaseAsksToolSource,
   createSandboxToolSource,
@@ -135,7 +136,6 @@ import {
   warmAgentBrowser,
   withComposio,
   withJudgeFallback,
-  createQuotaCliQualifier,
 } from "@agenteschat/engine";
 import { createOpenAIEmbeddings, createVoyageEmbeddings, type ModelProvider } from "@agenteschat/providers";
 import { type AppleTokenRevoker, appleTokenRevoker } from "./auth";
@@ -805,12 +805,18 @@ export function buildEngine(o: EngineOptions) {
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
     quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
     quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
-    // Owner policy 2026-11-14: Codex at its limit continues on the computer's Claude Code subscription sign-in.
+    // Owner policy 2026-11-14: a plan at its limit continues on the least used qualified subscription route.
     ...(config.QUOTA_HANDOFF_ENABLED
       ? {
           quotaCliContinuation: createQuotaCliQualifier({
+            db,
             machines: machineHub,
-            model: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+            models: {
+              claude_code: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+              grok: config.QUOTA_HANDOFF_GROK_MODEL,
+              codex: config.QUOTA_HANDOFF_CODEX_MODEL,
+            },
+            targets: config.QUOTA_HANDOFF_TARGETS,
           }),
         }
       : {}),
