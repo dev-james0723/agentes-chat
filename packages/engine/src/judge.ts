@@ -203,6 +203,7 @@ export function createJevJudge(options: {
           agentId: request.agentId,
           runId: request.runId,
           kind: "router",
+          purpose: request.kind,
           provider: "typesafe",
           model: resolvedModel ?? model,
           requestedModel: model,

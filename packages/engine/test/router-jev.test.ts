@@ -202,6 +202,43 @@ describe("Jev's questions", () => {
     expect((await socialOf(undefined)).decided.social).toEqual({ react: false, emoji: "" });
   });
 
+  test("a routing decision carries the id of the Jev call that made it, recorded as purpose route", async () => {
+    const jev = fakeJev(() => ({ nouls: {}, needs: 0.05 }));
+    const usages: unknown[] = [];
+    const decided = await createJevRouterStrategy({
+      key: "k",
+      recordUsage: async (u) => {
+        usages.push(u);
+        return "usage-record-1";
+      },
+      fetch: jev.fetcher,
+    }).decide({
+      orgId: "o",
+      channel: { id: "c", name: "geral", topic: "" },
+      message: { id: "m", author: "ana", body: "alguém pode revisar?" },
+      thread: [],
+      candidates: [cand("dev"), cand("qa")],
+      authorUserId: "u",
+    });
+    expect(decided.usageRecordId).toBe("usage-record-1");
+    expect(usages).toMatchObject([{ orgId: "o", purpose: "route" }]);
+    const unrecorded = await createJevRouterStrategy({
+      key: "k",
+      recordUsage: async () => {
+        throw new Error("ledger down");
+      },
+      fetch: jev.fetcher,
+    }).decide({
+      orgId: "o",
+      channel: { id: "c", name: "geral", topic: "" },
+      message: { id: "m", author: "ana", body: "alguém pode revisar?" },
+      thread: [],
+      candidates: [cand("dev"), cand("qa")],
+      authorUserId: "u",
+    });
+    expect(unrecorded.usageRecordId).toBeUndefined();
+  });
+
   test("insisting that nobody answered is a yes to 'should any agent reply?'", async () => {
     const { jev } = await socialOf(undefined);
     const questions = jev.requests[0]?.body.questions as { needs_agent: { instructions: string } };

@@ -140,6 +140,12 @@ test("real zero is valid; requested alias and resolved version stay distinct", a
   expect(recorded).toMatchObject([{ requestedModel: "jev-latest", model: "jev-1.14.0", partial: false }]);
 });
 
+test("each Jev judgment records what it was for, so its cost and value can be told apart", async () => {
+  const { judge, recorded } = jev({ answer: { type: "noul", noul: 0.4 } });
+  await judge.ask(request());
+  expect(recorded).toMatchObject([{ purpose: "integrity_test", kind: "router", provider: "typesafe" }]);
+});
+
 test("the existing delegation tool can persist a receipt without leaking raw judgment inputs", async () => {
   const { judge } = jev({ delegate: { choice: "qa", confidence: 0.9 } });
   const result = await chooseDelegate(

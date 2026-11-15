@@ -881,6 +881,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       requestedModel?: string;
       /** Missing service counters/model are unknown, even though legacy numeric columns require zeroes. */
       partial?: boolean;
+      /** What the call was for (a Jev judgment kind, `route`), so its cost and value can be told apart. */
+      purpose?: string;
       inputTokens: number;
       outputTokens: number;
       costNanoUsd: number;
@@ -897,6 +899,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           model: input.model,
           requestedModel: input.requestedModel ?? input.model,
           partial: input.partial ?? false,
+          purpose: input.purpose ?? null,
           inputTokens: input.inputTokens,
           outputTokens: input.outputTokens,
           costNanoUsd: input.costNanoUsd,

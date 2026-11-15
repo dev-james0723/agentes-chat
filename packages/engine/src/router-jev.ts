@@ -39,6 +39,8 @@ export interface JevUsage {
   partial?: boolean;
   inputTokens: number;
   outputTokens: number;
+  /** Always `route` for this strategy. */
+  purpose?: string;
 }
 
 /**
@@ -74,8 +76,8 @@ interface JevAnswer {
 export function createJevRouterStrategy(options: {
   /** Read on every call (`jev-key.ts`): without one it throws `JevOffError`. */
   key: JevKeySource;
-  /** Records the call's usage (kind `router`, provider `typesafe`). */
-  recordUsage(usage: JevUsage): Promise<void>;
+  /** Records the call's usage (kind `router`, provider `typesafe`); its id links the routing decision to it. */
+  recordUsage(usage: JevUsage): Promise<string | null | undefined | void>;
   baseURL?: string;
   model?: string;
   timeoutMs?: number;
@@ -195,16 +197,18 @@ export function createJevRouterStrategy(options: {
         timeoutMs: options.timeoutMs ?? 2000,
       });
       const resolvedModel = typeof body.model === "string" && body.model.trim() ? body.model : null;
-      await options
+      const usageRecordId = await options
         .recordUsage({
           orgId: input.orgId,
+          purpose: "route",
           model: resolvedModel ?? requestedModel,
           requestedModel,
           partial: !validTokens(body.usage?.input_tokens) || !validTokens(body.usage?.output_tokens) || !resolvedModel,
           inputTokens: validTokens(body.usage?.input_tokens) ? body.usage.input_tokens : 0,
           outputTokens: validTokens(body.usage?.output_tokens) ? body.usage.output_tokens : 0,
         })
-        .catch(() => {});
+        .then((id) => (typeof id === "string" ? id : undefined))
+        .catch(() => undefined);
       const answers = validateJudgeAnswers(questions, body.answers);
       const best = answers.best_agent?.probabilities ?? {};
       const to = answers.addressee?.probabilities ?? {};
@@ -253,6 +257,7 @@ export function createJevRouterStrategy(options: {
         ...(reason ? { reason } : {}),
         strategy: "jev",
         decidedBy: { step: "jev" },
+        ...(usageRecordId ? { usageRecordId } : {}),
       };
     },
   };

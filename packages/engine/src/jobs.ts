@@ -263,10 +263,11 @@ export function messageRouter(deps: JobDeps): RouterDeps | null {
             timeoutMs: jev.timeoutMs,
             fetch: jev.fetch,
             baseURL: jev.baseURL,
-            recordUsage: async (u) => {
-              await deps.gateway.recordExternalUsage({
+            recordUsage: (u) =>
+              deps.gateway.recordExternalUsage({
                 orgId: u.orgId,
                 kind: "router",
+                purpose: u.purpose,
                 provider: "typesafe",
                 model: u.model,
                 requestedModel: u.requestedModel,
@@ -274,8 +275,7 @@ export function messageRouter(deps: JobDeps): RouterDeps | null {
                 inputTokens: u.inputTokens,
                 outputTokens: u.outputTokens,
                 costNanoUsd: jevCostNanoUsd(u.inputTokens),
-              });
-            },
+              }),
           }),
         ]
       : []),

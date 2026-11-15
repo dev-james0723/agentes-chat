@@ -339,6 +339,8 @@ export const usageRecords = pgTable(
     /** Model that actually answered (may differ from the requested one after a server-side fallback). */
     model: text().notNull(),
     requestedModel: text().notNull(),
+    /** What an external judgment was for (a Jev judgment kind, `route`); null for ordinary model calls. */
+    purpose: text(),
     inputTokens: integer().notNull(),
     outputTokens: integer().notNull(),
     cacheReadTokens: integer().notNull().default(0),
