@@ -945,6 +945,51 @@ test("two decisions of one pause: the resume that finds the run running under th
   expect(fromAgent.map((m) => m.body)).toEqual(["Tests took 9 min, lint 2."]);
 });
 
+test("a computer brain that keeps going after asking through the bridge is cut after the grace: the run waits for the answer", async () => {
+  f = await setup({ askUser: true });
+  const machineId = await computerAgent(f);
+  let cut = false;
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run(turn, io) {
+      const result = await executeToolForRun(
+        f.jobDeps,
+        { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+        {
+          id: "ask-1",
+          name: "ask_user",
+          input: { why: "I need a person's answer before I go on: this decides what I change next.", question: "Ship it?" },
+        },
+      );
+      yield { type: "tool_call", id: "native-ask-1", name: "ask_user", input: {}, executed: { content: result.content } };
+      // Told to stop and end its turn, it polls on instead (what Grok did in production) until the turn is cut.
+      const started = Date.now();
+      while (!io.signal.aborted && Date.now() - started < 10_000) await Bun.sleep(20);
+      cut = io.signal.aborted;
+      yield { type: "error", code: "canceled", message: "The turn was canceled." };
+    },
+  };
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    bridgedPauseGraceMs: 200,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const t0 = Date.now();
+  await post(f, "@dev ship the release");
+  await drainOutbox(f.db, handlers);
+
+  expect(cut).toBe(true);
+  expect(Date.now() - t0).toBeLessThan(8_000);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("waiting_input");
+  const [question] = await f.db.select().from(schema.agentQuestions);
+  expect(question?.status).toBe("open");
+  const pending = (run?.transcript as { pending?: { calls: { questionId?: string; inTurn?: boolean }[] } }).pending;
+  // The turn that asked is over: the answer resumes the run by itself.
+  expect(pending?.calls.map((c) => [c.questionId, c.inTurn])).toEqual([[question?.id, undefined]]);
+});
+
 test("a question asked through the bridge: the text written before it comes first, what follows isn't posted", async () => {
   f = await setup({ askUser: true });
   const machineId = await computerAgent(f);
