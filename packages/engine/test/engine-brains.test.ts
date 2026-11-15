@@ -3063,6 +3063,37 @@ test.each(["executor_crashed", "plan_limit"] as const)(
   },
 );
 
+test("an interrupted reply still carries the files its bridged calls shared", async () => {
+  // 2026-11-15: Max shared four screenshots, the run was interrupted, and the reply showed none of them.
+  const fx = effectTools(() => f);
+  f = await setup({ toolSources: [fx.source] });
+  const machineId = await computerAgent(f);
+  const { brain } = scriptedComputerBrain(async function* (_n, turn) {
+    const id = { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId };
+    const result = await executeToolForRun(f.jobDeps, id, { id: "s-1", name: "save_note", input: {} });
+    yield { type: "tool_call", id: "s-1", name: "save_note", input: {}, executed: result };
+    // Another call of the turn has an unknown outcome: the turn ends on the effect hold (`stopOnClosedEpochHold`).
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: sql`jsonb_set(${schema.agentRuns.transcript}, '{effectUncertain}', ${JSON.stringify({ runId: turn.runId, turn: 0, tools: ["browser_fill"] })}::jsonb, true)`,
+      })
+      .where(eq(schema.agentRuns.id, turn.runId));
+    yield { type: "done", text: "Salvei as capturas." };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev anota e salva o arquivo");
+  await drainOutbox(f.db, handlers);
+
+  const last = (await timeline(f)).at(-1);
+  expect(last?.meta.brainInterrupted).toMatchObject({ outcomeUnknown: true });
+  expect(last?.meta.artifacts).toEqual([{ id: fx.artifactId, version: 1, title: "deploy.md" }]);
+});
+
 test("a recorded bridged call with no result is not resumed after its computer drops", async () => {
   let fallbackCalls = 0;
   f = await setup({

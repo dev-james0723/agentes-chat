@@ -4193,6 +4193,9 @@ async function executeRunInner(
   ) => {
     await deferred;
     const t = transcript as Transcript;
+    // What the bridge kept during the turn (shared files, cards) goes on this reply too: the files exist in the Drive
+    // and an interrupted reply is the only message that can link them. Taking them is idempotent.
+    if (isComputerBrain(from)) mergeToolEffects(t, await takeBridgeEffects(db, run.id).catch(() => null));
     const name = isComputerBrain(from) ? BRAIN_NAMES[from] : "Claude Code";
     // A reply it held back (`held`) is still part of what it said.
     const said = [t.held, stripSentinel(partial)].filter(Boolean).join("\n\n");
