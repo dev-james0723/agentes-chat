@@ -28,12 +28,14 @@ import { recordGitHubItem } from "./github-events";
 import { cloneOnMachine } from "./machine";
 import { parseRepo } from "./repos";
 import { signatureLine, signedBody } from "./signature";
+import { refusalData } from "../errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 export interface GitToolDeps {

@@ -10,6 +10,7 @@ import { replyThreadOf } from "./runs";
 import { noAgentText } from "./team";
 import { closeThread, getThread, updateThread } from "./threads";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
+import { refusalData } from "./errors";
 
 export const ADD_TO_CHANNEL_TOOL = "add_agent_to_channel";
 export const UPDATE_THREAD_TOOL = "update_thread";
@@ -18,6 +19,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** The person behind this run (`authority.ts`): null for a routine's work and for unattended runs. */

@@ -20,6 +20,7 @@ import {
 } from "./wiki";
 import { RESTRICTED_HERE, sendHeldToDm } from "./wiki-dm";
 import { inWorkspaceWords } from "./workspace-mode";
+import { refusalData } from "./errors";
 
 /** `search_wiki` as a personal workspace's agents read it (ADR 0159). */
 const WIKI_PERSONAL = {
@@ -31,6 +32,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** Shown when an agent tries to write with nobody who could have asked. */

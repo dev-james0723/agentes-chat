@@ -20,6 +20,7 @@ import {
 import { insertMessage, messageView } from "./messages";
 import { replyThreadOf } from "./runs";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
+import { refusalData } from "./errors";
 
 /**
  * The agent's own GIF and sticker tools (ADR 0091, addendum 2026-10-31): `send_gif` and `send_sticker`, for when
@@ -78,6 +79,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** The search as the provider gets it: one line, at most six words and 50 characters. */

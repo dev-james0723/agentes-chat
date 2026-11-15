@@ -53,6 +53,7 @@ import {
   workspaceActionTool,
 } from "./workspace-actions";
 import { isPersonalWorkspace } from "./workspace-mode";
+import { refusalData } from "./errors";
 
 const { agentActions, agentRuns, channels, machineAccounts, messages, orgRoles, skills } = schema;
 
@@ -293,6 +294,7 @@ export const NOBODY_READS: ToolOutput = { content: NO_PERSON_READS, isError: tru
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 const noAgents = async (ctx: ToolContext, missing: string[]): Promise<ToolOutput> => ({
   content: await noAgentText(ctx, missing),

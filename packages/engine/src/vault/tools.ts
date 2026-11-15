@@ -25,6 +25,7 @@ import {
   vaultPlaceName,
   vaultRefusalOutput,
 } from "./index";
+import { refusalData } from "../errors";
 
 /**
  * The Vault as tools (ADR 0144): what people saved for the agent, found before it asks them (`vault_list`), and the
@@ -69,6 +70,7 @@ const failed = (error: unknown): ToolOutput =>
   vaultRefusalOutput(error) ?? {
     content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
     isError: true,
+    ...refusalData(error),
   };
 
 /** Where a login may be typed, in words (`github.com`, `anywhere on github.com`). */

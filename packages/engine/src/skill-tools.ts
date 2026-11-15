@@ -35,6 +35,7 @@ import {
   skillFilesOf,
 } from "./skills";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
+import { refusalData } from "./errors";
 
 export const OFFER_INSTALL_SKILL_TOOL = "offer_install_skill";
 export const UPDATE_SKILL_FROM_SOURCE_TOOL = "update_skill_from_source";
@@ -65,6 +66,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** How an agent asks for a skill installed here that it doesn't have on: its own settings card, never by hand. */

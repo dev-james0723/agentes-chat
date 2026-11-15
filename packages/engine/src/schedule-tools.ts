@@ -8,7 +8,7 @@ import { runAuthorityById } from "./authority";
 import { cardPlace } from "./consultations";
 import { getChannelCached } from "./context";
 import { schedulesOf } from "./context/summaries";
-import { ForbiddenError } from "./errors";
+import { ForbiddenError, refusalData } from "./errors";
 import { cutText, stringsOf } from "./format";
 import { watchesFor } from "./mail/watches";
 import { isRightHand } from "./right-hand";
@@ -52,6 +52,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /**

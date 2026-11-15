@@ -23,6 +23,7 @@ import { personBehindCall } from "./requester";
 import { replyThreadOf } from "./runs";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { neutralizeUntrusted, untrustedBlock } from "./untrusted";
+import { refusalData } from "./errors";
 
 const MAX_READ_CHARS = 40_000;
 
@@ -118,6 +119,7 @@ const actorOf = (ctx: ToolContext): ArtifactActor => ({
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");

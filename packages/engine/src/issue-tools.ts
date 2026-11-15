@@ -33,6 +33,7 @@ import { type Audience, audienceOfConversation } from "./task-access";
 import { ensureTaskConversation } from "./task-conversation";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { untrustedBlock } from "./untrusted";
+import { refusalData } from "./errors";
 
 export const UPDATE_ISSUE_TOOL = "update_issue";
 
@@ -59,6 +60,7 @@ const actorOf = (ctx: ToolContext): IssueActor => ({
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 /** The right hand's tasks are its person's, in their DM (ADR 0137 §13): in a channel, others read the reply. */
 const ONLY_IN_DM: ToolOutput = { content: "Tasks only in your private conversation with a person.", isError: true };

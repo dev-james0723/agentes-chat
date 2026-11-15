@@ -31,12 +31,13 @@ import { replyThreadOf } from "./runs";
 import { SANDBOX_SCOPE } from "./sandbox";
 import { grantedScopeKeys, grantKey, toolAllowScope } from "./tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
+import { refusalData } from "./errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
-  ...((error as { code?: unknown }).code ? { data: { code: (error as { code: string }).code } } : {}),
+  ...refusalData(error, (error as { code?: unknown }).code ? { code: (error as { code: string }).code } : {}),
 });
 
 /** One finding of the investigation before a mission (ADR 0037 round 2). */

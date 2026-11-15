@@ -14,6 +14,7 @@ import {
   supersedeOlderSecretRequests,
 } from "./secrets";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./tools/types";
+import { refusalData } from "./errors";
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -47,6 +48,7 @@ const AGAIN =
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /**

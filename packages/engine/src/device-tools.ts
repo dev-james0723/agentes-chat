@@ -41,6 +41,7 @@ import { SANDBOX_SCOPE, truncateOutput, withConnectedMachine } from "./sandbox";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { untrustedBlock } from "./untrusted";
 import { shareSavedFile } from "./uploads";
+import { refusalData } from "./errors";
 
 const { machinePhones } = schema;
 
@@ -179,6 +180,7 @@ export function createDeviceToolSource(deps: DeviceToolDeps): ToolSource {
   const failed = (error: unknown): ToolOutput => ({
     content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
     isError: true,
+    ...refusalData(error),
   });
 
   /** A file the host just saved in the agent's folder, shown in this conversation. */

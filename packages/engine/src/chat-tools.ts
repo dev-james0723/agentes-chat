@@ -31,6 +31,7 @@ import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tool
 import { withWikiLinks } from "./wiki-links";
 import { movableRun, moveRun } from "./works";
 import { inWorkspaceWords } from "./workspace-mode";
+import { refusalData } from "./errors";
 
 export const POST_MESSAGE_TOOL = "post_message";
 export const SEND_DM_TOOL = "send_dm";
@@ -43,6 +44,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** A run consulted for someone outside its agent's audience answers the agent that asked, nowhere else. */
