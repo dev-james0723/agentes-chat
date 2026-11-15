@@ -5499,10 +5499,14 @@ async function executeRunInner(
           true,
         );
       };
-      const holdUnknownWhileWaiting = async (pending: NonNullable<Transcript["pending"]>["calls"]) => {
+      const holdUnknownWhileWaiting = async (pending: NonNullable<Transcript["pending"]>["calls"], settled = false) => {
         let unresolved: Awaited<ReturnType<typeof executedSince>>;
         try {
-          unresolved = await executedSince(db, run.id, turnStepSeq, [...executedNow, ...startedNow.values()], pending);
+          // A settled turn reports each call once: by its end when it ended, by its start only when it never did.
+          const reported = settled
+            ? [...executedNow, ...[...startedNow.values()].filter((call) => !finishedIds.has(call.id))]
+            : [...executedNow, ...startedNow.values()];
+          unresolved = await executedSince(db, run.id, turnStepSeq, reported, pending, settled);
         } catch {
           // A transient evidence read failure is not evidence of no effects. Persist a hold if the DB can accept it.
           // If persistence also fails, callers must treat this run as unreconciled; no stronger fence is implied.
@@ -6119,7 +6123,7 @@ async function executeRunInner(
       // A computer brain's call through the bridge paused the run during the turn: it waits now.
       if (turnPlan.kind !== "model" && (run.status === "waiting_approval" || run.status === "waiting_input")) {
         const pending = (run.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
-        await holdUnknownWhileWaiting(pending);
+        await holdUnknownWhileWaiting(pending, true);
         return suspendedByBridge(run.status, turnText, deltas.text() ? deltas.textBefore : undefined);
       }
 
@@ -7416,6 +7420,11 @@ async function executedSince(
   fromSeq: number,
   reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
   pending: NonNullable<Transcript["pending"]>["calls"] = [],
+  /**
+   * The turn ended on its own (a bridged call paused it), not cut: a reported error or pause is a known outcome and a
+   * call reported both as it started and as it ended counts once. A cut turn keeps every such case unknown.
+   */
+  settled = false,
 ): Promise<{ name: string; label: string; uncertain: boolean }[]> {
   const steps = await db
     .select({ kind: schema.agentRunSteps.kind, data: schema.agentRunSteps.data })
@@ -7463,7 +7472,7 @@ async function executedSince(
         previous?.conflict === true ||
         !previous ||
         previous.name !== name ||
-        data.isError !== false ||
+        (!settled && data.isError !== false) ||
         (previous?.results ?? 0) > 0,
     });
   }
@@ -7477,6 +7486,7 @@ async function executedSince(
     });
   const reportedIds = new Set<string>();
   for (const c of reported) {
+    if (settled && reportedIds.has(c.id)) continue;
     const previous = evidence.get(c.id);
     // Inputs are compared conservatively: unequal JSON values, including redaction or aliases, require
     // reconciliation. Their contents are never included in the handoff message.
@@ -7492,7 +7502,7 @@ async function executedSince(
         (calls.has(c.id) && !sameInput) ||
         reportedIds.has(c.id) ||
         !c.result ||
-        c.result.isError === true,
+        (!settled && c.result.isError === true),
     });
     reportedIds.add(c.id);
   }

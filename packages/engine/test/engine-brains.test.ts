@@ -6192,3 +6192,51 @@ test("quota policy: a run that pauses after its handoff resumes on the route it 
   expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
   expect(r.targetTurns.at(-1)?.session?.id).toBe(handoff?.targetSessionId);
 }, 60_000);
+
+test("a turn that asks a person after a failed command waits for the answer with no unknown effect", async () => {
+  // Mission C's case: a native command exits non-zero, then the agent asks through the bridge; the turn ends paused.
+  f = await setup({ askUser: true });
+  const machineId = await computerAgent(f);
+  const { brain } = scriptedComputerBrain(async function* (n, turn) {
+    if (n > 0) {
+      yield { type: "done", text: "Continuing with option A." };
+      return;
+    }
+    yield { type: "tool_started", id: "bash-1", name: "Bash" };
+    yield {
+      type: "tool_call",
+      id: "bash-1",
+      name: "Bash",
+      input: { command: "git rev-parse HEAD~5" },
+      executed: { content: "fatal: ambiguous argument", isError: true },
+    };
+    const input = {
+      why: "The command failed and the next step depends on how the data is truncated, which only a person can decide.",
+      question: "Truncate with A or B?",
+    };
+    const call = { id: "ask-1", name: "ask_user", input };
+    const result = await executeToolForRun(
+      f.jobDeps,
+      { orgId: turn.orgId, agentId: turn.agentId, runId: turn.runId, machineId },
+      call,
+    );
+    yield { type: "tool_started", id: "ask-1", name: "ask_user" };
+    yield { type: "tool_call", id: "ask-1", name: "ask_user", input, executed: result };
+    yield { type: "done", text: "" };
+  });
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev truncate the data");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("waiting_input");
+  expect((run?.transcript as { effectUncertain?: unknown } | undefined)?.effectUncertain ?? null).toBeNull();
+  const steps = await f.db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run?.id ?? ""));
+  expect(steps.some((step) => (step.data as Record<string, unknown>).reason === "effect_unknown_waiting")).toBe(false);
+}, 30_000);
