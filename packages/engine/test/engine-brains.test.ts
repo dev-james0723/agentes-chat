@@ -50,6 +50,7 @@ import {
   hasCredentialText,
   insertMessage,
   invokeToolForRun,
+  knownBridgeResult,
   listApprovals,
   listChannels,
   listMachineOutages,
@@ -6297,3 +6298,14 @@ test("a mission's ask_decision recorded with its own pause is the pending reques
   );
   expect(other.some((c) => c.uncertain && c.name === "ask_decision")).toBe(true);
 }, 30_000);
+
+test("a domain refusal before any write is a known bridge outcome; an unexplained failure is not", async () => {
+  f = await setup();
+  // Daniel's consulted run: propose_mission refused with "Join this channel first" (forbidden) held the run.
+  const refused = (code: string) => knownBridgeResult({ content: "Failed: refused", isError: true, data: { code } });
+  for (const code of ["forbidden", "unauthorized", "not_found", "invalid_request", "tool.invalid_input"])
+    expect(refused(code)).toBe(true);
+  for (const code of ["conflict", "rate_limited", "tool.failed"]) expect(refused(code)).toBe(false);
+  expect(knownBridgeResult({ content: "Failed: lost", isError: true })).toBe(false);
+  expect(knownBridgeResult({ content: "ok" })).toBe(true);
+});

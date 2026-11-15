@@ -691,6 +691,11 @@ export function knownBridgeResult(output: Pick<ToolOutput, "content" | "isError"
         "tool.not_allowed",
         "command.approval_needed",
         "command.not_allowed",
+        // Domain refusals (`errors.ts`) are raised by access and validation checks before any write.
+        "forbidden",
+        "unauthorized",
+        "not_found",
+        "invalid_request",
       ].includes(codeOf(output.content, output.data)))
   );
 }
