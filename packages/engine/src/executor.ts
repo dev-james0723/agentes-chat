@@ -7484,7 +7484,11 @@ export async function executedSince(
         previous?.conflict === true ||
         !previous ||
         previous.name !== name ||
-        (!settled && data.isError !== false) ||
+        // A cut turn keeps a reported failure unknown, except one the server recorded as refused by an access or
+        // validation check (`refusalData`): that call finished before the turn was cut and wrote nothing.
+        (!settled &&
+          data.isError !== false &&
+          typeof (data.data as { refusedByCheck?: unknown } | undefined)?.refusedByCheck !== "string") ||
         (previous?.results ?? 0) > 0,
     });
   }

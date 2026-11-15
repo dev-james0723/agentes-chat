@@ -6308,6 +6308,52 @@ test("a mission's ask_decision recorded with its own pause is the pending reques
   expect(other.some((c) => c.uncertain && c.name === "ask_decision")).toBe(true);
 }, 30_000);
 
+test("a cut turn does not hold on a call the server recorded as refused by a check", async () => {
+  // Daniel's consulted run on Grok, 2026-11-15 07:33 UTC: propose_mission was refused ("Join this channel first"),
+  // then ask_user paused the run. The Grok turn did not end by itself and was cut six minutes later; the recorded
+  // refusal was then counted as an unknown effect and the answered run stayed held.
+  f = await setup();
+  const machineId = await computerAgent(f);
+  const { brain } = scriptedComputerBrain(() => [{ type: "done", text: "ok" }]);
+  const handlers = createJobHandlers({
+    ...f.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  await post(f, "@dev start");
+  await drainOutbox(f.db, handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  if (!run) throw new Error("missing run");
+  const [last] = await f.db
+    .select({ seq: schema.agentRunSteps.seq })
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, run.id))
+    .orderBy(desc(schema.agentRunSteps.seq))
+    .limit(1);
+  const from = last?.seq ?? 0;
+  const ref = { orgId: run.orgId, id: run.id };
+  await addRunStep(f.db, ref, "tool_call", { name: "propose_mission", toolUseId: "pm-1", input: {} });
+  await addRunStep(f.db, ref, "tool_result", {
+    name: "propose_mission",
+    toolUseId: "pm-1",
+    content: "Failed: Join this channel first",
+    isError: true,
+    data: { code: "forbidden", refusedByCheck: "forbidden" },
+  });
+  await addRunStep(f.db, ref, "tool_call", { name: "create_issue", toolUseId: "ci-1", input: {} });
+  await addRunStep(f.db, ref, "tool_result", {
+    name: "create_issue",
+    toolUseId: "ci-1",
+    content: "Failed: the database did not answer",
+    isError: true,
+  });
+  const cut = await executedSince(f.db, run.id, from, [], [], false);
+  expect(cut.some((c) => c.uncertain && c.name === "propose_mission")).toBe(false);
+  // A failure nobody explained stays unknown in a cut turn.
+  expect(cut.some((c) => c.uncertain && c.name === "create_issue")).toBe(true);
+  void machineId;
+}, 30_000);
+
 test("a domain refusal before any write is a known bridge outcome; an unexplained failure is not", async () => {
   f = await setup();
   // Daniel's consulted run: propose_mission refused with "Join this channel first" (forbidden) held the run.
