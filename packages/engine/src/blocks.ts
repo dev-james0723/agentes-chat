@@ -14,7 +14,7 @@ import { runAuthorityById } from "./authority";
 import { requireChannelAccess } from "./channels";
 import { publishDelivery } from "./delivery";
 import { isAgentOnlyDm } from "./dms";
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { ConflictError, ForbiddenError, NotFoundError, refusalData, ValidationError } from "./errors";
 import { publishChannelEvent } from "./events";
 import { cutText } from "./format";
 import type { Judge } from "./judge";
@@ -97,6 +97,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 const actorOf = (ctx: ToolContext) => ({
   type: "agent" as const,

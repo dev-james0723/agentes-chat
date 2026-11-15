@@ -27,6 +27,7 @@ import { cardPlace, NO_PERSON_READS } from "./consultations";
 import { ownWords } from "./context/learn";
 import { decideProposal, proposeSettings, type SettingsProposalCard } from "./context/proposals";
 import type { ContextDeps } from "./context/summaries";
+import { refusalData } from "./errors";
 import { publishMessageCreated } from "./events";
 import { firstOf } from "./format";
 import { insertMessage, messageView } from "./messages";
@@ -293,6 +294,7 @@ export const NOBODY_READS: ToolOutput = { content: NO_PERSON_READS, isError: tru
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 const noAgents = async (ctx: ToolContext, missing: string[]): Promise<ToolOutput> => ({
   content: await noAgentText(ctx, missing),

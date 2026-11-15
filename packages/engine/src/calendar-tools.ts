@@ -7,6 +7,7 @@ import {
   proposeCalendarEvent,
   resolveParticipants,
 } from "./calendar";
+import { refusalData } from "./errors";
 import { agentSearchChannels } from "./search";
 import type { ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 
@@ -14,6 +15,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 const handles = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
 

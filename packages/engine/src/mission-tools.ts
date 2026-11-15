@@ -3,6 +3,7 @@ import { and, eq, inArray, schema } from "@agenteschat/db";
 import { getAgentCached } from "./agents";
 import { recordAudit } from "./audit";
 import { getChannelCached } from "./context";
+import { refusalData } from "./errors";
 import { publishUserEvent } from "./events";
 import { cutText } from "./format";
 import { taskRequester } from "./machine-tasks";
@@ -36,7 +37,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
-  ...((error as { code?: unknown }).code ? { data: { code: (error as { code: string }).code } } : {}),
+  ...refusalData(error, (error as { code?: unknown }).code ? { code: (error as { code: string }).code } : {}),
 });
 
 /** One finding of the investigation before a mission (ADR 0037 round 2). */

@@ -2,6 +2,7 @@ import type { PubSub } from "@agenteschat/adapters";
 import { getAgentCached } from "../agents";
 import { connectorScope } from "../connectors/catalog";
 import { activeConnections, type ConnectorDeps } from "../connectors/connections";
+import { refusalData } from "../errors";
 import { publishChannelEvent } from "../events";
 import { computerPreparing } from "../machine-provisioning";
 import { missionOfRun } from "../mission-context";
@@ -34,6 +35,7 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 export interface GitToolDeps {

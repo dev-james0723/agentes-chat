@@ -3,6 +3,7 @@ import { and, desc, type Executor, eq, gt, isNull, or, schema, sql } from "@agen
 import { channelSkip, MEDIA_GIF_PICK_FROM, MEDIA_GIF_SEARCH_LIMIT, pickGifIndex, withTimeout } from "./agent-media";
 import { getAgentCached } from "./agents";
 import { getChannelCached } from "./context";
+import { refusalData } from "./errors";
 import { publishMessageCreated } from "./events";
 import {
   type GifMedia,
@@ -78,6 +79,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** The search as the provider gets it: one line, at most six words and 50 characters. */

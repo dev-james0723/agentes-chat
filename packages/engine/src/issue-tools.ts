@@ -6,6 +6,7 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
+import { refusalData } from "./errors";
 import { projectByName } from "./issue-projects";
 import {
   askAgentToImplement,
@@ -59,6 +60,7 @@ const actorOf = (ctx: ToolContext): IssueActor => ({
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 /** The right hand's tasks are its person's, in their DM (ADR 0137 §13): in a channel, others read the reply. */
 const ONLY_IN_DM: ToolOutput = { content: "Tasks only in your private conversation with a person.", isError: true };

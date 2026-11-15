@@ -39,7 +39,7 @@ import type { ContextDeps } from "./context/summaries";
 import { publishDelivery } from "./delivery";
 import { openPersonAgentDm } from "./dms";
 import { queuePlanWaiting } from "./email";
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { ConflictError, ForbiddenError, NotFoundError, refusalData, ValidationError } from "./errors";
 import { publishAgentsChanged, publishChannelEvent, publishMessageCreated } from "./events";
 import { setAgentComputerTarget } from "./machines";
 import { getMessage, insertMessage, type Message, messageView } from "./messages";
@@ -186,6 +186,7 @@ const obj = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, u
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** "Tom de voz da Acme" → `tom-de-voz-da-acme`; a script with no Latin letters gets `skill-<n>`. */

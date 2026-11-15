@@ -50,6 +50,7 @@ import {
   hasCredentialText,
   insertMessage,
   invokeToolForRun,
+  knownBridgeResult,
   listApprovals,
   listChannels,
   listMachineOutages,
@@ -83,6 +84,15 @@ import {
 } from "../src";
 import { computerPrompt } from "../src/brains/prompt";
 import { admitBridgeEffect } from "../src/bridge-effect-epoch";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  refusalData,
+  TooManyError,
+  UnauthorizedError,
+  ValidationError,
+} from "../src/errors";
 import { afterSteered } from "../src/steering";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
@@ -6297,3 +6307,38 @@ test("a mission's ask_decision recorded with its own pause is the pending reques
   );
   expect(other.some((c) => c.uncertain && c.name === "ask_decision")).toBe(true);
 }, 30_000);
+
+test("a domain refusal before any write is a known bridge outcome; an unexplained failure is not", async () => {
+  f = await setup();
+  // Daniel's consulted run: propose_mission refused with "Join this channel first" (forbidden) held the run.
+  const refused = (code: string) => knownBridgeResult({ content: "Failed: refused", isError: true, data: { code } });
+  for (const code of ["forbidden", "unauthorized", "not_found", "invalid_request", "tool.invalid_input"])
+    expect(refused(code)).toBe(true);
+  for (const code of ["conflict", "rate_limited", "tool.failed"]) expect(refused(code)).toBe(false);
+  expect(knownBridgeResult({ content: "Failed: lost", isError: true })).toBe(false);
+  expect(knownBridgeResult({ content: "ok" })).toBe(true);
+});
+
+test("a check refusal is a known bridge outcome whatever its code, from any tool's failure result", async () => {
+  f = await setup();
+  // Max's Mission run, 2026-11-15: update_plan refused with ForbiddenError code `mission.not_allowed` next to a
+  // request_approval pause. The code was not on the list, so the approved run stayed held ("unresolved bridge effect").
+  const failed = (error: unknown) => ({ content: "Failed: x", isError: true as const, ...refusalData(error) });
+  expect(knownBridgeResult(failed(new ForbiddenError("Only the mission's owner can", "mission.not_allowed")))).toBe(
+    true,
+  );
+  expect(knownBridgeResult(failed(new ValidationError("The folder must be inside", "mission.bad_folder")))).toBe(true);
+  expect(knownBridgeResult(failed(new NotFoundError("No such task")))).toBe(true);
+  expect(knownBridgeResult(failed(new UnauthorizedError("Sign in again")))).toBe(true);
+  // Not checks before a write: these stay unknown, as before.
+  expect(knownBridgeResult(failed(new ConflictError("Someone saved first", "version_conflict")))).toBe(false);
+  expect(knownBridgeResult(failed(new TooManyError("Slow down")))).toBe(false);
+  expect(knownBridgeResult(failed(new TypeError("x is not a function")))).toBe(false);
+  expect(knownBridgeResult(failed(new Error("the machine did not answer")))).toBe(false);
+  expect(knownBridgeResult(failed(Object.assign(new Error("duplicate key"), { code: "23505" })))).toBe(false);
+  // The marker travels with other data the result already carried.
+  expect(refusalData(new ForbiddenError("no", "mission.not_allowed"), { code: "mission.not_allowed" })).toEqual({
+    data: { code: "mission.not_allowed", refusedByCheck: "forbidden" },
+  });
+  expect(refusalData(new Error("lost"))).toEqual({});
+});

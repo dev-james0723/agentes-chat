@@ -5,6 +5,7 @@ import { currentHandles } from "./agents";
 import { invalidateOrg } from "./cache";
 import { addChannelMember } from "./channels";
 import { getChannelCached } from "./context";
+import { refusalData } from "./errors";
 import { personBehindCall } from "./requester";
 import { replyThreadOf } from "./runs";
 import { noAgentText } from "./team";
@@ -18,6 +19,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** The person behind this run (`authority.ts`): null for a routine's work and for unattended runs. */

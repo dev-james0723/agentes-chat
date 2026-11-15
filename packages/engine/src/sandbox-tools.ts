@@ -39,7 +39,7 @@ import { recordAudit } from "./audit";
 import { fedByRoutine, runAuthorityById } from "./authority";
 import { sniffModelImage } from "./avatars";
 import { deviceRoster, devicesForRequester, rosterFacts, secretsMayGo } from "./device-resolve";
-import { ToolOffError } from "./errors";
+import { refusalData, ToolOffError } from "./errors";
 import { publishChannelEvent } from "./events";
 import { copyToComputer } from "./file-pulls";
 import { readForModel } from "./file-reader";
@@ -251,7 +251,7 @@ const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
   // A switch off on the computer: the reply's one-click card.
-  ...(error instanceof ToolOffError ? { data: { toolOff: error.toolOff } } : {}),
+  ...refusalData(error, error instanceof ToolOffError ? { toolOff: error.toolOff } : {}),
 });
 
 /**

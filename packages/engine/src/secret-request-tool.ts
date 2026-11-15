@@ -1,6 +1,7 @@
 import { isReservedSecretName, type PubSub } from "@agenteschat/adapters";
 import { and, eq, gt, isNull, ne, or, schema, sql } from "@agenteschat/db";
 import { recordAudit } from "./audit";
+import { refusalData } from "./errors";
 import { isAbsoluteMachinePath, pathInOwnFolder } from "./machine-access";
 import { type ComputerHandle, requireComputerManager } from "./sandbox";
 import {
@@ -47,6 +48,7 @@ const AGAIN =
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /**

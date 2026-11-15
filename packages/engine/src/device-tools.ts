@@ -28,6 +28,7 @@ import {
 } from "./device-resolve";
 import { type DeviceWaitReason, startDeviceWait } from "./device-waits";
 import { type MachinePhoneRow, phoneHolder, phoneStoppedBy, phoneTargetOf } from "./devices";
+import { refusalData } from "./errors";
 import { copyToComputer } from "./file-pulls";
 import { formatBytes } from "./format";
 import { fullMachinePath } from "./machine-access";
@@ -179,6 +180,7 @@ export function createDeviceToolSource(deps: DeviceToolDeps): ToolSource {
   const failed = (error: unknown): ToolOutput => ({
     content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
     isError: true,
+    ...refusalData(error),
   });
 
   /** A file the host just saved in the agent's folder, shown in this conversation. */

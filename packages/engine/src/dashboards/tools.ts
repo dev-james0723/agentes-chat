@@ -15,7 +15,7 @@ import {
 import { getAgent } from "../agents";
 import { canTalkTo, speakerOf } from "../audience";
 import { accountablePerson, runAuthorityById } from "../authority";
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors";
+import { ConflictError, ForbiddenError, NotFoundError, refusalData, ValidationError } from "../errors";
 import { getMembership } from "../organizations";
 import { routineBriefOf } from "../routine-brief";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -71,6 +71,7 @@ const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string =>
 const failed = (error: unknown): ToolOutput => ({
   content: `Not done: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 const refusal = (content: string): ToolOutput => ({ content, isError: true });
 

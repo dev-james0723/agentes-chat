@@ -18,6 +18,7 @@ import {
   tableToCsv,
   updateArtifact,
 } from "./artifacts";
+import { refusalData } from "./errors";
 import type { ModelFile } from "./file-reader";
 import { personBehindCall } from "./requester";
 import { replyThreadOf } from "./runs";
@@ -118,6 +119,7 @@ const actorOf = (ctx: ToolContext): ArtifactActor => ({
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");

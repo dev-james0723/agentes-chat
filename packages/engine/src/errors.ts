@@ -194,6 +194,28 @@ export class ToolOffError extends Error {
   }
 }
 
+/** A refusal raised by an access or validation check, before any write: the class decides, whatever code it carries. */
+export type CheckRefusal = "forbidden" | "unauthorized" | "not_found" | "invalid_request";
+
+export function checkRefusalOf(error: unknown): CheckRefusal | null {
+  if (error instanceof ForbiddenError) return "forbidden";
+  if (error instanceof UnauthorizedError) return "unauthorized";
+  if (error instanceof NotFoundError) return "not_found";
+  if (error instanceof ValidationError) return "invalid_request";
+  return null;
+}
+
+/**
+ * What a tool's failure result keeps about a refusal (`data.refusedByCheck`, with `extra`): a computer brain's turn
+ * that ended on such a result has a known outcome (`knownBridgeResult`), so the run is not held as an unknown effect.
+ * Any other failure (a conflict, a limit, an error nobody wrote) stays unknown.
+ */
+export function refusalData(error: unknown, extra: Record<string, unknown> = {}): { data?: Record<string, unknown> } {
+  const refusedByCheck = checkRefusalOf(error);
+  const data = { ...extra, ...(refusedByCheck ? { refusedByCheck } : {}) };
+  return Object.keys(data).length > 0 ? { data } : {};
+}
+
 /**
  * An error nobody wrote for the caller: not one of the domain errors above, nor a plain `Error` (whose message a tool
  * wrote for the model). A `TypeError`, a database error, a timeout: the app itself failing.

@@ -1,6 +1,7 @@
 import { type ActionRecord, actWithUndo } from "./agent-actions";
 import { getAgentCached } from "./agents";
 import { agentRoom } from "./artifacts";
+import { refusalData } from "./errors";
 import { cutText } from "./format";
 import { can, getMembership } from "./organizations";
 import { chosenAudience, personBehindCall, routineCreatorOfCall, visibleToField, wikiActorOfCall } from "./requester";
@@ -31,6 +32,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
+  ...refusalData(error),
 });
 
 /** Shown when an agent tries to write with nobody who could have asked. */

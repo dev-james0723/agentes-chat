@@ -1,5 +1,6 @@
 import { vaultRule, vaultRuleLabel } from "@agenteschat/adapters";
 import { eq, schema } from "@agenteschat/db";
+import { refusalData } from "../errors";
 import { cutText } from "../format";
 import { VAULT_LIST_TOOL, VAULT_READ_SCOPE, VAULT_SAVE_TOOL, VAULT_WRITE_SCOPE } from "../tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -69,6 +70,7 @@ const failed = (error: unknown): ToolOutput =>
   vaultRefusalOutput(error) ?? {
     content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
     isError: true,
+    ...refusalData(error),
   };
 
 /** Where a login may be typed, in words (`github.com`, `anywhere on github.com`). */
