@@ -421,6 +421,9 @@ async function signedBy(keyWrappers: KeyWrapper[], hook: HookRow, body: Uint8Arr
   });
 }
 
+/** Shared raw-body HMAC verifier for explicitly scoped migration ingress. */
+export const routineHookSignatureValid = signedBy;
+
 function logCall(
   db: Executor,
   hook: Pick<HookRow, "routineId" | "orgId">,

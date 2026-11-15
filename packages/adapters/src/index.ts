@@ -98,3 +98,5 @@ export interface Adapters {
    */
   vaultSources?: VaultSources | null;
 }
+
+export * from "./host-mcp-protocol";

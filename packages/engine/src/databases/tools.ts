@@ -17,6 +17,7 @@ import {
 } from "./connections";
 import { allowedRelations, guardSql, hiddenColumnsOf, relationAllowed } from "./guard";
 import { identPath, parseIdentPath, quoteIdent } from "./identifiers";
+import { INTERNAL_DATABASE_VIEWS, internalDatabaseProfile } from "./internal-targets";
 import { agentDatabasePolicies, type DatabasePolicy } from "./policies";
 import { formatRows, MAX_ROWS, wrapRows } from "./text";
 
@@ -149,6 +150,14 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
   }
 
   function toolsFor(connection: DbConnectionRow, slug: string, policy: DatabasePolicy): ToolDefinition[] {
+    const profile = internalDatabaseProfile(deps.internalTargets ?? [], { ...connection, sslmode: connection.sslmode });
+    if (profile)
+      policy = {
+        ...policy,
+        dailyQueryCap: Math.min(policy.dailyQueryCap ?? 100, 100),
+        timeoutSeconds: Math.min(policy.timeoutSeconds, 10),
+      };
+    const internalViews = profile ? INTERNAL_DATABASE_VIEWS : undefined;
     const whole = connection.wholeServer;
     /** The one database a call reads: its `database` input on a whole server, else the connection's own. */
     const dbOf = (input: Record<string, unknown>) => (whole ? str(input.database) : connection.database);
@@ -184,6 +193,9 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
       ? " Each database may belong to a different customer: answer about the database the person asked about and name it. Combine databases only when the person asks."
       : "";
     const allowed = allowedRelations(policy.tables);
+    const mayReadRelation = (schema: string, table: string) =>
+      relationAllowed(allowed, schema, table) &&
+      (!internalViews || (internalViews as readonly string[]).includes(identPath([schema, table])));
     const rules = { tables: policy.tables, hiddenColumns: policy.hiddenColumns };
     const capCheck = async (ctx: ToolContext): Promise<CallCheck> => {
       if (policy.dailyQueryCap === null) return { ok: true };
@@ -231,7 +243,7 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
           try {
             const client = await clientFor({ ...deps, db: ctx.db }, connection, database);
             const rows = await client.readOnly(CATALOG_LIMITS, async (run) => (await run(LIST_TABLES_SQL)).rows);
-            const visible = rows.filter((r) => relationAllowed(allowed, String(r[0]), String(r[1])));
+            const visible = rows.filter((r) => mayReadRelation(String(r[0]), String(r[1])));
             await log(ctx.db, ctx, connection, {
               kind: "list_tables",
               statement: "list tables",
@@ -257,7 +269,7 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
 
     const tableAllowed = (table: string): CallCheck => {
       const [schemaName, tableName] = parseIdentPath(table, 2) ?? [];
-      return allowed.size > 0 && !(schemaName && tableName && relationAllowed(allowed, schemaName, tableName))
+      return (allowed.size > 0 || internalViews) && !(schemaName && tableName && mayReadRelation(schemaName, tableName))
         ? { ok: false, message: `Not allowed: this agent may only read the tables ${[...allowed].join(", ")}.` }
         : { ok: true };
     };
@@ -289,6 +301,8 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
           if (!d.ok) return { content: d.message, isError: true };
           const database = dbOf(input);
           const label = labelOf(database);
+          const permitted = tableAllowed(str(input.table));
+          if (!permitted.ok) return { content: permitted.message, isError: true };
           const parts = parseIdentPath(str(input.table), 2);
           if (!parts)
             return {
@@ -333,7 +347,9 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
 
     const query = make(
       "query",
-      `Run one read-only SQL query (SELECT, WITH, or EXPLAIN without ANALYZE). At most ${MAX_ROWS} rows come back: aggregate or add a LIMIT. Unqualified tables are public.*. Times out after ${policy.timeoutSeconds} s.`,
+      profile
+        ? `Read one approved engineering_ro view using named columns, basic filters, column ordering and a literal LIMIT up to 1000. Counts are already aggregated as total. Functions, joins, subqueries, casts and EXPLAIN are unavailable. At most ${MAX_ROWS} rows come back. Times out after ${policy.timeoutSeconds} s.`
+        : `Run one read-only SQL query (SELECT, WITH, or EXPLAIN without ANALYZE). At most ${MAX_ROWS} rows come back: aggregate or add a LIMIT. Unqualified tables are public.*. Times out after ${policy.timeoutSeconds} s.`,
       {
         properties: {
           sql: { type: "string", minLength: 1, maxLength: 20_000, description: "One SELECT statement." },
@@ -353,13 +369,19 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
           detail: str(input.sql).slice(0, 1500),
         }),
         checkCall: async (input, ctx) => {
-          const g = await guardSql(str(input.sql), rules, { wholeServer: whole });
+          const g = await guardSql(str(input.sql), rules, {
+            wholeServer: whole,
+            ...(internalViews ? { internalViews } : {}),
+          });
           if (!g.ok) return { ok: false, message: `Not allowed: ${g.reason}` };
           const d = await databaseCheck(input, ctx);
           return d.ok ? capCheck(ctx) : d;
         },
         execute: async (input, ctx) => {
-          const g = await guardSql(str(input.sql), rules, { wholeServer: whole });
+          const g = await guardSql(str(input.sql), rules, {
+            wholeServer: whole,
+            ...(internalViews ? { internalViews } : {}),
+          });
           if (!g.ok) return { content: `Not allowed: ${g.reason}`, isError: true };
           const d = await databaseCheck(input, ctx);
           if (!d.ok) return { content: d.message, isError: true };
@@ -372,7 +394,7 @@ export function createDatabaseToolSource(deps: DatabaseToolDeps): ToolSource {
           try {
             const client = await clientFor({ ...deps, db: ctx.db }, connection, database);
             const result = await client.readOnly(
-              { statementTimeoutMs: policy.timeoutSeconds * 1000, searchPath: "public" },
+              { statementTimeoutMs: policy.timeoutSeconds * 1000, searchPath: profile ? "pg_catalog" : "public" },
               (run) => run(text, params),
             );
             const ms = Date.now() - started;

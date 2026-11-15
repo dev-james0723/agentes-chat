@@ -1,5 +1,7 @@
 import { cutText } from "./format";
 import { callJev, type JevKeySource, JevOffError } from "./jev-key";
+import type { JudgeQuestion } from "./judge";
+import { InvalidJudgeAnswerError, validateJudgeAnswers } from "./judge-answer";
 import {
   asksAddressee,
   ROUTER_MESSAGE_CHARS,
@@ -33,8 +35,12 @@ import {
 export interface JevUsage {
   orgId: string;
   model: string;
+  requestedModel?: string;
+  partial?: boolean;
   inputTokens: number;
   outputTokens: number;
+  /** Always `route` for this strategy. */
+  purpose?: string;
 }
 
 /**
@@ -70,8 +76,8 @@ interface JevAnswer {
 export function createJevRouterStrategy(options: {
   /** Read on every call (`jev-key.ts`): without one it throws `JevOffError`. */
   key: JevKeySource;
-  /** Records the call's usage (kind `router`, provider `typesafe`). */
-  recordUsage(usage: JevUsage): Promise<void>;
+  /** Records the call's usage (kind `router`, provider `typesafe`); its id links the routing decision to it. */
+  recordUsage(usage: JevUsage): Promise<string | null | undefined | void>;
   baseURL?: string;
   model?: string;
   timeoutMs?: number;
@@ -100,7 +106,7 @@ export function createJevRouterStrategy(options: {
           can: c.can ?? null,
         })),
       };
-      const questions: Record<string, unknown> = {
+      const questions: Record<string, JudgeQuestion> = {
         needs_agent: {
           type: "noul",
           instructions: `Should any AI agent reply to \`latest_message\`? ${whoFor()} ${input.personal ? PERSONAL_CHAT : TEAM_CHAT}: an agent should reply only when the message speaks to an agent (by @, by name or by its role), asks the agents or anyone something an agent can help with ("does anyone know…", "alguém sabe…"), speaks to the agents as a group, or continues a conversation with an agent. Also yes when the person insists or complains that nobody answered ("alô???", "ninguém vai responder?", a greeting again after nobody answered the first): they want an agent's reply. Otherwise, when unsure, no.`,
@@ -179,6 +185,7 @@ export function createJevRouterStrategy(options: {
         };
       }
 
+      const requestedModel = options.model ?? "jev-latest";
       const body = await callJev<{
         model?: string;
         answers?: Record<string, JevAnswer>;
@@ -186,18 +193,23 @@ export function createJevRouterStrategy(options: {
       }>(options.key, {
         fetch: options.fetch,
         baseURL: options.baseURL,
-        body: { state, model: options.model ?? "jev-latest", questions },
+        body: { state, model: requestedModel, questions },
         timeoutMs: options.timeoutMs ?? 2000,
       });
-      await options
+      const resolvedModel = typeof body.model === "string" && body.model.trim() ? body.model : null;
+      const usageRecordId = await options
         .recordUsage({
           orgId: input.orgId,
-          model: body.model ?? options.model ?? "jev-latest",
-          inputTokens: body.usage?.input_tokens ?? 0,
-          outputTokens: body.usage?.output_tokens ?? 0,
+          purpose: "route",
+          model: resolvedModel ?? requestedModel,
+          requestedModel,
+          partial: !validTokens(body.usage?.input_tokens) || !validTokens(body.usage?.output_tokens) || !resolvedModel,
+          inputTokens: validTokens(body.usage?.input_tokens) ? body.usage.input_tokens : 0,
+          outputTokens: validTokens(body.usage?.output_tokens) ? body.usage.output_tokens : 0,
         })
-        .catch(() => {});
-      const answers = body.answers ?? {};
+        .then((id) => (typeof id === "string" ? id : undefined))
+        .catch(() => undefined);
+      const answers = validateJudgeAnswers(questions, body.answers);
       const best = answers.best_agent?.probabilities ?? {};
       const to = answers.addressee?.probabilities ?? {};
       const scored = withAddressee(
@@ -245,12 +257,14 @@ export function createJevRouterStrategy(options: {
         ...(reason ? { reason } : {}),
         strategy: "jev",
         decidedBy: { step: "jev" },
+        ...(usageRecordId ? { usageRecordId } : {}),
       };
     },
   };
 }
 
 const clamp = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
+const validTokens = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
 /**
  * The router's chain (ADR 0074): each step in order until one decides. A step that can't read this message
@@ -282,6 +296,7 @@ export function routeChain(
           const skipped = error instanceof RouterSkip || error instanceof JevOffError;
           timed(skipped ? "skipped" : "failed");
           if (!skipped) failures.push(`${step.name}: ${error instanceof Error ? error.message : String(error)}`);
+          if (error instanceof InvalidJudgeAnswerError) throw new RouterChainEnd(failures);
         }
       }
       throw new RouterChainEnd(failures);

@@ -44,7 +44,14 @@ import { type Message, unreachedNote } from "./messages";
 import { missionBrief } from "./mission-brief";
 import { handoffGuidance, noticeForOthers, noticeText } from "./notices";
 import { openRequestsBlock, openRequestsOf } from "./open-requests";
+import { paperclipTaskReference } from "./paperclip-routine-state";
 import { parkedOnBlock } from "./parked-asks";
+import {
+  capturePublicationContext,
+  type PublicationCapture,
+  publicationConfigurationHash,
+  publicationMessageHash,
+} from "./private-skill-publication";
 import { reachNote, reachOf } from "./reach";
 import {
   answersForEveryone,
@@ -527,6 +534,7 @@ export async function teammatesNowAgain(
 }
 
 export interface RunContext {
+  publicationCapture: PublicationCapture;
   system: ContextBlock[];
   messages: ModelMessage[];
   stats: { historyMessages: number; systemChars: number; truncated: boolean };
@@ -962,17 +970,15 @@ export async function buildRunContext(
     .filter((m) => m.agentId && referencedIds.includes(m.agentId))
     .map((m) => `@${m.agentHandle}`);
   // The rest of the org's agents: channel members are described in "Where you are".
+  // Reporting handles/roles are org configuration, not task text (reporting.ts linePrompt).
+  const teamLine = options.team
+    ? linePrompt(
+        teamRows.filter((a) => a.id === agent.id || canTalkTo(a, requester, viaAgent(talks))),
+        agent.id,
+      )
+    : "";
   const team = options.team
-    ? [
-        teamPrompt(teamRows, agent.id, requester, here, talks, personal),
-        linePrompt(
-          // Its line as this person may know it: an agent they can't talk to stays out, as in "# Your team".
-          teamRows.filter((a) => a.id === agent.id || canTalkTo(a, requester, viaAgent(talks))),
-          agent.id,
-        ),
-      ]
-        .filter(Boolean)
-        .join("\n\n")
+    ? [teamPrompt(teamRows, agent.id, requester, here, talks, personal), teamLine].filter(Boolean).join("\n\n")
     : "";
   const memberList = members
     .map((m) =>
@@ -1017,6 +1023,7 @@ export async function buildRunContext(
   // Most stable first, so prompt-cache prefixes are shared: the rules are the same for every agent with the same
   // tools, the organization's block for every agent of the organization (a breakpoint after it, token-trim B5),
   // the agent's block per agent.
+  let publicationUnqualified = false;
   const system: ContextBlock[] = [
     {
       text: [
@@ -1157,8 +1164,9 @@ export async function buildRunContext(
     ...(briefing ? await briefing.then((text) => (text ? [{ conversation: true, text }] : [])) : []),
     ...(issueBrief ? [{ conversation: true, text: issueBrief }] : []),
     ...(machineAccess
-      ? await machineAccess.then((a) =>
-          a
+      ? await machineAccess.then((a) => {
+          if (a) publicationUnqualified = true;
+          return a
             ? [
                 { text: machineAccessText(a) },
                 // Cursor's, Grok's and Antigravity's sandboxes (ADR 0114, 0142, 0143) and OpenCode's permissions (ADR
@@ -1176,14 +1184,21 @@ export async function buildRunContext(
                   ? [{ text: containersText(a.name) }]
                   : []),
               ]
-            : [],
-        )
+            : [];
+        })
       : []),
-    ...(await heldSecrets.then((rows) => (rows.length > 0 ? [{ text: heldSecretsText(rows) }] : []))),
+    ...(await heldSecrets.then((rows) => {
+      if (rows.length) publicationUnqualified = true;
+      return rows.length > 0 ? [{ text: heldSecretsText(rows) }] : [];
+    })),
     ...(otherDevices
-      ? await otherDevices.then((d) =>
-          d && (d.computers.length > 0 || d.phones.length > 0) ? [{ text: devicesText(d) }] : [],
-        )
+      ? await otherDevices.then((d) => {
+          if (d && (d.computers.length > 0 || d.phones.length > 0)) {
+            publicationUnqualified = true;
+            return [{ text: devicesText(d) }];
+          }
+          return [];
+        })
       : []),
     // A routine's background run (ADR 0053 §4): its routine and what people said where it reports.
     ...(routine
@@ -1276,6 +1291,28 @@ export async function buildRunContext(
   const systemChars = system.reduce((n, b) => n + b.text.length, 0);
 
   return {
+    publicationCapture: capturePublicationContext({
+      complete:
+        !range &&
+        !threadInfo?.missionId &&
+        !teamMemory &&
+        !rightHand &&
+        !issueBrief &&
+        !briefing &&
+        !publicationUnqualified &&
+        origins.size === 0 &&
+        !run.background &&
+        !run.workId &&
+        thread.length < options.maxMessages &&
+        !history.some(
+          (m) => Object.keys(m.meta).some((key) => key !== "referencedAgentIds") || mediaOf(m.meta) !== null,
+        ) &&
+        !system.some((b) => b.found && !b.teammates),
+      channelId: channel.id,
+      triggerMessageId: trigger.id,
+      configurationHash: publicationConfigurationHash(org, agent),
+      sources: history.map((m) => ({ id: m.id, hash: publicationMessageHash(m) })),
+    }),
     system,
     messages: toTurns(history, agent.id, names, trigger.id, {
       origins,
@@ -1518,6 +1555,10 @@ async function routineContext(
   const record = last && (last.agentId === null || last.agentId === run.agentId) ? last : null;
   const lastAt = last ? (last.startedAt ?? last.at) : null;
   const event = current?.event && Object.keys(current.event).length > 0 ? current.event : null;
+  const migratedTask =
+    current?.event?.type === "paperclip.received" && run.channelId
+      ? await paperclipTaskReference(db, run.orgId, { agentId: run.agentId, channelId: run.channelId, runId: run.id })
+      : null;
   const name = brief.name || row?.name || "routine";
   const who = creator ?? "its creator";
 
@@ -1525,6 +1566,7 @@ async function routineContext(
     `# This is a routine run\nYour routine «${name}» started this run: background work that nobody watches. Nobody waits for a reply here and nothing you write here is posted; your message reaches people only through hand_off, which posts it in ${place}.`,
     `Its instructions, set up by ${creator ?? "its creator"}:\n${(row?.prompt ?? trigger.body).trim()}`,
     `What it may do: what you can do in any other run. Besides reading, you may change things inside agentes.chat that people can undo (issues, memory, wiki, Drive files) and work on your own branches (agentes/${agent.handle}/…) and their pull requests. ${routineAsks(agent.approvalsLevel, place)} You may also reach other agents and post where ${who} can: tell_agent leaves an agent a note (it wakes and works on it), ask_agent asks one something (the answer reaches you, or ${place} once this run ended), post_message posts in a channel ${who} can post in (an @mention there wakes that agent), and send_dm writes only to ${who}; only agents ${who} can talk to are reached. An @mention in your hand_off message also wakes an agent of ${place} to work on it, as asked by ${who} (one outside it hears nothing: use tell_agent): mention an agent there only when it should act, and not one you already handed it to with tell_agent. The web is yours to read (search, open pages, your browser) like anywhere else.`,
+    migratedTask ?? "",
     listed("approved")
       ? `Approved ahead for this run: a person already approved these exact actions for this time. Do each now with run_approved_action and its id: it goes out without asking. Don't do them any other way, then report how it went.\n${listed("approved")}`
       : "",

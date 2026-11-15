@@ -14,6 +14,14 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { publicHostAddress, type ResolveHost, resolveHostDns } from "../net-guard";
 import { requirePermission } from "../organizations";
 import { identPath } from "./identifiers";
+import {
+  attestInternalDatabaseReader,
+  INTERNAL_DATABASE_VIEWS,
+  type InternalDatabaseTarget,
+  internalDatabaseAddress,
+  internalDatabaseProfile,
+  isInternalDatabaseHost,
+} from "./internal-targets";
 
 const { dbConnections, agentScopes } = schema;
 
@@ -26,6 +34,8 @@ export interface DatabaseDeps {
   keyWrappers: KeyWrapper[];
   /** Null/absent = the database connector is off on this server. */
   databases?: DatabaseDriver | null;
+  /** Parsed server-only policy, absent by default; never supplied by a workspace request. */
+  internalTargets?: readonly InternalDatabaseTarget[];
   /** DNS for the address guard (tests: fake). */
   resolveHost?: ResolveHost;
   now?: () => Date;
@@ -186,7 +196,7 @@ interface Settings {
   databasePrefix: string | null;
 }
 
-type Address = Omit<Settings, "wholeServer" | "databasePrefix">;
+type Address = Omit<Settings, "wholeServer" | "databasePrefix"> & { wholeServer?: boolean };
 
 /** The address and fields as one set of settings; throws on anything missing or malformed. */
 export function databaseSettings(input: DatabaseConnectionInput, fallback?: Partial<Settings>): Settings {
@@ -278,11 +288,33 @@ const driverOf = (deps: Pick<DatabaseDeps, "databases">) => {
 async function targetFor(
   deps: DatabaseDeps,
   s: Address,
+  orgId: string,
 ): Promise<{ ok: true; target: DatabaseTarget } | { ok: false; error: DbTestError }> {
-  const r = await publicHostAddress(s.host, deps.resolveHost ?? resolveHostDns);
+  const resolve = deps.resolveHost ?? resolveHostDns;
+  const targets = deps.internalTargets ?? [];
+  const internal = isInternalDatabaseHost(targets, s.host);
+  const address = internal ? await internalDatabaseAddress(targets, { ...s, orgId }, resolve) : null;
+  const r = internal
+    ? address
+      ? { ok: true as const, address }
+      : { ok: false as const, reason: "blocked" as const }
+    : await publicHostAddress(s.host, resolve);
   if (!r.ok) return { ok: false, error: r.reason === "blocked" ? "blocked_host" : "unreachable" };
   const { host, port, database, username, password, sslmode } = s;
   return { ok: true, target: { host, port, database, username, password, sslmode, address: r.address } };
+}
+
+/** Internal targets attest a dedicated view-only role before a client is handed to any caller. */
+async function openCheckedClient(deps: DatabaseDeps, target: DatabaseTarget, orgId: string, wholeServer = false) {
+  const profile = internalDatabaseProfile(deps.internalTargets ?? [], { ...target, orgId, wholeServer });
+  const client = await driverOf(deps).open(target);
+  try {
+    if (profile) await attestInternalDatabaseReader(client, profile);
+    return client;
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
 }
 
 const testErrorOf = (error: unknown): DbTestError => {
@@ -306,17 +338,23 @@ export interface DatabaseTestResult {
 type Tested = { ok: true; result: DatabaseTestResult } | { ok: false; error: DbTestError };
 
 /** Connects, reads the version, counts the tables, and checks whether the user can change data. */
-async function testDatabase(deps: DatabaseDeps, s: Address): Promise<Tested> {
-  const t = await targetFor(deps, s);
+async function testDatabase(deps: DatabaseDeps, s: Address, orgId: string): Promise<Tested> {
+  const t = await targetFor(deps, s, orgId);
   if (!t.ok) return t;
   let client: DatabaseClient | null = null;
   try {
-    client = await driverOf(deps).open(t.target);
+    client = await openCheckedClient(deps, t.target, orgId, s.wholeServer);
     const result = await client.readOnly(CATALOG_LIMITS, async (run) => {
       const version = String((await run("select version()")).rows[0]?.[0] ?? "");
       const tables = (await run(LIST_TABLES_SQL)).rows.length;
       const canWrite = (await run(CAN_WRITE_SQL)).rows[0]?.[0] === true;
-      return { version, tables, canWrite, suggestedHidden: await sensitiveColumns(run) };
+      const profile = internalDatabaseProfile(deps.internalTargets ?? [], { ...s, orgId });
+      return {
+        version,
+        tables,
+        canWrite,
+        suggestedHidden: await sensitiveColumns(run, profile ? INTERNAL_DATABASE_VIEWS : undefined),
+      };
     });
     return { ok: true, result };
   } catch (error) {
@@ -365,9 +403,9 @@ async function fromEntry<T>(entries: string[], read: (database: string) => Promi
  * Whole server: lists the databases from an entry database, then runs the usual test on the sample (the
  * database given, else the first found).
  */
-async function testSettings(deps: DatabaseDeps, s: Settings): Promise<Tested> {
-  if (!s.wholeServer) return testDatabase(deps, s);
-  const t = await targetFor(deps, s);
+async function testSettings(deps: DatabaseDeps, s: Settings, orgId: string): Promise<Tested> {
+  if (!s.wholeServer) return testDatabase(deps, s, orgId);
+  const t = await targetFor(deps, s, orgId);
   if (!t.ok) return t;
   let databases: string[];
   try {
@@ -386,12 +424,18 @@ async function testSettings(deps: DatabaseDeps, s: Settings): Promise<Tested> {
   // tables and sensitive columns come from one they can.
   const sample = s.database && databases.includes(s.database) ? s.database : databases[0];
   if (!sample) return { ok: false, error: "no_databases" };
-  const tested = await testDatabase(deps, { ...s, database: sample });
+  const tested = await testDatabase(deps, { ...s, database: sample }, orgId);
   return tested.ok ? { ok: true, result: { ...tested.result, database: sample, databases } } : tested;
 }
 
-async function sensitiveColumns(run: DatabaseRun) {
-  const rows = (await run(COLUMNS_SQL)).rows;
+async function sensitiveColumns(run: DatabaseRun, internalViews?: readonly string[]) {
+  const statement = internalViews
+    ? COLUMNS_SQL.replace(
+        "\norder by",
+        `\n  and n.nspname || '.' || c.relname = any(ARRAY[${internalViews.map((_, i) => `$${i + 1}`).join(",")}]::text[])\norder by`,
+      )
+    : COLUMNS_SQL;
+  const rows = (await run(statement, internalViews ? [...internalViews] : undefined)).rows;
   return rows
     .filter((r) => SENSITIVE_COLUMN.test(String(r[2] ?? "")))
     .map((r) => identPath([String(r[0]), String(r[1]), String(r[2])]))
@@ -454,14 +498,15 @@ export async function clientFor(
       username: row.username,
       password: await passwordOf(deps, row),
       sslmode: row.sslmode === "disable" ? "disable" : "require",
+      wholeServer: row.wholeServer,
     };
-    const t = await targetFor(deps, s);
+    const t = await targetFor(deps, s, row.orgId);
     if (!t.ok)
       throw new DatabaseError(
         t.error === "blocked_host" ? "This server is not allowed." : "The database server didn't answer.",
         "unreachable",
       );
-    return driverOf(deps).open(t.target);
+    return openCheckedClient(deps, t.target, row.orgId, row.wholeServer);
   })();
   clients.set(key, { version, client, usedAt: now });
   client.catch(() => clients.get(key)?.client === client && clients.delete(key));
@@ -538,7 +583,7 @@ export async function createDatabaseConnection(
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   driverOf(deps);
   const s = databaseSettings(input);
-  const tested = await testSettings(deps, s);
+  const tested = await testSettings(deps, s, orgId);
   if (!tested.ok) return tested;
   const wrapper = deps.keyWrappers[0];
   if (!wrapper) throw new Error("no key wrapper");
@@ -628,7 +673,7 @@ export async function updateDatabaseConnection(
     // A stored password only goes to the server and user it was saved for.
     if (!given && (s.host !== row.host || s.port !== row.port || s.username !== row.username))
       throw new ValidationError("Give the database password", "database.password_required");
-    const test = await testSettings(deps, s);
+    const test = await testSettings(deps, s, orgId);
     if (!test.ok) return test;
     tested = test.result;
     const wrapper = deps.keyWrappers[0];

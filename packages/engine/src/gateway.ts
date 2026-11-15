@@ -36,12 +36,13 @@ import {
 } from "@agenteschat/providers";
 import { type Agent, getAgent } from "./agents";
 import { caches } from "./cache";
-import { decryptCredential, usableCredentialRow } from "./credentials";
+import { decryptCredentialWithVersion, usableCredentialRow } from "./credentials";
 import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
 import { maySql, type RolePermission } from "./permissions";
 import { addPersonSpend, assertPersonUnderLimit, personSpendAdded } from "./person-usage";
+import { type SharedBudgetTransport, withSharedBudget } from "./shared-budget";
 import { assertCanWork, standingRefusal } from "./standing";
 import { redactCredentials } from "./tool-detail";
 import { budgetPercent, monthStartUtc, withEffectiveBudget } from "./usage";
@@ -63,6 +64,10 @@ export interface ModelGatewayDeps {
   providers: Record<string, ModelProvider>;
   platformCredentials: PlatformCredentials;
   now?: () => Date;
+  /** Trusted server transport with a provider-enforced per-call cost cap; absent fails closed when the policy is on. */
+  sharedBudgetTransports?: Record<string, SharedBudgetTransport>;
+  /** Immutable admission mode for this gateway instance. Legacy calls are outside shared-budget protection. */
+  sharedBudgetRequired?: boolean;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
   /** Where an embeddings outage is reported, once (ADR 0104); absent: not reported. */
@@ -109,6 +114,8 @@ export interface GatewayCall {
    * limit before the call. Absent or null: nobody's (an agent's own work).
    */
   personId?: string | null;
+  /** Explicit trusted data classification for shared-budget route admission. */
+  dataClass?: string;
   system: SystemPrompt;
   messages: ModelMessage[];
   maxTokens: number;
@@ -144,6 +151,7 @@ export interface OrgCall {
   /** Agent the call is about, if any (recorded, not billed to its budget). */
   agentId?: string | null;
   runId?: string;
+  dataClass?: string;
   signal?: AbortSignal;
 }
 
@@ -222,6 +230,7 @@ const masked = (
  * Keys exist in memory only for the duration of the call.
  */
 export function createModelGateway(deps: ModelGatewayDeps) {
+  const sharedBudgetRequired = deps.sharedBudgetRequired === true;
   const now = deps.now ?? (() => new Date());
   const { db } = deps;
   let embedFailures = 0;
@@ -240,11 +249,15 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     /** A workspace endpoint's address and API style (ADR 0146). */
     endpoint?: Endpoint;
     credentialId: string | null;
+    credentialVersion?: string;
   };
   const label = (provider: string) => (PROVIDERS as Record<string, { label: string }>)[provider]?.label ?? provider;
   const noKey = (provider: string) =>
     new MissingCredentialError(`Add an API key for ${label(provider)} in the workspace settings`);
-  const keyOf = (c: Awaited<ReturnType<typeof decryptCredential>>, credentialId: string | null): Key | null =>
+  const keyOf = (
+    c: Awaited<ReturnType<typeof decryptCredentialWithVersion>>,
+    credentialId: string | null,
+  ): Key | null =>
     c
       ? {
           apiKey: c.apiKey,
@@ -255,6 +268,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
             ? { endpoint: { style: c.options.endpoint.style, baseURL: c.options.endpoint.baseURL } }
             : {}),
           credentialId,
+          credentialVersion: c.credentialVersion,
         }
       : null;
 
@@ -266,7 +280,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
    */
   async function resolveKey(orgId: string, provider: string, agentCredentialId?: string | null): Promise<Key> {
     if (agentCredentialId) {
-      const credential = await decryptCredential(db, deps.keyWrappers, orgId, agentCredentialId);
+      const credential = await decryptCredentialWithVersion(db, deps.keyWrappers, orgId, agentCredentialId);
       if (!credential) {
         throw new MissingCredentialError("This agent's API key was revoked. Pick another one in the agent's settings.");
       }
@@ -279,7 +293,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     }
     const defaultId = await orgDefaultCredentialId(orgId, provider);
     if (defaultId) {
-      const credential = await decryptCredential(db, deps.keyWrappers, orgId, defaultId);
+      const credential = await decryptCredentialWithVersion(db, deps.keyWrappers, orgId, defaultId);
       if (credential && credential.provider === provider) return keyOf(credential, defaultId) as Key;
     }
     const platform = await deps.platformCredentials.resolve(orgId, provider);
@@ -370,10 +384,14 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (!p) return null;
     let inputTokens = p.inputTokens;
     if (inputTokens === null) {
-      try {
-        inputTokens = provider.countTokens ? await provider.countTokens(request, key) : null;
-      } catch {
-        inputTokens = null;
+      // Provider token counters can make network calls with the prompt; required mode has no separately
+      // qualified or budgeted counting route. Keep its existing local estimate and do not dispatch one.
+      if (!sharedBudgetRequired) {
+        try {
+          inputTokens = provider.countTokens ? await provider.countTokens(request, key) : null;
+        } catch {
+          inputTokens = null;
+        }
       }
       inputTokens ??= estimateTokens(promptChars(request));
     }
@@ -768,14 +786,27 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
       let result: ModelResult;
       try {
-        result = await provider.stream(request, {
-          apiKey: key.apiKey,
-          workspaceId: key.workspaceId,
-          organization: key.organization,
-          project: key.project,
-          endpoint: key.endpoint,
-          ...(call.session ? { session: call.session } : {}),
-          onDelta: call.onDelta,
+        result = await withSharedBudget(db, {
+          orgId: call.orgId,
+          subject: `agent:${agent.id}`,
+          providerId,
+          credentialId: key.credentialId,
+          credentialVersion: key.credentialVersion,
+          required: sharedBudgetRequired,
+          dataClass: call.dataClass,
+          request,
+          provider,
+          now,
+          transport: deps.sharedBudgetTransports?.[providerId],
+          options: {
+            apiKey: key.apiKey,
+            workspaceId: key.workspaceId,
+            organization: key.organization,
+            project: key.project,
+            endpoint: key.endpoint,
+            ...(call.session ? { session: call.session } : {}),
+            onDelta: call.onDelta,
+          },
         });
       } catch (error) {
         const usage = error instanceof ProviderError ? await partialUsage(error, provider, request, key) : null;
@@ -846,6 +877,12 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       kind: "router" | "agent";
       provider: string;
       model: string;
+      /** Keep an alias separate from the model resolved by the external service. */
+      requestedModel?: string;
+      /** Missing service counters/model are unknown, even though legacy numeric columns require zeroes. */
+      partial?: boolean;
+      /** What the call was for (a Jev judgment kind, `route`), so its cost and value can be told apart. */
+      purpose?: string;
       inputTokens: number;
       outputTokens: number;
       costNanoUsd: number;
@@ -860,7 +897,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           credentialId: null,
           provider: input.provider,
           model: input.model,
-          requestedModel: input.model,
+          requestedModel: input.requestedModel ?? input.model,
+          partial: input.partial ?? false,
+          purpose: input.purpose ?? null,
           inputTokens: input.inputTokens,
           outputTokens: input.outputTokens,
           costNanoUsd: input.costNanoUsd,
@@ -887,6 +926,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       inputType: "document" | "query";
       kinds?: readonly SearchKind[];
     }) {
+      // Embedding calls have no qualified shared-budget transport yet; preserve full-text fallback in required mode.
+      if (sharedBudgetRequired) return null;
       const embeddings = deps.embeddings;
       if (!embeddings || call.texts.length === 0) return null;
       const embedded = embeddings.kinds;
@@ -943,6 +984,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
      * (`record`), as a `summary` call of the organization.
      */
     async verifyKey(input: KeyToVerify): Promise<KeyCheck> {
+      // A key check has no qualified route or reserved bound. In required mode it must remain unchecked.
+      if (sharedBudgetRequired) return { state: "unchecked" };
       const provider = deps.providers[input.provider];
       if (!provider || (await standingRefusal(db, input.orgId))) return { state: "unchecked" };
       if (input.provider === "openrouter") await ensureOpenRouterModels().catch(() => {});
@@ -976,7 +1019,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
     /** `verifyKey` on a stored key; null when the org has no such key. The key stays here, only the result leaves. */
     async verifyStoredKey(orgId: string, credentialId: string) {
-      const credential = await decryptCredential(db, deps.keyWrappers, orgId, credentialId);
+      const credential = await decryptCredentialWithVersion(db, deps.keyWrappers, orgId, credentialId);
       if (!credential) return null;
       const { provider, apiKey, workspaceId, options } = credential;
       if (provider === "custom") return { provider, result: { state: "unchecked" } as KeyCheck };
@@ -1018,11 +1061,25 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       };
       let result: ModelResult;
       try {
-        result = await provider.stream(request, {
-          apiKey: key.apiKey,
-          workspaceId: key.workspaceId,
-          endpoint: key.endpoint,
-          onDelta: () => {},
+        result = await withSharedBudget(db, {
+          orgId: call.orgId,
+          subject: `org:${call.kind}`,
+          providerId,
+          credentialId: key.credentialId,
+          credentialVersion: key.credentialVersion,
+          required: sharedBudgetRequired,
+          dataClass: call.dataClass,
+          request,
+          provider,
+          now,
+          transport: deps.sharedBudgetTransports?.[providerId],
+          options: {
+            apiKey: key.apiKey,
+            workspaceId: key.workspaceId,
+            endpoint: key.endpoint,
+            onDelta: () => {},
+            ...(sharedBudgetRequired ? { organization: key.organization, project: key.project } : {}),
+          },
         });
       } catch (error) {
         const usage = error instanceof ProviderError ? await partialUsage(error, provider, request, key) : null;

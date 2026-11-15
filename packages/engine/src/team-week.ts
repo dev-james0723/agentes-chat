@@ -272,7 +272,7 @@ export async function buildTeamWeek(
 
   // Waiting for this person: one row per agent, the longest waiting first.
   const waiting = (await listApprovals(db, w.userId, w.orgId, { status: "pending", limit: 200 })).filter(
-    (a) => a.canDecide,
+    (a) => !a.publicationRequired && a.canDecide,
   );
   const byAgent = new Map<string, typeof waiting>();
   for (const a of waiting) byAgent.set(a.agentId, [...(byAgent.get(a.agentId) ?? []), a]);

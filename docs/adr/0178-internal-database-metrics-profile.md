@@ -1,0 +1,22 @@
+# 0178. An opt-in view-only profile for an internal application database
+
+- Status: Proposed; default off. Provisioning and activation are separate operator actions.
+- Extends: ADR 0039 (Postgres connector), ADR 0007 (sealed credentials).
+
+The public-only address guard prevents a database connector from reaching its own network. Self-hosters sometimes need a narrow metrics view of their own installation. A general private-host switch would also expose authentication, credentials, other workspaces and private conversations.
+
+`DATABASE_INTERNAL_TARGETS=[]` preserves the current connector. A nonempty policy requires the real selfhost edition, closed signup, one exact org/host/port/database/reader tuple, canonical pinned private addresses, and explicit `isolated_local_plaintext` transport. It is server configuration, never request input. Only that reserved host uses the new validator; every other host keeps `publicHostAddress`. Every resolved address must be pinned, and the driver uses the checked IP. A mismatch, whole-server mode, missing address, public/metadata/loopback destination or TLS mismatch fails closed. No network range or wildcard is accepted.
+
+The dedicated reader is attested before every newly opened client: expected role/database, no elevated flags or memberships, no schema creation, no base-table/column reads or writes, and SELECT on all three approved views. Only `engineering_ro.agent_inventory`, `issue_status_counts` and `run_status_counts` are exposed. The manual SQL template creates a separate NOLOGIN view owner with minimal base-column grants; every view fixes its org and omits private conversations and content. It aborts on existing role/schema names. It generates no password and is not a migration.
+
+Agent SQL has a separate strict mode: a default-deny parser grammar over one schema-qualified approved view, explicit known column projections or simple literals, basic unqualified comparisons/AND/OR/null filters, column ordering and a literal LIMIT up to 1000. Unknown AST nodes or fields are rejected, as are functions, subqueries, joins, stars, CTEs, aggregates, casts, custom operators, catalogs and EXPLAIN. The count views are already aggregated; broader SQL is unnecessary for initial metrics. Normal database queries retain their current guard. List/describe metadata follows the same view boundary. Server limits cap this profile at 100 queries/day and 10 seconds, even if an agent policy is wider; ordinary access grants and explicit denials remain unchanged.
+
+Existing postgres.js, parser, key wrapping, gateway and audit are reused; no new dependency, daemon, port publication or app-service credential. Plaintext is not a fallback: it must be explicitly approved for an isolated local network. The existing TLS require mode does not verify certificates and is not presented as an identity-verified alternative. A future verified-TLS profile should be a separate reviewed change.
+
+Activation requires reviewed role/view DDL, a new securely entered reader password, exact current pinned addresses, and the normal Database API. App SQL permissions are still distinct from the database role. PostgreSQL PUBLIC CONNECT/TEMP defaults are not globally revoked; the application enforces the exact database target. The reader is granted no raw application table or future-table default privilege.
+
+Tests use synthetic PGlite data and fake DNS/driver interfaces: exact admission, default-off/public behavior, rebinding, view/role restrictions, privilege drift, private/other-org exclusion, schema-growth isolation and actual gateway calls. No production database is a test fixture.
+
+## Restore
+
+Core backups made with --no-owner --no-privileges retain the view definitions but not the global roles or their grants. Keep this feature disabled during restore. After core migrations and review of the restored view definitions, the separate recover-internal-database-metrics.sql recreates fresh restricted roles, assigns the existing metrics schema/views and minimal grants, and aborts if unexpected roles/relations already exist. It never recreates existing views. Set a new reader credential securely and reconnect through the app; never reuse an old sealed password or application service login. Pin the new destination addresses and requalify the normal read path before enabling access. Synthetic reconstruction is tested; an actual cold backup/restore of the whole feature remains a separate operational acceptance check. No backup implementation is changed here.

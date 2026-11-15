@@ -6,7 +6,7 @@ import type { EndpointModel } from "./schemas";
 type ModelIn = z.infer<typeof EndpointModel>;
 type CredentialRow = Awaited<ReturnType<typeof listCredentials>>[number];
 
-export const modelIn = ({ prices, check: _check, ...m }: ModelIn) => ({
+export const modelIn = ({ prices, check: _check, structuredOutputCheck: _structuredCheck, ...m }: ModelIn) => ({
   ...m,
   ...(prices ? { prices: endpointPricesFromUsd(prices) } : {}),
 });

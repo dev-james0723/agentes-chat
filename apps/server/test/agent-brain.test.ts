@@ -90,6 +90,76 @@ function pairMac(api: (path: string, init?: Parameters<ReturnType<typeof browser
   return pairComputer(t, api, { ...RUNNER, exec: true }, { name: "mac" });
 }
 
+test("agent brain: rememberSetup false changes only this agent and preserves the workspace's new-agent setup", async () => {
+  const { api, agentId } = await workspace();
+  const mac = await pairMac(api);
+  await api(`/agents/${agentId}/computer/target`, { method: "PUT", json: { machineId: mac.machineId } });
+  const setupBefore = ((await (await api("/agent-setup")).json()) as { setup: unknown }).setup;
+  expect(setupBefore).toMatchObject({ brain: "model", model: "claude-sonnet-5-5" });
+
+  const selected = await api(`/agents/${agentId}/brain`, {
+    method: "PUT",
+    json: { brain: "claude_code", model: "opus", effort: "high", fallback: false, rememberSetup: false },
+  });
+  expect(selected.status).toBe(200);
+  expect(await selected.json()).toMatchObject({ brain: "claude_code", model: "opus", effort: "high", fallback: false });
+  expect(((await (await api("/agent-setup")).json()) as { setup: unknown }).setup).toEqual(setupBefore);
+
+  // Preserve a deliberately remembered non-null setup while changing this same agent again.
+  const rememberA = await api(`/agents/${agentId}/brain`, {
+    method: "PUT",
+    json: { model: "sonnet", rememberSetup: true },
+  });
+  expect(rememberA.status).toBe(200);
+  const setupA = ((await (await api("/agent-setup")).json()) as { setup: unknown }).setup;
+  expect(setupA).toMatchObject({ brain: "claude_code", model: "sonnet" });
+  const isolatedB = await api(`/agents/${agentId}/brain`, {
+    method: "PUT",
+    json: { model: "opus", rememberSetup: false },
+  });
+  expect(isolatedB.status).toBe(200);
+  expect(await isolatedB.json()).toMatchObject({ brain: "claude_code", model: "opus" });
+  expect(((await (await api("/agent-setup")).json()) as { setup: unknown }).setup).toEqual(setupA);
+});
+
+test("agent brain: rememberSetup true and omitted keep remembering the last setup", async () => {
+  const { api, agentId } = await workspace();
+  const mac = await pairMac(api);
+  await api(`/agents/${agentId}/computer/target`, { method: "PUT", json: { machineId: mac.machineId } });
+  const selected = await api(`/agents/${agentId}/brain`, {
+    method: "PUT",
+    json: { brain: "claude_code", model: "opus", rememberSetup: true },
+  });
+  expect(selected.status).toBe(200);
+  expect(((await (await api("/agent-setup")).json()) as { setup: unknown }).setup).toMatchObject({
+    brain: "claude_code",
+    model: "opus",
+  });
+
+  const changed = await api(`/agents/${agentId}/brain`, { method: "PUT", json: { model: "sonnet" } });
+  expect(changed.status).toBe(200);
+  expect(((await (await api("/agent-setup")).json()) as { setup: unknown }).setup).toMatchObject({
+    brain: "claude_code",
+    model: "sonnet",
+  });
+});
+
+test("agent brain: rememberSetup does not bypass actor permission or accept a non-boolean", async () => {
+  const { api, asBia, agentId } = await workspace();
+  const before = await (await api(`/agents/${agentId}/brain`)).json();
+  const setupBefore = ((await (await api("/agent-setup")).json()) as { setup: unknown }).setup;
+  expect(
+    (await asBia(`/agents/${agentId}/brain`, { method: "PUT", json: { fallback: false, rememberSetup: false } }))
+      .status,
+  ).toBe(403);
+  expect(
+    (await api(`/agents/${agentId}/brain`, { method: "PUT", json: { fallback: false, rememberSetup: "false" } }))
+      .status,
+  ).toBe(400);
+  expect(await (await api(`/agents/${agentId}/brain`)).json()).toEqual(before);
+  expect(((await (await api("/agent-setup")).json()) as { setup: unknown }).setup).toEqual(setupBefore);
+});
+
 test("agent brain: defaults, who may, letting others talk to a plan, what the computer has, model and fallback", async () => {
   const { api, asBia, agentId } = await workspace();
 

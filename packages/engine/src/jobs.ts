@@ -73,7 +73,7 @@ import { cutText } from "./format";
 import type { GitHubAppAccess } from "./git/github-call";
 import { GITHUB_EVENT_JOB, type GitHubAppEvent, handleGitHubAppEvent } from "./git/github-events";
 import { FILE_JOIN_REQUEST_JOB, fileJoinRequest } from "./invite-requests";
-import { announceTaskConversation } from "./issues";
+import { announceTaskConversation, publishDeferredIssueCreated } from "./issues";
 import type { JevKey, JevKeySource } from "./jev-key";
 import { DEEP_MENTION_THRESHOLD, DEEP_WAKE_HOP, MENTION_WAKE_THRESHOLD, mentionNeedsNothing } from "./judge";
 import { platformCapReached } from "./limits";
@@ -159,6 +159,8 @@ async function maybeEnqueueReflection(deps: JobDeps, orgId: string, threadId: st
 }
 
 export interface JobDeps extends RunExecutorDeps {
+  /** Migrated Paperclip receipts cannot start when the installation opt-in is absent. */
+  paperclipCompatibilityEnabled?: boolean;
   maxHops: number;
   /** Search index (jobs `search.index`, `search.reindex`). */
   search?: SearchIndexResolver;
@@ -261,17 +263,19 @@ export function messageRouter(deps: JobDeps): RouterDeps | null {
             timeoutMs: jev.timeoutMs,
             fetch: jev.fetch,
             baseURL: jev.baseURL,
-            recordUsage: async (u) => {
-              await deps.gateway.recordExternalUsage({
+            recordUsage: (u) =>
+              deps.gateway.recordExternalUsage({
                 orgId: u.orgId,
                 kind: "router",
+                purpose: u.purpose,
                 provider: "typesafe",
                 model: u.model,
+                requestedModel: u.requestedModel,
+                partial: u.partial,
                 inputTokens: u.inputTokens,
                 outputTokens: u.outputTokens,
                 costNanoUsd: jevCostNanoUsd(u.inputTokens),
-              });
-            },
+              }),
           }),
         ]
       : []),
@@ -910,6 +914,10 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
         reaction: String(job.payload.reaction),
       });
     },
+    "issue.created.publish": async (job) => {
+      if (job.orgId && typeof job.payload.issueId === "string")
+        await publishDeferredIssueCreated(deps, job.orgId, job.payload.issueId);
+    },
     "routine.run": async (job) => {
       await executeRoutineRun(
         {
@@ -917,6 +925,7 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
           pubsub: deps.pubsub,
           context: deps.context,
           ai: { gateway: deps.gateway, machines: deps.machines ?? null },
+          paperclipCompatibilityEnabled: deps.paperclipCompatibilityEnabled,
         },
         String(job.payload.routineRunId),
       );

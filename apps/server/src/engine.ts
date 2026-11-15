@@ -51,6 +51,7 @@ import {
   createGitHubAppSettings,
   createGitToolSource,
   createHandOffToolSource,
+  createHostMcpToolSource,
   createIssueToolSource,
   createJevJudge,
   createJevKey,
@@ -65,10 +66,12 @@ import {
   createModelGateway,
   createPassToolSource,
   createPermissionToolSource,
+  createQuotaCliQualifier,
   createReactToolSource,
   createReleaseAsksToolSource,
   createSandboxToolSource,
   createScheduleToolSource,
+  createSelfProfileToolSource,
   createSessionScreening,
   createSetStatusToolSource,
   createSetupToolSource,
@@ -95,6 +98,7 @@ import {
   GrokBrain,
   getAgentCached,
   hubBrainLink,
+  type InternalDatabaseTarget,
   isAgentesCloud,
   isRightHand,
   type JobDeps,
@@ -105,6 +109,7 @@ import {
   missionTurnPermissions,
   notifyOwnerOnBudget,
   OpencodeBrain,
+  paperclipProjectHub,
   platformCapJudge,
   prepareAgentCode,
   queueBudgetEmail,
@@ -143,6 +148,7 @@ export const NO_TERMINAL = "no_terminal";
 export interface EngineOptions {
   db: Database;
   config: Config;
+  internalDatabaseTargets?: readonly InternalDatabaseTarget[];
   adapters: Adapters;
   modelProviders: Record<string, ModelProvider>;
   /** Tests: extra tool sources, in-process MCP, fake HTTP, fake embeddings. */
@@ -395,6 +401,8 @@ export function buildEngine(o: EngineOptions) {
   // The workspace's cap of live background works (ADR 0121 §7).
   setWorkOrgCap(config.AGENT_WORK_MAX_PER_ORG);
   const tools = createToolGateway({
+    // Default off; a canary's exact agent and skill pairs only (ADR 0189).
+    ...(config.SKILL_READ_CANARY.length ? { nativeSkillReads: { canary: config.SKILL_READ_CANARY } } : {}),
     sources: [
       // A question for what the agent could find, or a secret asked in the chat, is held first (ADR 0109).
       createAskUserToolSource({ judge: context.judge, tools: () => tools }),
@@ -412,8 +420,9 @@ export function buildEngine(o: EngineOptions) {
         ai: { gateway, machines: machineHub },
         judge: context.judge,
       }),
-      createFindAgentToolSource({ machines: machineHub }),
+      createFindAgentToolSource({ machines: machineHub, judge: context.judge, ai: { gateway, machines: machineHub } }),
       createUsageToolSource(),
+      createSelfProfileToolSource({ listTools: (ctx) => tools.list(ctx), ai: { gateway, machines: machineHub } }),
       // What people saved for the agent in the Vault, found before it asks them (ADR 0144).
       createVaultToolSource(vault),
       // What the agent says it is doing, next to its name (ADR 0084).
@@ -478,6 +487,7 @@ export function buildEngine(o: EngineOptions) {
       }),
       createWikiToolSource({ pubsub: adapters.pubsub, search: context }),
       createContextToolSource(context),
+      createHostMcpToolSource({ db, hub: machineHub }),
       createConnectorToolSource({
         ...connectorDeps,
         artifacts,
@@ -494,7 +504,12 @@ export function buildEngine(o: EngineOptions) {
         artifacts,
       }),
       // People's Postgres databases (ADR 0039): read-only queries, when the server has a driver.
-      createDatabaseToolSource({ keyWrappers, databases: adapters.databases, resolveHost: o.resolveHost }),
+      createDatabaseToolSource({
+        keyWrappers,
+        databases: adapters.databases,
+        resolveHost: o.resolveHost,
+        internalTargets: o.internalDatabaseTargets,
+      }),
       createMissionToolSource(missionDeps),
       // Approval from the people who decide (ADR 0126): after the missions source, whose own request_approval wins
       // in a mission's thread.
@@ -613,7 +628,12 @@ export function buildEngine(o: EngineOptions) {
   // Computer brains (ADR 0032): Claude Code and Codex on the agent's computer, through the hub. Each turn's
   // run tool token (issued by the engine) goes in `brain.turn.mcp.token`, so the runner bridge maps calls to the run.
   const agentScope = agentScopeFromDb(db);
-  const brainLink = hubBrainLink({ hub: machineHub, pubsub: adapters.pubsub });
+  const projectBrainHub = paperclipProjectHub({
+    db,
+    hub: machineHub,
+    enabled: config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
+  });
+  const brainLink = hubBrainLink({ hub: projectBrainHub, pubsub: adapters.pubsub });
   /**
    * A computer turn's permission profile (ADR 0053 §3), the same for Claude Code and Codex: a mission run
    * keeps its own (plan before Start and while a write item is live, work otherwise; ADR 0044); every other
@@ -651,7 +671,7 @@ export function buildEngine(o: EngineOptions) {
   const brains: RunExecutorDeps["brains"] = {
     claude_code: (_agent, run, setup) =>
       createClaudeCodeBrain({
-        hub: machineHub,
+        hub: projectBrainHub,
         pubsub: adapters.pubsub,
         agentScope,
         mcpToken: () => setup.mcpToken(),
@@ -750,6 +770,7 @@ export function buildEngine(o: EngineOptions) {
       : null,
   };
   const jobDeps: JobDeps = {
+    paperclipCompatibilityEnabled: config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
     feedbackBlobs: adapters.platformBlobs,
     feedbackFetch: o.http,
     accountEmails: adapters.email.delivers ? { publicUrl: config.PUBLIC_URL, support: config.SUPPORT_EMAIL } : null,
@@ -784,6 +805,23 @@ export function buildEngine(o: EngineOptions) {
     gifs: adapters.gifs ?? null,
     log: o.log,
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
+    quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
+    quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
+    // Owner policy 2026-11-14: a plan at its limit continues on the least used qualified subscription route.
+    ...(config.QUOTA_HANDOFF_ENABLED
+      ? {
+          quotaCliContinuation: createQuotaCliQualifier({
+            db,
+            machines: machineHub,
+            models: {
+              claude_code: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+              grok: config.QUOTA_HANDOFF_GROK_MODEL,
+              codex: config.QUOTA_HANDOFF_CODEX_MODEL,
+            },
+            targets: config.QUOTA_HANDOFF_TARGETS,
+          }),
+        }
+      : {}),
     // A run started on a person's message reads what they add in the next seconds with it (ADR 0112).
     quietMs: o.routerQuietMs ?? ROUTER_QUIET_MS,
     // It ends early when the person isn't typing, and Claude's API reads the prompt into its cache meanwhile.

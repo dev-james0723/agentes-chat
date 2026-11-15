@@ -1,0 +1,15 @@
+# 0181: Owner-registered project workspaces
+
+Status: implemented behind `PAPERCLIP_ROUTINE_COMPATIBILITY=on`; production qualification and source cutover remain separate.
+
+Paperclip's fixed project/workspace IDs carry execution context. A native issue project is a task grouping, not a computer folder. A prompt or invocation must never select a host path. We reuse the existing PostgreSQL migration bindings, authenticated machine hub and native folder grants; no dependency or source licence changes.
+
+An owner first registers a local, separate snapshot with `agentes-runner paperclip-project register`. This local-only operation requires an interactive terminal, exact source IDs, owner-selected private artifacts and their SHA-256 digests. It verifies the complete ordinary-file inventory, separate source/target physical identities and Git metadata, bundle history and matching initial Git HEADs, and an existing target-only grant for every assignee. The native registry is immutable, owner-readable only, and outside agent folders. Registration grants no folder access.
+
+The normal session/CSRF API then registers only the safe certificate after a fresh native proof for each assignee. PostgreSQL stores immutable source IDs, local-record digest, generation, target cwd, machine/owner and exact agent/model/account pins. Routine preparation, enablement, dispatch and native start require that binding. Native start holds the mapping and binding locks; revocation conflicts with those locks. Native Run Now and receipt-free migrated runs remain refused.
+
+Before every brain turn, the server resolves the persisted receipt/routine/agent-run chain. A guarded brain refuses model fallback and unsupported brains, then gives the normal prompt builder a fresh session and the registered cwd. Dedicated protocol66 operations bind a short-lived, one-use nonce to the organization, owner, machine, connection, binding generation, agent and run. Before creating a process the native runner rechecks identity, registration and grants. Ordinary `brain.turn` cannot silently accept an ignored proof. Lost delivery is not replayed automatically.
+
+The trust model is an owner-controlled, single-user Mac. These checks do not isolate a malicious process running as the same macOS UID. Filesystem recheck and process creation are not one atomic kernel operation. Owner revocation racing an already dispatched native turn may occur after its last server check; it does not undo an existing process. The conservative identity verifier also refuses symlinks, Git redirections and oversized/unsupported trees.
+
+This supports fixed source project/workspace IDs only. Dynamic per-invocation project overrides, environments, source schedules and external producer cursors require separate adapters and qualification. All source producers remain owned by their existing executor until an explicit cutover. Seven synthetic routine/cwd tests qualify an execution mechanism, not real-model output quality or production migration completeness.

@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Vérifier le partage d’un brouillon privé",
+    "destination": "Destination : bibliothèque de compétences de l’organisation",
+    "warning": "Les personnes pouvant lire cette compétence verront ce brouillon complet.",
+    "approve": "Partager cette version une seule fois",
+    "loading": "Chargement de l’aperçu protégé…",
+    "failed": "L’aperçu protégé n’a pas pu être vérifié. Rouvrez-le pour réessayer.",
+    "stale": "Cette compétence a changé. Demandez une nouvelle demande de partage.",
+    "body": "Texte complet de la compétence",
+    "review": "Vérifier le brouillon privé",
+    "withdraw": "Retirer l’autorisation de partage"
+  },
   "app": {
     "name": "agentes"
   },
@@ -8295,6 +8307,9 @@
       },
       "deploy": {
         "succeeded": "Déploiement terminé"
+      },
+      "paperclip": {
+        "received": "Demande Paperclip reçue"
       }
     },
     "when": {

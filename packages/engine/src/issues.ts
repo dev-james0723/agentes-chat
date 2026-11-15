@@ -13,6 +13,7 @@ import {
   type SQL,
   schema,
   sql,
+  type Transaction,
 } from "@agenteschat/db";
 import { plainLine, plainLines } from "@agenteschat/ui/markdown";
 import { getAgent } from "./agents";
@@ -36,6 +37,8 @@ import { fileIdsOf, getMessage, insertMessage, type MessageView, messageView, po
 import { enqueueRunJob } from "./mission-runs";
 import { notifyIssueChanged } from "./notification-producers";
 import { can, getMembership, requireActiveMembership } from "./organizations";
+import { enqueue } from "./outbox";
+import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
 import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
@@ -75,7 +78,8 @@ export type IssueSource =
   | { type: "manual" }
   | { type: "message"; channelId: string; messageId: string }
   | { type: "agent"; agentId: string; workId?: string; channelId?: string; messageId?: string }
-  | { type: "webhook"; provider: string };
+  | { type: "webhook"; provider: string }
+  | { type: "routine"; routineId: string; receiptId: string };
 
 /** An issue as the app shows it. */
 export interface IssueView {
@@ -214,7 +218,7 @@ type IssueRow = typeof issues.$inferSelect;
 /** The columns that say who sees a task. */
 type TaskScope = Pick<IssueRow, "channelId" | "restricted" | "audienceUserIds">;
 /** What an agent's reach also reads of a task. */
-type TaskRef = TaskScope & Partial<Pick<IssueRow, "assigneeType" | "assigneeId" | "conversationChannelId">>;
+type TaskRef = TaskScope & Partial<Pick<IssueRow, "id" | "assigneeType" | "assigneeId" | "conversationChannelId">>;
 
 const WORKSPACE_SCOPE: TaskScope = { channelId: null, restricted: false, audienceUserIds: [] };
 
@@ -388,6 +392,7 @@ async function agentReaches(db: Database, actor: AgentActor, orgId: string, t: T
 export async function canSee(db: Database, actor: IssueActor, orgId: string, t: TaskRef) {
   if (actor.type === "person") return personSees(db, actor.userId, orgId, t);
   if (await agentReaches(db, actor, orgId, t)) return true;
+  if (t.id && (await paperclipIssueIds(db, orgId, actor, t.id)).length) return true;
   const person = await runPerson(db, orgId, actor.runId);
   return person !== null && personSees(db, person, orgId, t);
 }
@@ -812,25 +817,50 @@ const announce = (deps: IssueDeps, orgId: string, issue: IssueView, type: "issue
   publishToTaskReaders(deps, orgId, issue, { type, issue });
 
 /** Creates an issue with the next number of the org. */
-export async function createIssue(
+export type CreateIssueInput = IssueInput & {
+  source?: IssueSource;
+  channelId?: string | null;
+  parentIssueId?: string | null;
+  /** Drive files uploaded from the new-issue box: linked to the issue and kept on its "created" event. */
+  attachmentIds?: string[];
+  /**
+   * Files the caller checked and placed where whoever sees the task reads them: an agent's, brought by its tool
+   * (`bringFiles` in `issue-tools.ts`), or the message's own turned into the task. Linked and kept on its "created"
+   * event like a box's, but never moved: one in the shared Drive stays everyone's.
+   */
+  linkFileIds?: string[];
+  /** Who sees it (ADR 0151); left out, where it's made decides. A step always follows its parent. */
+  audience?: Audience;
+};
+
+export function createIssue(
   deps: IssueDeps,
   actor: IssueActor,
   orgId: string,
-  input: IssueInput & {
-    source?: IssueSource;
-    channelId?: string | null;
-    parentIssueId?: string | null;
-    /** Drive files uploaded from the new-issue box: linked to the issue and kept on its "created" event. */
-    attachmentIds?: string[];
-    /**
-     * Files the caller checked and placed where whoever sees the task reads them: an agent's, brought by its tool
-     * (`bringFiles` in `issue-tools.ts`), or the message's own turned into the task. Linked and kept on its "created"
-     * event like a box's, but never moved: one in the shared Drive stays everyone's.
-     */
-    linkFileIds?: string[];
-    /** Who sees it (ADR 0151); left out, where it's made decides. A step always follows its parent. */
-    audience?: Audience;
-  },
+  input: CreateIssueInput,
+): Promise<IssueView> {
+  return createIssueCore(deps, actor, orgId, input);
+}
+
+/** Native validation and writes inside the caller transaction; side effects use the durable outbox. */
+export function createIssueInTransaction(
+  deps: IssueDeps,
+  tx: Transaction,
+  actor: IssueActor,
+  orgId: string,
+  input: CreateIssueInput,
+): Promise<IssueView> {
+  if (input.attachmentIds?.length || input.linkFileIds?.length)
+    throw new ValidationError("Transactional issue creation does not move or link files");
+  return createIssueCore({ ...deps, db: tx }, actor, orgId, input, true);
+}
+
+async function createIssueCore(
+  deps: IssueDeps,
+  actor: IssueActor,
+  orgId: string,
+  input: CreateIssueInput,
+  deferred = false,
 ): Promise<IssueView> {
   const { db } = deps;
   const membership = await requireOrgMember(db, actor, orgId);
@@ -917,6 +947,15 @@ export async function createIssue(
     }
     return issue;
   });
+  if (deferred) {
+    await enqueue(db, {
+      orgId,
+      kind: "issue.created.publish",
+      payload: { issueId: row.id },
+      dedupeKey: `issue.created.publish:${row.id}`,
+    });
+    return one(db, row);
+  }
   await keepFilesWithTask(
     deps,
     actor,
@@ -948,6 +987,15 @@ export async function createIssue(
     ).catch(() => 0);
   }
   return view;
+}
+
+/** Idempotent UI refresh only; native agent execution has its own routine.run outbox row. */
+export async function publishDeferredIssueCreated(deps: IssueDeps, orgId: string, issueId: string): Promise<void> {
+  const [row] = await deps.db
+    .select()
+    .from(issues)
+    .where(and(eq(issues.orgId, orgId), eq(issues.id, issueId)));
+  if (row) await announce(deps, orgId, await one(deps.db, row), "issue.created");
 }
 
 export async function findVisible(
@@ -1062,8 +1110,10 @@ export async function listIssues(
         rows.map((r) => r.id),
       )
     : new Set<string>();
+  const migrated = new Set(await paperclipIssueIds(db, orgId, actor));
   const visible: IssueRow[] = [];
-  for (const r of rows) if (shared.has(r.id) || (await agentReaches(db, actor, orgId, r))) visible.push(r);
+  for (const r of rows)
+    if (shared.has(r.id) || migrated.has(r.id) || (await agentReaches(db, actor, orgId, r))) visible.push(r);
   return views(db, visible);
 }
 
@@ -1913,8 +1963,8 @@ export async function linkIssueToWork(
 
 /**
  * A card follows its work (ADR 0121 §4): queued → A fazer, working → Em andamento, waiting on a person, paused or
- * failed → the blocked badge in its stage, done → Feito (left in review when the agent moved it there), stopped →
- * back to A fazer. An update is an activity event on it.
+ * failed → the blocked badge in its stage, done → Feito only with no unchecked criteria (left in review when
+ * the agent moved it there), stopped → back to A fazer. An update is an activity event on it (ADR 0186).
  */
 export async function setWorkIssueState(
   deps: IssueDeps,
@@ -1923,23 +1973,31 @@ export async function setWorkIssueState(
 ) {
   if (!work.issueId) return;
   const view = (await workViews(deps.db, work.orgId, [work.id])).get(work.id);
-  const [current] = await deps.db.select().from(issues).where(eq(issues.id, work.issueId));
-  if (!view || !current || current.status === "canceled") return;
-  const now = new Date();
-  let status: IssueStatus = current.status;
-  let blocked: IssueRow["blocked"] = null;
-  const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
-  if (ended === "done") status = current.status === "in_review" ? "in_review" : "done";
-  else if (ended === "canceled") status = "todo";
-  else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
-  else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";
-  else {
-    if (current.status === "todo" || current.status === "done") status = "in_progress";
-    if (view.state && view.state !== "working")
-      blocked = { reason: view.state, since: current.blocked?.since ?? now.toISOString() };
-  }
+  if (!view) return;
   const author: WorkActor = { type: "agent", id: work.agentId };
   const row = await deps.db.transaction(async (tx) => {
+    // Criteria and status share this row. Decide from the locked, current values so a committed edit before
+    // this transaction cannot be overwritten using an earlier read. No work/run locks are acquired here.
+    const [current] = await tx
+      .select()
+      .from(issues)
+      .where(eq(issues.id, work.issueId as string))
+      .for("update");
+    if (!current || current.status === "canceled") return null;
+    const now = new Date();
+    let status: IssueStatus = current.status;
+    let blocked: IssueRow["blocked"] = null;
+    const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
+    if (ended === "done") {
+      if (current.status !== "in_review" && current.criteria.every((criterion) => criterion.done)) status = "done";
+    } else if (ended === "canceled") status = "todo";
+    else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
+    else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";
+    else {
+      if (current.status === "todo" || current.status === "done") status = "in_progress";
+      if (view.state && view.state !== "working")
+        blocked = { reason: view.state, since: current.blocked?.since ?? now.toISOString() };
+    }
     const [updated] = await tx
       .update(issues)
       .set({

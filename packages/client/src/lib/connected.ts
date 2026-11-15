@@ -95,7 +95,11 @@ export function fromServer(s: CustomServer, catalog: ConnectorDef[]): ConnectedI
     def: catalog.find((d) => d.kind === "remote_mcp" && sameServer(d.serverUrl, s.serverUrl)) ?? null,
     image: s.iconUrl ?? null,
     // Composio's address means nothing to people: only the account, when it is known.
-    account: s.accountLabel ? accountNote(s.label, s.accountLabel) : s.via === "composio" ? null : host(s.serverUrl),
+    account: s.accountLabel
+      ? accountNote(s.label, s.accountLabel)
+      : s.via === "composio" || s.authType === "machine_mcp"
+        ? null
+        : host(s.serverUrl),
     viaComposio: s.via === "composio",
     needsReconnect: s.status === "needs_reconnect",
     reconnectAdds: [],
@@ -197,13 +201,11 @@ export function asksCount(t: TFunction, item: Pick<ConnectedItem, "server" | "de
 }
 
 /**
- * What a connection just made is, in a sentence or two: every agent has it and how many actions ask ("Todos os
- * agentes podem usar. 4 ações pedem aprovação no chat."). A server whose tools no one gave a level yet says
- * that instead: agents get none of them until someone does (`pending`). Nothing asking adds no second sentence.
+ * A new connection requires explicit agent access. If tools also need classification, explain both steps.
+ * Sensitive tools retain their approval requirement after access is granted.
  */
 export function connectedSummary(t: TFunction, item: Pick<ConnectedItem, "server" | "def" | "pending">) {
-  const lead =
-    item.pending > 0 ? t("connectFlow.done.waiting", { count: item.pending }) : t("connectFlow.done.everyone");
+  const lead = item.pending > 0 ? t("connectFlow.done.accessPending") : t("connectFlow.done.accessRequired");
   const asks = asksCount(t, item);
   return asks > 0 ? t("common.joinSentences", { a: lead, b: t("connectFlow.done.asks", { count: asks }) }) : lead;
 }

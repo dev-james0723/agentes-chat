@@ -38,6 +38,7 @@ import {
   reconcileComposioConnectors,
   revokeConnection,
   saveCustomTools,
+  setAgentAccess,
   syncCustomTools,
   type ToolContext,
   ValidationError,
@@ -113,7 +114,19 @@ async function world(options: { cap?: number } = {}) {
   return { fake, composio, deps, connect, signedIn };
 }
 
+/** Tool-execution scenarios explicitly authorize their fixture accounts before creating a run. */
 async function runOf(fx: Fixture): Promise<ToolContext> {
+  const accounts = await fx.db
+    .select()
+    .from(schema.connectorConnections)
+    .where(eq(schema.connectorConnections.orgId, fx.org.id));
+  await setAgentAccess(fx.db, fx.owner.id, fx.org.id, fx.agent.id, {
+    all: false,
+    connectors: Object.fromEntries(accounts.filter((c) => !c.revokedAt).map((c) => [c.id, true])),
+    scopes: [],
+    tools: { allow: [], deny: [] },
+  });
+
   const msg = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
     body: "organize a pasta do cliente",
   });
@@ -358,7 +371,7 @@ describe("connecting through Composio", () => {
     });
   });
 
-  test("stored with Composio's account and no secret, named by its Google address, every agent's, its tools ours", async () => {
+  test("stored with Composio's account and no secret, named by its Google address, without agent grants", async () => {
     const w = await world();
     const { connection, outcome } = await w.connect("ana@acme.com");
     expect(outcome).toBe("connected");
@@ -375,7 +388,7 @@ describe("connecting through Composio", () => {
       (await f.db.select().from(schema.agentScopes).where(eq(schema.agentScopes.connectionId, connection.id))).map(
         (g) => g.scope,
       ),
-    ).toEqual(["connector:*"]);
+    ).toEqual([]);
     const tools = await f.db
       .select()
       .from(schema.customTools)
@@ -392,7 +405,7 @@ describe("connecting through Composio", () => {
     expect(w.fake.state.toolLists).toEqual([`googledrive@${VERSION}`]);
   });
 
-  test("another account is a new row, every agent's too; the same one only swaps Composio's account; Reconectar keeps it", async () => {
+  test("another account starts without grants; the same account refreshes and reconnection preserves it", async () => {
     const w = await world();
     const ana = await w.connect("ana@acme.com");
     const bob = await w.connect("bob@acme.com");
@@ -402,7 +415,7 @@ describe("connecting through Composio", () => {
       .select()
       .from(schema.agentScopes)
       .where(eq(schema.agentScopes.connectionId, bob.connection.id));
-    expect([...new Set(given.map((g) => g.scope))]).toEqual(["connector:*"]);
+    expect(given).toEqual([]);
 
     const same = await w.connect("ana@acme.com");
     expect(same.outcome).toBe("same_account");

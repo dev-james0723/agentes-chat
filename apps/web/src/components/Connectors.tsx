@@ -493,12 +493,12 @@ function ServiceRow({
                 {t("connectors.rename")}
               </MenuItem>
               {/* GitHub through the app alone has no sign-in to renew: its accounts are on GitHub's side. */}
-              {!item.viaGithubApp && (
+              {!item.viaGithubApp && item.server?.authType !== "machine_mcp" && (
                 <MenuItem icon="refresh" onSelect={onReconnect}>
                   {t("connectors.detail.reconnect")}
                 </MenuItem>
               )}
-              {item.custom && (
+              {item.custom && item.server?.authType !== "machine_mcp" && (
                 <MenuItem icon="plus" onSelect={onAddAccount}>
                   {t("connectors.detail.addAccount")}
                 </MenuItem>

@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import type { CommandProfile } from "@agenteschat/adapters/command-policy";
-import type { AgentScope, BrainEffort } from "@agenteschat/adapters/machine-protocol";
+import type { AgentScope, BrainEffort, HostAcpHistory } from "@agenteschat/adapters/machine-protocol";
 import { isAccountId } from "@agenteschat/adapters/machine-protocol";
 import {
   ACCOUNT_MISSING_MESSAGE,
@@ -17,14 +17,15 @@ import {
   withoutSignIns,
 } from "./accounts";
 import { AGY_CHAT_AGENT, prepareAgyHome } from "./agy-home";
-import { LIMIT_TEXT } from "./brain";
 import { type CodexBrainEvent, CodexThreads, chatFolder, codexProfileOf, codexThreadKey } from "./brain-codex";
 import { cursorPrompt } from "./brain-cursor";
 import { RunnerError } from "./errors";
 import { killTree } from "./exec";
 import { AGY_BIN, resolveCommand } from "./executors";
+import { runHostAcpTurn } from "./host-acp-runtime";
 import { CODEX_MCP_ENV, CODEX_MCP_SERVER, redactDeep } from "./mcp";
 import { resolveForAgent } from "./paths";
+import { ambiguousLimit, explicitPlanLimit } from "./plan-limit-evidence";
 import { resetFromWords } from "./plan-usage";
 import type { Spawn } from "./scope-gate";
 import { agentSecrets } from "./secrets";
@@ -64,6 +65,7 @@ const KILL_GRACE_MS = 5000;
 
 /** `brain.turn` with `kind: "antigravity"`. */
 export interface AntigravityBrainTurnRequest {
+  hostAcpHistory?: HostAcpHistory;
   runId: string;
   kind: "antigravity";
   session: { id: string; resume: boolean };
@@ -149,7 +151,9 @@ export function antigravityChatBreach(ev: Record<string, unknown>, sawInit: bool
 }
 
 /** `AGY_ERROR: {…}` on stderr (CLI 1.2.x): what it says, and whether it is a limit or a refused sign-in. */
-export function parseAgyError(stderr: string): { message: string; limit: boolean; auth: boolean } | null {
+export function parseAgyError(
+  stderr: string,
+): { message: string; limit: boolean; auth: boolean; ambiguous: boolean } | null {
   const line = stderr
     .split("\n")
     .reverse()
@@ -160,19 +164,19 @@ export function parseAgyError(stderr: string): { message: string; limit: boolean
     const v = JSON.parse(line.slice("AGY_ERROR:".length).trim());
     if (isRecord(v)) o = v;
   } catch {
-    return { message: line.slice(0, 500), limit: false, auth: false };
+    return { message: line.slice(0, 500), limit: false, auth: false, ambiguous: false };
   }
   const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
   const status = `${str(o.status)} ${str(o.canonical_status)} ${str(o.code)} ${str(o.http_status)}`;
   const message = (str(o.message) || str(o.error) || status.trim() || "The model call failed").slice(0, 500);
   return {
     message,
-    limit: /RESOURCE_EXHAUSTED|\b429\b/i.test(status) || AGY_LIMIT.test(message),
+    limit: explicitPlanLimit(message),
+    ambiguous: /RESOURCE_EXHAUSTED|\b429\b/i.test(status) || ambiguousLimit(message),
     auth: /UNAUTHENTICATED|\b401\b/i.test(status) || AGY_AUTH.test(message),
   };
 }
 
-const AGY_LIMIT = /quota|rate.?limit|usage limit|resource.?exhausted|weekly limit|five.?hour limit|out of credits/i;
 /** The CLI can't sign in (signed out, a refused token, no license). */
 export const AGY_AUTH =
   /auth(?:entication)? required|not (?:authenticated|logged in|signed in)|unauthenticated|unauthori[sz]ed|\b401\b|invalid (?:token|credentials|grant)|license/i;
@@ -180,9 +184,9 @@ export const AGY_AUTH =
 /** How a turn that went wrong ends: `limit` then `plan_limit`, `not_logged_in`, or `antigravity_failed`. */
 export function antigravityProblem(
   problem: string,
-  o: { worked?: boolean; limit?: boolean; auth?: boolean; now?: number } = {},
+  o: { worked?: boolean; auth?: boolean; ambiguous?: boolean; now?: number } = {},
 ): CodexBrainEvent[] {
-  if (o.limit || AGY_LIMIT.test(problem) || LIMIT_TEXT.test(problem)) {
+  if (explicitPlanLimit(problem)) {
     const resetsAt = resetFromWords(problem, o.now);
     return [
       { type: "limit", ...(resetsAt ? { resetsAt } : {}) },
@@ -191,7 +195,14 @@ export function antigravityProblem(
   }
   if (o.auth || AGY_AUTH.test(problem))
     return [{ type: "error", code: "not_logged_in", message: problem, retryable: true }];
-  return [{ type: "error", code: "antigravity_failed", message: problem, retryable: true }];
+  return [
+    {
+      type: "error",
+      code: "antigravity_failed",
+      message: problem,
+      retryable: !(o.ambiguous || ambiguousLimit(problem)),
+    },
+  ];
 }
 
 const tokens = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
@@ -452,7 +463,7 @@ export async function runAntigravityTurn(input: AntigravityTurnInput, opts: Anti
             : `The Antigravity CLI exited with code ${exit.code ?? "?"}${stderr.trim() ? `: ${stderr.trim().slice(-500)}` : ""}`);
     for (const event of antigravityProblem(clean(why), {
       worked: worked || streamed,
-      limit: agyError?.limit ?? false,
+      ambiguous: agyError?.ambiguous ?? false,
       auth: agyError?.auth ?? false,
       ...(opts.now ? { now: opts.now() } : {}),
     }))
@@ -474,6 +485,8 @@ export interface AntigravityBrainContext {
   accounts?: AccountFolders;
   /** In a worker, a sign-in root keeps for all agents (protocol 58): the copy this turn gets (`AccountManager.grant`). */
   grant?: AccountGrant;
+  /** The locally verified opt-in, never a value from the remote turn request. */
+  hostAccountStatus?: () => { id: string; loggedIn: boolean } | null;
   spawn?: Spawn;
   platform?: NodeJS.Platform;
 }
@@ -508,6 +521,53 @@ export async function handleAntigravityBrainTurn(
     return;
   }
   if (!isAccountId(accountId)) throw new RunnerError("bad_request", "Invalid account id");
+  const host = ctx.hostAccountStatus?.();
+  if (host?.id === accountId) {
+    if (!host.loggedIn) {
+      scope.emit({ type: "error", code: "not_logged_in", message: ACCOUNT_SIGNED_OUT, retryable: false });
+      return;
+    }
+    // A resumed native run starts a fresh ACP session with engine-reconstructed history.
+    if (!ctx.mcp || !req.model) {
+      scope.emit({
+        type: "error",
+        code: "unsupported",
+        message: "Host ACP requires an app bridge and an explicit model.",
+        retryable: false,
+      });
+      return;
+    }
+    const chat = req.permissions?.mode === "chat";
+    const folder = chat ? chatFolder(ctx.runnerHome, String(req.agent.id)) : ctx.folder;
+    let cwd = folder;
+    if (!chat && typeof req.cwd === "string" && req.cwd.trim() !== "") {
+      const resolved = await resolveForAgent(folder, ctx.grants, req.cwd);
+      if (!resolved.exists) throw new RunnerError("not_found", `The folder ${req.cwd} doesn't exist`);
+      cwd = resolved.abs;
+    }
+    const secrets = chat ? null : await agentSecrets(ctx.secretsDir, req.agent);
+    await runHostAcpTurn({
+      cwd,
+      runnerHome: ctx.runnerHome,
+      runId: req.runId,
+      sessionId: req.session.id,
+      model: req.model,
+      hostAcpHistory: req.hostAcpHistory,
+      profile: req.permissions?.mode === "work" ? "work" : "plan",
+      prompt: [req.system, req.prompt].filter((x): x is string => typeof x === "string" && x.length > 0).join("\n\n"),
+      mcp: { ...ctx.mcp, token: req.mcp.token },
+      signal: scope.signal,
+      emit: scope.emit,
+      isAuthorized: () => {
+        const current = ctx.hostAccountStatus?.();
+        return current?.id === accountId && current.loggedIn;
+      },
+      bin: resolveCommand(ctx.bin ?? AGY_BIN),
+      ...(secrets ? { redact: secrets.redact } : {}),
+      ...(ctx.spawn ? { spawn: ctx.spawn } : {}),
+    });
+    return;
+  }
   let signIn: Awaited<ReturnType<typeof accountSignIn>>;
   try {
     signIn = await accountSignIn(ctx.accounts, "antigravity", accountId, ctx.grant);

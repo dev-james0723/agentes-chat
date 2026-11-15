@@ -242,7 +242,9 @@ describe("Adicionar conector: one catalog", () => {
     expect(notion.textContent).toContain("Buscar e ler páginas");
     expect(notion.textContent).toContain("Um clique: você autoriza na página do serviço");
     // What connecting changes, as one line under what it can do (no heading of its own).
-    expect(notion.textContent).toContain("Ao conectar, todos os agentes podem usar. Dá para ajustar depois.");
+    expect(notion.textContent).toContain(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+    );
     expect(within(notion).queryByRole("heading", { level: 4, name: "Depois de conectar" })).toBeNull();
     // × goes back to the catalog; another tile opens its own.
     await click(within(notion).getByRole("button", { name: "Fechar detalhe" }));
@@ -347,7 +349,8 @@ describe("Adicionar conector: one catalog", () => {
       await pressEsc(service(name));
       return text;
     };
-    const everyone = "Ao conectar, todos os agentes podem usar. Dá para ajustar depois.";
+    const everyone =
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.";
     expect(await detail("Notion", "Notion")).toContain(everyone);
     expect(await detail("GitHub, conectado", "GitHub")).toContain("Substitui o login atual. Quem usa continua igual.");
     expect(await detail("Zapier, conectado", "Zapier")).toContain("Cada conta tem quem usa e níveis próprios.");
@@ -368,7 +371,9 @@ describe("Adicionar conector: one catalog", () => {
     dialog = await catalog();
     await click(within(dialog).getByRole("button", { name: /Não achou/ }));
     await click(within(service("Outro serviço")).getByRole("button", { name: "Conectar pelo endereço" }));
-    expect(flow().textContent).toContain("Ao conectar, todos os agentes podem usar. Dá para ajustar depois.");
+    expect(flow().textContent).toContain(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+    );
     await type(within(flow()).getByLabelText("Endereço do servidor MCP"), "https://oauth.zapier.example/mcp");
     // No account here was named by its provider, so step 1 can't tell accounts apart and asks for one not yet here.
     expect(flow().textContent).toContain(
@@ -401,7 +406,8 @@ describe("Adicionar conector: one catalog", () => {
 });
 
 const REVIEW = "Revise o que o agente pode fazer sozinho";
-const WAITING = "Os agentes só recebem as ferramentas quando você continuar, nos níveis que sugerimos.";
+const WAITING =
+  "Revise as ferramentas e escolha o acesso dos agentes em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.";
 /** "Ajustar" on the confirmation: on to the detail. */
 const adjust = async () => {
   await click(within(screen().getAllByRole("dialog").at(-1) as HTMLElement).getByRole("button", { name: "Ajustar" }));
@@ -409,6 +415,40 @@ const adjust = async () => {
 };
 
 describe("the connect flow: conectar → conectado; Ajustar → o que faz → quem pode usar", () => {
+  test("an API-key-only remote preset offers the password field directly without a fictional OAuth action", async () => {
+    const state = seedState({ connections: [] });
+    const api = createFakeApi(state);
+    const stitch: ConnectorDef = {
+      ...(CATALOG.connectors.find((d) => d.id === "linear") as ConnectorDef),
+      id: "stitch",
+      label: "Stitch",
+      description: "Stitch projects and screens.",
+      serverUrl: "https://stitch.googleapis.com/mcp",
+      auth: ["api_key"],
+      oauthConfigured: false,
+      available: true,
+      soon: false,
+      iconUrl: null,
+      brandColor: null,
+    };
+    api.connectors.catalog = async () => ({ ...CATALOG, connectors: [...CATALOG.connectors, stitch] });
+    expect(authKind(stitch)).toBe("key");
+    const { dialog } = await open(state, api);
+    await pick(dialog, "Stitch");
+    const flow = screen().getAllByRole("dialog").at(-1) as HTMLElement;
+    const field = within(flow).getByLabelText("Chave de API");
+    expect(field.getAttribute("type")).toBe("password");
+    expect(within(flow).queryByRole("button", { name: "Continuar no Stitch" })).toBeNull();
+    await type(field, "synthetic-stitch-key");
+    await click(within(flow).getByRole("button", { name: "Conectar com a chave" }));
+    await settle(4);
+    const calls = state.calls.filter((c) => c.method === "customConnectors.connect");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args[1]).toMatchObject({ serverUrl: stitch.serverUrl, apiKey: "[redacted]", label: "Stitch" });
+    expect(state.calls.filter((c) => /oauth/i.test(c.method))).toEqual([]);
+    expect(JSON.stringify(state.calls)).not.toContain("synthetic-stitch-key");
+  });
+
   test("a one-click server that asks for a key; tools reviewed by subject; a level per agent", async () => {
     const { state, dialog } = await open();
     await pick(dialog, "Linear");
@@ -416,7 +456,9 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     expect(flow().textContent).toContain("Conectar Linear");
     const steps = within(flow()).getByRole("list", { name: "Passos" });
     expect(within(steps).getAllByRole("listitem")[0]?.getAttribute("aria-current")).toBe("step");
-    expect(flow().textContent).toContain("Ao conectar, todos os agentes podem usar. Dá para ajustar depois.");
+    expect(flow().textContent).toContain(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+    );
 
     await click(within(flow()).getByRole("button", { name: "Continuar no Linear" }));
     await settle(4);
@@ -486,12 +528,12 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     });
     expect(saved.tools.every((x) => x.confirmed)).toBe(true);
 
-    // Step 3: everyone starts at "Ler e escrever" (the server gave it to every agent); then a level each.
+    // Step 3: nobody has access until an explicit choice is saved.
     expect(screen().getByRole("dialog", { name: "Quem pode usar Linear" })).toBeTruthy();
     expect(levels(flow(), ["Nível de todos os agentes", "Nível de Ada", "Nível de Atlas"])).toEqual([
-      "Ler e escrever",
-      "Ler e escrever",
-      "Ler e escrever",
+      "Sem acesso",
+      "Sem acesso",
+      "Sem acesso",
     ]);
     await click(levelIn(flow(), "Nível de todos os agentes", "Ler"));
     await click(levelIn(flow(), "Nível de Ada", "Sem acesso"));
@@ -502,8 +544,7 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     const put = (agentId: string) =>
       state.calls.find((c) => c.method === "access.set" && c.args[1] === agentId)?.args[2] as AccessInput;
     // "Sem acesso": nothing of the server is left.
-    expect(put(ADA_ID).connectors[serverId]).toBeUndefined();
-    expect(put(ADA_ID).scopes.some((s) => s.connectionId === serverId)).toBe(false);
+    expect(put(ADA_ID)).toBeUndefined();
     // "Ler": its read scope, nothing else; the agent's other grants stay.
     expect(put(ATLAS_ID).connectors[serverId]).toBeUndefined();
     expect(put(ATLAS_ID).scopes).toContainEqual({ connectionId: serverId, scope: `custom:${serverId}:read` });
@@ -606,7 +647,7 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     ]);
   });
 
-  test("a new connection: every agent at 'Ler e escrever', read fresh after connecting, so Liberar only confirms", async () => {
+  test("a new connection starts without access; confirming without changes grants nothing", async () => {
     // GitHub is connected: the page already read every agent's access, from before the new server.
     const { state, dialog } = await open(seedState());
     await click(within(dialog).getByRole("button", { name: /Não achou/ }));
@@ -621,16 +662,16 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     await settle(4);
     expect(screen().getByRole("dialog", { name: "Quem pode usar Suporte" })).toBeTruthy();
     expect(levels(flow(), ["Nível de todos os agentes", "Nível de Ada", "Nível de Atlas"])).toEqual([
-      "Ler e escrever",
-      "Ler e escrever",
-      "Ler e escrever",
+      "Sem acesso",
+      "Sem acesso",
+      "Sem acesso",
     ]);
     // Sensitive actions still ask, and the dialog says so.
     expect(flow().textContent).toContain("1 ação sempre pede aprovação no chat.");
     await click(within(flow()).getByRole("button", { name: "Liberar" }));
     await settle(8);
     expect(state.calls.filter((c) => c.method === "access.set")).toEqual([]);
-    expect(document.body.textContent).toContain("Suporte: 2 agentes podem usar.");
+    expect(document.body.textContent).toContain("Suporte: 0 agentes podem usar.");
   });
 
   test("ours with an OAuth app: 'Continuar no GitHub' leaves for GitHub and comes back to Conectores", async () => {
@@ -666,9 +707,9 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     await settle(6);
     expect(screen().getByRole("dialog", { name: "Quem pode usar GitHub" })).toBeTruthy();
     expect(levels(flow(), ["Nível de todos os agentes", "Nível de Ada", "Nível de Atlas"])).toEqual([
-      "Ler e escrever",
-      "Ler e escrever",
-      "Ler e escrever",
+      "Sem acesso",
+      "Sem acesso",
+      "Sem acesso",
     ]);
     await click(levelIn(flow(), "Nível de todos os agentes", "Ler"));
     await click(within(flow()).getByRole("button", { name: "Liberar" }));
@@ -707,7 +748,7 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     await click(within(flow()).getByText("Conectar com uma chave de API"));
     await type(within(flow()).getByLabelText("Chave de API"), "ghp_abcdef123456");
     const shown = note();
-    expect(shown).toContain("Ao conectar, todos os agentes podem usar.");
+    expect(shown).toContain("Novas conexões não liberam acesso adicional.");
     await click(within(flow()).getByRole("button", { name: "Conectar com a chave" }));
     // The list is read again while the key is still being answered.
     await act(async () => services.queryClient.invalidateQueries({ queryKey: keys.connections(ORG_ID) }));
@@ -846,7 +887,7 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     await click(within(flow()).getByRole("button", { name: "Continuar" }));
     await settle(6);
     expect(screen().getByRole("dialog", { name: "Quem pode usar himetrica" })).toBeTruthy();
-    expect(levels(flow(), ["Nível de Ada", "Nível de Atlas"])).toEqual(["Ler e escrever", "Ler e escrever"]);
+    expect(levels(flow(), ["Nível de Ada", "Nível de Atlas"])).toEqual(["Sem acesso", "Sem acesso"]);
   });
 
   test("new tools on a reviewed server: the row asks for review; disconnecting always asks first", async () => {
@@ -880,8 +921,8 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
 
     await click(within(await rowMenu("Suporte")).getByRole("menuitem", { name: "Desconectar" }));
     const confirm = screen().getByRole("dialog", { name: "Desconectar Suporte?" });
-    // Connected, it was every agent's.
-    expect(confirm.textContent).toContain("2 agentes perdem o acesso na hora.");
+    // Connecting did not grant anybody access.
+    expect(confirm.textContent).toContain("Nenhum agente usa agora.");
     await click(within(confirm).getByRole("button", { name: "Desconectar" }));
     await settle(4);
     expect(state.calls.find((c) => c.method === "customConnectors.disconnect")?.args).toEqual([ORG_ID, res.server.id]);
@@ -992,7 +1033,7 @@ describe("several accounts of one service", () => {
     expect(within(flow()).queryByLabelText("Chave de API")).toBeNull();
   });
 
-  test("another account: every agent's too; Ajustar asks its name first, then its tools, then who uses it", async () => {
+  test("another account starts without access; Ajustar asks its name, tools and agent access", async () => {
     const { state } = await twoAccounts();
     await click(within(await rowMenu("Zapier")).getByRole("menuitem", { name: "Adicionar outra conta" }));
     expect(screen().getByRole("dialog", { name: "Outra conta do Zapier" })).toBe(flow());
@@ -1026,13 +1067,13 @@ describe("several accounts of one service", () => {
     });
     expect(screen().getByRole("dialog", { name: "Quem pode usar Zapier Loja" })).toBe(flow());
     expect(levels(flow(), ["Nível de todos os agentes", "Nível de Ada", "Nível de Atlas"])).toEqual([
-      "Ler e escrever",
-      "Ler e escrever",
-      "Ler e escrever",
+      "Sem acesso",
+      "Sem acesso",
+      "Sem acesso",
     ]);
   });
 
-  test("Quem usa is per account, and every account starts as every agent's", async () => {
+  test("Quem usa is per account, and new accounts start without agent access", async () => {
     await twoAccounts();
     const who = async (name: string) => {
       await openConnected();
@@ -1043,8 +1084,8 @@ describe("several accounts of one service", () => {
       await click(within(flow()).getByRole("button", { name: "Cancelar" }));
       return shown;
     };
-    expect(await who("Zapier")).toEqual(["Ler e escrever", "Ler e escrever"]);
-    expect(await who("Zapier 2")).toEqual(["Ler e escrever", "Ler e escrever"]);
+    expect(await who("Zapier")).toEqual(["Sem acesso", "Sem acesso"]);
+    expect(await who("Zapier 2")).toEqual(["Sem acesso", "Sem acesso"]);
   });
 
   test("Renomear: the new name everywhere, a name another connector has is refused in place", async () => {
@@ -1113,7 +1154,9 @@ describe("the confirmation that ends connecting", () => {
     await click(within(flow()).getByRole("button", { name: "Conectar com a chave" }));
     await settle(4);
     expect(screen().getByRole("dialog", { name: "GitHub conectado" })).toBe(flow());
-    expect(sentence()).toBe("Todos os agentes podem usar. 1 ação pede aprovação no chat.");
+    expect(sentence()).toBe(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
+    );
     expect(buttons()).toEqual(["Ajustar", "Pronto"]);
     await click(within(flow()).getByRole("button", { name: "Pronto" }));
     await settle(4);
@@ -1132,7 +1175,9 @@ describe("the confirmation that ends connecting", () => {
     await renderApp(`/org/${ORG_ID}/settings/connectors?connected=sentry`, { api: createFakeApi(state) });
     await settle(8);
     expect(screen().getByRole("dialog", { name: "Sentry conectado" })).toBe(flow());
-    expect(sentence()).toBe("Todos os agentes podem usar.");
+    expect(sentence()).toBe(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+    );
   });
 
   test("a server whose tools have no level yet: it says so, and Continuar saves the suggested ones", async () => {
@@ -1181,7 +1226,9 @@ describe("the confirmation that ends connecting", () => {
     });
     await renderApp(`/org/${ORG_ID}/settings/connectors?connected=custom:${res.server.id}`, { api });
     await settle(8);
-    expect(sentence()).toBe("Todos os agentes podem usar. 3 ações pedem aprovação no chat.");
+    expect(sentence()).toBe(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 3 ações pedem aprovação no chat.",
+    );
     expect(buttons()).toEqual(["Ajustar", "Pronto"]);
   });
 
@@ -1214,14 +1261,14 @@ describe("the confirmation that ends connecting", () => {
         },
       });
     expect([0, 1, 2].map((n) => of("pt-BR", n))).toEqual([
-      "Todos os agentes podem usar.",
-      "Todos os agentes podem usar. 1 ação pede aprovação no chat.",
-      "Todos os agentes podem usar. 2 ações pedem aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 2 ações pedem aprovação no chat.",
     ]);
     expect([0, 1, 2].map((n) => of("en", n))).toEqual([
-      "Every agent can use it.",
-      "Every agent can use it. 1 action asks for approval in the chat.",
-      "Every agent can use it. 2 actions ask for approval in the chat.",
+      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply. 1 action asks for approval in the chat.",
+      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply. 2 actions ask for approval in the chat.",
     ]);
   });
 });
@@ -1277,7 +1324,9 @@ describe("a server whose tools can't be read", () => {
     await settle(8);
     // The confirmation says it too, under who can use it.
     const done = screen().getByRole("dialog", { name: "Suporte conectado" });
-    expect(done.querySelector(".cflow__text")?.textContent).toBe("Todos os agentes podem usar.");
+    expect(done.querySelector(".cflow__text")?.textContent).toBe(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+    );
     expect(within(done).getByRole("alert").textContent).toBe(`Não deu para ler as ferramentas do conector: ${reason}`);
     await adjust();
     const review = () => screen().getByRole("dialog", { name: REVIEW });

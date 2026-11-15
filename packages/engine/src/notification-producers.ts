@@ -23,6 +23,7 @@ import {
   retargetNotifications,
 } from "./notifications";
 import { maySql, type RolePermission } from "./permissions";
+import { isPrivatePublication } from "./private-skill-publication";
 import { secretLabelOf } from "./secrets";
 import { stretchCardOf } from "./stretch";
 import { adminChannelSql, taskReadersAmong } from "./task-access";
@@ -472,6 +473,8 @@ const approvalGroupKey = (approval: Pick<ApprovalRow, "id" | "messageId">) =>
   approval.messageId ? `approval-card:${approval.messageId}` : `approval:${approval.id}`;
 
 export async function notifyApproval(deps: NotificationDeps, approval: ApprovalRow, deciders: string[]) {
+  // The protected original DM card/user refresh is this flow's delivery. No push/email/inbox copy of its draft.
+  if (isPrivatePublication(approval)) return;
   const [[channel], cardThreads, [first]] = await Promise.all([
     deps.db
       .select({ kind: channels.kind, name: channels.name })

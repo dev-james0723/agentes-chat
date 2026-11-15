@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { orgTopic } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
 import type { ModelRequest } from "@agenteschat/providers";
@@ -21,6 +21,7 @@ import {
   listAgentScopes,
   listConnections,
   listSkills,
+  loadSkill,
   NotFoundError,
   parseSkillMarkdown,
   postPersonMessage,
@@ -29,10 +30,13 @@ import {
   revokeConnection,
   SKILL_LIMITS,
   type SkillDetail,
+  type SkillFileInput,
   saveSkill,
   setAgentAccess,
   setAgentSkills,
+  skillFile,
   type TooManyError,
+  updateSkill,
   ValidationError,
 } from "../src";
 import { toolDetail } from "../src/tool-detail";
@@ -227,6 +231,25 @@ Body.`);
 });
 
 describe("import", () => {
+  test("create-only imports refuse existing, archived and concurrent names without changing them", async () => {
+    f = await setup();
+    const bundle = zip({ "SKILL.md": SKILL_MD, "scripts/helper.py": "print('fixture')" });
+    const first = await importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true });
+    await expect(importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true })).rejects.toThrow();
+    const unchanged = await getSkill(f.db, f.owner.id, f.org.id, first.id);
+    expect(unchanged.version).toBe(1);
+    await deleteSkill(f.db, f.owner.id, f.org.id, first.id);
+    await expect(importSkillZip(skillDeps(), f.owner.id, f.org.id, bundle, { createOnly: true })).rejects.toThrow();
+    const other = zip({ "SKILL.md": SKILL_MD.replaceAll("relatorio-semanal", "collision-race") });
+    const concurrent = await Promise.allSettled([
+      importSkillZip(skillDeps(), f.owner.id, f.org.id, other, { createOnly: true }),
+      importSkillZip(skillDeps(), f.owner.id, f.org.id, other, { createOnly: true }),
+    ]);
+    expect(concurrent.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((x) => x.status === "rejected")).toHaveLength(1);
+    const skills = await listSkills(f.db, f.owner.id, f.org.id);
+    expect(skills.find((x) => x.name === "collision-race")?.version).toBe(1);
+  });
   test("a zip of the folder: SKILL.md, text files and images stored, scripts kept as scripts", async () => {
     f = await setup();
     const skill = await importSkillZip(
@@ -256,6 +279,326 @@ describe("import", () => {
       source: "manual",
     });
     expect(again.version).toBe(2);
+  });
+
+  test("manual body edits retain exact resource records, bytes and unavailable-file metadata", async () => {
+    f = await setup();
+    const enc = (text: string) => new TextEncoder().encode(text);
+    const original = await saveSkill(skillDeps(), f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "upload",
+      files: [
+        { path: "references/guide.md", data: enc("# Supporting guide\n") },
+        { path: "data/settings.json", data: enc('{"enabled":true}\n') },
+        { path: "assets/pixel.png", data: PNG },
+        { path: "scripts/fixture.sh", data: enc("#!/bin/sh\nexit 0\n") },
+        { path: "assets/unavailable.pdf", data: new Uint8Array(), skippedSize: SKILL_LIMITS.assetBytes + 1 },
+      ],
+    });
+    const filesAt = (version: number) =>
+      f.db
+        .select({
+          path: schema.skillFiles.path,
+          size: schema.skillFiles.size,
+          mime: schema.skillFiles.mime,
+          status: schema.skillFiles.status,
+          storageConfigId: schema.skillFiles.storageConfigId,
+          blobKey: schema.skillFiles.blobKey,
+        })
+        .from(schema.skillFiles)
+        .where(and(eq(schema.skillFiles.skillId, original.id), eq(schema.skillFiles.version, version)))
+        .orderBy(schema.skillFiles.path);
+    const before = await filesAt(1);
+    const digest = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
+    const hashes = async (rows: typeof before) =>
+      Promise.all(
+        rows
+          .filter((row) => row.blobKey)
+          .map(async (row) => {
+            const store = await skillDeps().blobs.forConfig(f.org.id, row.storageConfigId);
+            if (!row.blobKey) throw new Error("fixture resource has no blob reference");
+            const object = await store.get(row.blobKey);
+            if (!object) throw new Error("fixture resource missing");
+            return [row.path, digest(object.body)];
+          }),
+      );
+    const beforeHashes = await hashes(before);
+    await setAgentSkills(f.db, f.owner.id, f.org.id, f.agent.id, [{ skillId: original.id, enabled: true }]);
+    const grants = await f.db.select().from(schema.agentSkills);
+    const scopes = await f.db.select().from(schema.agentScopes);
+    expect(grants).toHaveLength(1);
+    const v2 = await updateSkill(skillDeps(), f.owner.id, f.org.id, original.id, { body: "# Revised body" });
+    expect(v2.version).toBe(2);
+    expect(v2.body).toBe("# Revised body");
+    expect(v2.files).toEqual(original.files);
+    expect(await filesAt(2)).toEqual(before);
+    expect(await hashes(await filesAt(2))).toEqual(beforeHashes);
+    expect(await filesAt(1)).toEqual(before);
+    expect(await f.db.select().from(schema.agentSkills)).toEqual(grants);
+    expect(await f.db.select().from(schema.agentScopes)).toEqual(scopes);
+    const row = await loadSkill(f.db, f.org.id, original.id);
+    expect(digest((await skillFile(skillDeps(), row, "assets/pixel.png")).data)).toBe(digest(PNG));
+    await expect(skillFile(skillDeps(), row, "scripts/fixture.sh")).rejects.toThrow("script");
+    await expect(skillFile(skillDeps(), row, "assets/unavailable.pdf")).rejects.toThrow("was not kept");
+    expect(v2.pendingUpdate).toBeNull();
+  });
+
+  test("a manual edit waits for a concurrent full version and preserves its replacement resources", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const enc = (text: string) => new TextEncoder().encode(text);
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "upload",
+      files: [{ path: "guide.md", data: enc("old resource") }],
+    });
+    const location = await deps.blobs.forOrg(f.org.id);
+    let entered = () => {},
+      release = () => {};
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const store = new Proxy(location.store, {
+      get(target, key) {
+        if (key === "put")
+          return async (...args: Parameters<typeof target.put>) => {
+            if (args[0].includes("/v2/")) {
+              entered();
+              await gate;
+            }
+            return target.put(...args);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const publishing = saveSkill(
+      {
+        ...deps,
+        blobs: {
+          forOrg: async () => ({ ...location, store }),
+          forConfig: deps.blobs.forConfig.bind(deps.blobs),
+        },
+      },
+      f.owner.id,
+      f.org.id,
+      {
+        ...parseSkillMarkdown(SKILL_MD),
+        body: "# New full version",
+        source: "upload",
+        files: [{ path: "guide.md", data: enc("replacement resource") }],
+      },
+    );
+    let editing: ReturnType<typeof updateSkill> | undefined;
+    try {
+      await writing;
+      let edited = false;
+      editing = updateSkill(deps, f.owner.id, f.org.id, original.id, { description: "Edited description" });
+      void editing.then(
+        () => {
+          edited = true;
+        },
+        () => {},
+      );
+      await Bun.sleep(25);
+      expect(edited).toBe(false);
+    } finally {
+      release();
+    }
+    await publishing;
+    if (!editing) throw new Error("manual edit did not start");
+    const current = await editing;
+    expect(current).toMatchObject({ version: 3, body: "# New full version", description: "Edited description" });
+    expect(current.files.map((file) => file.path)).toEqual(["guide.md"]);
+    expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe(
+      "replacement resource",
+    );
+    expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md", 1)).content).toBe("old resource");
+  });
+
+  test("a failed full import does not publish an empty current resource version", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "upload",
+      files: [{ path: "guide.md", data: new TextEncoder().encode("old resource") }],
+    });
+    const location = await deps.blobs.forOrg(f.org.id);
+    const store = new Proxy(location.store, {
+      get(target, key) {
+        if (key === "put")
+          return async () => {
+            throw new Error("synthetic storage failure");
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await expect(
+      saveSkill(
+        {
+          ...deps,
+          blobs: {
+            forOrg: async () => ({ ...location, store }),
+            forConfig: deps.blobs.forConfig.bind(deps.blobs),
+          },
+        },
+        f.owner.id,
+        f.org.id,
+        {
+          ...parseSkillMarkdown(SKILL_MD),
+          body: "must not publish",
+          source: "upload",
+          files: [{ path: "replacement.md", data: new TextEncoder().encode("new resource") }],
+        },
+      ),
+    ).rejects.toThrow("synthetic storage failure");
+    const current = await getSkill(f.db, f.owner.id, f.org.id, original.id);
+    expect(current).toMatchObject({ version: 1, body: original.body, files: original.files });
+    expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("old resource");
+    expect(
+      (await f.db.select().from(schema.auditLog)).filter((event) => event.action === "skill.updated"),
+    ).toHaveLength(0);
+  });
+
+  test("a late blob write from a failed publication cannot overwrite a successful retry", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const enc = (text: string) => new TextEncoder().encode(text);
+    const supporting: SkillFileInput[] = [
+      { path: "data/settings.json", data: enc('{"enabled":true}\n') },
+      { path: "assets/pixel.png", data: PNG },
+      { path: "scripts/fixture.sh", data: enc("#!/bin/sh\nexit 0\n") },
+      { path: "assets/unavailable.pdf", data: new Uint8Array(), skippedSize: SKILL_LIMITS.assetBytes + 1 },
+    ];
+    const definition = { ...parseSkillMarkdown(SKILL_MD), source: "upload" as const };
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...definition,
+      files: [{ path: "guide.md", data: enc("ORIG!") }, ...supporting],
+    });
+    await setAgentSkills(f.db, f.owner.id, f.org.id, f.agent.id, [{ skillId: original.id, enabled: true }]);
+    const grants = await f.db.select().from(schema.agentSkills);
+    expect(grants).toHaveLength(1);
+    const scopes = await f.db.select().from(schema.agentScopes);
+    const location = await deps.blobs.forOrg(f.org.id);
+    let entered = () => {},
+      release = () => {},
+      finished = () => {};
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lateDone = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    let lateKey: string | undefined;
+    const store = new Proxy(location.store, {
+      get(target, key) {
+        if (key === "put")
+          return async (...args: Parameters<typeof target.put>) => {
+            if (args[0].endsWith("/guide.md")) {
+              lateKey = args[0];
+              entered();
+              try {
+                await gate;
+                await target.put(...args);
+              } finally {
+                finished();
+              }
+              return;
+            }
+            if (args[0].endsWith("/failure.txt")) {
+              await writing;
+              throw new Error("synthetic sibling write failure");
+            }
+            return target.put(...args);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    try {
+      await expect(
+        saveSkill(
+          {
+            ...deps,
+            blobs: {
+              forOrg: async () => ({ ...location, store }),
+              forConfig: deps.blobs.forConfig.bind(deps.blobs),
+            },
+          },
+          f.owner.id,
+          f.org.id,
+          {
+            ...definition,
+            body: "# Failed attempt",
+            files: [
+              { path: "guide.md", data: enc("STALE") },
+              { path: "failure.txt", data: enc("ERROR") },
+            ],
+          },
+        ),
+      ).rejects.toThrow("synthetic sibling write failure");
+      expect(await getSkill(f.db, f.owner.id, f.org.id, original.id)).toMatchObject({
+        version: 1,
+        body: original.body,
+        files: original.files,
+      });
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("ORIG!");
+      const freshFiles: SkillFileInput[] = [{ path: "guide.md", data: enc("FRESH") }, ...supporting];
+      const retry = await saveSkill(deps, f.owner.id, f.org.id, {
+        ...definition,
+        body: "# Reviewed retry",
+        files: freshFiles,
+      });
+      expect(retry).toMatchObject({ version: 2, body: "# Reviewed retry", pendingUpdate: null });
+      expect(retry.files).toEqual(original.files);
+      const rows = await f.db
+        .select()
+        .from(schema.skillFiles)
+        .where(and(eq(schema.skillFiles.skillId, original.id), eq(schema.skillFiles.version, retry.version)))
+        .orderBy(schema.skillFiles.path);
+      const resourceBytes = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            rows
+              .filter((row) => row.blobKey)
+              .map(async (row) => {
+                const currentStore = await deps.blobs.forConfig(f.org.id, row.storageConfigId);
+                if (!row.blobKey) throw new Error("fixture resource has no blob reference");
+                const object = await currentStore.get(row.blobKey);
+                if (!object) throw new Error("fixture resource missing");
+                return [row.path, Array.from(object.body)];
+              }),
+          ),
+        );
+      const expectedBytes = Object.fromEntries(
+        freshFiles.filter((file) => file.skippedSize === undefined).map((file) => [file.path, Array.from(file.data)]),
+      );
+      expect(await resourceBytes()).toEqual(expectedBytes);
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("FRESH");
+      release();
+      await lateDone;
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe("FRESH");
+      expect(await resourceBytes()).toEqual(expectedBytes);
+      expect(await getSkill(f.db, f.owner.id, f.org.id, original.id)).toEqual(retry);
+      expect(rows.find((row) => row.path === "guide.md")?.blobKey).not.toBe(lateKey);
+      expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md", 1)).content).toBe("ORIG!");
+      expect(await f.db.select().from(schema.agentSkills)).toEqual(grants);
+      expect(await f.db.select().from(schema.agentScopes)).toEqual(scopes);
+      await expect(getSkillFile(deps, f.owner.id, f.org.id, original.id, "scripts/fixture.sh")).rejects.toThrow(
+        "script",
+      );
+    } finally {
+      release();
+      if (lateKey) await lateDone;
+    }
   });
 
   test("two files that collapse to one path are refused (no shared blob key, no undercounted size)", async () => {

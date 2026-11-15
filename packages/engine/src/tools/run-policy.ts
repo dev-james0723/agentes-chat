@@ -180,6 +180,7 @@ const READS = new Set([
   "list_reminders",
   "find_agent",
   "get_my_usage",
+  "get_my_profile",
   "computer_status",
   "read_file",
   "list_files",

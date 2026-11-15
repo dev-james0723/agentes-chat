@@ -7,12 +7,12 @@ describe("presetLevels", () => {
     { id: "mine", def: null },
   ];
 
-  test("a team's agent starts with the catalog's apps at write and a custom server at none", () => {
-    expect(presetLevels("custom", items)).toEqual({ cal: "write", mine: "none" });
+  test("a team's agent starts with unlisted apps and custom servers at no access", () => {
+    expect(presetLevels("custom", items)).toEqual({ cal: "none", mine: "none" });
   });
 
-  test("a personal workspace's agent starts with every app at write, custom servers too (ADR 0159)", () => {
-    expect(presetLevels("custom", items, true)).toEqual({ cal: "write", mine: "write" });
+  test("a personal workspace does not change unlisted app or custom server defaults", () => {
+    expect(presetLevels("custom", items, true)).toEqual({ cal: "none", mine: "none" });
   });
 });
 

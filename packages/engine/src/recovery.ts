@@ -84,6 +84,9 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "running"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${cutoff.toISOString()}::timestamptz`,
         sql`not exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
           and o.payload->>'runId' = ${agentRuns.id}::text and o.status = 'pending' and o.payload->>'wait' is null)`,
@@ -124,6 +127,9 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "queued"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${agentRuns.createdAt} < ${cutoff.toISOString()}::timestamptz`,
         sql`not ${liveJob}`,
       ),
@@ -151,6 +157,7 @@ export async function recoverStaleRuns(
     .where(
       and(
         eq(agentRuns.status, "waiting_input"),
+        sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
         inArray(sql<string>`${agentRuns.transcript}->'waitingForBrain'->>'code'`, [...USAGE_WAIT_CODES]),
         sql`${agentRuns.transcript}->'waitingForBrain'->>'waitId' is not null`,
         sql`(${agentRuns.transcript}->'waitingForBrain'->>'until')::timestamptz < ${cutoff.toISOString()}::timestamptz`,
@@ -198,6 +205,9 @@ async function claimStale(tx: Executor, runId: string, at: SweepTime) {
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, "running"),
+        sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
       ),
     )

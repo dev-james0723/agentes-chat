@@ -1378,6 +1378,22 @@ export function agentRoutes(deps: AppDeps) {
     state: z.enum(["queued", "answering"]),
     title: z.string().nullable().openapi({ description: "A routine's or a long work's title." }),
     mayStop: z.boolean().openapi({ description: "The viewer may say not to run it (who asked, the owner, an admin)." }),
+    quotaContinuity: z
+      .object({
+        version: z.literal(1),
+        state: z.enum(["captured", "consumed"]),
+        capturedAt: z.iso.datetime(),
+        nextSafeAction: z.enum(["RECONCILE_EFFECT", "RESUME_SAME_HARNESS"]),
+        completedReceipts: z.number().int().nonnegative(),
+        unresolvedEffects: z.number().int().nonnegative(),
+        evidenceTruncated: z.boolean(),
+      })
+      .nullable()
+      .optional()
+      .openapi({
+        description:
+          "Readable rows only: content-free same-harness checkpoint status, not permission to replay. Null means legacy or unknown metadata.",
+      }),
   });
   const UsageQueueClosedRow = z.object({
     runId: z.uuid(),
@@ -1895,6 +1911,18 @@ export function agentRoutes(deps: AppDeps) {
         body: body(
           z.object({
             scope: BrainScope.optional(),
+            expectedConfigHash: z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .optional()
+              .openapi({
+                description:
+                  "Compare the current raw agent brain configuration before any mutation; stale (including no-op) is 409. Only the ordinary owner own-sign-in scope is supported. Omitted keeps legacy behavior.",
+              }),
+            rememberSetup: z.boolean().optional().openapi({
+              description:
+                "False changes only this agent without replacing the workspace's new-agent AI setup. Omitted or true keeps remembering it, as before. Does not change who may edit the agent.",
+            }),
             brain: BrainKind.optional(),
             model: z.string().max(80).nullable().optional().openapi({
               description:
@@ -1935,11 +1963,15 @@ export function agentRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, agentId } = c.req.valid("param");
-      const input = c.req.valid("json");
-      const view = await setAgentBrain({ db }, c.get("user").id, orgId, agentId, {
-        ...input,
-        scope: input.scope ?? "mine",
-      });
+      const { rememberSetup, ...input } = c.req.valid("json");
+      const view = await setAgentBrain(
+        { db },
+        c.get("user").id,
+        orgId,
+        agentId,
+        { ...input, scope: input.scope ?? "mine" },
+        { remember: rememberSetup },
+      );
       // Its computers hear which account each agent thinks with (system mode lends the folders by it), on every save:
       // the one an old plan was on may be none the view shows (the team's right hand, which is on no computer).
       await publishMachineAgentsChanged(adapters.pubsub, orgId);

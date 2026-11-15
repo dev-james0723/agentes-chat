@@ -220,6 +220,130 @@ function walk(
   }
 }
 
+/** A closed grammar for the three preaggregated internal views. Unknown parser fields fail closed. */
+function internalSelectAllowed(top: Node, views: readonly string[]): boolean {
+  const shape = (value: unknown, keys: readonly string[]): value is Node =>
+    isObject(value) && Object.keys(value).every((key) => key === "location" || keys.includes(key));
+  const node = (value: unknown, tag: string, keys: readonly string[]): Node | null =>
+    isObject(value) && Object.keys(value).length === 1 && shape(value[tag], keys) ? (value[tag] as Node) : null;
+  const select = node(top, "SelectStmt", [
+    "targetList",
+    "fromClause",
+    "whereClause",
+    "sortClause",
+    "limitCount",
+    "limitOption",
+    "op",
+  ]);
+  if (select?.op !== "SETOP_NONE" || !Array.isArray(select.fromClause) || select.fromClause.length !== 1) return false;
+  const range = node(select.fromClause[0], "RangeVar", ["schemaname", "relname", "inh", "relpersistence"]);
+  if (
+    range?.schemaname !== "engineering_ro" ||
+    typeof range.relname !== "string" ||
+    range.inh !== true ||
+    range.relpersistence !== "p"
+  )
+    return false;
+  const columnsByView: Record<string, readonly string[]> = {
+    agent_inventory: ["id", "name", "handle", "role", "model", "brain", "brain_model"],
+    issue_status_counts: ["status", "priority", "total"],
+    run_status_counts: ["status", "total"],
+  };
+  const columns = columnsByView[range.relname];
+  if (!columns || !views.includes(`engineering_ro.${range.relname}`)) return false;
+  const column = (value: unknown): boolean => {
+    const ref = node(value, "ColumnRef", ["fields"]);
+    if (!ref || !Array.isArray(ref.fields) || ref.fields.length !== 1) return false;
+    const field = node(ref.fields[0], "String", ["sval"]);
+    return !!field && typeof field.sval === "string" && columns.includes(field.sval);
+  };
+  const literal = (value: unknown): boolean => {
+    const constant = node(value, "A_Const", ["ival", "sval", "boolval", "isnull"]);
+    if (!constant) return false;
+    const keys = Object.keys(constant).filter((key) => key !== "location");
+    if (keys.length !== 1) return false;
+    if (keys[0] === "isnull") return constant.isnull === true;
+    const type = keys[0];
+    if (!type || !["ival", "sval", "boolval"].includes(type) || !shape(constant[type], [type])) return false;
+    const v = (constant[type] as Node)[type];
+    // protobuf omits zero and false scalar values; an empty typed wrapper still denotes that literal.
+    return (
+      v === undefined || (type === "ival" ? Number.isInteger(v) : typeof v === (type === "sval" ? "string" : "boolean"))
+    );
+  };
+  const predicate = (value: unknown, depth = 0): boolean => {
+    if (depth > 32) return false;
+    const comparison = node(value, "A_Expr", ["kind", "name", "lexpr", "rexpr"]);
+    if (comparison) {
+      if (comparison.kind !== "AEXPR_OP" || !Array.isArray(comparison.name) || comparison.name.length !== 1)
+        return false;
+      const operator = node(comparison.name[0], "String", ["sval"]);
+      return (
+        !!operator &&
+        ["=", "<>", "<", ">", "<=", ">="].includes(String(operator.sval)) &&
+        column(comparison.lexpr) &&
+        literal(comparison.rexpr)
+      );
+    }
+    const bool = node(value, "BoolExpr", ["boolop", "args"]);
+    if (bool)
+      return (
+        ["AND_EXPR", "OR_EXPR"].includes(String(bool.boolop)) &&
+        Array.isArray(bool.args) &&
+        bool.args.length >= 2 &&
+        bool.args.length <= 20 &&
+        bool.args.every((arg) => predicate(arg, depth + 1))
+      );
+    const nullTest = node(value, "NullTest", ["arg", "nulltesttype", "argisrow"]);
+    return (
+      !!nullTest &&
+      ["IS_NULL", "IS_NOT_NULL"].includes(String(nullTest.nulltesttype)) &&
+      !nullTest.argisrow &&
+      column(nullTest.arg)
+    );
+  };
+  if (
+    !Array.isArray(select.targetList) ||
+    select.targetList.length === 0 ||
+    select.targetList.length > 20 ||
+    !select.targetList.every((value) => {
+      const target = node(value, "ResTarget", ["name", "val"]);
+      return (
+        !!target &&
+        (target.name === undefined || typeof target.name === "string") &&
+        (column(target.val) || literal(target.val))
+      );
+    })
+  )
+    return false;
+  if (select.whereClause !== undefined && !predicate(select.whereClause)) return false;
+  if (
+    select.sortClause !== undefined &&
+    (!Array.isArray(select.sortClause) ||
+      select.sortClause.length > 7 ||
+      !select.sortClause.every((value) => {
+        const sort = node(value, "SortBy", ["node", "sortby_dir", "sortby_nulls"]);
+        return (
+          !!sort &&
+          column(sort.node) &&
+          ["SORTBY_DEFAULT", "SORTBY_ASC", "SORTBY_DESC"].includes(String(sort.sortby_dir)) &&
+          ["SORTBY_NULLS_DEFAULT", "SORTBY_NULLS_FIRST", "SORTBY_NULLS_LAST"].includes(String(sort.sortby_nulls))
+        );
+      }))
+  )
+    return false;
+  if (select.limitCount === undefined) return select.limitOption === "LIMIT_OPTION_DEFAULT";
+  const limit = node(select.limitCount, "A_Const", ["ival"]);
+  if (!limit || !shape(limit.ival, ["ival"])) return false;
+  const count = (limit.ival as Node).ival;
+  return (
+    select.limitOption === "LIMIT_OPTION_COUNT" &&
+    Number.isInteger(count) &&
+    Number(count) >= 1 &&
+    Number(count) <= 1000
+  );
+}
+
 /**
  * Checks one agent query; `rules` are the agent's tables and hidden columns there. `wholeServer`: the connection
  * reads every database of its server (see `WHOLE_SERVER_BLOCKED_RELATIONS`).
@@ -227,7 +351,7 @@ function walk(
 export async function guardSql(
   text: string,
   rules: SqlRules,
-  options: { wholeServer?: boolean } = {},
+  options: { wholeServer?: boolean; internalViews?: readonly string[] } = {},
 ): Promise<GuardResult> {
   const sqlText = text.trim();
   if (!sqlText) return { ok: false, reason: "The query is empty." };
@@ -298,6 +422,12 @@ export async function guardSql(
       columnRefs.push(svalsOf(fields));
     }
   });
+  if (options.internalViews && (kind !== "select" || !internalSelectAllowed(top, options.internalViews)))
+    return {
+      ok: false,
+      reason:
+        "This internal database profile permits a simple SELECT of named columns from one approved view, basic filters/order and a literal LIMIT up to 1000; other SQL is unavailable.",
+    };
   if (problems[0]) return { ok: false, reason: problems[0] };
   if (crossDatabase)
     return {

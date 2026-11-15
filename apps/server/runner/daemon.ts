@@ -111,6 +111,8 @@ import { cachedExecutors, EXECUTORS_TTL_MS, type ExecutorRun } from "./executors
 import { systemGitCache } from "./git";
 import type { HandlerContext, RequestObserver, RequestOutcome } from "./handlers";
 import { Holds } from "./holds";
+import { hostAcpVerified, readHostAcpOptIn, removeHostAcpOptIn } from "./host-acp-optin";
+import { HostMcpManager } from "./host-mcp";
 import { IphoneSetup, type IphoneSetupOptions } from "./iphone-setup";
 import { currentProcess, isCompiled, selfCommand } from "./launch";
 import { tailLines } from "./logfile";
@@ -132,6 +134,7 @@ import {
 } from "./network-state";
 import { type CachedLogo, logoDataUrl, readCachedLogo, removeCachedLogo, syncOrgLogo } from "./org-logo";
 import { type DeviceGrant, devicePair, type FetchFn, LINK_CODE, PairingError, uniqueWorkspace } from "./pairing";
+import { createPaperclipGateway } from "./paperclip-gateway";
 import { agentId8, agentWorkspace } from "./paths";
 import { iphonesWifiFileOf, PhoneManager, type PhoneManagerOptions } from "./phones";
 import { agentSecrets, dropStoredSiteSecrets, secretValue } from "./secrets";
@@ -241,6 +244,8 @@ export function configFromGrant(
   const same = prev?.machineId === grant.machineId && prev?.server === input.server;
   return {
     ...(prev?.mode ? { mode: prev.mode } : {}),
+    ...(same && prev?.orgId && prev.orgId === grant.org.id && prev.hostMcp ? { hostMcp: prev.hostMcp } : {}),
+    ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
     ...(prev?.networkMark ? { networkMark: prev.networkMark } : {}),
@@ -328,6 +333,7 @@ interface Session {
   accountBrains: AccountBrains | null;
   codexApp: CodexAppServers;
   mcp: McpBridge;
+  hostMcp: HostMcpManager;
   browser: BrowserManager;
   /** Desktop and terminal streams (ADR 0058): they end with the session. */
   streams: DataSockets;
@@ -404,6 +410,8 @@ const taskWhat = (job: Pick<ControlJob, "summary" | "said">): Record<string, str
   job.said?.executor ? { executor: job.said.executor } : { what: job.summary };
 
 export class RunnerDaemon implements RequestObserver {
+  /** Fixed at startup: config changes cannot enable host auth while phone discovery is still running. */
+  private phonesDisabledAtStart = false;
   private stored: StoredConfig | null = null;
   private config: RunnerConfig | null = null;
   /** The config text last read or written (the watcher skips our own writes). */
@@ -500,6 +508,7 @@ export class RunnerDaemon implements RequestObserver {
   private fixer: XcodeFixer | null = null;
 
   constructor(private readonly opts: DaemonOptions) {
+    this.phonesDisabledAtStart = opts.phones === false;
     this.uidNetworks = new AgentNetworks({}, readNetworkPins(opts.home));
     this.networkDrain = new NetworkDrain(readNetworkTransitions(opts.home));
     this.activity = new ActivityLog(opts.home);
@@ -531,6 +540,18 @@ export class RunnerDaemon implements RequestObserver {
     this.accountUsers = accountUsers;
     this.accounts = new AccountManager({
       root: lent?.root ?? path.join(opts.home, "accounts"),
+      hostAccount: () => {
+        const opted = this.hostAcpOptIn();
+        if (!opted) return null;
+        // Opt-in alone is not login: the local owner must run a real no-tools prompt probe.
+        const verified = hostAcpVerified(opted) && !!this.executors().antigravity;
+        return { id: opted.id, kind: "antigravity", provider: "host-macos", loggedIn: verified, shared: true };
+      },
+      removeHostAccount: (id) => {
+        const binding = this.hostAcpBinding();
+        const opted = binding && readHostAcpOptIn(opts.home, binding);
+        return !!(binding && opted?.id === id && removeHostAcpOptIn(opts.home, binding));
+      },
       ...(lent ? { lending: { chown: lent.chown } } : {}),
       ...(lent?.authEgress ? { authEgress: lent.authEgress } : {}),
       ...(accountUsers
@@ -730,6 +751,7 @@ export class RunnerDaemon implements RequestObserver {
     } catch (err) {
       this.opts.log(`config.json can't be read: ${err instanceof Error ? err.message : String(err)}`);
     }
+    this.phonesDisabledAtStart ||= stored?.phonesDisabled === true;
     this.applyStored(stored, null, true);
     if (this.accountUsers) {
       this.accountUsers.sweep();
@@ -748,6 +770,22 @@ export class RunnerDaemon implements RequestObserver {
     const browsers = setInterval(() => this.browsersChanged(), BROWSER_STATE_POLL_MS);
     browsers.unref?.();
     this.timers.push(browsers);
+    // Local consent may be revoked while connected. Each turn rechecks the marker independently;
+    // this poll also tells the server promptly without restarting the runner.
+    if (this.phonesDisabledAtStart) {
+      let lastHost = JSON.stringify(this.accounts.hostAccountStatus());
+      const host = setInterval(() => {
+        const current = JSON.stringify(this.accounts.hostAccountStatus());
+        if (current !== lastHost) {
+          lastHost = current;
+          this.executorsChanged();
+          this.accounts.invalidate();
+          void this.accounts.refresh(true).catch(() => undefined);
+        }
+      }, 5000);
+      host.unref?.();
+      this.timers.push(host);
+    }
     // A CLI installed while the runner stays up: with no app asking for the status, nothing else looks again.
     const clis = setInterval(() => this.executors(), EXECUTORS_TTL_MS);
     clis.unref?.();
@@ -1434,7 +1472,7 @@ export class RunnerDaemon implements RequestObserver {
           onChange: (toolchains) => this.send({ type: "toolchains.changed", toolchains }),
         });
     // Phones are reached as the person (adb's key, the Mac's pairing with the iPhone): a system-mode runner has none.
-    if (!this.phones && config.mode !== "system" && this.opts.phones !== false) {
+    if (!this.phones && config.mode !== "system" && !this.phonesDisabledAtStart) {
       this.phones = new PhoneManager({
         log,
         onChange: (phones) => {
@@ -1447,8 +1485,28 @@ export class RunnerDaemon implements RequestObserver {
       });
       this.phones.start();
     }
+    const hostMcp = new HostMcpManager({
+      home,
+      machineId: config.machineId,
+      orgId: config.orgId,
+      phonesDisabled: config.phonesDisabled,
+      systemMode: config.mode === "system",
+      config: config.hostMcp,
+    });
+    const paperclip =
+      config.orgId && config.machineId && config.mode !== "system"
+        ? createPaperclipGateway({
+            runnerHome: home,
+            workspaceReal,
+            orgId: config.orgId,
+            machineId: config.machineId,
+            access: () => this.access(),
+          })
+        : undefined;
     const context: HandlerContext = {
+      hostMcp,
       workspaceReal,
+      ...(paperclip ? { paperclip } : {}),
       get exec() {
         return daemon.access().tools.commands;
       },
@@ -1546,6 +1604,7 @@ export class RunnerDaemon implements RequestObserver {
       onState: (state) => {
         // Offline: frames have nowhere to go; the server starts the live view again when it is back.
         if (state !== "online") {
+          paperclip?.reset();
           this.observeEgress = false;
           browser.stopStreams();
           views.closeAll();
@@ -1598,6 +1657,7 @@ export class RunnerDaemon implements RequestObserver {
       accountBrains,
       codexApp,
       mcp,
+      hostMcp,
       browser,
       streams,
       desktopUse,
@@ -1831,6 +1891,7 @@ export class RunnerDaemon implements RequestObserver {
     this.egressGeneration++;
     this.egress.reset();
     s.connection.stop();
+    await s.hostMcp.close();
     s.streams.closeAll();
     s.desktopUse.stopAll();
     await s.supervisor?.close();
@@ -1910,6 +1971,25 @@ export class RunnerDaemon implements RequestObserver {
     };
   }
 
+  /** Host auth is only available to this paired single-user, phone-disabled runner. */
+  private hostAcpBinding() {
+    const c = this.config;
+    if (!c?.orgId || !this.phonesDisabledAtStart) return null;
+    return {
+      server: c.server,
+      orgId: c.orgId,
+      machineId: c.machineId,
+      mode: c.mode ?? "user",
+      platform: process.platform,
+      phones: false,
+    } as const;
+  }
+
+  private hostAcpOptIn() {
+    const binding = this.hostAcpBinding();
+    return binding ? readHostAcpOptIn(this.opts.home, binding) : null;
+  }
+
   /** The computer's own sign-ins' usage, when anything is known (`hello`, `accounts.changed`). */
   private ownUsage(): Pick<RunnerInfo, "ownUsage"> {
     const own = this.accounts.ownUsage();
@@ -1922,14 +2002,18 @@ export class RunnerDaemon implements RequestObserver {
     const found = this.executors();
     if (!this.executorsKnown()) return undefined;
     // Claude Code installed or logged in since the last look: the app shows it.
-    const seen = JSON.stringify(found);
+    const visible =
+      this.hostAcpOptIn() && found.antigravity
+        ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }
+        : found;
+    const seen = JSON.stringify(visible);
     if (seen !== this.lastExecutors) {
       this.lastExecutors = seen;
       this.queueStatus();
     }
     // Not filtered by the tools turned on: those reach the server on every change (`access.changed`),
     // while `hello` only goes out on connect, so a tool turned on later looked "not installed".
-    return found;
+    return visible;
   }
 
   /**
@@ -1939,7 +2023,11 @@ export class RunnerDaemon implements RequestObserver {
   private executorsChanged() {
     this.queueStatus();
     if (!this.executorsKnown()) return;
-    const executors = this.executors();
+    const found = this.executors();
+    const executors =
+      this.hostAcpOptIn() && found.antigravity
+        ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }
+        : found;
     const seen = JSON.stringify(executors);
     if (seen !== this.lastExecutors && this.send({ type: "executors.changed", executors })) this.lastExecutors = seen;
   }

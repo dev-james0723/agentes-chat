@@ -133,13 +133,28 @@ export async function mcpSessionOver(transport: Transport): Promise<McpSession> 
   };
 }
 
-export const connectOverHttp: McpConnect = (connection, headers) =>
-  mcpSessionOver(
+/** A fixed-header credential never follows redirects or travels to a different endpoint. */
+export function fixedEndpointMcpFetch(endpoint: string, base: FetchLike = fetch): FetchLike {
+  return async (url, init) => {
+    if (String(url) !== endpoint) throw new TypeError("MCP endpoint changed");
+    return base(url, { ...init, redirect: "error" });
+  };
+}
+
+export const connectOverHttp: McpConnect = (connection, headers) => {
+  const preset = presetForServer(connection.serverUrl);
+  const guarded = outboundFetch({ ownRedirects: true });
+  const http =
+    preset?.keyHeader && connection.serverUrl === preset.serverUrl
+      ? fixedEndpointMcpFetch(connection.serverUrl, outboundFetch())
+      : guarded;
+  return mcpSessionOver(
     new StreamableHTTPClientTransport(new URL(connection.serverUrl), {
       requestInit: { headers },
-      fetch: tolerantMcpFetch(outboundFetch({ ownRedirects: true })),
+      fetch: tolerantMcpFetch(http),
     }),
   );
+};
 
 const JSONRPC_MEMBERS = ["jsonrpc", "id", "method", "params", "result", "error"];
 
@@ -343,7 +358,7 @@ export function createConnectorToolSource(
    */
   async function customToolsOf(connection: ConnectorConnection): Promise<ToolDefinition[]> {
     // A sign-in that stopped working (a Composio account too) has no tools until it is reconnected.
-    if (connection.status === "needs_reconnect") return [];
+    if (connection.status === "needs_reconnect" || connection.authType === "machine_mcp") return [];
     let classified = await classifiedTools(deps.db, connection.id);
     if (classified.length === 0) return [];
     const before = reclassified;

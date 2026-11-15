@@ -1189,6 +1189,9 @@ function runCli(command: string[], args: string[], env: NodeJS.ProcessEnv, timeo
 // ── The manager ──────────────────────────────────────────────────────────────
 
 export interface AccountManagerOptions {
+  /** A separately consented host sign-in. Never owns or signs out the OS account. */
+  hostAccount?: () => RunnerAccountInfo | null;
+  removeHostAccount?: (id: string) => boolean;
   /** `<runner home>/accounts`. */
   root: string;
   /** Tests: the clock. */
@@ -2324,7 +2327,21 @@ export class AccountManager {
         found.push({ kind, id: e.name });
       }
     }
-    return Promise.all(found.slice(0, MAX_MACHINE_ACCOUNTS).map((a) => this.lookUp(a.kind, a.id)));
+    const managed = await Promise.all(found.slice(0, MAX_MACHINE_ACCOUNTS).map((a) => this.lookUp(a.kind, a.id)));
+    const host = this.opts.hostAccount?.();
+    // An id collision is never resolved by silently replacing a managed account.
+    if (host && !managed.some((a) => a.id === host.id) && managed.length < MAX_MACHINE_ACCOUNTS) managed.push(host);
+    return managed;
+  }
+
+  /** The local opt-in's account, never supplied by a remote request. */
+  hostAccountStatus(): RunnerAccountInfo | null {
+    return this.opts.hostAccount?.() ?? null;
+  }
+
+  hostAccountId(): string | null {
+    const host = this.hostAccountStatus();
+    return host?.loggedIn === true ? host.id : null;
   }
 
   /** Every account on this machine with its status and usage (cached for `ACCOUNTS_TTL_MS`). */
@@ -2383,6 +2400,16 @@ export class AccountManager {
   async remove(kind: AccountKind, id: string): Promise<boolean> {
     if (!isAccountKind(kind)) throw new RunnerError("bad_request", "Unknown account kind");
     if (!isAccountId(id)) throw new RunnerError("bad_request", "Invalid account id");
+    // This only removes our local consent marker; never invoke agy logout on the host identity.
+    const host = this.opts.hostAccount?.();
+    if (kind === "antigravity" && host?.id === id) {
+      const removed = this.opts.removeHostAccount?.(id) === true;
+      if (removed) {
+        if (this.cache) this.cache = { ...this.cache, value: this.cache.value.filter((a) => a.id !== id) };
+        this.changed();
+      }
+      return removed;
+    }
     const login = this.logins.get(id);
     if (login?.state === "waiting") return this.cancel(id);
     const dir = this.dirOf(kind, id);

@@ -479,7 +479,7 @@ describe("only an installation made from an install started here links (ADR 0156
 });
 
 describe("the app's installation is the workspace's GitHub (ADR 0156)", () => {
-  test("a first installation without a GitHub connection is one: every agent's, its accounts as the account", async () => {
+  test("a first installation creates a GitHub connection without automatic agent access", async () => {
     const w = await world();
     await w.install(w.ana, w.orgA.id, 1);
     const [row] = (await w.github(w.orgA.id)).live;
@@ -489,8 +489,7 @@ describe("the app's installation is the workspace's GitHub (ADR 0156)", () => {
       secretCiphertext: null,
       label: "GitHub",
     });
-    const agents = await w.db.select().from(schema.agents).where(eq(schema.agents.orgId, w.orgA.id));
-    expect((await w.grantsOf(row?.id ?? "")).map((g) => g.scope)).toEqual(agents.map(() => "connector:*"));
+    expect(await w.grantsOf(row?.id ?? "")).toEqual([]);
 
     // A second account names both; GitHub stays one connection with the same grants.
     w.gh.visible[`user-${w.ana.id}`] = [1, 3];

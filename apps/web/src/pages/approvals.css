@@ -980,3 +980,11 @@ html:not([data-pointer]) .ap-li:focus-visible {
   font-size: 13.5px;
   color: var(--muted);
 }
+
+/* Full private draft: safe text with no line clamp, hidden suffix, or Markdown side effects. */
+.ap-publication-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: none;
+  margin: 0;
+}

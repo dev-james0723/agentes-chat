@@ -63,17 +63,25 @@ export function serverBody(t: TFunction, body: string, meta: Meta, locale?: stri
     return interrupted.text ? `${interrupted.text}\n\n${note}` : note;
   }
   // A computer brain stopped mid-turn after its tools ran: what it wrote, then what its tools did, in words.
-  const cut = m.brainInterrupted as { brain?: unknown; text?: unknown; tools?: unknown } | undefined;
+  const cut = m.brainInterrupted as
+    | { brain?: unknown; text?: unknown; tools?: unknown; outcomeUnknown?: unknown }
+    | undefined;
   if (cut && typeof cut === "object" && typeof cut.text === "string") {
     const brain = brainName(typeof cut.brain === "string" ? cut.brain : null);
     const names = Array.isArray(cut.tools) ? cut.tools.filter((x): x is string => typeof x === "string") : [];
     const done = names.map((tool) => lowerFirst(stepLabel(t, { ...toolActivity(tool), tool }), locale));
-    const tools = joinNames([...new Set(done)], t);
-    const note = `_${t("chat.body.brain_interrupted", {
-      brain,
-      tools,
-      defaultValue: `${brain} stopped before finishing. Already done, not repeated: ${tools}.`,
-    })}_`;
+    const tools = joinNames([...new Set(cut.outcomeUnknown === true ? names : done)], t);
+    const note = `_${t(
+      cut.outcomeUnknown === true ? "chat.body.brain_interrupted_unknown" : "chat.body.brain_interrupted",
+      {
+        brain,
+        tools,
+        defaultValue:
+          cut.outcomeUnknown === true
+            ? `${brain} stopped before finishing. Tool outcome unknown; reconcile before retrying: ${tools}.`
+            : `${brain} stopped before finishing. Already done, not repeated: ${tools}.`,
+      },
+    )}_`;
     return cut.text ? `${cut.text}\n\n${note}` : note;
   }
   const code = typeof m.bodyCode === "string" ? m.bodyCode : null;

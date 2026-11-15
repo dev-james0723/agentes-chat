@@ -108,6 +108,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new ConfigError(["WEB_PUSH_VAPID_PUBLIC_KEY isn't the public half of WEB_PUSH_VAPID_PRIVATE_KEY"]);
   }
   const site = new URL(config.PUBLIC_URL);
+  if (config.LOCAL_HTTP_LOGIN && (site.protocol !== "https:" || OFFICIAL_HOSTS.has(site.hostname))) {
+    throw new ConfigError(["LOCAL_HTTP_LOGIN is only available on self-hosted HTTPS instances"]);
+  }
   if (OFFICIAL_HOSTS.has(site.hostname)) {
     config.TERMS_URL ??= `${site.origin}/terms`;
     config.PRIVACY_URL ??= `${site.origin}/privacy`;

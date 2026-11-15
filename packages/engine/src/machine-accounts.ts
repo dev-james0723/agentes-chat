@@ -14,6 +14,8 @@ import {
   CURSOR_PROTOCOL,
   claudeLoginMethodsOf,
   GROK_PROTOCOL,
+  HOST_ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROVIDER,
   isAccountId,
   isAccountKind,
   isAccountLoginFailure,
@@ -700,8 +702,6 @@ export async function syncMachineAccounts(
   machineId: string,
   accounts: RunnerAccountInfo[],
 ): Promise<MachineAccountRef[]> {
-  const reported = new Map<string, RunnerAccountInfo>();
-  for (const a of accounts) if (isAccountId(a.id) && isAccountKind(a.kind)) reported.set(a.id, a);
   const now = new Date();
   const out = await deps.db.transaction(async (tx) => {
     const [machine] = await tx
@@ -713,13 +713,73 @@ export async function syncMachineAccounts(
       .select()
       .from(machineAccounts)
       .where(and(eq(machineAccounts.orgId, orgId), eq(machineAccounts.machineId, machineId)));
+    // Host authentication is local opt-in only. It is never accepted from an old runner, a
+    // workspace machine, a system runner, or a machine lacking the explicit capability.
+    // An existing host account cannot silently change owner or be relabelled as another provider.
+    const reported = new Map<string, RunnerAccountInfo>();
+    for (const a of accounts) {
+      if (!isAccountId(a.id) || !isAccountKind(a.kind)) continue;
+      const prior = existing.find((r) => r.id === a.id);
+      if (a.provider === HOST_ANTIGRAVITY_PROVIDER || prior?.provider === HOST_ANTIGRAVITY_PROVIDER) {
+        if (
+          a.provider !== HOST_ANTIGRAVITY_PROVIDER ||
+          a.kind !== "antigravity" ||
+          a.shared !== true ||
+          machine.protocol < HOST_ANTIGRAVITY_PROTOCOL ||
+          machine.os !== "darwin" ||
+          !machine.pairedByUserId ||
+          machine.executors?.mode === "system" ||
+          machine.executors?.antigravity?.hostAuth !== true ||
+          existing.some((r) => r.provider === HOST_ANTIGRAVITY_PROVIDER && r.id !== a.id) ||
+          [...reported.values()].some((r) => r.provider === HOST_ANTIGRAVITY_PROVIDER && r.id !== a.id) ||
+          (prior !== undefined &&
+            (prior.provider !== HOST_ANTIGRAVITY_PROVIDER || prior.createdBy !== machine.pairedByUserId))
+        )
+          continue;
+      }
+      reported.set(a.id, a);
+    }
     let changed = false;
     const released: string[] = [];
     const remove: MachineAccountRef[] = [];
+    // Older installations acquired `everyone` when the serving policy was added.
+    // Host opt-ins remain owner-only, including when a runner is offline.
+    const sharedHosts = existing.filter((r) => r.provider === HOST_ANTIGRAVITY_PROVIDER && r.serves !== "owner");
+    if (sharedHosts.length) {
+      await tx
+        .update(machineAccounts)
+        .set({ serves: "owner", updatedAt: now })
+        .where(
+          inArray(
+            machineAccounts.id,
+            sharedHosts.map((r) => r.id),
+          ),
+        );
+      changed = true;
+    }
+    // Keep the owner binding even while the runner stops reporting its opt-in or loses capability.
+    // Otherwise a later owner change could silently adopt the very same account id. An explicit
+    // account removal uses the normal tombstone acknowledgement to forget the binding.
+    const hostUnavailable = existing.filter(
+      (r) =>
+        r.provider === HOST_ANTIGRAVITY_PROVIDER &&
+        r.status !== "removing" &&
+        (!reported.has(r.id) || r.createdBy !== machine.pairedByUserId),
+    );
+    if (hostUnavailable.length) {
+      const ids = hostUnavailable.map((r) => r.id);
+      released.push(...(await releaseAgents(tx, orgId, ids, now)));
+      await tx
+        .update(machineAccounts)
+        .set({ status: "signed_out", updatedAt: now })
+        .where(inArray(machineAccounts.id, ids));
+      changed ||= hostUnavailable.some((r) => r.status !== "signed_out");
+    }
     if (accounts.length < MAX_MACHINE_ACCOUNTS) {
       const gone = existing.filter(
         (r) =>
           !reported.has(r.id) &&
+          !(r.provider === HOST_ANTIGRAVITY_PROVIDER && r.status !== "removing") &&
           !(r.status === "signing_in" && now.getTime() - r.createdAt.getTime() < SIGNING_IN_KEEP_MS),
       );
       if (gone.length > 0) {
@@ -759,7 +819,8 @@ export async function syncMachineAccounts(
         const provider =
           isPlanId(a.provider) ||
           (a.kind === "cursor" && a.provider === CURSOR_KEY_PROVIDER) ||
-          (a.kind === "opencode" && a.provider === OPENCODE_KEY_PROVIDER)
+          (a.kind === "opencode" && a.provider === OPENCODE_KEY_PROVIDER) ||
+          (a.kind === "antigravity" && a.provider === HOST_ANTIGRAVITY_PROVIDER)
             ? a.provider
             : null;
         const candidate = { orgId, machineId, id: a.id, kind: a.kind, createdBy: owner, provider };
@@ -779,12 +840,15 @@ export async function syncMachineAccounts(
             ...reportedState(a),
             usage: a.usage ?? null,
             shared: a.shared === true,
+            ...(provider === HOST_ANTIGRAVITY_PROVIDER ? { serves: "owner" as const } : {}),
           })
           .onConflictDoNothing()
           .returning({ id: machineAccounts.id });
         changed ||= inserted.length > 0;
         continue;
       }
+      // A host opt-in is bound to one pairing; it never moves to a new machine.
+      if (a.provider === HOST_ANTIGRAVITY_PROVIDER || elsewhere.provider === HOST_ANTIGRAVITY_PROVIDER) continue;
       // Taken: by a machine that was disconnected (this computer before it was paired again), it comes here.
       const [moved] = await tx
         .update(machineAccounts)

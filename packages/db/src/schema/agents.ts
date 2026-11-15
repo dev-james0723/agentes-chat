@@ -31,12 +31,18 @@ import { organizationMembers, organizations } from "./tenancy";
 export interface StoredEndpoint {
   style: "openai" | "anthropic";
   baseURL: string;
+  /** Internal generation binding checks to this credential configuration and its latest check attempt. */
+  verification?: { configurationId: string; attemptId?: string; completedAttemptId?: string };
   models: {
     id: string;
     label?: string;
     prices?: { input: number; output: number; cacheRead: number; cacheWrite: number };
     /** The last test call: answered and called a tool, answered without calling it, or failed. */
     check?: "ok" | "no_tools" | "failed";
+    /** Admin opt-in to schema-constrained calls; absent or false keeps routing and summaries disabled. */
+    structuredOutput?: boolean;
+    /** Server-owned result of the nested JSON schema test; an opt-in alone never enables the capability. */
+    structuredOutputCheck?: "ok" | "failed";
   }[];
 }
 

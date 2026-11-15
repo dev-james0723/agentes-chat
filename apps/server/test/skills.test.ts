@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { zip } from "@agenteschat/engine";
+import { type SkillDetail, zip } from "@agenteschat/engine";
 import { browser, createTestServer, joinByInvitation, seedOrg, signUp, type TestServer } from "./harness";
 
 let t: TestServer | undefined;
@@ -9,6 +9,162 @@ afterEach(async () => {
 });
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: Use for ${name}.\n---\n# ${name}`;
+
+test("ZIP createOnly is parsed and cannot overwrite an existing skill", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const path = `/api/app/organizations/${orgId}/skills/import`;
+  const first = await b(path, {
+    json: {
+      zipBase64: Buffer.from(zip([["SKILL.md", skill("create-only-route")]])).toString("base64"),
+      createOnly: true,
+    },
+  });
+  expect(first.status).toBe(201);
+  const created = (await first.json()) as { id: string; version: number; body: string };
+  expect(created.version).toBe(1);
+  const changed = `${skill("create-only-route")}\nThis must not overwrite the original.`;
+  const duplicate = await b(path, {
+    json: { zipBase64: Buffer.from(zip([["SKILL.md", changed]])).toString("base64"), createOnly: true },
+  });
+  expect(duplicate.status).toBe(409);
+  const current = await b(`/api/app/organizations/${orgId}/skills/${created.id}`);
+  expect(current.status).toBe(200);
+  expect(await current.json()).toMatchObject({ id: created.id, version: 1, body: created.body });
+});
+
+test("body and description edits keep supporting files across versions; a new ZIP replaces them", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const at = (path: string) => `/api/app/organizations/${orgId}/skills${path}`;
+  const guide = "# Guide\nRead the supporting JSON before editing.\n";
+  const options = '{"greeting":"Olá","enabled":true}\n';
+  const image = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 255]);
+  const script = "#!/bin/sh\nprintf 'fixture only\\n'\n";
+  const markdown = `---
+name: resource-patch
+description: Use for resource-patch.
+fixture: resource-preservation
+---
+# resource-patch
+Read docs/guide.md.`;
+  const imported = await b(at("/import"), {
+    json: {
+      zipBase64: Buffer.from(
+        zip([
+          ["SKILL.md", markdown],
+          ["docs/guide.md", guide],
+          ["data/options.json", options],
+          ["assets/pixel.png", image],
+          ["scripts/fixture.sh", script],
+        ]),
+      ).toString("base64"),
+    },
+  });
+  expect(imported.status).toBe(201);
+  const original = (await imported.json()) as SkillDetail;
+  const expectedFiles: SkillDetail["files"] = [
+    { path: "assets/pixel.png", size: image.byteLength, mime: "image/png", status: "stored" },
+    { path: "data/options.json", size: Buffer.byteLength(options), mime: "application/json", status: "stored" },
+    { path: "docs/guide.md", size: Buffer.byteLength(guide), mime: "text/markdown", status: "stored" },
+    { path: "scripts/fixture.sh", size: Buffer.byteLength(script), mime: "text/x-shellscript", status: "script" },
+  ];
+  expect(original).toMatchObject({ version: 1, metadata: { fixture: "resource-preservation" } });
+  expect(original.files).toEqual(expectedFiles);
+  const readFile = async (path: string, version?: number) => {
+    const response = await b(
+      at(`/${original.id}/files/${encodeURIComponent(path)}${version === undefined ? "" : `?version=${version}`}`),
+    );
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const expectReadableFiles = async (version: number) => {
+    for (const [path, mime, content] of [
+      ["docs/guide.md", "text/markdown", guide],
+      ["data/options.json", "application/json", options],
+    ] as const) {
+      expect(await readFile(path)).toEqual({ path, version, mime, content });
+      expect(await readFile(path, 1)).toEqual({ path, version: 1, mime, content });
+    }
+  };
+  await expectReadableFiles(1);
+
+  const editedBody = "# Edited resource-patch\nKeep using docs/guide.md and data/options.json.";
+  const bodyEdit = await b(at(`/${original.id}`), { method: "PATCH", json: { body: editedBody } });
+  expect(bodyEdit.status).toBe(200);
+  const bodyVersion = (await bodyEdit.json()) as SkillDetail;
+  await expectReadableFiles(2);
+  expect(bodyVersion).toMatchObject({
+    id: original.id,
+    version: 2,
+    body: editedBody,
+    description: original.description,
+    metadata: original.metadata,
+  });
+  expect(bodyVersion.files).toEqual(expectedFiles);
+
+  const editedDescription = "Use the edited resource fixture.";
+  const descriptionEdit = await b(at(`/${original.id}`), {
+    method: "PATCH",
+    json: { description: editedDescription },
+  });
+  expect(descriptionEdit.status).toBe(200);
+  const descriptionVersion = (await descriptionEdit.json()) as SkillDetail;
+  await expectReadableFiles(3);
+  expect(descriptionVersion).toMatchObject({
+    version: 3,
+    body: editedBody,
+    description: editedDescription,
+    metadata: original.metadata,
+  });
+  expect(descriptionVersion.files).toEqual(expectedFiles);
+
+  const defaultEdit = await b(at(`/${original.id}`), { method: "PATCH", json: { defaultForNewAgents: true } });
+  expect(defaultEdit.status).toBe(200);
+  expect(await defaultEdit.json()).toMatchObject({ version: 3, defaultForNewAgents: true, files: expectedFiles });
+  const current = await b(at(`/${original.id}`));
+  expect(current.status).toBe(200);
+  expect(await current.json()).toMatchObject({ version: 3, body: editedBody, files: expectedFiles });
+  await expectReadableFiles(3);
+  // These remain listed and kept, but the text-file endpoint never exposes binaries or scripts.
+  for (const [path, status] of [
+    ["assets/pixel.png", 400],
+    ["scripts/fixture.sh", 404],
+  ] as const) {
+    expect((await b(at(`/${original.id}/files/${encodeURIComponent(path)}`))).status).toBe(status);
+  }
+
+  const replacementText = "Only the newly uploaded resource.";
+  const replacement = await b(at("/import"), {
+    json: {
+      zipBase64: Buffer.from(
+        zip([
+          ["SKILL.md", skill("resource-patch")],
+          ["replacement.md", replacementText],
+        ]),
+      ).toString("base64"),
+    },
+  });
+  expect(replacement.status).toBe(201);
+  const replaced = (await replacement.json()) as SkillDetail;
+  expect(replaced).toMatchObject({ id: original.id, version: 4 });
+  expect(replaced.files).toEqual([
+    { path: "replacement.md", size: Buffer.byteLength(replacementText), mime: "text/markdown", status: "stored" },
+  ]);
+  expect(await readFile("replacement.md")).toEqual({
+    path: "replacement.md",
+    version: 4,
+    mime: "text/markdown",
+    content: replacementText,
+  });
+  expect((await b(at(`/${original.id}/files/${encodeURIComponent("docs/guide.md")}`))).status).toBe(404);
+  expect(await readFile("docs/guide.md", 3)).toMatchObject({ version: 3, content: guide });
+  expect(await readFile("data/options.json", 1)).toMatchObject({ version: 1, content: options });
+});
 
 /**
  * Fake GitHub: acme/skills' archive (two skills, deflated as codeload sends them) through codeload's redirect.

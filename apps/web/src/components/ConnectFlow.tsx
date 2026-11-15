@@ -79,8 +79,8 @@ import { useToast } from "@/lib/toast";
 import { reviewNote, ToolLevelsView, ToolReview, type ToolReviewState } from "./ToolReview";
 
 /**
- * Connecting a service, in one dialog: connect (OAuth or an API key), then a short confirmation ("done": every agent
- * can use it, so many actions ask) that ends the flow. "Ajustar" there, and the rows of "Conectados", open the two
+ * Connecting a service, in one dialog: connect (OAuth or an API key), then a confirmation that access still needs
+ * to be granted explicitly. "Ajustar" there, and the rows of "Conectados", open the two
  * steps of detail: what it does (each tool reads, writes or always asks for approval; off = never offered) and who can
  * use it (one level per agent).
  */
@@ -267,7 +267,6 @@ function ConnectStep({
   const byAddress = fixed !== null || def === null || def.kind === "remote_mcp";
   const askUrl = fixed === null && def === null;
   const viaComposio = item ? item.viaComposio : def?.via === "composio";
-  const canOAuth = byAddress || Boolean(def?.oauthConfigured && def.auth.includes("oauth"));
   // A one-click server the catalog lists without a key (Intercom on the Cloud) offers none, unless it answers that it
   // needs one; a service through Composio signs in there.
   // An account by address follows its catalog entry's rule too, so Reconectar doesn't bring the key back.
@@ -275,6 +274,7 @@ function ConnectStep({
     fixed === null
       ? def
       : (catalog.data?.connectors.find((c) => c.kind === "remote_mcp" && sameServer(c.serverUrl, fixed)) ?? null);
+  const canOAuth = listed ? Boolean(listed.oauthConfigured && listed.auth.includes("oauth")) : byAddress;
   const canKey = !viaComposio && (listed === null || listed.auth.includes("api_key") || needsKey !== null);
   const serverUrl = fixed ?? (def?.kind === "remote_mcp" ? def.serverUrl : url.trim());
   const appOffered =
@@ -477,7 +477,7 @@ function ConnectStep({
                 ? t(unchecked ? "connectFlow.replaceUnchecked" : "connectFlow.replace")
                 : again && unchecked
                   ? t("connectFlow.newAccountUnchecked")
-                  : t("connectFlow.allCanUse")
+                  : t("connectFlow.accessRequired")
         }
       >
         <Button onClick={onClose}>{t("common.cancel")}</Button>
@@ -738,6 +738,23 @@ function ToolsStep({
     );
   }
 
+  if (server.authType === "machine_mcp") {
+    return (
+      <>
+        <DialogBody className="cflow__body">
+          <p className="muted cflow__text">{t("toolReview.lead", { count: tools.length, name })}</p>
+          <ToolLevelsView tools={tools} />
+        </DialogBody>
+        <DialogFooter bar>
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" onClick={() => next()}>
+            {t("connectFlow.next")}
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
   const saveAll = async () => {
     const wanted = label.trim();
     let named = server.label;
@@ -837,7 +854,7 @@ function WhoStep({ item, onBack, onClose }: { item: ConnectedItem; onBack: () =>
   const current = (agentId: string) => levelIn(access.byAgent.get(agentId), resourceId);
   const [who, setWho] = useState<Record<string, LevelState> | null>(null);
   const loaded = agents.isSuccess && !access.loading && !access.fetching;
-  // Starts once from each agent's level, read fresh: a connection made a moment ago is already every agent's.
+  // Starts from fresh explicit grants; new connections start with no agent access.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, when the fresh trees arrive
   useEffect(() => {
     if (loaded && who === null) setWho(Object.fromEntries(list.map((a) => [a.id, current(a.id)])));

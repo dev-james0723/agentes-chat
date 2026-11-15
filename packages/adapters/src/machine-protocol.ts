@@ -1,4 +1,5 @@
 import type { MergeDone } from "./command-policy";
+import { type HostMcpReply, type HostMcpRequest, isHostMcpRequest, isMcpResultMedia } from "./host-mcp-protocol";
 /**
  * The wire protocol between our server and the runner on a connected
  * computer (ADR 0025). JSON text frames over one WebSocket the runner opens
@@ -7,7 +8,14 @@ import type { MergeDone } from "./command-policy";
  */
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
-export const MACHINE_PROTOCOL_VERSION = 63;
+export const MACHINE_PROTOCOL_VERSION = 67;
+/** Owner-registered project proof and a dedicated guarded turn. */
+export const PAPERCLIP_WORKSPACE_PROTOCOL = 66;
+/** MCP list capability and tool-result state for a run suspended by the gateway. */
+export const MCP_RUN_STATE_PROTOCOL = 65;
+/** A locally opted-in, owner-bound macOS Antigravity host account. */
+export const HOST_ANTIGRAVITY_PROTOCOL = 64;
+export const HOST_ANTIGRAVITY_PROVIDER = "host-macos";
 export const MIN_RUNNER_PROTOCOL = 1;
 /** From this protocol on, requests carry `agent` and each agent works in its own folder. */
 export const AGENT_FOLDERS_PROTOCOL = 2;
@@ -1853,12 +1861,16 @@ export interface RunnerExecutorInfo {
   /** Protocol 8, `claude` only: how it is logged in (`claude.ai`, `api_key`…) and the plan (`pro`, `max`, `ultra`…). */
   authMethod?: string;
   plan?: string;
+  /** Observed Claude organization UUID; not an account epoch or spending authorization. */
+  claudeOrgId?: string;
   /**
    * Protocol 36, `cursor`: the models its sign-in lists (`agent models`), and which its plan includes when the CLI
    * says. Protocol 39, `opencode`: the models `opencode models` lists (`provider/model`), `free` on OpenCode's free tier.
    * Protocol 43, `grok`: the models `grok models` lists. Protocol 44, `antigravity`: the models `agy models` lists.
    */
   models?: CursorModelInfo[];
+  /** The local user explicitly opted this single-user Mac into host authentication (protocol 56). */
+  hostAuth?: true;
 }
 
 /** A model Cursor's CLI (`agent models`) or OpenCode's (`opencode models`) lists. */
@@ -1974,6 +1986,100 @@ export const STEER_LIMITS = { messages: 20, text: 100_000 } as const;
  * `brain.event` frames (by `runId`), then `brain.done`, then the request's
  * `result` with the final event (a `done` or an `error`).
  */
+/** Prototype capability: selected only by an owner-registered project mapping. No path can be supplied to attest. */
+export interface PaperclipWorkspaceProof {
+  bindingId: string;
+  orgId: string;
+  machineId: string;
+  ownerId: string;
+  agentId: string;
+  generation: string;
+  runId: string;
+  connectionId: string;
+  nonce: string;
+  expiresAt: number;
+}
+/** Authenticated engine reconstruction of this native run's tool receipts; never model-authored history. */
+export interface HostAcpHistory {
+  runId: string;
+  observations: Array<{
+    seq: number;
+    callId: string;
+    name: string;
+    input: Record<string, unknown>;
+    content: string;
+    isError: boolean;
+    state: "completed" | "unknown";
+    partial: boolean;
+  }>;
+}
+export const HOST_ACP_TOOL_NAMES = [
+  "list_issues",
+  "load_skill",
+  "read_skill_file",
+  "search_wiki",
+  "read_wiki_page",
+  "find_agent",
+  "ask_agent",
+  "tell_agent",
+  "ask_user",
+  "comment_issue",
+  "update_issue",
+  "create_issue",
+  "list_files",
+  "read_file",
+  "write_file",
+  "run_code",
+  "run_skill_script",
+  "browser_open",
+  "browser_back",
+  "browser_tabs",
+  "browser_read",
+  "browser_click",
+  "browser_fill",
+  "browser_select",
+  "browser_check",
+  "browser_press",
+  "browser_scroll",
+  "browser_wait",
+  "browser_ask_person",
+  "browser_close",
+  "browser_profile",
+  "get_my_profile",
+  "create_artifact",
+] as const;
+export function isHostAcpHistory(value: unknown, runId: string): value is HostAcpHistory {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const h = value as HostAcpHistory;
+  if (
+    h.runId !== runId ||
+    !Array.isArray(h.observations) ||
+    h.observations.length > 128 ||
+    JSON.stringify(h).length > 300_000
+  )
+    return false;
+  let last = 0;
+  return h.observations.every((o) => {
+    const valid =
+      !!o &&
+      Number.isInteger(o.seq) &&
+      o.seq > last &&
+      typeof o.callId === "string" &&
+      o.callId.length > 0 &&
+      o.callId.length <= 256 &&
+      (HOST_ACP_TOOL_NAMES as readonly string[]).includes(o.name) &&
+      !!o.input &&
+      typeof o.input === "object" &&
+      !Array.isArray(o.input) &&
+      typeof o.content === "string" &&
+      o.content.length <= 8000 &&
+      typeof o.isError === "boolean" &&
+      typeof o.partial === "boolean" &&
+      (o.state === "completed" || o.state === "unknown");
+    last = o?.seq;
+    return valid;
+  });
+}
 export interface BrainTurnRequest {
   runId: string;
   /**
@@ -1998,6 +2104,7 @@ export interface BrainTurnRequest {
    * tools, space-separated; a kept-alive Codex, which lists them once when its thread opens, starts again when one is new.
    */
   mcp: { token: string; url?: string; tools?: string };
+  hostAcpHistory?: HostAcpHistory;
   /** Keep one process per (agent, session) alive between turns (default true; false for a background turn). Codex: protocol 16. */
   keepAlive?: boolean;
   /** Also load the machine owner's own MCP servers (default false: `--strict-mcp-config`; never in a `plan` turn). */
@@ -2350,6 +2457,9 @@ export interface AgentScope {
 
 /** What the server asks. Paths are always relative to the workspace (the agent's folder when `agent` is set). */
 export type MachineRequest = (
+  | { op: "paperclip.workspace.probe" }
+  | { op: "paperclip.workspace.attest"; proof: PaperclipWorkspaceProof }
+  | ({ op: "paperclip.brain.turn"; paperclipProof: PaperclipWorkspaceProof } & BrainTurnRequest)
   | {
       op: "exec";
       command: string;
@@ -2365,6 +2475,7 @@ export type MachineRequest = (
       /** Protocol 45: Vault keys for this command only (ADR 0144). */
       vault?: ExecVault;
     }
+  | { op: "host_mcp"; request: HostMcpRequest }
   | { op: "read"; path: string; maxBytes: number }
   | { op: "write"; path: string; base64: string }
   | { op: "list"; path: string; depth: number }
@@ -2568,6 +2679,10 @@ export interface BrowserBatchCommand {
 export type MachineOp = MachineRequest["op"];
 
 export const MACHINE_OPS: readonly MachineOp[] = [
+  "host_mcp",
+  "paperclip.workspace.probe",
+  "paperclip.workspace.attest",
+  "paperclip.brain.turn",
   "exec",
   "read",
   "write",
@@ -2631,6 +2746,23 @@ export const MACHINE_OPS: readonly MachineOp[] = [
 
 /** What each op answers with `ok: true`. */
 export interface MachineReplies {
+  host_mcp: HostMcpReply;
+  "paperclip.workspace.probe": { version: 1; connectionId: string };
+  "paperclip.workspace.attest": {
+    bindingId: string;
+    nonce: string;
+    runId: string;
+    generation: string;
+    targetCwd: string;
+    bindingDigest: string;
+    sourceCompanyId: string;
+    sourceProjectId: string;
+    sourceWorkspaceId: string;
+    projectDigest: string;
+    snapshotDigest: string;
+    agentIds: string[];
+  };
+  "paperclip.brain.turn": MachineReplies["brain.turn"];
   exec: {
     exitCode: number;
     stdout: string;
@@ -2908,10 +3040,24 @@ export type ServerFrame =
       text: string;
       /** `MCP_IMAGES_PROTOCOL`: pictures (PNG, JPEG, GIF, WebP) and PDFs the tool returned, base64. */
       images?: { mediaType: string; data: string; name?: string }[];
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      /** The server confirmed this completed result was not shortened. */
+      complete?: true;
+      /** A known result was shortened by the native bridge; never a complete read. */
+      resultTruncated?: boolean;
     }
-  | { type: "mcp.result"; callId: string; ok: false; error: { code: string; message: string } }
+  | {
+      type: "mcp.result";
+      callId: string;
+      ok: false;
+      error: { code: string; message: string };
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    }
   /** Protocol 8: the answer to an `mcp.list`: the tools this run may use (JSON Schemas simplified for the CLIs). */
-  | { type: "mcp.tools"; callId: string; ok: true; tools: McpToolInfo[] }
+  | { type: "mcp.tools"; callId: string; ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
   | { type: "mcp.tools"; callId: string; ok: false; error: { code: string; message: string } }
   /**
    * Protocol 9: the agents of the organization that use this machine (pointed
@@ -2970,6 +3116,8 @@ export type RunnerFrame =
       taskId: string;
       tool: string;
       args: Record<string, unknown>;
+      /** Protocol 65: refuse a completed tool result if the bridge must shorten its text. */
+      requireComplete?: true;
       /** Protocol 8: the server-issued token of the task or run (ADR 0032); without it, the legacy mission path. */
       token?: string;
     }
@@ -3217,11 +3365,21 @@ export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerIn
     if (!isObject(e) || !isString(e.version)) continue;
     const authMethod = word(e.authMethod);
     const plan = word(e.plan);
+    const claudeOrgId =
+      name === "claude" &&
+      e.loggedIn === true &&
+      authMethod === "claude.ai" &&
+      typeof e.claudeOrgId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(e.claudeOrgId)
+        ? e.claudeOrgId.toLowerCase()
+        : undefined;
     out[name] = {
       version: e.version.replace(/\s+/g, " ").trim().slice(0, 80),
+      ...(name === "antigravity" && e.hostAuth === true ? { hostAuth: true as const } : {}),
       ...(typeof e.loggedIn === "boolean" ? { loggedIn: e.loggedIn } : {}),
       ...(authMethod ? { authMethod } : {}),
       ...(plan ? { plan } : {}),
+      ...(claudeOrgId ? { claudeOrgId } : {}),
     };
     const models = name === "claude" || name === "codex" ? [] : parseCursorModels(e.models);
     if (models.length) out[name] = { ...out[name], models } as RunnerExecutorInfo;
@@ -3669,6 +3827,7 @@ export function parseRunnerFrame(raw: string): RunnerFrame | null {
         taskId: f.taskId.slice(0, 64),
         tool: f.tool.slice(0, 64),
         args,
+        ...(f.requireComplete === true ? { requireComplete: true as const } : {}),
         ...(isRunToolToken(f.token) ? { token: f.token } : {}),
       };
     }
@@ -3713,10 +3872,17 @@ export function parseServerFrame(raw: string): ServerFrame | null {
   if (f.type === "request") {
     if (!isString(f.id) || !isString(f.op)) return null;
     if (!MACHINE_OPS.includes(f.op as MachineOp)) return null;
+    if (f.op === "host_mcp" && !isHostMcpRequest(f.request)) return null;
   }
   if ((f.type === "cancel" || f.type === "request") && !isString(f.id)) return null;
   if (f.type === "task.ack" && !isString(f.taskId)) return null;
   if ((f.type === "mcp.result" || f.type === "mcp.tools") && !isString(f.callId)) return null;
+  if (
+    f.type === "mcp.result" &&
+    f.images !== undefined &&
+    (f.ok !== true || !isMcpResultMedia(f.images, MAX_FRAME_BYTES))
+  )
+    return null;
   if (f.type === "mcp.tools" && f.ok === true && !Array.isArray(f.tools)) return null;
   if (f.type === "agents" && !Array.isArray(f.agents)) return null;
   if (f.type === "browser.handoff" && (!isString(f.agentId) || (f.handoff !== null && !isObject(f.handoff)))) {

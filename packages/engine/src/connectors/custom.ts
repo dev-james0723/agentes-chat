@@ -34,7 +34,6 @@ import {
   connectionHeaders,
   freeLabel,
   freeToolPrefix,
-  grantToEveryAgent,
   noteRefusedSignIn,
   OAUTH_STATE_TTL_MS,
   oauthRedirectUri,
@@ -171,7 +170,7 @@ export interface CustomServerView {
   label: string;
   /** The account as the provider names it ("Acme"), when it says; null otherwise. */
   accountLabel: string | null;
-  authType: "oauth" | "api_key";
+  authType: "oauth" | "api_key" | "machine_mcp";
   /** The server's own icon, served by us (`/api/app/connector-icons/…`); null = a monogram. */
   iconUrl: string | null;
   /** A service through Composio (ADR 0107): its page signs in, and its address means nothing to people. */
@@ -258,7 +257,7 @@ function view(c: ConnectorConnection, tools: ToolRow[], whole = true): CustomSer
     serverUrl: whole ? c.serverUrl : serverUrlShown(c.serverUrl),
     label: c.label,
     accountLabel: c.accountLabel,
-    authType: c.authType === "oauth" ? "oauth" : "api_key",
+    authType: c.authType === "machine_mcp" ? "machine_mcp" : c.authType === "oauth" ? "oauth" : "api_key",
     iconUrl: c.icon,
     ...(composioToolkitOf(c.serverUrl) ? { via: "composio" as const } : {}),
     status: c.status === "needs_reconnect" ? "needs_reconnect" : "active",
@@ -392,7 +391,7 @@ export async function reconnectTarget(db: Database, orgId: string, connectionId:
  * another account there is refused (`connector.other_account`), the grants were given for that one. Without it a
  * new account comes in, except when the provider says it is one already connected (its sign-in is refreshed,
  * `same_account`) or the server has no sign-in at all (the one connection it has). Every new account
- * is every agent's (`grantToEveryAgent`). Addresses match as the apps match them
+ * has no agent grants until an administrator explicitly chooses access. Addresses match as the apps match them
  * (`serverKey`). A service through Composio (ADR 0107) keeps Composio's account and no secret; the account it
  * replaces goes away at Composio.
  */
@@ -534,10 +533,9 @@ export async function storeCustomConnection(
             authType: input.authType,
             label,
             account: named,
-            everyAgent: true,
+            everyAgent: false,
           },
         });
-        await grantToEveryAgent(tx, input.orgId, input.actorId, row);
         return { twin: null, row };
       });
       if (!done.row) {
@@ -778,12 +776,17 @@ export async function connectCustomServer(
   };
   if (apiKey) {
     if (apiKey.length < 8) throw new ValidationError("The key looks too short", "connector.key_too_short");
+    if (presetForServer(serverUrl)?.keyHeader && !/^[\x21-\x7e]+$/.test(apiKey)) {
+      throw new ValidationError("The API key contains invalid characters", "connector.key_invalid");
+    }
     // The vendor's terms forbid asking for a token: on the Cloud it signs in only (ADR 0107).
     if (presetForServer(serverUrl)?.cloudOAuthOnly && isAgentesCloud(deps.publicUrl)) {
       throw new ValidationError("This service connects by signing in", "connector.oauth_only");
     }
     return stored("api_key", { apiKey });
   }
+  // Stitch's documented key header is not MCP OAuth or an ADC credential imported from another client.
+  if (presetForServer(serverUrl)?.keyHeader) return { status: "needs_key" };
   const probe = await probeMcpServer(deps, serverUrl);
   if (probe.kind === "open") return stored("none", null);
   if (probe.kind === "needs_key") return { status: "needs_key" };
@@ -873,6 +876,8 @@ export async function beginMcpOAuth(
 export async function refreshCustomServer(deps: CustomDeps, actorId: string, orgId: string, id: string) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   // A server that can't be read comes back with `toolsError`, for the apps to say why and offer to try again.
   await syncCustomTools(deps, c).catch((error) => {
     if (!(error instanceof ToolsUnreadable)) throw error;
@@ -903,6 +908,8 @@ export async function saveCustomTools(
 ) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   const known = new Map((await toolRows(deps.db, [c.id])).map((t) => [t.name, t]));
   for (const t of input.tools) {
     if (!DECISIONS.includes(t.access)) throw new ValidationError(`Invalid access for ${t.name}`);
@@ -963,6 +970,8 @@ export async function classifiedTools(db: Database, connectionId: string) {
 export async function acceptCustomSuggestion(deps: CustomDeps, actorId: string, orgId: string, id: string) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const c = await loadCustom(deps.db, orgId, id);
+  if (c.authType === "machine_mcp")
+    throw new ValidationError("This host MCP connection is managed by its owner registry", "connector.owner_registry");
   const rows = await toolRows(deps.db, [c.id]);
   const tools = rows.map((t): ToolDecisionInput => {
     let access = (

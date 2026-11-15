@@ -9,7 +9,6 @@ import { ConflictError, ForbiddenError, MisconfiguredError, NotFoundError, Valid
 import { forgetInstallationTokens } from "../git/github-app";
 import { outboundFetch, type ResolveHost } from "../net-guard";
 import { requireChangePermission, requirePermission } from "../organizations";
-import { CONNECTOR_ALL } from "../tools/scopes";
 import { CONNECTOR_CATALOG, type ConnectorDefinition } from "./catalog";
 import { type ComposioConnectors, completeComposioOAuth, forgetComposioAccount } from "./composio";
 import { beginMcpOAuth, isCustom, storeCustomConnection } from "./custom";
@@ -19,7 +18,7 @@ import { clientAuth, getOAuthClient, type McpOAuthDeps, probeMcpServer } from ".
 import { oauthReturnTo } from "./oauth-return";
 import { presetForServer } from "./presets";
 
-const { connectorConnections, oauthStates, agentScopes, agents, approvalRules, githubAppInstallations } = schema;
+const { connectorConnections, oauthStates, agentScopes, approvalRules, githubAppInstallations } = schema;
 
 export type ConnectorConnection = typeof connectorConnections.$inferSelect;
 
@@ -104,42 +103,9 @@ export function bearerHeaders(secret: ConnectionSecret): Record<string, string> 
 }
 
 /**
- * A new connection starts at "Ler e escrever" (`connector:*`) for every agent: agents get the basics and people take
- * access away where they want. Sensitive tools still ask a person on every call, whatever the grant. Connecting is an
- * admin's call, as giving grants is; each agent's grant is an `agent.access_changed` audit row. Runs in the caller's
- * transaction, which clears the org's scope cache once it commits.
+ * Connections start without agent grants. Administrators choose agent access explicitly through the existing
+ * access controls after connecting; reconnecting only carries previously approved grants forward.
  */
-export async function grantToEveryAgent(
-  tx: Executor,
-  orgId: string,
-  actorId: string,
-  connection: Pick<ConnectorConnection, "id" | "label">,
-) {
-  const everyone = await tx
-    .select({ id: agents.id })
-    .from(agents)
-    .where(and(eq(agents.orgId, orgId), isNull(agents.archivedAt)));
-  if (everyone.length === 0) return;
-  await tx.insert(agentScopes).values(
-    everyone.map((a) => ({
-      orgId,
-      agentId: a.id,
-      connectionId: connection.id,
-      scope: CONNECTOR_ALL,
-      grantedByUserId: actorId,
-    })),
-  );
-  for (const a of everyone) {
-    await recordAudit(tx, {
-      orgId,
-      actor: { type: "person", id: actorId },
-      action: "agent.access_changed",
-      target: { type: "agent", id: a.id },
-      details: { connectionId: connection.id, label: connection.label, level: "write" },
-    });
-  }
-}
-
 /** OAuth app credentials per connector (from env; real apps are configured per deployment). */
 export type OAuthApps = Record<string, { clientId: string; clientSecret: string } | undefined>;
 
@@ -244,7 +210,7 @@ async function storeConnection(
   const id = crypto.randomUUID();
   const sealed = input.secret ? await sealSecret(wrapper, JSON.stringify(input.secret), aadFor(input.orgId, id)) : null;
   return deps.db.transaction(async (tx) => {
-    // One active connection per connector: a new one replaces the old (grants move over); a first one is every agent's.
+    // One active connection per connector: a new one replaces the old (grants move over); a first one has no agent grants.
     const [previous] = await tx
       .update(connectorConnections)
       .set({ revokedAt: deps.now?.() ?? new Date() })
@@ -295,7 +261,6 @@ async function storeConnection(
         details: { connector: input.connector, label: row.label, auth: input.authType },
       });
     }
-    if (!previous) await grantToEveryAgent(tx, input.orgId, input.actorId, row);
     caches.connections.delete(`${input.orgId}:active`);
     caches.scopes.deletePrefix(`${input.orgId}:`);
     // Over GitHub through the app alone, an account is a first connection to people: never a "Reconectar".
@@ -514,7 +479,7 @@ async function installationAccounts(tx: Executor, orgId: string) {
 /**
  * Keeps the workspace's GitHub connection in step with its GitHub App installations (ADR 0156), in the caller's
  * transaction: with installations and no GitHub connection, the app alone is one, made by the person binding it
- * (every agent's, like any first connection: grants, rules and the git proxy work as with an account's); a row of the
+ * (without agent access until explicitly granted, like any first connection); a row of the
  * app alone names their accounts, and ends with the last one, as disconnecting does. An account's own connection is
  * left as it is: the app's tokens are used where it is installed anyway.
  */
@@ -561,7 +526,6 @@ export async function syncGitHubAppConnection(
       target: { type: "connector", id: row.id },
       details: { connector: def.id, label: row.label, auth: GITHUB_APP_AUTH },
     });
-    await grantToEveryAgent(tx, orgId, actor.id, row);
   } else return;
   caches.connections.delete(`${orgId}:active`);
   caches.scopes.deletePrefix(`${orgId}:`);
@@ -842,7 +806,9 @@ export async function connectionHeaders(deps: ConnectorDeps, c: ConnectorConnect
   const secret = await openConnectionSecret(deps.keyWrappers, c);
   if (!secret) return {};
   if (secret.apiKey) {
-    return { authorization: `${presetForServer(c.serverUrl)?.keyScheme ?? "Bearer"} ${secret.apiKey}` };
+    const preset = presetForServer(c.serverUrl);
+    if (preset?.keyHeader && c.serverUrl === preset.serverUrl) return { [preset.keyHeader]: secret.apiKey };
+    return { authorization: `${preset?.keyScheme ?? "Bearer"} ${secret.apiKey}` };
   }
   const at = deps.now?.() ?? new Date();
   if (!expiring(c, secret, at)) return bearer(secret);

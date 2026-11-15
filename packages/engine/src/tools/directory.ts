@@ -391,6 +391,7 @@ export const RARE_TOOLS: ReadonlySet<string> = new Set([
   "read_skill_file",
   "find_agent",
   "get_my_usage",
+  "get_my_profile",
   "set_status",
   "set_reply_style",
   "commit_co_author",

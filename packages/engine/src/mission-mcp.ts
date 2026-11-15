@@ -1,5 +1,6 @@
 import {
   findPullRequestUrl,
+  isMcpResultMedia,
   MCP_ALWAYS_LOAD,
   MCP_TOOLS_MAX,
   type McpToolInfo,
@@ -12,6 +13,7 @@ import { eq, schema } from "@agenteschat/db";
 import type { ToolImage } from "@agenteschat/providers";
 import { getAgentCached } from "./agents";
 import { recordAudit } from "./audit";
+import { admitBridgeEffect, finishBridgeEffect } from "./bridge-effect-epoch";
 import { getContextItems, personMayRead } from "./context/items";
 import { ValidationError } from "./errors";
 import { cutText } from "./format";
@@ -73,11 +75,24 @@ const { machineTasks } = schema;
  */
 export type McpCallFrame = Extract<RunnerFrame, { type: "mcp.call" }>;
 export type McpOutcome =
-  | { ok: true; text: string; images?: ToolImage[] }
-  | { ok: false; error: { code: string; message: string } };
+  | {
+      ok: true;
+      text: string;
+      images?: ToolImage[];
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    }
+  | {
+      ok: false;
+      error: { code: string; message: string };
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+    };
 export type McpListFrame = Extract<RunnerFrame, { type: "mcp.list" }>;
 export type McpListOutcome =
-  | { ok: true; tools: McpToolInfo[] }
+  | { ok: true; tools: McpToolInfo[]; runStateVersion?: 1 | 2 | 3 }
   | { ok: false; error: { code: string; message: string } };
 
 const refuse = (code: string, message: string): McpOutcome => ({ ok: false, error: { code, message } });
@@ -383,16 +398,51 @@ export async function handleMissionMcpCall(
   if (held) return refuse(held.code, held.message);
   const tools = id.taskId ? taskGatewayOf(deps) : (deps.tools ?? null);
   try {
+    if (
+      !id.taskId &&
+      (!id.bridgeEpochId || !(await admitBridgeEffect(deps.db, id.runId, id.bridgeEpochId, frame.callId)))
+    )
+      return refuse(
+        "bridge.effect_epoch_closed",
+        "This run cannot admit a new bridge effect; reconcile or start a new turn.",
+      );
     const out = await invokeToolForRun({ db: deps.db, pubsub: deps.pubsub, tools }, id, {
       id: frame.callId,
       name: frame.tool,
       input: frame.args,
     });
-    if (!out.result.isError) {
-      return { ok: true, text: out.result.content, ...(out.result.images ? { images: out.result.images } : {}) };
-    }
+    if (!id.taskId && id.bridgeEpochId)
+      await finishBridgeEffect(
+        deps.db,
+        id.bridgeEpochId,
+        frame.callId,
+        out.runState !== "completed" && out.runState !== "suspended",
+      );
+    if (out.result.images && !isMcpResultMedia(out.result.images))
+      return {
+        ...refuse("bridge.media_rejected", "The action completed but its media output was rejected. Do not replay it."),
+        ...(out.runState
+          ? { runState: out.runState, imageOmitted: true, resultTruncated: out.resultTruncated === true }
+          : {}),
+      };
+    if (!out.result.isError && typeof out.imageOmitted === "boolean")
+      return {
+        ok: true,
+        text: out.result.content,
+        ...(out.result.images ? { images: out.result.images } : {}),
+        runState: out.runState,
+        imageOmitted: out.imageOmitted,
+        resultTruncated: out.resultTruncated === true,
+      };
+    if (!out.result.isError)
+      return refuse("bridge.image_state_unknown", "The tool result's image state is unknown. Stop without retry.");
     const code = out.code ?? "tool.failed";
-    return refuse((id.taskId && TASK_CODES[code]) || code, out.result.content);
+    return {
+      ...refuse((id.taskId && TASK_CODES[code]) || code, out.result.content),
+      ...(out.runState
+        ? { runState: out.runState, imageOmitted: out.imageOmitted, resultTruncated: out.resultTruncated === true }
+        : {}),
+    };
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     return refuse(typeof code === "string" ? code : "internal", error instanceof Error ? error.message : String(error));
@@ -421,6 +471,7 @@ export async function handleMissionMcpList(
     );
     return {
       ok: true,
+      runStateVersion: 3,
       tools: tools.slice(0, MCP_TOOLS_MAX).map((t) => ({
         name: t.name,
         description: cutText(t.description, 4000),

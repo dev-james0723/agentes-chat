@@ -11,6 +11,7 @@ import composeFile from "../../../docker-compose.yml" with { type: "text" };
 import installScript from "../../../install.sh" with { type: "text" };
 import { registerAppLinks } from "./app-links";
 import { authHandler, signInPageUrl } from "./auth";
+import { rejectForwardedLocal } from "./dual-origin-guard";
 import { apiBodyLimit } from "./http/body-limit";
 import { errorPages } from "./http/error-page";
 import { apiError, domainErrorResponse, routeOf, validationHook } from "./http/errors";
@@ -51,6 +52,8 @@ import { managementRoutes } from "./routes/app/management";
 import { memoryRoutes } from "./routes/app/memory";
 import { missionRoutes } from "./routes/app/missions";
 import { notificationRoutes } from "./routes/app/notifications";
+import { paperclipRoutineRoutes } from "./routes/app/paperclip-routines";
+import { paperclipWorkspaceRoutes } from "./routes/app/paperclip-workspaces";
 import { personUsageRoutes } from "./routes/app/person-usage";
 import { planUsageRoutes } from "./routes/app/plan-usage";
 import { pushRoutes } from "./routes/app/push";
@@ -157,7 +160,7 @@ export function createApp(options: AppOptions) {
 
   if (options.services) {
     const { auth, config, db } = options.services;
-    const handleAuth = authHandler(auth, db);
+    const handleAuth = authHandler(auth, db, config);
     const serverError = signInPageUrl(config.PUBLIC_URL, { error: "server_error" });
     api.on(["GET", "POST"], "/auth/*", async (c) => {
       const res = await handleAuth(c.req.raw);
@@ -211,6 +214,8 @@ export function createApp(options: AppOptions) {
     api.route("/app", missionRoutes(deps));
     api.route("/app", wikiRoutes(deps));
     api.route("/app", routineRoutes(deps));
+    api.route("/app", paperclipRoutineRoutes(deps));
+    api.route("/app", paperclipWorkspaceRoutes(deps));
     api.route("/app", calendarRoutes(deps));
     api.route("/app", skillRoutes(deps));
     api.route("/app", agentImportRoutes(deps));
@@ -299,6 +304,11 @@ export function createApp(options: AppOptions) {
   }
 
   const app = new OpenAPIHono();
+  app.use("*", async (c, next) => {
+    const rejected = options.services ? rejectForwardedLocal(options.services.config, c.req.raw) : null;
+    if (rejected) return rejected;
+    await next();
+  });
   app.onError((error, c) => {
     const mapped = domainErrorResponse(error, c);
     if (mapped) return mapped;

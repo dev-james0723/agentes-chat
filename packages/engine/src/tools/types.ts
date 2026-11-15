@@ -53,6 +53,8 @@ export interface ToolContext {
    * when its command policy would hold it. Never set from a call's input.
    */
   approved?: boolean;
+  /** Native exact-disclosure resume only; downstream reloads and claims the DB row. Never model input. */
+  privatePublicationApprovalId?: string;
   /**
    * Set by the gateway for our own tools, never a connected server's (`schedule_action`): asks a person now to
    * approve one exact call for a routine's run later, after every check that call meets then (ADR 0015, ahead).
@@ -63,6 +65,8 @@ export interface ToolContext {
 export interface ToolOutput {
   /** Text the model sees as the tool result. */
   content: string;
+  /** Native text is a partial observation or was capped before transport; never an authorization claim. */
+  resultTruncated?: boolean;
   isError?: boolean;
   /** Pictures the model sees with the text (base64 PNG, JPEG, GIF or WebP): model brains only, never kept in steps. */
   images?: ToolImage[];

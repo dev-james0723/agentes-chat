@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Sprawdź udostępnienie prywatnej wersji roboczej",
+    "destination": "Miejsce docelowe: biblioteka umiejętności organizacji",
+    "warning": "Osoby mające dostęp do tej umiejętności zobaczą całą wersję roboczą.",
+    "approve": "Udostępnij tę wersję tylko raz",
+    "loading": "Wczytywanie chronionego podglądu…",
+    "failed": "Nie można zweryfikować chronionego podglądu. Otwórz go ponownie, aby spróbować jeszcze raz.",
+    "stale": "Ta umiejętność została zmieniona. Poproś o nową prośbę o udostępnienie.",
+    "body": "Pełna treść umiejętności",
+    "review": "Sprawdź prywatną wersję roboczą",
+    "withdraw": "Wycofaj zgodę na udostępnienie"
+  },
   "app": {
     "name": "agentes"
   },
@@ -8520,6 +8532,9 @@
       },
       "deploy": {
         "succeeded": "Wdrożenie zakończone"
+      },
+      "paperclip": {
+        "received": "Otrzymano prośbę z Paperclip"
       }
     },
     "when": {

@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { ANTIGRAVITY_PROTOCOL, LOCKED_BRAIN_PROTOCOL, SHARED_GEMINI_PROTOCOL } from "@agenteschat/adapters";
+import {
+  ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROTOCOL,
+  HOST_ANTIGRAVITY_PROVIDER,
+  LOCKED_BRAIN_PROTOCOL,
+  MACHINE_PROTOCOL_VERSION,
+  SHARED_GEMINI_PROTOCOL,
+} from "@agenteschat/adapters";
 import {
   ANTIGRAVITY_MODELS,
   GEMINI_ENTERPRISE_PROVIDER,
@@ -76,6 +83,56 @@ const brain = (l: ComputerBrainLink, permissions?: BrainTurnRequest["permissions
     mcp: async () => ({ token: "tok" }),
     ...(permissions ? { permissions: async () => permissions } : {}),
   });
+
+test("host ACP sends the engine-visible conversation again for every fresh session; other Gemini accounts resume normally", async () => {
+  const l = link({ protocol: HOST_ANTIGRAVITY_PROTOCOL, events: [{ type: "done", text: "hello" }] });
+  const host = { ...ACCOUNT, provider: "host-macos" };
+  const initial = turn({ account: host, messages: [{ role: "user", content: "hi" }], trigger: "hi" });
+  await collect(brain(l).run(initial, io()));
+  const followup = turn({
+    account: host,
+    session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+    messages: [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "what did I say?" },
+    ],
+    trigger: "what did I say?",
+  });
+  await collect(brain(l).run(followup, io()));
+  expect(l.sent[0]?.prompt).toBe("hi");
+  expect(l.sent[1]?.prompt).toBe(
+    "The conversation so far:\n\nUser: hi\n\nYou: hello\n\nNow answer this:\n\nwhat did I say?",
+  );
+  expect(l.sent[1]?.session.resume).toBe(false);
+  await collect(brain(l).run({ ...followup, account: ACCOUNT }, io()));
+  expect(l.sent[2]?.prompt).toBe("what did I say?");
+  expect(l.sent[2]?.session.resume).toBe(true);
+});
+
+test("host replay preserves the supplied context and its token limit without a new silent cut", async () => {
+  const l = link({ protocol: HOST_ANTIGRAVITY_PROTOCOL, events: [{ type: "done", text: "ok" }] });
+  const history = `START-${"x".repeat(200_000)}-END`;
+  await collect(
+    brain(l).run(
+      turn({
+        account: { ...ACCOUNT, provider: "host-macos" },
+        session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+        contextTokens: 8192,
+        messages: [
+          { role: "user", content: history },
+          { role: "assistant", content: "remembered" },
+          { role: "user", content: "continue" },
+        ],
+        trigger: "continue",
+      }),
+      io(),
+    ),
+  );
+  expect(l.sent[0]?.prompt).toContain(history);
+  expect(l.sent[0]?.prompt).toContain("You: remembered");
+  expect(l.sent[0]?.contextTokens).toBe(8192);
+});
 
 test("a Gemini turn goes to the runner as kind antigravity with its account; its usage passes through as the person's plan", async () => {
   const l = link({
@@ -178,4 +235,47 @@ test("the right hand's reply never carries a Google token, refresh token, key or
   const out = scrubSignIns(`token ${access} refresh ${refresh} key ${key} secret ${secret}`, "[removed]");
   for (const v of [access, refresh, key, secret]) expect(out.text).not.toContain(v);
   expect(out.found).toBe(4);
+});
+
+test("fresh host ACP turns reconstruct original context after pause and consultation return", async () => {
+  const l = link({ protocol: MACHINE_PROTOCOL_VERSION, events: [{ type: "done", text: "phase result" }] });
+  for (const trigger of ["ANSWERED_MARKER", "specialist answer returned; synthesize next phase"]) {
+    const resumed = turn({
+      model: "gemini-4-argon-high",
+      account: { ...ACCOUNT, provider: HOST_ANTIGRAVITY_PROVIDER },
+      session: { id: SESSION, resume: true, machineId: "m1", cwd: "" },
+      system: "Original role and task instructions",
+      conversation: "Prior native tool observations and owned task",
+      messages: [
+        { role: "user", content: "Original task marker" },
+        { role: "assistant", content: "Requested a harmless marker and consultation" },
+        { role: "user", content: trigger },
+      ],
+      trigger,
+      hostAcpHistory: {
+        runId: "0193aaaa-0000-7000-8000-000000000002",
+        observations: [
+          {
+            seq: 1,
+            callId: "completed-1",
+            name: "create_issue",
+            input: {},
+            content: "completed receipt",
+            isError: false,
+            state: "completed",
+            partial: true,
+          },
+        ],
+      },
+    });
+    await collect(brain(l).run(resumed, io()));
+    const sent = l.sent.at(-1)!;
+    expect(sent.session).toMatchObject({ id: SESSION, resume: false });
+    expect(sent.system).toContain("Original role and task instructions");
+    expect(sent.system).toContain("Prior native tool observations");
+    expect(sent.prompt).toContain("Original task marker");
+    expect(sent.prompt).toContain(trigger);
+    expect(sent.model).toBe("gemini-4-argon-high");
+    expect(sent.hostAcpHistory).toEqual(resumed.hostAcpHistory);
+  }
 });

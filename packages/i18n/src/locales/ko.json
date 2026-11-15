@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "비공개 초안 공유 검토",
+    "destination": "공유 대상: 조직 스킬 라이브러리",
+    "warning": "이 스킬을 읽을 수 있는 사람에게 초안 전체가 공개됩니다.",
+    "approve": "이 버전을 한 번만 공유",
+    "loading": "보호된 미리보기 불러오는 중…",
+    "failed": "보호된 미리보기를 확인할 수 없습니다. 다시 열어 시도하세요.",
+    "stale": "이 스킬이 변경되었습니다. 새 공유 요청을 요청하세요.",
+    "body": "스킬 전체 본문",
+    "review": "비공개 초안 검토",
+    "withdraw": "공유 승인 철회"
+  },
   "app": {
     "name": "agentes"
   },
@@ -7771,6 +7783,9 @@
       },
       "deploy": {
         "succeeded": "배포 완료"
+      },
+      "paperclip": {
+        "received": "Paperclip 요청 수신"
       }
     },
     "when": {

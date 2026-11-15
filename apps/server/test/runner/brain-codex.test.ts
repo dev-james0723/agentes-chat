@@ -961,3 +961,62 @@ test.skipIf(!posix)(
   },
   15_000,
 );
+
+test("owner workspace guard checks the actual Codex cwd before process spawn", async () => {
+  const root = tempDir("brain-codex-guard-");
+  dirs.push(root);
+  const events: CodexBrainEvent[] = [];
+  let spawned = false;
+  let checked = "";
+  await runCodexTurn(
+    { runId: RUN, sessionId: SESSION, cwd: root, system: "", prompt: "hi", mcp: { token: "t" } },
+    {
+      threads: new CodexThreads(path.join(root, "threads.json")),
+      workDir: path.join(root, "turn"),
+      emit: (e) => events.push(e),
+      signal: new AbortController().signal,
+      codexVersion: () => "codex-cli 0.166.0",
+      beforeLaunch: async (cwd) => {
+        checked = cwd;
+        throw new Error("workspace drift");
+      },
+      spawn: (() => {
+        spawned = true;
+        throw new Error("must not spawn");
+      }) as Spawn,
+    },
+  );
+  expect(checked).toBe(root);
+  expect(spawned).toBe(false);
+  expect(events).toMatchObject([{ type: "error", code: "codex_failed" }]);
+});
+
+test("guarded Codex never resumes a stored thread or retries a failed launch", async () => {
+  const root = tempDir("brain-codex-guard-fresh-");
+  dirs.push(root);
+  const threads = new CodexThreads(path.join(root, "threads.json"));
+  threads.set(SESSION, THREAD);
+  let calls = 0;
+  let args: string[] = [];
+  await runCodexTurn(
+    { runId: RUN, sessionId: SESSION, cwd: root, system: "", prompt: "hi", mcp: { token: "t" }, speed: "fast" },
+    {
+      threads,
+      workDir: path.join(root, "turn"),
+      emit: () => {},
+      signal: new AbortController().signal,
+      codexVersion: () => "codex-cli 0.166.0",
+      beforeLaunch: async (cwd) => {
+        expect(cwd).toBe(root);
+      },
+      spawn: ((_bin, argv) => {
+        calls++;
+        args = argv as string[];
+        throw new Error("spawn refused");
+      }) as Spawn,
+    },
+  );
+  expect(calls).toBe(1);
+  expect(args).not.toContain("resume");
+  expect(args).not.toContain(THREAD);
+});

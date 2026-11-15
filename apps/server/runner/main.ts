@@ -65,6 +65,14 @@ import { DesktopSessions, type DesktopSessionsOptions, runnerUser, systemDesktop
 import { localSources, runDoctor } from "./doctor";
 import { RUNNER_VERSION } from "./errors";
 import { defaultHostState, HostComputer, readTokenFile, runnerChild } from "./host";
+import {
+  clearHostAcpVerified,
+  createHostAcpOptIn,
+  markHostAcpVerified,
+  readHostAcpOptIn,
+  removeHostAcpOptIn,
+} from "./host-acp-optin";
+import { verifyLocalHostAcp } from "./host-acp-verify";
 import { writeJson } from "./json-file";
 import { hasBunTerminal, runningCompiled, thisRunner } from "./launch";
 import { acquireLock, lockedMessage, pidAlive, readLock } from "./lock";
@@ -83,6 +91,8 @@ import {
   takeEnrollCode,
   whoCanUse,
 } from "./pairing";
+import { registerOwnerProject } from "./paperclip-register";
+import { removeOwnerBinding } from "./paperclip-registry";
 import { agentWorkspace } from "./paths";
 import { connectVnc, type VncConnection, vncInit } from "./rfb";
 import { installService, installSystemService, removeOwnService, serviceStatus, uninstallService } from "./service";
@@ -140,10 +150,22 @@ Usage:
       Ends standby: the runner connects again at once.
   agentes-runner status
       The connection, the service, and whether the agents' desktops and the terminal can run here.
+  agentes-runner paperclip-project register --confirm-local-owner --owner-id <id> --agent <id>...
+      --source-company <id> --source-project <id> --source-workspace <id>
+      --project-file <path> --snapshot-file <path> --bundle-file <path>
+      --project-sha256 <digest> --snapshot-sha256 <digest>
+      Owner-local prototype: records an already-granted separate project snapshot; does not add grants or start work.
+  agentes-runner paperclip-project remove --confirm-local-owner --binding <id>
+      Revokes this local project binding. Does not remove folders or alter the original project.
   agentes-runner doctor [--wait | --no-wait] [--json]
       What this computer gives agents: its connections, the agent apps, the toolchains and the phones,
       with the fix for whatever needs you. On a terminal it then waits for those fixes (--wait anywhere,
       --no-wait never). Exits 0 when nothing needs you, 1 otherwise.
+  agentes-runner host-acp <enable | verify | disable | status> [--accept-host-account]
+      Local user-mode Mac only: opt in to the currently paired owner's host Antigravity CLI account.
+      Enabling requires an interactive terminal and --accept-host-account; no sign-in is changed.
+      Verify runs one isolated no-tools READY prompt through the existing host login.
+      The daemon additionally requires phones disabled; opt-in alone does not verify account login.
   agentes-runner computer
       What this computer has, what is free now, and which agents use the most of it (they share it).
       Agents run it before something heavy.
@@ -204,6 +226,16 @@ const VALUE_FLAGS = new Set([
   "rotate",
   "link",
   "minutes",
+  "owner-id",
+  "source-company",
+  "source-project",
+  "source-workspace",
+  "project-file",
+  "snapshot-file",
+  "bundle-file",
+  "project-sha256",
+  "snapshot-sha256",
+  "binding",
 ]);
 const LIST_FLAGS = new Set(["agent", "rotate"]);
 
@@ -433,7 +465,13 @@ async function start(): Promise<number> {
     console.error(lockedMessage(home, lock.holder));
     return serviceSafe(4);
   }
-  const daemon = new RunnerDaemon({ home, mode: "start", log, print: (line) => console.log(line) });
+  const daemon = new RunnerDaemon({
+    home,
+    mode: "start",
+    log,
+    print: (line) => console.log(line),
+    ...(config.phonesDisabled === true ? { phones: false as const } : {}),
+  });
   const stop = () => void daemon.stop();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -1362,6 +1400,43 @@ async function main(argv: string[]): Promise<number> {
     return command || p.flags.has("help") ? 0 : 1;
   }
   switch (command) {
+    case "paperclip-project": {
+      if (
+        (sub !== "register" && sub !== "remove") ||
+        !p.flags.has("confirm-local-owner") ||
+        !process.stdin.isTTY ||
+        !process.stdout.isTTY
+      ) {
+        console.error("Owner-local operation requires register or remove, --confirm-local-owner and a terminal.");
+        return 1;
+      }
+      const need = (key: string) => {
+        const value = flagString(p, key);
+        if (!value) throw new Error(`--${key} is required`);
+        return value;
+      };
+      if (sub === "remove") {
+        removeOwnerBinding(runnerHome(), need("binding"));
+        console.log("Local project binding removed.");
+        return 0;
+      }
+      const cfg = storedOrNull();
+      if (!cfg) throw new Error("A paired runner is required");
+      const out = registerOwnerProject(runnerHome(), cfg, {
+        ownerId: need("owner-id"),
+        agentIds: p.lists.get("agent") ?? [],
+        sourceCompanyId: need("source-company"),
+        sourceProjectId: need("source-project"),
+        sourceWorkspaceId: need("source-workspace"),
+        projectFile: need("project-file"),
+        snapshotFile: need("snapshot-file"),
+        bundleFile: need("bundle-file"),
+        projectDigest: need("project-sha256"),
+        snapshotDigest: need("snapshot-sha256"),
+      });
+      console.log(JSON.stringify(out));
+      return 0;
+    }
     case "pair":
       return pair(p);
     case "start":
@@ -1381,6 +1456,70 @@ async function main(argv: string[]): Promise<number> {
         json,
         write: (text) => process.stdout.write(text),
       });
+    }
+    case "host-acp": {
+      const config = readConfig(runnerHome());
+      if (!config?.orgId) {
+        console.error("Pair this runner to an organization first.");
+        return 1;
+      }
+      const binding = {
+        server: config.server,
+        orgId: config.orgId,
+        machineId: config.machineId,
+        mode: config.mode ?? "user",
+        platform: process.platform,
+        phones: false,
+      } as const;
+      if (sub === "status") {
+        console.log(
+          readHostAcpOptIn(runnerHome(), binding)
+            ? "Host ACP locally opted in; account and runner eligibility still need verification."
+            : "Host ACP is not enabled for this pairing.",
+        );
+        return 0;
+      }
+      if (sub !== "enable" && sub !== "verify" && sub !== "disable") {
+        console.error("Usage: agentes-runner host-acp <enable|verify|disable|status>");
+        return 1;
+      }
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
+        console.error("Use a local interactive terminal for this action.");
+        return 1;
+      }
+      if (sub === "enable") {
+        if (!p.flags.has("accept-host-account")) {
+          console.error("Pass --accept-host-account to opt in to using this Mac user's existing Antigravity account.");
+          return 1;
+        }
+        createHostAcpOptIn(runnerHome(), binding);
+        updateConfig((c) => ({ ...c, phonesDisabled: true }), runnerHome());
+        console.log(
+          "Local opt-in recorded. Phone discovery stays disabled after the next runner start. Restart the runner to apply this setting. Account login is not yet verified.",
+        );
+      } else if (sub === "verify") {
+        const opted = readHostAcpOptIn(runnerHome(), binding);
+        if (!opted || config.phonesDisabled !== true) {
+          console.error("Enable host ACP for this pairing first.");
+          return 1;
+        }
+        clearHostAcpVerified(runnerHome(), binding, opted.id);
+        if (!(await verifyLocalHostAcp(runnerHome()))) {
+          console.error("The isolated host account probe did not succeed.");
+          return 1;
+        }
+        markHostAcpVerified(runnerHome(), binding, opted.id);
+        console.log(
+          "Host account answered an isolated no-tools probe. Model selection received an ACP acknowledgement; model usage is not independently confirmed.",
+        );
+      } else {
+        console.log(
+          removeHostAcpOptIn(runnerHome(), binding)
+            ? "Local opt-in removed; the OS sign-in was not changed."
+            : "No matching local opt-in.",
+        );
+      }
+      return 0;
     }
     case "computer":
       console.log(await computerNow());

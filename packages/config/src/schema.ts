@@ -71,6 +71,12 @@ export const envVars = {
     section: "Server",
     example: "https://chat.example.com",
   },
+  LOCAL_HTTP_LOGIN: {
+    schema: z.stringbool().default(false),
+    description:
+      "Allow browser sign-in and app requests at http://localhost:PORT alongside PUBLIC_URL. Requires the backend port to be reachable only on loopback, and every external reverse proxy to overwrite X-Forwarded-Host or X-Forwarded-Proto on every request, including WebSocket upgrades; verify those guarantees for the deployed proxy version. A controlled machine alone is not enough.",
+    section: "Server",
+  },
   LANDING_URL: {
     schema: z.url().optional(),
     description:
@@ -144,6 +150,12 @@ export const envVars = {
     section: "Database",
     example: "postgres://agenteschat:password@db.example.com:5432/agenteschat?sslmode=require",
     secret: true,
+  },
+  DATABASE_INTERNAL_TARGETS: {
+    schema: z.string().max(4000).default("[]"),
+    description:
+      "Default-off closed-selfhost database metrics profile: one exact org/host/port/database/reader, pinned private IPs, and explicit isolated_local_plaintext transport. Only the provisioned engineering_ro views are readable. Never a credential or general private-network switch.",
+    section: "Database",
   },
   DATABASE_POOL_MAX: {
     schema: z.coerce.number().int().min(1).default(20),
@@ -308,6 +320,13 @@ export const envVars = {
       "SHA-256 fingerprints of the Android app's signing certificates (`AA:BB:…`), comma-separated: Google Play's app signing key (Play Console › Test and release › App integrity › App signing), and the upload key's for builds installed outside Play.",
     section: "Sign-in",
   },
+  PAPERCLIP_ROUTINE_COMPATIBILITY: {
+    schema: z.enum(["off", "on"]).default("off"),
+    description:
+      "Enable the authenticated Paperclip routine migration API. Mappings and their native routines are imported paused; enable only after source and target parity and a coordinated single-ingress cutover.",
+    section: "Agents",
+    example: "off",
+  },
   AGENT_DEFAULT_MODEL: {
     schema: modelId.default("claude-sonnet-5-5"),
     description:
@@ -354,6 +373,34 @@ export const envVars = {
       "Jev model for judgments over images (an agent finding a target on a screenshot of its browser or desktop). Needs a release that takes images.",
     section: "Agents",
   },
+  SKILL_READ_CANARY: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+          .map((entry) => {
+            const [agentId = "", skillId = "", extra] = entry.split(":");
+            return { agentId: agentId.trim(), skillId: skillId.trim(), extra };
+          }),
+      )
+      .pipe(
+        z
+          .array(
+            z
+              .object({ agentId: z.uuid(), skillId: z.uuid(), extra: z.undefined() })
+              .transform(({ agentId, skillId }) => ({ agentId, skillId, operation: "load_skill" as const })),
+          )
+          .max(20),
+      ),
+    description:
+      "Off when empty. Comma-separated agentId:skillId pairs whose load_skill reads go through the one-shot verified skill-read gate (ADR 0189): the body is released only after a fresh native proof and a single database claim, and an unverifiable read is refused instead of falling back. For a small canary only.",
+    section: "Agents",
+    example: "01a1...agent-uuid:01a1...skill-uuid",
+  },
   OPENAI_CHEAP_MODEL: {
     schema: modelId.default("gpt-6-luna"),
     description:
@@ -391,6 +438,63 @@ export const envVars = {
   AGENT_CONTEXT_MESSAGES: {
     schema: z.coerce.number().int().min(1).max(500).default(30),
     description: "How many recent channel (or thread) messages are included in an agent's context.",
+    section: "Agents",
+  },
+  QUOTA_RESERVE_PERCENT: {
+    schema: z.coerce.number().int().min(1).max(100).default(85),
+    description: "Account-wide usage percentage at which a fresh observation signals low capacity for routing.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("true")
+      .transform((v) => v === "true"),
+    description:
+      "Owner-approved quota continuity: a Codex agent near or at its plan limit continues on the computer's Claude Code subscription sign-in, with one notice in the task.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_TARGETS: {
+    schema: z
+      .string()
+      .default("claude_code,grok,codex")
+      .transform((v) =>
+        v
+          .split(",")
+          .map((x) => x.trim())
+          .filter((x): x is "claude_code" | "grok" | "codex" => ["claude_code", "grok", "codex"].includes(x)),
+      ),
+    description:
+      "Subscription routes a quota handoff may use, in preference order for ties (the least used goes first).",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_GROK_MODEL: {
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("grok-4.7"),
+    description: "Grok model a quota handoff runs on.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_CODEX_MODEL: {
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("gpt-6.1-sol"),
+    description: "Codex model a quota handoff runs on.",
+    section: "Agents",
+  },
+  QUOTA_HANDOFF_CLAUDE_MODEL: {
+    schema: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+      .default("claude-fable-5-2"),
+    description: "Claude Code model a quota handoff runs on.",
+    section: "Agents",
+  },
+  QUOTA_RESERVE_MAX_AGE_MS: {
+    schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
+    description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",
     section: "Agents",
   },
   AGENT_MAX_HOPS: {

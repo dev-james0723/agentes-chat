@@ -106,6 +106,27 @@ const chat = (chunks: Record<string, unknown>[]) =>
   `${chunks.map((c) => `data: ${JSON.stringify({ id: "c1", object: "chat.completion.chunk", created: 1, ...c })}\n\n`).join("")}data: [DONE]\n\n`;
 
 describe("calls", () => {
+  test("Chat Completions forwards a strict JSON schema unchanged without OpenRouter-specific routing", async () => {
+    const { fetcher, requests } = scripted(
+      chat([{ choices: [{ index: 0, delta: { content: '{"ok":true}' }, finish_reason: "stop" }] }]),
+    );
+    const outputSchema = {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+      additionalProperties: false,
+    };
+    const result = await createCustomProvider({ fetch: fetcher, maxRetries: 0 }).stream(
+      { model: id, system: "s", messages: [{ role: "user", content: "Check" }], maxTokens: 256, outputSchema },
+      { apiKey: "none", endpoint: { style: "openai", baseURL: "http://localhost:11434/v1" }, onDelta() {} },
+    );
+    expect(requests[0]?.body.response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "output", strict: true, schema: outputSchema },
+    });
+    expect(requests[0]?.body.provider).toBeUndefined();
+    expect(result.text).toBe('{"ok":true}');
+  });
   test("Chat Completions: the endpoint's address and model id, no OpenRouter extras, usage asked, its cost ignored", async () => {
     const { fetcher, requests } = scripted(
       chat([

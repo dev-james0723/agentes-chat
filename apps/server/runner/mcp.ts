@@ -191,6 +191,8 @@ export interface IpcRequest {
   token: string;
   tool: string;
   args: Record<string, unknown>;
+  /** Text-only adapters can refuse a result that would otherwise be shortened. */
+  requireComplete?: true;
   /**
    * `list`: the tools this task (or run) may use (`tool` and `args` unused). `session`: a delegated CLI's relay (the
    * rest of the connection is MCP itself, `runMcpRelay`). Default: a call.
@@ -203,8 +205,30 @@ export interface IpcRequest {
  * answer. `memo`: a list the daemon answers again by itself for the same run (`LIST_MEMO_MS`), so asking often is free.
  */
 export type IpcReply =
-  | { ok: true; text: string; images?: McpImage[]; tools?: McpToolInfo[]; memo?: boolean }
-  | { ok: false; error: string; transient?: boolean; idle?: boolean };
+  | {
+      ok: true;
+      text: string;
+      images?: McpImage[];
+      tools?: McpToolInfo[];
+      memo?: boolean;
+      runState?: "completed" | "suspended";
+      runStateVersion?: 1 | 2 | 3;
+      imageOmitted?: boolean;
+      complete?: true;
+      resultTruncated?: boolean;
+      callId?: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      transient?: boolean;
+      idle?: boolean;
+      code?: string;
+      runState?: "completed" | "suspended";
+      imageOmitted?: boolean;
+      resultTruncated?: boolean;
+      callId?: string;
+    };
 
 /** A frame's pictures, when each is one (anything else in their place is dropped). */
 const validImages = (v: unknown): v is McpImage[] =>
@@ -426,8 +450,25 @@ export class McpBridge {
     this.pending.delete(frame.callId);
     p.resolve(
       frame.ok
-        ? { ok: true, text: String(frame.text ?? ""), ...(validImages(frame.images) ? { images: frame.images } : {}) }
-        : { ok: false, error: frame.error.message },
+        ? {
+            ok: true,
+            text: String(frame.text ?? ""),
+            ...(validImages(frame.images) ? { images: frame.images } : {}),
+            ...(frame.runState === "completed" || frame.runState === "suspended" ? { runState: frame.runState } : {}),
+            ...(typeof frame.imageOmitted === "boolean" ? { imageOmitted: frame.imageOmitted } : {}),
+            ...(frame.complete === true ? { complete: true as const } : {}),
+            ...(typeof frame.resultTruncated === "boolean" ? { resultTruncated: frame.resultTruncated } : {}),
+            ...(frame.runState ? { callId: frame.callId } : {}),
+          }
+        : {
+            ok: false,
+            error: frame.error.message,
+            code: frame.error.code,
+            runState: frame.runState,
+            imageOmitted: frame.imageOmitted,
+            resultTruncated: frame.resultTruncated,
+            callId: frame.callId,
+          },
     );
   }
 
@@ -439,7 +480,14 @@ export class McpBridge {
     this.pending.delete(frame.callId);
     p.resolve(
       frame.ok
-        ? { ok: true, text: "", tools: (Array.isArray(frame.tools) ? frame.tools : []).filter(isToolInfo) }
+        ? {
+            ok: true,
+            text: "",
+            tools: (Array.isArray(frame.tools) ? frame.tools : []).filter(isToolInfo),
+            ...(frame.runStateVersion === 1 || frame.runStateVersion === 2 || frame.runStateVersion === 3
+              ? { runStateVersion: frame.runStateVersion }
+              : {}),
+          }
         : { ok: false, error: frame.error.message },
     );
   }
@@ -517,6 +565,7 @@ export class McpBridge {
       taskId: info.runId ?? taskId,
       tool,
       args,
+      ...(req.requireComplete === true ? { requireComplete: true as const } : {}),
       ...(info.serverToken ? { token: info.serverToken } : {}),
     };
     return this.relayAndWait(callId, tool, frame, !info.runId || RESEND_SAFE.has(tool));
@@ -746,6 +795,8 @@ export class McpToolCache {
   private loadedAt = 0;
   private key = "";
   private asking: Promise<boolean> | null = null;
+  /** Only a successful server list can establish the typed-state capability. */
+  runStateVersion: 1 | 2 | 3 | undefined;
   /** The daemon answered the last ask by itself (between turns, or the same run's list): asking often is free. */
   local = false;
 
@@ -779,7 +830,14 @@ export class McpToolCache {
     const idle = Boolean(reply && !reply.ok && reply.idle);
     this.local = idle || Boolean(reply?.ok && reply.memo);
     if (idle) this.loadedAt = 0;
-    if (!reply?.ok || !reply.tools) return false;
+    if (!reply?.ok || !reply.tools) {
+      this.runStateVersion = undefined;
+      return false;
+    }
+    this.runStateVersion =
+      reply.runStateVersion === 1 || reply.runStateVersion === 2 || reply.runStateVersion === 3
+        ? reply.runStateVersion
+        : undefined;
     const key = JSON.stringify(reply.tools);
     const changed = this.list !== null && key !== this.key;
     this.list = reply.tools;
@@ -810,6 +868,8 @@ export async function handleMcpMessage(
   profile: CommandProfile = "work",
   /** Whose prompts these are: the agent's own branches, and whether a background task asks (`PromptContext`). */
   context: McpContext = {},
+  /** True only after a real server list advertised the typed-state contract. */
+  runStateVersion?: () => 1 | 2 | 3 | undefined,
 ): Promise<Record<string, unknown> | null> {
   if (typeof message !== "object" || message === null || Array.isArray(message)) {
     return rpcError(null, -32600, "Invalid request");
@@ -847,24 +907,42 @@ export async function handleMcpMessage(
       };
     case "ping":
       return { jsonrpc: "2.0", id, result: {} };
-    case "tools/list":
+    case "tools/list": {
+      const available: readonly McpToolInfo[] = list ? await list() : MISSION_MCP_TOOLS;
+      const version = runStateVersion?.();
+      const typed = Boolean(list && !context.local && (version === 1 || version === 2 || version === 3));
       return {
         jsonrpc: "2.0",
         id,
         result: {
           // Read-only tools say so (Codex runs them without an approval even when told to ask).
           tools: [
-            ...(delegated?.tools ?? []),
-            ...(list ? await list() : MISSION_MCP_TOOLS)
+            ...(delegated?.tools ?? []).map((tool) => {
+              const meta = { ...tool._meta };
+              delete meta["agenteschat/runStateEnforced"];
+              const { _meta: _originalMeta, ...withoutMeta } = tool;
+              return { ...withoutMeta, ...(Object.keys(meta).length ? { _meta: meta } : {}) };
+            }),
+            ...available
               .filter((tool) => !delegated?.tools.some((t) => t.name === tool.name))
-              .map((tool) => ({
-                ...tool,
-                ...(READ_ONLY_TOOLS.has(tool.name) ? { annotations: { readOnlyHint: true } } : {}),
-                ...(ALWAYS_LOADED.has(tool.name) ? { _meta: { "anthropic/alwaysLoad": true } } : {}),
-              })),
+              .map((tool) => {
+                const meta = { ...tool._meta };
+                // This marker is the runner's assertion about its dispatch path, never a tool's own claim.
+                delete meta["agenteschat/runStateEnforced"];
+                if (ALWAYS_LOADED.has(tool.name)) meta["anthropic/alwaysLoad"] = true;
+                if (typed && tool.name !== PERMISSION_TOOL) meta["agenteschat/runStateEnforced"] = true;
+                const { _meta: _originalMeta, ...withoutMeta } = tool;
+                return {
+                  ...withoutMeta,
+                  ...(READ_ONLY_TOOLS.has(tool.name) ? { annotations: { readOnlyHint: true } } : {}),
+                  ...(Object.keys(meta).length ? { _meta: meta } : {}),
+                };
+              }),
           ],
+          ...(typed ? { _meta: { "agenteschat/runStateVersion": version } } : {}),
         },
       };
+    }
     case "tools/call": {
       const name = typeof params.name === "string" ? params.name : "";
       if (delegated?.tools.some((t) => t.name === name)) {
@@ -891,6 +969,19 @@ export async function handleMcpMessage(
         return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(answer) }] } };
       }
       const reply = await call(name, args);
+      const resultMeta = {
+        ...(reply.callId ? { "agenteschat/callId": reply.callId } : {}),
+        ...(reply.runState ? { "agenteschat/runState": reply.runState } : {}),
+        ...(typeof reply.imageOmitted === "boolean" ? { "agenteschat/imageOmitted": reply.imageOmitted } : {}),
+        ...(typeof reply.resultTruncated === "boolean" ? { "agenteschat/resultTruncated": reply.resultTruncated } : {}),
+        ...(reply.ok && reply.complete === true ? { "agenteschat/complete": true } : {}),
+        ...(!reply.ok
+          ? {
+              "agenteschat/errorCode":
+                reply.code ?? (reply.error === MCP_CUT_OFF ? "bridge.cut_off" : "bridge.unconfirmed"),
+            }
+          : {}),
+      };
       return {
         jsonrpc: "2.0",
         id,
@@ -900,6 +991,7 @@ export async function handleMcpMessage(
             ...(reply.ok && reply.images ? mcpImageContent(reply.images) : []),
           ],
           isError: !reply.ok,
+          ...(Object.keys(resultMeta).length ? { _meta: resultMeta } : {}),
         },
       };
     }
@@ -1045,6 +1137,8 @@ export async function runMcpServer(options: {
   pollMs?: number;
   /** How calls reach the daemon. Default: over `socketPath`. Inside the daemon (a `session`): straight to its bridge. */
   ipc?: (req: IpcRequest) => Promise<IpcReply>;
+  /** Request an unshortened result (the host ACP adapter sets this in its subprocess environment). */
+  requireComplete?: boolean;
   /** Default: `AGENTES_MCP_BRANCHES` and `AGENTES_MCP_TASK`. */
   context?: McpContext;
 }): Promise<number> {
@@ -1060,11 +1154,19 @@ export async function runMcpServer(options: {
   const out = options.output ?? process.stdout;
   const write = (msg: unknown) => out.write(`${JSON.stringify(msg)}\n`);
   const context: McpContext = options.context ?? mcpContextFromEnv(process.env);
+  const requireComplete = options.requireComplete ?? process.env.AGENTES_MCP_REQUIRE_COMPLETE === "1";
   const ipc = options.ipc ?? ((req: IpcRequest) => ipcCall(options.socketPath, req));
   // A background task outside a mission has no tools of ours: only the prompt, answered on this computer.
   const call: ToolCaller = context.local
     ? async () => ({ ok: false, error: NOBODY_TO_ASK })
-    : (tool, args) => ipc({ taskId: options.taskId, token, tool, args });
+    : (tool, args) =>
+        ipc({
+          taskId: options.taskId,
+          token,
+          tool,
+          args,
+          ...(requireComplete ? { requireComplete: true as const } : {}),
+        });
   // The run's tools, asked from the server through the daemon (cached here: one process per task or run). A list
   // that changed (a scope granted, a connector added, a mission thread, another run's groups): the executor re-reads
   // it (Claude Code 2.1.316 does, between the tool calls of a turn; Codex 0.165.0 doesn't, `brain-codex-app.ts`).
@@ -1099,7 +1201,7 @@ export async function runMcpServer(options: {
       write(rpcError(null, -32700, "Parse error"));
       continue;
     }
-    const p = handleMcpMessage(message, call, scope, list, profile, context)
+    const p = handleMcpMessage(message, call, scope, list, profile, context, () => cache.runStateVersion)
       .then((res) => {
         if (res) write(res);
       })

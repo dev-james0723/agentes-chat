@@ -2,11 +2,12 @@ import type { ConnectorCategory } from "./catalog";
 import { canonicalResource } from "./oauth-mcp";
 
 /**
- * One-click connectors: vendors' official remote MCP servers that speak MCP
+ * Connector presets for official remote MCP servers. Most speak MCP
  * OAuth with Dynamic Client Registration (no app of ours to register). Each
  * was checked (2026-10-15, and 2026-10-28 from GitLab on): the server
  * answers 401 with OAuth, its authorization server publishes a
  * `registration_endpoint` and PKCE S256.
+ * API-key-only vendors instead declare a fixed keyHeader; they offer no OAuth.
  * They connect like any custom MCP server; after the OAuth, our suggested
  * classification (read tools free, writes approved, destructive ones need
  * approval) is applied at once, and admins can change it.
@@ -55,6 +56,8 @@ export interface McpPreset {
   cloudOAuthOnly?: true;
   /** How its server takes an API key in `Authorization` (Semrush: `Apikey <key>`); default `Bearer`. */
   keyScheme?: string;
+  /** An API-key-only vendor's fixed header, only at its exact serverUrl; never a user-supplied header. */
+  keyHeader?: "x-goog-api-key";
   /**
    * The read-only tool that lists the accounts a sign-in reaches: its answer (JSON) keeps them at `list`, each one's
    * id made of the values at `id` and its name at `name` (dotted paths). Two connections are the same account when
@@ -103,6 +106,15 @@ export const MCP_PRESETS: readonly McpPreset[] = [
     description: "Linear issues, projects and cycles.",
     icon: "linear",
     serverUrl: "https://mcp.linear.app/mcp",
+  },
+  {
+    id: "stitch",
+    category: "product",
+    label: "Stitch",
+    description: "Google Stitch projects, screens and design assets.",
+    icon: "plug",
+    serverUrl: "https://stitch.googleapis.com/mcp",
+    keyHeader: "x-goog-api-key",
   },
   {
     id: "sentry",

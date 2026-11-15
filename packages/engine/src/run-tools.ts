@@ -16,6 +16,11 @@ import { insertMessage, type Message, messageView } from "./messages";
 import { notifyMissionApproval } from "./mission-tools";
 import { notifyQuestion } from "./notification-producers";
 import {
+  isFreshPublicationCapture,
+  isPrivatePublication,
+  PRIVATE_PUBLICATION_TITLE,
+} from "./private-skill-publication";
+import {
   type AgentQuestionRow,
   ASK_USER_TOOL,
   impliedAddressee,
@@ -29,6 +34,7 @@ import { routineBriefOf } from "./routine-brief";
 import type { BridgeIdentity } from "./run-tool-tokens";
 import { type AgentRun, replyThreadOf } from "./runs";
 import { publishSecret, type SecretRequestRow, secretLabelOf, secretRequestView, syncSecretMessage } from "./secrets";
+import { keepRunMarkers } from "./sticky-transcript";
 import { artifactToolDetail, promptAnswer, promptPoll, toolCode, toolCommand, toolDetail } from "./tool-detail";
 import { directoryRole, HARNESS_PREFIX, ON_DEMAND_USE, resolveDirectoryTool } from "./tools/directory";
 import { type Approval, type InvokeResult, isSensitive, type ToolGateway } from "./tools/gateway";
@@ -59,6 +65,10 @@ export interface RunToolsDeps {
 export interface BridgeCallResult {
   result: ToolResult;
   code?: string;
+  /** Present only after a known gateway result or persisted suspension. */
+  runState?: "completed" | "suspended";
+  imageOmitted?: boolean;
+  resultTruncated?: boolean;
 }
 
 /** Where a run's events and cards go. */
@@ -355,7 +365,7 @@ async function recordBridgeEffects(
     mergeToolEffects(kept, effects);
     await tx
       .update(agentRuns)
-      .set({ transcript: { ...t, [BRIDGE_EFFECTS]: kept }, updatedAt: new Date() })
+      .set({ transcript: keepRunMarkers({ ...t, [BRIDGE_EFFECTS]: kept }), updatedAt: new Date() })
       .where(eq(agentRuns.id, run.id));
   });
   if (update) await publishChannelEvent(deps.pubsub, { type: "memory.updated", ...where, update });
@@ -369,8 +379,20 @@ async function recordBridgeEffects(
  * drop ones kept since. The row's value stays as it is.
  */
 export function storedTranscript(t: object): SQL {
-  const { [BRIDGE_EFFECTS]: _kept, ...rest } = t as Record<string, unknown>;
-  return sql`(${pgSafeStringify(rest)}::jsonb || jsonb_strip_nulls(jsonb_build_object(${BRIDGE_EFFECTS}::text, ${agentRuns.transcript} -> ${BRIDGE_EFFECTS}::text)))`;
+  const { [BRIDGE_EFFECTS]: _kept, publicationCapture, metadata: _metadata, ...rest } = t as Record<string, unknown>;
+  // Row-owned metadata may be updated concurrently. Presence is significant: JSON null is not an absent key.
+  const current = sql`coalesce(${agentRuns.transcript},'{}'::jsonb)`;
+  const keep = (key: string) => sql`case when ${current} ? ${key}::text
+    then jsonb_build_object(${key}::text, ${current}->${key}::text) else '{}'::jsonb end`;
+  // Only genuine newly assembled native context can initialize coverage before a system transcript exists.
+  const initial = isFreshPublicationCapture(publicationCapture)
+    ? sql`case when not (${current} ? 'system') then jsonb_build_object('publicationCapture',${pgSafeStringify(publicationCapture)}::jsonb) else '{}'::jsonb end`
+    : sql`'{}'::jsonb`;
+  // Quota hold markers (continuityCheckpoint, effectUncertain) are sticky against stale writers.
+  return keepRunMarkers(
+    sql`(${pgSafeStringify(rest)}::jsonb || ${keep(BRIDGE_EFFECTS)} || ${keep("metadata")} ||
+    case when ${current} ? 'publicationCapture' then ${keep("publicationCapture")} else ${initial} end)`,
+  );
 }
 
 /** Takes (and clears) the side effects the bridge kept for this run (`recordBridgeEffects`). */
@@ -385,7 +407,10 @@ export async function takeBridgeEffects(db: Database, runId: string): Promise<To
     const kept = t?.[BRIDGE_EFFECTS] as ToolSideEffects | undefined;
     if (!t || !kept) return null;
     const { [BRIDGE_EFFECTS]: _taken, ...rest } = t;
-    await tx.update(agentRuns).set({ transcript: rest, updatedAt: new Date() }).where(eq(agentRuns.id, runId));
+    await tx
+      .update(agentRuns)
+      .set({ transcript: keepRunMarkers(rest), updatedAt: new Date() })
+      .where(eq(agentRuns.id, runId));
     return kept;
   });
 }
@@ -499,16 +524,19 @@ export async function invokeWithChip(
   // is the computer's permission check, which only exists on the bridge: its line says the command it checked.
   const screen = screenTool(use.name)?.tool;
   const prompt = use.name === PERMISSION_TOOL;
-  const detail = screen
-    ? toolDetail(screen, input)
-    : prompt
-      ? toolDetail(use.name, input)
-      : builtIn
-        ? (toolDetail(use.name, input) ??
-          (await artifactToolDetail(deps.db, ctx.orgId, ctx.channelId, use.name, input).catch(() => undefined)))
-        : undefined;
-  const code = builtIn ? toolCode(use.name, input) : undefined;
-  const command = toolCommand(use.name, input);
+  const detail =
+    shownName === "update_skill"
+      ? PRIVATE_PUBLICATION_TITLE
+      : screen
+        ? toolDetail(screen, input)
+        : prompt
+          ? toolDetail(use.name, input)
+          : builtIn
+            ? (toolDetail(use.name, input) ??
+              (await artifactToolDetail(deps.db, ctx.orgId, ctx.channelId, use.name, input).catch(() => undefined)))
+            : undefined;
+  const code = shownName === "update_skill" ? undefined : builtIn ? toolCode(use.name, input) : undefined;
+  const command = shownName === "update_skill" ? undefined : toolCommand(use.name, input);
   // The agent's line follows what it does now (ADR 0084 §10), beside the call, never in its way.
   if (def) void followWork(deps, ctx, def).catch(() => {});
   const said = takeStepWords(where.runId);
@@ -516,7 +544,7 @@ export async function invokeWithChip(
     type: "agent.tool",
     ...where,
     tool: shownName,
-    ...(said ? { said } : {}),
+    ...(said && shownName !== "update_skill" ? { said } : {}),
     ...(connector ? { connector } : {}),
     ...(def?.service ? { service: def.service } : {}),
     ...(def?.serviceIcon ? { serviceIcon: def.serviceIcon } : {}),
@@ -650,6 +678,23 @@ function codeOf(content: string, data?: Record<string, unknown>) {
   return "tool.failed";
 }
 
+/** Same completion proof for live bridge results and native-history reconstruction. */
+export function knownBridgeResult(output: Pick<ToolOutput, "content" | "isError" | "data">): boolean {
+  const canceled = output.data?.canceled as { killed?: boolean } | undefined;
+  return (
+    (!canceled || canceled.killed === true) &&
+    (!output.isError ||
+      typeof output.data?.exitCode === "number" ||
+      [
+        "tool.invalid_input",
+        "tool.unknown",
+        "tool.not_allowed",
+        "command.approval_needed",
+        "command.not_allowed",
+      ].includes(codeOf(output.content, output.data)))
+  );
+}
+
 /**
  * One call for a run or a mission task from outside the engine loop (the
  * runner bridge, `executeToolForRun`), with the error code the bridge answers
@@ -678,9 +723,15 @@ export async function invokeToolForRun(
     : await tools.invoke(ctx, { toolUseId: call.id, name: call.name, input });
   if (run && where) await recordBridgeEffects(deps, run, where, use, outcome);
   const wait = outcome.type === "result" && !outcome.output.isError ? waitOf(outcome.output.data) : null;
+  // Malformed image data is also treated as omitted, never silently as text-only.
+  const images = outcome.type === "result" ? outcome.output.images : undefined;
+  const imageOmitted = images !== undefined && (!Array.isArray(images) || images.length > 0);
+  const resultTruncated = outcome.type === "result" && outcome.output.resultTruncated === true;
   const suspend = async (pause: RunPause, r: AgentRun): Promise<BridgeCallResult> => {
     const result = await suspendRunForTool(deps, r, { id: call.id, name: call.name }, pause);
-    return result.isError ? { result, code: "bridge.run_not_running" } : { result };
+    return result.isError
+      ? { result, code: "bridge.run_not_running" }
+      : { result, runState: "suspended", imageOmitted, resultTruncated };
   };
   if (wait && run) {
     return suspend(
@@ -690,13 +741,20 @@ export async function invokeToolForRun(
   }
   if (outcome.type === "result") {
     const isError = outcome.output.isError === true;
+    const code = isError ? codeOf(outcome.output.content, outcome.output.data) : undefined;
+    // A returned failure may represent a lost machine request, not a completed command.
+    // Only explicit command exits or pre-dispatch gateway refusals prove a known error outcome.
+    const known = knownBridgeResult(outcome.output);
     return {
       result: {
         content: outcome.output.content,
         ...(isError ? { isError: true } : {}),
         ...(outcome.output.images?.length ? { images: outcome.output.images } : {}),
       },
-      ...(isError ? { code: codeOf(outcome.output.content, outcome.output.data) } : {}),
+      ...(code ? { code } : {}),
+      ...(known ? { runState: "completed" as const } : {}),
+      imageOmitted,
+      resultTruncated,
     };
   }
   if (!run) {
@@ -924,6 +982,21 @@ export async function postPauseCards(tx: Executor, run: AgentRun, requests: Paus
   }
 
   for (const approval of requests.approvals) {
+    if (isPrivatePublication(approval)) {
+      if (approval.channelId !== run.channelId) throw new Error("Private sharing audience changed");
+      const message = await card(
+        { channelId: approval.channelId, threadId: approval.threadRootId },
+        PRIVATE_PUBLICATION_TITLE,
+        { ...bodyCode("approval_request", { title: PRIVATE_PUBLICATION_TITLE }), approvalId: approval.id },
+      );
+      const [linked] = await tx
+        .update(approvals)
+        .set({ messageId: message.id })
+        .where(eq(approvals.id, approval.id))
+        .returning();
+      out.approvals.push(linked ?? approval);
+      continue;
+    }
     const meta = {
       ...bodyCode("approval_request", { title: approval.title }),
       approvalId: approval.id,
@@ -976,7 +1049,8 @@ export async function publishPauseCards(deps: { db: Database; pubsub?: PubSub },
     for (const card of posted.approvals) {
       await publishApproval({ db, pubsub }, card, "approval.created");
       // A mission's approval (agent mode): its owner hears it waits.
-      if (card.missionId) await notifyMissionApproval({ db, pubsub }, card).catch(() => undefined);
+      if (card.missionId && !isPrivatePublication(card))
+        await notifyMissionApproval({ db, pubsub }, card).catch(() => undefined);
     }
   }
   for (const old of posted.superseded) await publishApproval({ db, pubsub }, old, "approval.decided").catch(() => {});
@@ -1089,11 +1163,11 @@ export async function suspendRunForTool(
         // Without a transcript (never executed by the engine) there is nothing to resume from: state only.
         ...(transcript
           ? {
-              transcript: {
+              transcript: keepRunMarkers({
                 ...transcript,
                 postedCount: (transcript.postedCount ?? 0) + pause.messages.length,
                 pending: { calls: [...(transcript.pending?.calls ?? []), pendingCall] },
-              },
+              }),
             }
           : {}),
       })

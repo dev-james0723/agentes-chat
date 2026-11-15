@@ -16,7 +16,14 @@ export interface ClaudeSharedLogin {
 }
 
 /** What `pair` writes and `start` reads (`~/.agentes-runner/config.json`, mode 600). */
+export interface HostMcpConfig {
+  enabled: true;
+  registry: string;
+  sha256: string;
+}
 export interface RunnerConfig {
+  /** Default off. Private, owner-reviewed registry; commands never come from the server. */
+  hostMcp?: HostMcpConfig;
   /** Our server, e.g. `https://app.agentes.chat` (no trailing slash). */
   server: string;
   machineId: string;
@@ -27,6 +34,8 @@ export interface RunnerConfig {
   workspace: string;
   /** Commands on (kept equal to `access.tools.commands` once `access` exists). */
   exec: boolean;
+  /** This runner must not discover or access phones. Applied at startup. */
+  phonesDisabled?: true;
   /** Background tasks at once on this computer (default 3). */
   maxConcurrentTasks?: number;
   /** A background task is stopped after this many seconds (default 4 h). */
@@ -179,6 +188,18 @@ export function readStoredConfig(home = runnerHome()): StoredConfig | null {
 }
 
 export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
+  const hostMcp = raw.hostMcp as Partial<HostMcpConfig> | undefined;
+  if (
+    hostMcp !== undefined &&
+    (!hostMcp ||
+      hostMcp.enabled !== true ||
+      typeof hostMcp.registry !== "string" ||
+      !path.isAbsolute(hostMcp.registry) ||
+      typeof hostMcp.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(hostMcp.sha256) ||
+      Object.keys(hostMcp).some((k) => !["enabled", "registry", "sha256"].includes(k)))
+  )
+    throw new Error("Invalid hostMcp config");
   if (raw.networkMark !== undefined) validateNetworkMark(raw.networkMark);
   if (
     raw.networkLauncher !== undefined &&
@@ -204,6 +225,8 @@ export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
     ...(text(raw.token, 4000) ? { token: text(raw.token, 4000) } : {}),
     ...(text(raw.workspace, 4000) ? { workspace: text(raw.workspace, 4000) } : {}),
     ...(typeof raw.exec === "boolean" ? { exec: raw.exec } : {}),
+    ...(hostMcp ? { hostMcp: hostMcp as HostMcpConfig } : {}),
+    ...(raw.phonesDisabled === true ? { phonesDisabled: true as const } : {}),
     ...(positive(raw.maxConcurrentTasks) ? { maxConcurrentTasks: positive(raw.maxConcurrentTasks) } : {}),
     ...(positive(raw.taskMaxSeconds) ? { taskMaxSeconds: positive(raw.taskMaxSeconds) } : {}),
     ...(positive(raw.brainIdleMinutes) ? { brainIdleMinutes: positive(raw.brainIdleMinutes) } : {}),

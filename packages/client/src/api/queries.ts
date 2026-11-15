@@ -1955,7 +1955,11 @@ export const useCardApprovals = (orgId: string, messageId: string, enabled = tru
 };
 
 /** Puts a fresh approval in the caches (decision responses, WebSocket events). */
-export function cacheApproval(qc: ReturnType<typeof useQueryClient>, orgId: string, approval: Approval) {
+export function cacheApproval(qc: ReturnType<typeof useQueryClient>, orgId: string, incoming: Approval) {
+  // Events and decision responses are summaries. A protected draft is never promoted into a list cache.
+  const approval = incoming.publicationRequired
+    ? { ...incoming, publication: undefined, canDecide: false, canCancel: false }
+    : incoming;
   qc.setQueryData<Approval[]>(keys.approvals(orgId), (list) => {
     if (!list) return list;
     const previous = list.find((a) => a.id === approval.id);
@@ -1963,6 +1967,7 @@ export function cacheApproval(qc: ReturnType<typeof useQueryClient>, orgId: stri
     return previous ? list.map((a) => (a.id === approval.id ? merged : a)) : [merged, ...list];
   });
   qc.setQueryData<Approval>(keys.approval(orgId, approval.id), (prev) => keepOwnRights(prev, approval));
+  if (approval.publicationRequired) void qc.invalidateQueries({ queryKey: keys.approval(orgId, approval.id) });
   // One prepared ahead is also on its routine's page (approved, ran, withdrawn).
   if (approval.routineId) void qc.invalidateQueries({ queryKey: keys.routines(orgId) });
 }
@@ -1972,7 +1977,7 @@ export function cacheApproval(qc: ReturnType<typeof useQueryClient>, orgId: stri
  * while an action approved ahead may still run.
  */
 function keepOwnRights(previous: Approval | undefined, approval: Approval): Approval {
-  if (!previous) return approval;
+  if (!previous || approval.publicationRequired) return approval;
   if (approval.status === "pending") return { ...approval, canDecide: previous.canDecide };
   if (approval.status === "approved" && approval.runAt && !approval.executedAt) {
     return { ...approval, canCancel: approval.canCancel || previous.canCancel };
@@ -2006,15 +2011,17 @@ export function useDecideApproval(orgId: string) {
       decision,
       reason,
       always,
+      publicationFingerprint,
     }: {
       id: string;
       decision: "approve" | "refuse";
       reason?: string;
       always?: boolean;
+      publicationFingerprint?: string;
     }) =>
       decision === "approve"
-        ? api.approvals.approve(orgId, id, reason, always, via)
-        : api.approvals.refuse(orgId, id, reason, via),
+        ? api.approvals.approve(orgId, id, reason, always, via, publicationFingerprint)
+        : api.approvals.refuse(orgId, id, reason, via, publicationFingerprint),
     onSuccess: (approval, { decision, always }) => {
       playSound(decision === "approve" ? "approved" : "error");
       cacheApproval(qc, orgId, approval);

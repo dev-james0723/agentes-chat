@@ -1215,12 +1215,14 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
       return {
         content: `${content}\n${waiting.content}`,
         ...(waiting.isError ? { isError: true } : {}),
+        resultTruncated: true,
         data: { ...data, ...(waiting.data ?? {}) },
       };
     }
     // A step that ran and only failed its check was done: not an error (it must not be done again).
     const nothingDone = report.steps.every((s) => s.status !== "done" && !s.ran);
-    return { content, ...(f.failed && nothingDone ? { isError: true } : {}), data };
+    // Page reports are bounded observations/diffs, not the complete rendered page or its HTML (ADR 0196).
+    return { content, ...(f.failed && nothingDone ? { isError: true } : {}), resultTruncated: true, data };
   }
 
   /**
@@ -1378,7 +1380,8 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
         }
         const out = await execute(input, ctx);
         if (seesThePage && !out.isError) await markPageRead(ctx.db, ctx);
-        return out;
+        // The runner also caps snapshots; even a short excerpt cannot attest a complete original page.
+        return name === "browser_read" || name === "browser_tabs" ? { ...out, resultTruncated: true } : out;
       },
       ...rest,
     };

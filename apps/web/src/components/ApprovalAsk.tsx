@@ -28,6 +28,7 @@ import type { TFunction } from "i18next";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AheadLine, ApproveAlways, CancelAhead } from "@/components/ApprovalItem";
+import { DetailsLink } from "@/components/details-link";
 import { useOrg } from "@/components/org-context";
 import { inlineWords } from "@/lib/markdown";
 import {
@@ -129,7 +130,11 @@ export function ApprovalAsk({
       }
       body={<AheadLine approval={approval} className="ap-ask__ahead" />}
       actions={
-        !pending || !approval.canDecide ? undefined : refusing ? (
+        !pending || !approval.canDecide ? undefined : approval.publicationRequired ? (
+          <DetailsLink item={{ kind: "approval", id: approval.id }} className="ap-link">
+            {t("privatePublication.review")}
+          </DetailsLink>
+        ) : refusing ? (
           <RefuseBox approval={approval} agent={agent} onCancel={() => setRefusing(false)} />
         ) : (
           <>
@@ -515,10 +520,12 @@ function GroupItem({
         !refusing && (
           <div className="rq__item-acts">
             <ApproveButton approval={approval} />
-            {always && <ApproveAlways approval={approval} agent={agent} also={also} />}
-            <Button size="sm" onClick={() => setRefusing(true)}>
-              {t("approval.notNow")}
-            </Button>
+            {always && !approval.publicationRequired && <ApproveAlways approval={approval} agent={agent} also={also} />}
+            {!approval.publicationRequired && (
+              <Button size="sm" onClick={() => setRefusing(true)}>
+                {t("approval.notNow")}
+              </Button>
+            )}
           </div>
         )
       ) : (

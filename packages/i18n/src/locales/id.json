@@ -1,4 +1,16 @@
 {
+  "privatePublication": {
+    "title": "Tinjau pembagian draf pribadi",
+    "destination": "Tujuan: pustaka keterampilan organisasi",
+    "warning": "Orang yang dapat membaca keterampilan ini akan melihat seluruh draf ini.",
+    "approve": "Bagikan versi ini satu kali",
+    "loading": "Memuat pratinjau terlindungi…",
+    "failed": "Pratinjau terlindungi tidak dapat diverifikasi. Buka kembali untuk mencoba lagi.",
+    "stale": "Keterampilan ini telah berubah. Minta permintaan berbagi yang baru.",
+    "body": "Isi lengkap keterampilan",
+    "review": "Tinjau draf pribadi",
+    "withdraw": "Tarik persetujuan berbagi"
+  },
   "app": {
     "name": "agentes"
   },
@@ -7811,6 +7823,9 @@
       },
       "deploy": {
         "succeeded": "Deploy selesai"
+      },
+      "paperclip": {
+        "received": "Permintaan Paperclip diterima"
       }
     },
     "when": {

@@ -1,6 +1,10 @@
 import {
   type BrainTurnTimings,
   CODEX_FOLDER_PROTOCOL,
+  HOST_ACP_TOOL_NAMES,
+  HOST_ANTIGRAVITY_PROVIDER,
+  type HostAcpHistory,
+  isHostAcpHistory,
   PERMISSION_TOOL,
   type PlanUsage,
   type ProviderFailureCause,
@@ -79,6 +83,7 @@ import {
   noteModelLimit,
   notePlanLimit,
   offRefusal,
+  planIsOwners,
   recordRunBrain,
   refusalScope,
   regionRefusal,
@@ -98,6 +103,7 @@ import {
   isComputerBrain,
   type ToolResult,
 } from "./brains/types";
+import { closeBridgeEffectEpoch } from "./bridge-effect-epoch";
 import { agentBrowserProfiles } from "./browser/profiles";
 import { browsersPrompt } from "./browser/tools";
 import { BROWSER_SCOPE } from "./browser/types";
@@ -250,9 +256,19 @@ import {
 import { openRequestNudge, openRequestsOf, WITHDRAW_REQUEST_TOOL } from "./open-requests";
 import { enqueue, PermanentJobError } from "./outbox";
 import { type OutsideMemo, personWords, runReadOutside } from "./outside";
+import { paperclipProjectBrain } from "./paperclip-project-runtime";
 import { assertPersonUnderLimit } from "./person-usage";
+import { capturePublicationContext } from "./private-skill-publication";
 import { createProfiler, type StageTiming } from "./profile";
 import { ASK_USER_TOOL, QUESTION_MAX_CHARS, questionResult } from "./questions";
+import {
+  captureQuotaContinuity,
+  consumeQuotaContinuity,
+  quotaContinuityTranscript,
+  quotaContinuityValue,
+  readQuotaContinuity,
+} from "./quota-continuity";
+import { planAccountFor } from "./quota-qualifier";
 import {
   endsWithSentinel,
   isSentinelOnly,
@@ -289,6 +305,7 @@ import {
   type HandedTask,
   invokeToolForRun,
   invokeWithChip,
+  knownBridgeResult,
   mergeToolEffects,
   type PauseRequests,
   postPauseCards,
@@ -344,6 +361,7 @@ import {
 import { type Approval, type InvokeResult, isSensitive, type ToolGateway } from "./tools/gateway";
 import { grantedScopeKeys, grantKey } from "./tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./tools/types";
+import { untrustedBlock } from "./untrusted";
 import {
   budgetUsedPercent,
   continuesPastPlan,
@@ -410,6 +428,7 @@ const {
   agentQuestions,
   machines,
   messages,
+  providerCredentials,
   outbox,
   routineRuns,
   secretRequests,
@@ -431,8 +450,175 @@ const UNCOUNTED_TOOLS = `^(${REACT_TOOL}|${ON_DEMAND_FIND}|${ON_DEMAND_USE})$|_$
  * cancel, steering, deltas and events, NO_REPLY / `react`, limits, profile.
  * Brains (`brains/*`) only think: one turn in, neutral events out.
  */
+/** Upper bound of the portable record a new harness reads on a quota handoff. */
+export const PORTABLE_CONTEXT_MAX_BYTES = 400_000;
+export const QUOTA_HANDOFF_RESUME_PROMPT =
+  "The previous model for this same task reached its usage limit, so you are continuing its work in a new session. " +
+  "The portable prior conversation and work log above show what was asked, what was already done and what it said. " +
+  "Check the working directory's current state, do not redo finished steps or repeat external actions already taken, " +
+  "and continue with the remaining work.";
+
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max)}… [${text.length - max} more]` : text;
+
+/**
+ * Text-only portable copy of a run's conversation for a different harness: tool calls and results become short
+ * lines, other parts are named. The newest messages are kept within the byte bound; the first (the goal) always is.
+ */
+export function portableMessages(messages: ModelMessage[], workLog = "", conversation = ""): ModelMessage[] {
+  const flat: ModelMessage[] = conversation
+    ? [{ role: "user", content: `[earlier messages in this conversation]\n${conversation}` } as ModelMessage]
+    : [];
+  flat.push(
+    ...messages.map((message) => {
+      if (typeof message.content === "string") return { role: message.role, content: message.content } as ModelMessage;
+      const parts = Array.isArray(message.content) ? (message.content as unknown as Record<string, unknown>[]) : [];
+      const text = parts
+        .map((part) => {
+          if (part.type === "text") return String(part.text ?? "");
+          if (part.type === "tool-call" || part.type === "tool_use")
+            return `[tool call ${String(part.toolName ?? part.name ?? "?")}: ${clip(JSON.stringify(part.input ?? part.args ?? {}), 1_500)}]`;
+          if (part.type === "tool-result" || part.type === "tool_result") {
+            const out = part.output ?? part.result ?? part.content;
+            return `[tool result ${String(part.toolName ?? part.name ?? "")}: ${clip(typeof out === "string" ? out : JSON.stringify(out ?? null), 3_000)}]`;
+          }
+          return `[${String(part.type ?? "part")} omitted]`;
+        })
+        .join("\n");
+      return { role: message.role, content: text } as ModelMessage;
+    }),
+  );
+  if (workLog) flat.push({ role: "user", content: `[work log of this run so far]\n${workLog}` } as ModelMessage);
+  const budget = PORTABLE_CONTEXT_MAX_BYTES - 8_000;
+  const size = (m: ModelMessage) => new TextEncoder().encode(JSON.stringify(m)).length;
+  if (flat.reduce((n, m) => n + size(m), 0) <= budget) return flat;
+  const [first, ...rest] = flat;
+  const kept: ModelMessage[] = [];
+  let used = first ? size(first) : 0;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const m = rest[i] as ModelMessage;
+    if (used + size(m) > budget) break;
+    used += size(m);
+    kept.unshift(m);
+  }
+  return [
+    ...(first ? [first] : []),
+    { role: "user", content: `[${rest.length - kept.length} earlier messages omitted]` } as ModelMessage,
+    ...kept,
+  ];
+}
+
+/** A bounded, model-independent log of what this run did (its recorded tool calls, results and posts). */
+export async function runWorkDigest(db: Database, runId: string, limit = 300): Promise<string> {
+  const rows = await db
+    .select({ seq: agentRunSteps.seq, kind: agentRunSteps.kind, data: agentRunSteps.data })
+    .from(agentRunSteps)
+    .where(and(eq(agentRunSteps.runId, runId), inArray(agentRunSteps.kind, ["tool_call", "tool_result", "message"])))
+    .orderBy(desc(agentRunSteps.seq))
+    .limit(limit);
+  const lines = rows.reverse().map(({ seq, kind, data }) => {
+    const d = data as Record<string, unknown>;
+    if (kind === "tool_call")
+      return `#${seq} call ${String(d.name ?? "?")} ${clip(JSON.stringify(d.input ?? {}), 400)}`;
+    if (kind === "tool_result")
+      return `#${seq} result${d.isError ? " (error)" : ""} ${clip(typeof d.content === "string" ? d.content : JSON.stringify(d.content ?? d.result ?? ""), 600)}`;
+    return `#${seq} said ${clip(String(d.text ?? d.body ?? ""), 600)}`;
+  });
+  return clip(lines.join("\n"), 60_000);
+}
+
+/**
+ * The conversation this run belongs to, as plain lines (its thread, or the channel's recent top-level messages):
+ * a native session may hold earlier turns that the run's own transcript does not, and the new harness reads them here.
+ * Only the run's own conversation, which the agent already reads.
+ */
+export async function conversationDigest(
+  db: Database,
+  run: Pick<AgentRun, "orgId" | "channelId" | "threadRootId" | "triggerMessageId">,
+  limit = 40,
+): Promise<string> {
+  const topLevel = run.threadRootId === run.triggerMessageId;
+  const rows = await db
+    .select({ authorType: messages.authorType, body: messages.body, createdAt: messages.createdAt })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.orgId, run.orgId),
+        eq(messages.channelId, run.channelId),
+        isNull(messages.deletedAt),
+        ne(messages.id, run.triggerMessageId),
+        topLevel
+          ? isNull(messages.threadId)
+          : sql`(${messages.id} = ${run.threadRootId} or ${messages.threadId} = ${run.threadRootId})`,
+        sql`${messages.meta}->'quotaHandoff' is null`,
+      ),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(limit);
+  const lines = rows.reverse().map((m) => `${m.authorType}: ${clip(m.body, 1_500)}`);
+  return clip(lines.join("\n"), 40_000);
+}
+
+export const QUOTA_HANDOFF_KINDS = ["claude_code", "grok", "codex"] as const;
+export type QuotaHandoffKind = (typeof QUOTA_HANDOFF_KINDS)[number];
+export const QUOTA_HANDOFF_DEFAULT_TARGETS: readonly QuotaHandoffKind[] = QUOTA_HANDOFF_KINDS;
+export const isHandoffKind = (kind: BrainKind): kind is QuotaHandoffKind =>
+  (QUOTA_HANDOFF_KINDS as readonly string[]).includes(kind);
+const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "host.docker.internal", "ollama"]);
+
+/** The agent's model brain (its own credential) runs on this host's local endpoint: free, no paid API. */
+export async function thinkerIsLocal(db: Database, thinker: Pick<Agent, "credentialId">): Promise<boolean> {
+  if (!thinker.credentialId) return false;
+  const [row] = await db
+    .select({ provider: providerCredentials.provider, options: providerCredentials.options })
+    .from(providerCredentials)
+    .where(and(eq(providerCredentials.id, thinker.credentialId), isNull(providerCredentials.revokedAt)));
+  const endpoint = (row?.options as { endpoint?: unknown } | null)?.endpoint;
+  if (row?.provider !== "custom" || typeof endpoint !== "string") return false;
+  try {
+    return LOCAL_HOSTS.has(new URL(endpoint).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export interface QuotaCliQualification {
+  targetKind: QuotaHandoffKind;
+  /** The machine account the target signs in with; absent: the computer's own sign-in. */
+  accountId?: string | null;
+  machineId: string;
+  model: string;
+  sourcePool: string;
+  targetPool: string;
+  noPaidExtraUsage: true;
+  noCredentialsInContext: true;
+  evidence: string;
+  observedAt: number;
+  validUntil: number;
+}
+
 export interface EngineDeps {
   db: Database;
+  /** Trusted same-host, same-agent qualification; no production implementation is installed by this patch. */
+  quotaCliContinuation?: {
+    qualify(input: {
+      orgId: string;
+      runId: string;
+      agentId: string;
+      channelId: string;
+      goalMessageId: string;
+      machineId: string;
+      sourceKind: BrainKind;
+      sourceAccountId: string | null;
+      targetKind: QuotaHandoffKind;
+      requiredTools: string[];
+      context: { system: SystemBlock[]; messages: ModelMessage[] };
+    }): Promise<QuotaCliQualification | null>;
+    /** Routes to try, in preference order for ties (default Claude Code, Grok, Codex). */
+    targets?: readonly QuotaHandoffKind[];
+  };
+  paperclipCompatibilityEnabled?: boolean;
   /** Reads a live block's parts (`blockSpecAt`): the agent reads what its blocks show (ADR 0113). */
   blockSpec?: BlockSpecReader;
   gateway: ModelGateway;
@@ -445,6 +631,9 @@ export interface EngineDeps {
   tools?: ToolGateway;
   /** Model calls one run may make (tool loops). */
   maxToolTurns?: number;
+  /** Shared plan reserve threshold and maximum age for the admission signal. */
+  quotaReservePercent?: number;
+  quotaReserveMaxAgeMs?: number;
   /** Long work's safety net (ADR 0121 §1): active time and model calls before a person's run moves, and how often it looks. */
   workAutoAfterMs?: number;
   workAutoAfterCalls?: number;
@@ -534,6 +723,13 @@ export type RunExecutorDeps = EngineDeps;
  * and prompt caches stay valid.
  */
 export interface Transcript {
+  /** Row-owned controller metadata. storedTranscript preserves the current DB value, never this stale copy. */
+  metadata?: unknown;
+  publicationCapture?: import("./private-skill-publication").PublicationCapture;
+  /** A caught bridged turn has an unknown effect; a decision must not resume it before reconciliation. */
+  effectUncertain?: { runId: string; turn: number; tools: string[] };
+  /** A host ACP call lost its delivery result: carried across fresh turns until explicitly reconciled. */
+  hostAcpUncertain?: { runId: string; turn: number; message: string };
   system: SystemBlock[];
   messages: ModelMessage[];
   /** Tools on demand (ADR 0043): the tool groups this run listed up front; absent = every tool. */
@@ -627,6 +823,70 @@ export interface Transcript {
    * the judges read this as the request instead.
    */
   request?: string;
+  /** A foreground plan cut after work: scoped source references only, never a claim that effects are safe. */
+  continuityCheckpoint?: {
+    schema: "quota-cut-checkpoint/1";
+    orgId: string;
+    runId: string;
+    channelId: string;
+    agentId: string;
+    goal: { state: "reference"; messageId: string } | { state: "unknown" };
+    task: "unknown";
+    executionOwner: "unknown";
+    constraints: "unknown";
+    completed: "unknown";
+    pending: "unknown";
+    decisions: "unknown";
+    tests: "unknown";
+    fileVersions: "unknown";
+    dependencies: "unknown";
+    effects: "unknown";
+    /** Bounded source references, not copied content or proof of eligibility. */
+    portable?: {
+      schema: "portable-run-references/1";
+      complete: false;
+      dispatch: "hold";
+      events: { id: string; seq: number; kind: string }[];
+      eventsTruncated: boolean;
+      messages: { id: string; createdAt: string }[];
+      messagesTruncated: boolean;
+      memories: { id: string; version: number }[];
+      skills: { id: string; version: number }[];
+      transcript: { runId: string; messageCount: number; complete: false };
+      gaps: string[];
+    };
+    source: { throughSeq: number; capturedAt: string; complete: false };
+    nextSafeAction: "reconcile_effects_and_qualify_route";
+    dispatch: "hold";
+  };
+  /** A pre-dispatch reserve hold, whose last measured reading is retained without claiming freshness. */
+  quotaReservePending?: {
+    usedPercent: number;
+    observedAt?: string;
+    pool: { machineId: string | null; kind: BrainKind; accountId: string | null };
+  };
+  /** Portable qualified continuation, using a new target harness session; not a native session import. */
+  quotaCliHandoff?: {
+    schema: "quota-cli-handoff/1";
+    disposition: "CONTINUE";
+    runId: string;
+    agentId: string;
+    channelId: string;
+    goalMessageId: string;
+    sourceKind: BrainKind;
+    sourceSessionId: string;
+    targetKind: QuotaHandoffKind;
+    /** The machine account the target signs in with (absent: the computer's own sign-in, or an older record). */
+    targetAccountId?: string | null;
+    targetSessionId: string;
+    machineId: string;
+    model: string;
+    sourcePool: string;
+    targetPool: string;
+    evidence: string;
+    observedAt: number;
+    validUntil: number;
+  };
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
   fallback?: { from: BrainKind; code: string; message: string; resetsAt?: string };
   /** Fast was refused on a turn of this run, which went on at standard speed (`meta.speedFallback`). */
@@ -1083,6 +1343,22 @@ async function executeRunInner(
   steerGate: { close: () => void },
 ) {
   const { db } = deps;
+  // An already-held run never consumes a decision or starts a model turn. The transition CAS below repeats this
+  // check atomically for queued/waiting runs; this read covers recovery of a row still marked running.
+  const [effectHold] = await db
+    .select({
+      transcript: agentRuns.transcript,
+      unsettledBridgeEpoch: sql<boolean>`exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
+      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+    })
+    .from(agentRuns)
+    .where(eq(agentRuns.id, runId));
+  if (
+    effectHold?.unsettledBridgeEpoch ||
+    effectHold?.unsettledApproval ||
+    (effectHold?.transcript as { effectUncertain?: unknown } | null)?.effectUncertain
+  )
+    return;
   // A job for one wait for the computer (back, grace, plan reset, room): only while the run still waits on it.
   // Another job may have resumed it already; running it again would run the run twice.
   let askingForRoom = false;
@@ -1099,6 +1375,7 @@ async function executeRunInner(
         code: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'code'`,
         people: sql<boolean | null>`(${agentRuns.transcript}->>'roomPeople')::boolean`,
         spilled: sql<boolean>`${agentRuns.transcript} ? 'spill'`,
+        continuityHold: sql<string | null>`${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch'`,
         source: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'source'`,
         cut: sql<string | null>`${agentRuns.transcript}->'interruptedTurn'->>'cause'`,
         orgId: agentRuns.orgId,
@@ -1117,7 +1394,7 @@ async function executeRunInner(
       })
       .from(agentRuns)
       .where(eq(agentRuns.id, runId));
-    if (row?.status !== "waiting_input" || row.waitId !== options.wait) return;
+    if (row?.status !== "waiting_input" || row.waitId !== options.wait || row.continuityHold === "hold") return;
     // Only the head of its key's line tries the provider again; the others look later, without claiming. A wake for
     // another wait (its budget, once back from the park) isn't this line's to hold.
     if (row.keyLine && row.outageWait === options.wait) {
@@ -1148,13 +1425,21 @@ async function executeRunInner(
       busyTries < BUSY_RETRIES &&
       (await otherAgentAnswering(db, row).catch(() => false))
     ) {
-      await db
+      const [stillWaiting] = await db
         .update(agentRuns)
         .set({
           transcript: sql`jsonb_set(${agentRuns.transcript}, '{catchUpTriage}', coalesce(${agentRuns.transcript}->'catchUpTriage', '{"calls":0}'::jsonb)
             || jsonb_build_object('busyRetries', ${busyTries + 1}::int, 'outcome', 'skipped_busy', 'at', ${Date.now()}::bigint))`,
         })
-        .where(and(eq(agentRuns.id, runId), eq(agentRuns.status, "waiting_input")));
+        .where(
+          and(
+            eq(agentRuns.id, runId),
+            eq(agentRuns.status, "waiting_input"),
+            sql`coalesce(${agentRuns.transcript}->'waitingForBrain'->>'waitId', ${agentRuns.transcript}->'outage'->>'waitId') = ${options.wait}`,
+          ),
+        )
+        .returning({ id: agentRuns.id });
+      if (!stillWaiting) return;
       await enqueue(db, {
         orgId: row.orgId,
         kind: "agent_run.execute",
@@ -1216,7 +1501,7 @@ async function executeRunInner(
   let waitedModel: string | null | undefined;
   /** When its wait's own timer was due: a claim before it was a wake (a turn through, a reading with room). */
   let waitedUntil: string | undefined;
-  const started = await transitionRun(db, runId, "queued", "running");
+  const started = await transitionRun(db, runId, "queued", "running", { requireNoUnknownEffect: true });
   if (started) {
     run = started;
     fresh = true;
@@ -1225,6 +1510,8 @@ async function executeRunInner(
     if (!loaded) throw new PermanentJobError(`agent run ${runId} not found`);
     run = loaded;
     if (isTerminal(run.status) || run.status === "queued") return;
+    // A timer belongs to exactly one waiting_input generation; it cannot pick up a run already moved elsewhere.
+    if (options.wait && run.status !== "waiting_input") return;
     if (run.status === "running") {
       // Another job runs it right now (a second resume of the same pause): one run never thinks twice at once.
       if (await runJobElsewhere(db, run.id, options.jobId)) return;
@@ -1256,7 +1543,8 @@ async function executeRunInner(
         run.id,
         run.status,
         "running",
-        lineMachine ? { waitingMachineId: lineMachine } : {},
+        { ...(lineMachine ? { waitingMachineId: lineMachine } : {}), requireNoUnknownEffect: true },
+        options.wait ? { waitId: options.wait } : undefined,
       );
       if (!resumed) return;
       run = resumed;
@@ -1327,7 +1615,12 @@ async function executeRunInner(
     await announceConsultationChange({ db, pubsub: deps.pubsub }, run).catch(() => {});
   }
   // Declared before `finished`: the early endings (standing, archived, no AI) read it before any turn.
-  let transcript = run.transcript as unknown as Transcript | null;
+  const storedContext = run.transcript as unknown as Partial<Transcript> | null;
+  // A controller may park metadata before the first context exists. It cannot stand in for model/source history.
+  let transcript: Transcript | null =
+    storedContext && Array.isArray(storedContext.system) && Array.isArray(storedContext.messages)
+      ? (storedContext as Transcript)
+      : null;
   /** Who thinks for this run (set before the first turn). */
   let brainPlan: BrainPlan | null = null;
   /** How its last turn ended (`decideTurnEnd`); every other way to `done` is recorded as `ended` (I2). */
@@ -2361,6 +2654,16 @@ async function executeRunInner(
     };
     later(() => addRunStep(db, run, "context", stats));
     transcript = {
+      publicationCapture: capturePublicationContext({
+        ...context.publicationCapture,
+        complete:
+          context.publicationCapture.complete &&
+          pending.length === 0 &&
+          !repositories &&
+          !browsers &&
+          granted.every((tool) => !tool.connectionId) &&
+          !system.some((b) => !context.system.includes(b) && (b.found || b.conversation)),
+      }),
       // What doesn't change during the run first (prompt cache), the per-turn blocks last.
       system: stableFirst(system),
       messages: context.messages,
@@ -2481,6 +2784,7 @@ async function executeRunInner(
   };
 
   // Back from waiting for the computer: it is tried again below. Asking for room again ends no wait anyone reads.
+  const quotaResumeWaitId = transcript.waitingForBrain?.waitId;
   const backFromComputerWait = Boolean(transcript.waitingForBrain);
   if (backFromComputerWait) {
     delete transcript.waitingForBrain;
@@ -2554,6 +2858,35 @@ async function executeRunInner(
           result = { content: output.content, isError: output.isError === true };
           // The approvals screen shows it ran (and what came back).
           const [ran] = await db.select().from(approvals).where(eq(approvals.id, approval.id));
+          if (!ran || (ran.executedAt && (ran.result as { isError?: unknown } | null)?.isError !== false)) {
+            transcript.effectUncertain = { runId: run.id, turn: run.turns, tools: [approval.tool] };
+            const note = await db.transaction(async (tx) => {
+              await addRunStep(tx, run, "error", {
+                reason: "approved_effect_unknown",
+                approvalId: approval.id,
+                tool: approval.tool,
+              });
+              const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+                transcript: storedTranscript(transcript),
+              });
+              if (!moved) throw new PermanentJobError("run changed before approved effect could be held");
+              if (run.background) return null;
+              return post(
+                tx,
+                replyThreadId,
+                "An approved action has an unknown outcome. This work is waiting for reconciliation before continuing.",
+                undefined,
+                undefined,
+                true,
+              );
+            });
+            if (note) {
+              const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+              if (view) await publishMessageCreated(deps.pubsub, view);
+            }
+            await finished("waiting_input");
+            return;
+          }
           if (ran) await publishApproval({ db, pubsub: deps.pubsub }, ran, "approval.decided").catch(() => {});
         } else if (approval?.status === "canceled" && approval.supersededById && mootText) {
           // Replaced by its newer request (`supersedeApprovals`): nothing was decided here.
@@ -2811,6 +3144,8 @@ async function executeRunInner(
     // A routine's or any background run's work never continues a conversation's session, nor the other way.
     fresh: Boolean(viaRoutine) || run.background,
     promptKey: transcript.promptKey,
+    quotaReservePercent: deps.quotaReservePercent,
+    quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
   });
   // The agent's model left its plan's live list, so this turn runs another: its owner hears it, never silently.
   const dropped =
@@ -2855,6 +3190,74 @@ async function executeRunInner(
         text: settingsChangedNote(transcript.system, await isPersonalWorkspace(db, run.orgId)),
       } as ContextBlock,
     ];
+  }
+  // A cross-harness continuation that paused (room, an approval, an answer) or restarted goes on with the route it
+  // moved to, in that route's own session. Only an unknown effect, a checkpoint hold or a route that cannot be
+  // resolved keeps it held for reconciliation; a source native session is never replayed.
+  const resumedHandoff =
+    transcript.quotaCliHandoff &&
+    !transcript.effectUncertain &&
+    !transcript.continuityCheckpoint &&
+    isHandoffKind(transcript.quotaCliHandoff.targetKind) &&
+    run.brainSessionId === transcript.quotaCliHandoff.targetSessionId
+      ? await (async () => {
+          const h = transcript.quotaCliHandoff as NonNullable<Transcript["quotaCliHandoff"]>;
+          const accountId =
+            h.targetAccountId !== undefined
+              ? h.targetAccountId
+              : h.targetKind === "grok"
+                ? await planAccountFor(db, run.orgId, h.machineId, "grok").catch(() => null)
+                : null;
+          const resumed = await resolveBrain(
+            { db, machines: deps.machines },
+            {
+              ...agent,
+              brain: h.targetKind,
+              brainModel: h.model,
+              brainAccountId: accountId,
+              brainAccountLentBy: null,
+              brainExtraUsage: false,
+            } as Agent,
+            run,
+            replyThreadId ?? run.channelId,
+            { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
+          ).catch(() => null);
+          return resumed && resumed.kind === h.targetKind && !resumed.missionId ? resumed : null;
+        })()
+      : null;
+  if (resumedHandoff) brainPlan = resumedHandoff;
+  else if (transcript.quotaCliHandoff) {
+    const h = transcript.quotaCliHandoff;
+    transcript.continuityCheckpoint = {
+      schema: "quota-cut-checkpoint/1",
+      orgId: run.orgId,
+      runId: run.id,
+      channelId: run.channelId,
+      agentId: run.agentId,
+      goal: { state: "reference", messageId: h.goalMessageId },
+      task: "unknown",
+      executionOwner: "unknown",
+      constraints: "unknown",
+      completed: "unknown",
+      pending: "unknown",
+      decisions: "unknown",
+      tests: "unknown",
+      fileVersions: "unknown",
+      dependencies: "unknown",
+      effects: "unknown",
+      source: { throughSeq: await lastStepSeq(db, run.id), capturedAt: new Date().toISOString(), complete: false },
+      nextSafeAction: "reconcile_effects_and_qualify_route",
+      dispatch: "hold",
+    };
+    await db.transaction(async (tx) => {
+      await addRunStep(tx, run, "error", { reason: "quota_handoff_reconciliation_required" });
+      const held = await transitionRun(tx, run.id, "running", "waiting_input", {
+        transcript: storedTranscript(transcript),
+      });
+      if (!held) throw new PermanentJobError("run changed state while holding a prior quota handoff");
+    });
+    await finished("waiting_input");
+    return;
   }
   // A conversation run that fell back to the model brain keeps it when it resumes (an approval, an answer):
   // its transcript is the model's, and the computer would start the task again from the trigger.
@@ -2927,6 +3330,34 @@ async function executeRunInner(
   // The context budget reads the model's window: an OpenRouter model's comes with its list.
   await modelInfoFor(db, thinker.model, run.orgId);
   let plan: BrainPlan = brainPlan;
+  // Evidence consumption only: the existing native wait/job/permission gates own the resume.
+  // A legacy, changed-owner or changed-harness record grants no new action and is never replayed here.
+  if (quotaResumeWaitId) {
+    const checkpoint = readQuotaContinuity(quotaContinuityValue(transcript));
+    const consumed = consumeQuotaContinuity(checkpoint, run, thinker, plan, quotaResumeWaitId);
+    if (consumed) {
+      const [saved] = await db
+        .update(agentRuns)
+        .set({ transcript: quotaContinuityTranscript(sql`coalesce(${agentRuns.transcript}, '{}'::jsonb)`, consumed) })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            sql`${agentRuns.transcript}->'metadata'->'quotaContinuity'->>'waitId' = ${quotaResumeWaitId}`,
+            sql`${agentRuns.transcript}->'metadata'->'quotaContinuity' = ${JSON.stringify(checkpoint)}::jsonb`,
+            sql`exists (select 1 from ${schema.agents} a where a.org_id = ${run.orgId}::uuid and a.id = ${run.agentId}::uuid
+              and a.owner_user_id is not distinct from ${consumed.identity.ownerUserId}::text)`,
+          ),
+        )
+        .returning({ transcript: agentRuns.transcript });
+      if (saved) {
+        transcript.metadata = saved.transcript?.metadata;
+        await addRunStep(db, run, "context", {
+          quotaContinuity: { state: "consumed", nextSafeAction: consumed.nextSafeAction },
+        });
+      }
+    }
+  }
   /**
    * What the turn-end judge reads (ADR 0109), filled only when it runs: the run's general means (`turnMeans`, its
    * computer's own tools on a computer brain) and every call it tried (`triedCalls`). An `untried` nudge names them.
@@ -2948,13 +3379,14 @@ async function executeRunInner(
             .catch(() => [])
         : [];
       evidence.means = [...turnMeans(names, teammates, await isPersonalWorkspace(db, run.orgId)), ...own];
-      // No call executed in this run: no tool step to read.
-      evidence.tried = t.executedCalls ? await triedCalls(db, run, t.harnessTried) : (t.harnessTried ?? []);
+      // Native MCP calls can persist tool evidence without a matching brain tool event.
+      evidence.tried =
+        t.executedCalls || plan.kind !== "model" ? await triedCalls(db, run, t.harnessTried) : (t.harnessTried ?? []);
       return evidence;
     };
     return { evidence, gather };
   };
-  let brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript);
+  let brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
   let triggerText = trigger?.body ?? topTrigger?.body ?? "";
   if (plan.kind !== "model" && !triggerText) {
     triggerText = (await getMessage(db, run.orgId, run.triggerMessageId))?.body ?? "";
@@ -3176,8 +3608,42 @@ async function executeRunInner(
    * the run waits for the computer, or (nothing to think with) it fails with `no_ai`. A computer with no room for the
    * turn (`busy`) is asked again every `COMPUTER_BUSY_RETRY_MS` until it runs.
    */
+  /**
+   * One line in the task's conversation per handoff event: it informs and never waits for an answer. The same switch
+   * (from, to) in the same conversation within six hours is told once.
+   */
+  const quotaHandoffNotice = async (from: BrainKind, to: BrainKind, toModel: string, why: "reserve" | "limit") => {
+    const [said] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.orgId, run.orgId),
+          eq(messages.channelId, run.channelId),
+          sql`${messages.meta}->'quotaHandoff'->>'from' = ${from}`,
+          sql`${messages.meta}->'quotaHandoff'->>'to' = ${to}`,
+          sql`${messages.createdAt} > now() - interval '6 hours'`,
+        ),
+      )
+      .limit(1);
+    if (said) return;
+    const fromName = planName(from, plan.account?.provider);
+    const toName = planName(to);
+    const body =
+      why === "reserve"
+        ? `${fromName} is near its usage limit, so this task switched to ${toName} (${toModel}) and continues from where it was. No action needed.`
+        : `${fromName} reached its usage limit, so this task switched to ${toName} (${toModel}) and continues from where it was. No action needed.`;
+    const note = await db.transaction((tx) =>
+      post(tx, replyThreadId, body, { quotaHandoff: { from, to, model: toModel, why } }, undefined, true),
+    );
+    (transcript as Transcript).postedCount++;
+    if (note) {
+      const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+      if (view) await publishMessageCreated(deps.pubsub, view);
+    }
+  };
   const brainUnavailable = async (
-    u: BrainUnavailability & { queued?: boolean; retryAt?: number },
+    u: BrainUnavailability & { queued?: boolean; retryAt?: number; quotaReserve?: boolean },
     look?: "first" | "again",
   ): Promise<"fallback" | "waited" | "failed" | "no" | "back" | "canceled"> => {
     const from = plan.kind;
@@ -3214,9 +3680,200 @@ async function executeRunInner(
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
     const onlyThisComputer = (t.interruptedTurn?.executed.length ?? 0) > 0 || t.interruptedTurn?.cause === "plan_limit";
+    // Owner policy (2026-11-14): a plan near or at its limit hands the same agent and run, at a turn boundary, to
+    // the least used qualified subscription route on the same computer (Claude Code, Grok, Codex), never importing
+    // the source vendor's session. Missing capability, billing or data-policy evidence keeps the wait; with no cloud
+    // route, only a local model brain may stand in. A cut turn with executed or unknown effects still holds.
+    let allowLegacyFallback = true;
+    if (deps.quotaCliContinuation && (u.code === "plan_limit" || u.quotaReserve === true) && isHandoffKind(from)) {
+      allowLegacyFallback = await thinkerIsLocal(db, thinker).catch(() => false);
+      const session = plan.session;
+      const workLog = await runWorkDigest(db, run.id).catch(() => "");
+      const conversation = await conversationDigest(db, run).catch(() => "");
+      const content = portableMessages(t.messages, workLog, conversation);
+      const bytes = new TextEncoder().encode(JSON.stringify(content)).length;
+      // A session the conversation's earlier runs shared holds turns only it had: the portable record carries the
+      // conversation instead, and the target always starts a new session of its own.
+      if (
+        !plan.missionId &&
+        !isRightHand(agent) &&
+        agent.brainExtraUsage === false &&
+        !onlyThisComputer &&
+        !t.pending &&
+        !t.effectUncertain &&
+        !t.hostAcpUncertain &&
+        !t.continuityCheckpoint &&
+        session &&
+        machineId &&
+        session.machineId === machineId &&
+        deps.machines &&
+        bytes <= PORTABLE_CONTEXT_MAX_BYTES
+      ) {
+        const context = structuredClone({ system: t.system, messages: content });
+        const serializedContext = JSON.stringify(context);
+        const contextSnapshot = JSON.stringify(t.messages);
+        const choices: { proof: QuotaCliQualification; target: BrainPlan; used: number; rank: number }[] = [];
+        const order = deps.quotaCliContinuation.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS;
+        for (const [rank, kind] of order.entries()) {
+          if (kind === from || !deps.brains?.[kind]) continue;
+          const proof: QuotaCliQualification | null = await deps.quotaCliContinuation
+            .qualify({
+              orgId: run.orgId,
+              runId: run.id,
+              agentId: agent.id,
+              channelId: run.channelId,
+              goalMessageId: run.triggerMessageId,
+              machineId,
+              sourceKind: from,
+              sourceAccountId: plan.account?.id ?? null,
+              targetKind: kind,
+              requiredTools: tools.map((tool) => tool.name),
+              context,
+            })
+            .catch(() => null);
+          const at = Date.now();
+          if (
+            !proof ||
+            proof.targetKind !== kind ||
+            proof.machineId !== machineId ||
+            !SAFE_ID.test(proof.model) ||
+            !SAFE_ID.test(proof.sourcePool) ||
+            !SAFE_ID.test(proof.targetPool) ||
+            proof.sourcePool === proof.targetPool ||
+            !SAFE_ID.test(proof.evidence) ||
+            proof.noPaidExtraUsage !== true ||
+            proof.noCredentialsInContext !== true ||
+            !Number.isSafeInteger(proof.observedAt) ||
+            !Number.isSafeInteger(proof.validUntil) ||
+            proof.observedAt > at ||
+            proof.observedAt < at - 300_000 ||
+            proof.validUntil <= at ||
+            proof.validUntil > proof.observedAt + 300_000
+          )
+            continue;
+          const target: BrainPlan | null = await resolveBrain(
+            { db, machines: deps.machines },
+            {
+              ...agent,
+              brain: kind,
+              brainModel: proof.model,
+              brainAccountId: proof.accountId ?? null,
+              brainAccountLentBy: null,
+              brainExtraUsage: false,
+            } as Agent,
+            // Carrying the source session keeps the resolver from storing a session on the run; the handoff
+            // assigns its own new one below.
+            { ...run, brainSessionId: session.id },
+            replyThreadId ?? run.channelId,
+            {
+              fresh: true,
+              quotaReservePercent: deps.quotaReservePercent,
+              quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
+            },
+          ).catch(() => null);
+          // Readings come from turns: a stale one is unknown. Subscription routes have no paid extra usage, so an
+          // unknown window is tried (a full one refuses the turn and the task waits); a known low one is skipped.
+          if (
+            !target ||
+            target.kind !== kind ||
+            target.unavailable ||
+            target.missionId ||
+            target.quotaReserve?.state === "low" ||
+            !target.session ||
+            target.session.machineId !== machineId
+          )
+            continue;
+          choices.push({ proof, target, used: target.quotaReserve?.usedPercent ?? 50, rank });
+        }
+        // The least used route first spreads the fleet over the plans with room; ties keep the configured order.
+        choices.sort((x, y) => x.used - y.used || x.rank - y.rank);
+        const pick = choices[0];
+        if (pick && JSON.stringify(t.messages) === contextSnapshot && JSON.stringify(context) === serializedContext) {
+          const { proof, target } = pick;
+          const kind = proof.targetKind;
+          const sessionId = Bun.randomUUIDv7();
+          delete t.quotaReservePending;
+          t.quotaCliHandoff = {
+            schema: "quota-cli-handoff/1",
+            disposition: "CONTINUE",
+            runId: run.id,
+            agentId: agent.id,
+            channelId: run.channelId,
+            goalMessageId: run.triggerMessageId,
+            sourceKind: from,
+            sourceSessionId: session.id,
+            targetKind: kind,
+            targetAccountId: proof.accountId ?? null,
+            targetSessionId: sessionId,
+            machineId,
+            model: proof.model,
+            sourcePool: proof.sourcePool,
+            targetPool: proof.targetPool,
+            evidence: proof.evidence,
+            observedAt: proof.observedAt,
+            validUntil: proof.validUntil,
+          };
+          // This is portable context for a new harness, never a claim that the source native session resumed.
+          t.system = [
+            ...t.system,
+            {
+              turn: true,
+              found: true,
+              text: untrustedBlock(
+                "portable prior conversation",
+                JSON.stringify(context.messages),
+                PORTABLE_CONTEXT_MAX_BYTES,
+              ),
+            } as ContextBlock,
+          ];
+          if (options.owned && !(await options.owned()))
+            throw new PermanentJobError("lost run ownership before handoff");
+          await db.transaction(async (tx) => {
+            const [moved] = await tx
+              .update(agentRuns)
+              .set({
+                brain: kind,
+                brainSessionId: sessionId,
+                transcript: storedTranscript(t),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(agentRuns.id, run.id),
+                  eq(agentRuns.status, "running"),
+                  eq(agentRuns.brainSessionId, session.id),
+                  sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+                  sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+                ),
+              )
+              .returning();
+            if (!moved) throw new PermanentJobError("run changed before qualified handoff");
+            await addRunStep(tx, run, "context", { quotaCliHandoff: t.quotaCliHandoff });
+            run = moved;
+          });
+          plan = {
+            ...target,
+            model: proof.model,
+            session: { id: sessionId, resume: false, machineId, cwd: session.cwd },
+          };
+          // Mid-run, the new harness has no native history: it reads the portable record and goes on from there.
+          if (computerTurns > 0 || run.turns > 0) {
+            nextPrompt = [QUOTA_HANDOFF_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+          }
+          await quotaHandoffNotice(from, kind, proof.model, u.quotaReserve === true ? "reserve" : "limit").catch(
+            () => {},
+          );
+          brain = createBrain(deps, thinker, run, kind, turnToken, () => transcript as Transcript, triggerMessage);
+          return "fallback";
+        }
+      }
+    }
+    // A reserve reading is not provider exhaustion. If no alternate qualified, leave existing admission unchanged.
+    if (u.quotaReserve) return "no";
     // A background run never stands in on the model brain (`mayFallBack`): it waits for its computer.
     // Behind others in the computer's line (`roomGate`) is no refusal: it waits its turn.
     if (
+      allowLegacyFallback &&
       !onlyThisComputer &&
       !u.queued &&
       mayFallBack(agent, run) &&
@@ -3231,7 +3888,7 @@ async function executeRunInner(
         ...(plan.missionId ? { missionId: plan.missionId } : {}),
         ...(autoEffort ? { effort: autoEffort } : {}),
       };
-      brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript);
+      brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
       onDemandForOtherBrain(t);
       await saveTranscript(db, t);
       await recordRunBrain(db, run.id, "model");
@@ -3437,6 +4094,11 @@ async function executeRunInner(
     // A background run never posts by itself (ADR 0053 §5): its cards speak for it.
     if (run.background || repeatsLastPost(text)) text = "";
     text = await heldWords(text);
+    if (!run.background && t.effectUncertain) {
+      const warning =
+        "An earlier tool outcome is unknown. The decision is retained, but this run cannot continue until the effect is reconciled.";
+      text = text ? `${text}\n\n${warning}` : warning;
+    }
     // The bridge posted its cards when it asked: what it says goes with them.
     const message = text ? await post(db, replyThreadId, text, withFallback(t, takeMemoryUpdates(t)), at) : null;
     if (message) t.postedCount++;
@@ -3451,7 +4113,7 @@ async function executeRunInner(
     }
     await finished(status);
     // Decided while the turn still ran (the decision's job left the run to this turn): it goes on now.
-    if (t.pending && !(await pauseOpen(db, run.id, t))) {
+    if (!t.effectUncertain && t.pending && !(await pauseOpen(db, run.id, t))) {
       await enqueue(db, {
         orgId: run.orgId,
         kind: "agent_run.execute",
@@ -3474,6 +4136,7 @@ async function executeRunInner(
     failure: { code: string; message: string },
     executed: string[],
     partial: string,
+    outcomeUnknown = false,
   ) => {
     await deferred;
     const t = transcript as Transcript;
@@ -3482,33 +4145,49 @@ async function executeRunInner(
     const said = [t.held, stripSentinel(partial)].filter(Boolean).join("\n\n");
     // What the CLI said goes where everyone in the conversation reads it: without its paths, stack or secrets.
     const why = cliErrorWords(failure.message);
-    const note = `_${name} stopped before finishing (${why}). Already done, not repeated: ${executed.join(", ")}._`;
+    const note = outcomeUnknown
+      ? `_${name} stopped before finishing (${why}). Tool outcome unknown; reconcile before retrying: ${executed.join(", ")}._`
+      : `_${name} stopped before finishing (${why}). Already done, not repeated: ${executed.join(", ")}._`;
     await addRunStep(db, run, "error", {
       reason: "brain_interrupted",
       code: failure.code,
       message: why,
       executed,
+      ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
     });
+    const unknownError = "brain_interrupted: tool outcome unknown; reconcile before retrying";
     // A background run posts nothing (ADR 0053 §5): it fails with the brain's code, its ledger says so.
     if (run.background) {
       if (said && t.messages.at(-1)?.role !== "assistant")
         t.messages.push({ role: "assistant", content: [{ type: "text", text: said }] });
       t.postedUpTo = t.messages.length;
       await saveTranscript(db, t);
-      return fail(`brain_interrupted: ${why}`, { code: failure.code, detail: why });
+      // A saved held reply cannot make an unresolved tool outcome a successful background run.
+      if (outcomeUnknown) endWithHeld = null;
+      return fail(outcomeUnknown ? unknownError : `brain_interrupted: ${why}`, {
+        code: failure.code,
+        detail: outcomeUnknown ? "tool outcome unknown; reconcile before retrying" : why,
+      });
     }
     const reply = await db.transaction(async (tx) => {
       const m = await post(tx, workThread(), said ? `${said}\n\n${note}` : note, {
         ...(takeMemoryUpdates(t) ?? {}),
-        brainInterrupted: { brain: from, code: failure.code, message: why, text: said, tools: executed },
+        brainInterrupted: {
+          brain: from,
+          code: failure.code,
+          message: why,
+          text: said,
+          tools: executed,
+          ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
+        },
         ...workEnd("run.brain_interrupted"),
       });
       t.postedUpTo = t.messages.length;
       t.postedCount++;
       await addRunStep(tx, run, "message", { messageId: m.id });
-      const done = await transitionRun(tx, run.id, "running", "done", {
+      const done = await transitionRun(tx, run.id, "running", outcomeUnknown ? "failed" : "done", {
         replyMessageId: m.id,
-        error: null,
+        error: outcomeUnknown ? unknownError : null,
         transcript: storedTranscript(t),
       });
       if (!done) throw new PermanentJobError("run changed state while executing");
@@ -3516,9 +4195,15 @@ async function executeRunInner(
     });
     const [view] = await withWikiLinks(db, run.orgId, [messageView(reply)]);
     if (view) await publishMessageCreated(deps.pubsub, view);
-    await publishChannelEvent(deps.pubsub, event("done"));
-    await finished("done");
-    await redispatchPending("done");
+    if (outcomeUnknown) {
+      await publishChannelEvent(deps.pubsub, event("failed", unknownError));
+      await finished("failed", unknownError);
+      await redispatchPending("failed");
+    } else {
+      await publishChannelEvent(deps.pubsub, event("done"));
+      await finished("done");
+      await redispatchPending("done");
+    }
   };
 
   /**
@@ -3678,6 +4363,10 @@ async function executeRunInner(
     soon?: boolean;
     /** Long work paused near a limit (ADR 0118): on what, how far along, and the plan's window. */
     pause?: { source: "plan" | "budget"; used: number; window?: string };
+    /** Atomically persist a reserve pre-dispatch hold and its wake. */
+    reserve?: true;
+    /** Positive evidence of an uncertain tool outcome in the caught turn; absent evidence is not proof of safety. */
+    effectUnknown?: boolean;
     /** One model's refusal, not the account's (`refusalScope`). */
     scope?: ModelScope;
   }) => {
@@ -3737,12 +4426,15 @@ async function executeRunInner(
     else delete wait.resetsAt;
     t.usageWait = wait;
     const cut = t.interruptedTurn?.cause === "plan_limit";
+    // This first bounded path holds only foreground quota cuts after work; background and other waits retain their
+    // existing behavior pending their own supervisor integration. It does not prove native effects are fenced.
+    const checkpointHold = cut && !run.background && !u.pause && u.effectUnknown === true;
     const name = planName(plan.kind, plan.account?.provider);
     // A routine's run waits quietly (Rotinas says so); any other says it once per wait.
     const firstPark = t.brainNotice !== u.code;
-    const say = !(run.background || viaRoutine !== null || u.soon) && firstPark;
+    const say = !(run.background || viaRoutine !== null || u.soon) && (firstPark || checkpointHold);
     const waitId = Bun.randomUUIDv7();
-    let joined = null as Message | null;
+    const joined: Message[] = [];
     const note = say
       ? await db.transaction(async (tx) => {
           if (u.pause) {
@@ -3752,57 +4444,214 @@ async function executeRunInner(
             return card;
           }
           const forUserId = await personOfMessage(tx, run.orgId, run.triggerMessageId).catch(() => null);
+          if (checkpointHold) {
+            const { messages, agentRuns } = schema;
+            const scope = and(
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+              sql`${messages.meta}->'usageWait'->'canceled' is null`,
+              sql`(${messages.meta}->'usageWait'->>'runId' = ${run.id} or coalesce(${messages.meta}->'usageWait'->'runIds', '[]'::jsonb) ? ${run.id})`,
+            );
+            // Join uses per-thread advisory locks. Take all known thread locks in stable order before row locks.
+            const observed = await tx.select({ threadId: messages.threadId }).from(messages).where(scope);
+            const threads = [...new Set([replyThreadId ?? "", ...observed.map((m) => m.threadId ?? "")])].sort();
+            for (const thread of threads) {
+              await tx.execute(
+                sql`select pg_advisory_xact_lock(hashtext(${`usage-note:${run.agentId}:${run.channelId}:${thread}`}))`,
+              );
+            }
+            const prior = await tx.select().from(messages).where(scope).orderBy(desc(messages.createdAt)).for("update");
+            if (prior.some((m) => !threads.includes(m.threadId ?? "")))
+              throw new Error("usage note thread changed while splitting");
+            const ids = [
+              ...new Set(
+                prior.flatMap((m) => {
+                  const wait = m.meta.usageWait as { runIds?: unknown } | undefined;
+                  return Array.isArray(wait?.runIds)
+                    ? wait.runIds.filter(
+                        (id): id is string =>
+                          typeof id === "string" &&
+                          id !== run.id &&
+                          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+                      )
+                    : [];
+                }),
+              ),
+            ];
+            // Lock the same-org, same-channel, same-agent waiting rows while choosing a holder. Terminal or foreign
+            // IDs cannot receive the note. A different requester cannot receive this person's cancellation control.
+            const candidates = ids.length
+              ? await tx
+                  .select()
+                  .from(agentRuns)
+                  .where(
+                    and(
+                      inArray(agentRuns.id, ids),
+                      eq(agentRuns.orgId, run.orgId),
+                      eq(agentRuns.channelId, run.channelId),
+                      eq(agentRuns.agentId, run.agentId),
+                      eq(agentRuns.status, "waiting_input"),
+                    ),
+                  )
+                  .orderBy(agentRuns.id)
+                  .for("update")
+              : [];
+            const people = new Map<string, string | null>();
+            for (const candidate of candidates)
+              people.set(candidate.id, await personOfMessage(tx, run.orgId, candidate.triggerMessageId));
+            // null also means broken, routine or unknown authority. Accept only independently verified direct
+            // agent messages from the same author and conversation; other null roots remain unresolved.
+            const originIds = [...new Set([run.triggerMessageId, ...candidates.map((r) => r.triggerMessageId)])];
+            const origins = await tx
+              .select()
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.orgId, run.orgId),
+                  eq(messages.channelId, run.channelId),
+                  inArray(messages.id, originIds),
+                ),
+              )
+              .for("share");
+            const directOrigin = (id: string, threadId: string | null) => {
+              const origin = origins.find((m) => m.id === id && m.threadId === threadId);
+              return origin?.authorType === "agent" &&
+                origin.authorAgentId &&
+                !origin.agentRunId &&
+                origin.deletedAt === null &&
+                Object.keys(origin.meta).length === 0
+                ? origin.authorAgentId
+                : null;
+            };
+            let heldNote: Message | null = null;
+            for (const previous of prior) {
+              const wait = previous.meta.usageWait as
+                | { runId?: unknown; runIds?: unknown; forUserId?: unknown }
+                | undefined;
+              const where = and(
+                eq(messages.id, previous.id),
+                eq(messages.orgId, run.orgId),
+                eq(messages.channelId, run.channelId),
+                sql`${messages.createdAt} >= ${previous.createdAt.toISOString()}::timestamptz and ${messages.createdAt} < ${new Date(previous.createdAt.getTime() + 1).toISOString()}::timestamptz`,
+              );
+              if (wait?.runId !== run.id) {
+                const [detached] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait,runIds}', (${messages.meta}->'usageWait'->'runIds') - ${run.id}::text)`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!detached) throw new Error("usage note membership changed while splitting");
+                joined.push(detached);
+                continue;
+              }
+              const listed = Array.isArray(wait.runIds) ? wait.runIds : [];
+              const live = candidates
+                .filter(
+                  (candidate) =>
+                    listed.includes(candidate.id) &&
+                    ((typeof wait.forUserId === "string" && people.get(candidate.id) === wait.forUserId) ||
+                      (wait.forUserId === null &&
+                        people.get(candidate.id) === null &&
+                        directOrigin(run.triggerMessageId, previous.threadId) !== null &&
+                        directOrigin(run.triggerMessageId, previous.threadId) ===
+                          directOrigin(candidate.triggerMessageId, previous.threadId))),
+                )
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+              const [holder, ...rest] = live;
+              if (holder) {
+                const [moved] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait}', ((${messages.meta}->'usageWait') - 'ended') || jsonb_build_object('runId', ${holder.id}::text, 'runIds', ${JSON.stringify(rest.map((r) => r.id))}::jsonb))`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!moved) throw new Error("usage note ownership changed while splitting");
+                joined.push(moved);
+              } else if (!heldNote && previous.threadId === replyThreadId && previous.deletedAt === null) {
+                const [updated] = await tx
+                  .update(messages)
+                  .set({
+                    body: `This run stopped at the ${name} plan's limit after work began. Its outcome needs reconciliation and a qualified route before resuming.`,
+                    meta: sql`jsonb_set((${messages.meta} - 'bodyCode' - 'bodyParams') #- '{usageWait,ended}', '{usageWait,runIds}', '[]'::jsonb)`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!updated) throw new Error("usage note changed while updating hold");
+                heldNote = updated;
+              } else {
+                const [ended] = await tx
+                  .update(messages)
+                  .set({
+                    meta: sql`jsonb_set(${messages.meta}, '{usageWait}', (${messages.meta}->'usageWait') || jsonb_build_object('ended', true, 'runIds', '[]'::jsonb))`,
+                  })
+                  .where(where)
+                  .returning();
+                if (!ended) throw new Error("usage note changed while closing old wait");
+                joined.push(ended);
+              }
+            }
+            if (heldNote) return heldNote;
+          }
           // Its conversation already heard it waits on this limit: one note speaks for every turn waiting there.
           const join = cut ? null : await joinUsageNote(tx, run, replyThreadId, forUserId, u.code, resetsAt, now);
           if (join) {
-            joined = join.note;
+            if (join.note) joined.push(join.note);
             return null;
           }
           const ownModel = scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
           const modelWords: Record<string, string> = ownModel ? { model: ownModel.label, agent: agent.name } : {};
-          const [code, text] = budget
+          const [code, text] = checkpointHold
             ? [
-                "budget_wait",
-                "My budget for the month ran out. I'll go on when it renews, or sooner if an admin raises it.",
+                "plan_limit_cut_unknown",
+                `I stopped at the ${name} plan's limit after work began. The outcome needs reconciliation and a qualified route before resuming.`,
               ]
-            : ownModel && scope === "region"
+            : budget
               ? [
-                  "plan_model_region_wait",
-                  `This model (${ownModel.label}) needs the Global region on in OpenCode (Settings › Privacy).`,
+                  "budget_wait",
+                  "My budget for the month ran out. I'll go on when it renews, or sooner if an admin raises it.",
                 ]
-              : ownModel && scope === "inactive"
+              : ownModel && scope === "region"
                 ? [
-                    "plan_inactive_wait",
-                    "OpenCode Go isn't active on this key's OpenCode account, so none of its models answer. Check the Go subscription in OpenCode, or connect a key from the account that has it.",
+                    "plan_model_region_wait",
+                    `This model (${ownModel.label}) needs the Global region on in OpenCode (Settings › Privacy).`,
                   ]
-                : ownModel && scope === "off"
+                : ownModel && scope === "inactive"
                   ? [
-                      "plan_model_off_wait",
-                      `OpenCode refused ${ownModel.label} with this key: the model or the account is turned off there. Turn it on in OpenCode or change ${agent.name}'s model.`,
+                      "plan_inactive_wait",
+                      "OpenCode Go isn't active on this key's OpenCode account, so none of its models answer. Check the Go subscription in OpenCode, or connect a key from the account that has it.",
                     ]
-                  : ownModel
+                  : ownModel && scope === "off"
                     ? [
-                        known ? "plan_model_limit_wait" : "plan_model_limit_wait_unknown",
-                        `${ownModel.label} hit its own limit on ${name}. The plan's other models keep working: change ${agent.name}'s model or wait ${known ? "until it resets" : "for it to reset"}.`,
+                        "plan_model_off_wait",
+                        `OpenCode refused ${ownModel.label} with this key: the model or the account is turned off there. Turn it on in OpenCode or change ${agent.name}'s model.`,
                       ]
-                    : cut
+                    : ownModel
                       ? [
-                          known ? "plan_limit_cut" : "plan_limit_cut_unknown",
-                          `I stopped at the ${name} plan's limit. I'll pick up where I left off ${known ? "when" : "as soon as"} it resets.`,
+                          known ? "plan_model_limit_wait" : "plan_model_limit_wait_unknown",
+                          `${ownModel.label} hit its own limit on ${name}. The plan's other models keep working: change ${agent.name}'s model or wait ${known ? "until it resets" : "for it to reset"}.`,
                         ]
-                      : [
-                          known ? "plan_limit_wait" : "plan_limit_wait_unknown",
-                          known
-                            ? `The ${name} plan hit its limit. I'll answer when it resets. If it's freed sooner on ${name}, I'll notice and answer right away.`
-                            : `The ${name} plan hit its limit. I'll answer as soon as it resets.`,
-                        ];
+                      : cut
+                        ? [
+                            known ? "plan_limit_cut" : "plan_limit_cut_unknown",
+                            `I stopped at the ${name} plan's limit. I'll pick up where I left off ${known ? "when" : "as soon as"} it resets.`,
+                          ]
+                        : [
+                            known ? "plan_limit_wait" : "plan_limit_wait_unknown",
+                            known
+                              ? `The ${name} plan hit its limit. I'll answer when it resets. If it's freed sooner on ${name}, I'll notice and answer right away.`
+                              : `The ${name} plan hit its limit. I'll answer as soon as it resets.`,
+                          ];
           const m = await post(
             tx,
             replyThreadId,
             text,
             // `usageWait.resetsAt`: the apps say when in the reader's zone; `runId`: "Don't run it" cancels it.
             {
-              ...bodyCode(code, { plan: name, ...modelWords }),
+              // The old localized body promises automatic resumption; keep the explicit hold text instead.
+              ...(checkpointHold ? {} : bodyCode(code, { plan: name, ...modelWords })),
               usageWait: { code: u.code, runId: run.id, forUserId, ...(resetsAt ? { resetsAt } : {}) },
             },
             undefined,
@@ -3850,39 +4699,274 @@ async function executeRunInner(
           }
         : {}),
     };
-    await addRunStep(db, run, "error", {
-      reason: "usage_wait",
-      code: u.code,
-      message: u.message,
-      ...(u.pause ? { pause: u.pause } : {}),
-      until: runAt.toISOString(),
-      ...(resetsAt ? { resetsAt } : {}),
-    });
-    // Queued before the wait is stored: a crash in between leaves at worst a job that finds no such wait.
-    await enqueue(db, {
-      orgId: run.orgId,
-      kind: "agent_run.execute",
-      payload: { runId: run.id, wait: waitId },
-      dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
-      runAt,
-      maxAttempts: 4,
-    });
-    // The line pauses together: whoever is behind it waits for the same reset, in its place, 60 s apart (with an
-    // unknown reset, on the safety timer until the head gets through).
-    if (!u.soon) {
-      const base = known ? at : now + LINE_SAFETY_MS;
-      await retimeLine(db, line.behind, (i) => new Date(base + RESUME_AFTER_MS + RESUME_GAP_MS * (line.place + 1 + i)));
+    // A held run is excluded from the line and must not postpone other runs' existing timers.
+    if (checkpointHold) {
+      // Event, source-only checkpoint, scheduled wake and wait state commit together. No model is needed to build it.
+      await db.transaction(async (tx) => {
+        await addRunStep(tx, run, "error", {
+          reason: "usage_wait",
+          code: u.code,
+          message: u.message,
+          until: runAt.toISOString(),
+          ...(resetsAt ? { resetsAt } : {}),
+        });
+        const [last] = await tx
+          .select({ seq: sql<number>`coalesce(max(${agentRunSteps.seq}), 0)::int` })
+          .from(agentRunSteps)
+          .where(and(eq(agentRunSteps.orgId, run.orgId), eq(agentRunSteps.runId, run.id)));
+        // A run can be routed from another conversation; never export its message reference across audiences.
+        const [goal] = await tx
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.id, run.triggerMessageId),
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+            ),
+          );
+        // Store scoped references, not raw transcript, tool payloads or credentials. A reader must reauthorize every
+        // referenced source at use time; this bounded, read-committed snapshot never proves all history is present.
+        const sourceEvents = await tx
+          .select({
+            id: agentRunSteps.id,
+            seq: agentRunSteps.seq,
+            kind: agentRunSteps.kind,
+            memoryItems: sql<unknown>`case when ${agentRunSteps.kind} = 'context' and jsonb_typeof(${agentRunSteps.data}->'memoryItems') = 'array'
+              then case when jsonb_array_length(${agentRunSteps.data}->'memoryItems') <= 128 and pg_column_size(${agentRunSteps.data}->'memoryItems') <= 8192
+                then ${agentRunSteps.data}->'memoryItems' else '[]'::jsonb end
+              else '[]'::jsonb end`,
+            memoryOversized: sql<boolean>`case when ${agentRunSteps.kind} = 'context' and jsonb_typeof(${agentRunSteps.data}->'memoryItems') = 'array'
+              then jsonb_array_length(${agentRunSteps.data}->'memoryItems') > 128 or pg_column_size(${agentRunSteps.data}->'memoryItems') > 8192
+              else false end`,
+          })
+          .from(agentRunSteps)
+          .where(
+            and(
+              eq(agentRunSteps.orgId, run.orgId),
+              eq(agentRunSteps.runId, run.id),
+              sql`${agentRunSteps.seq} <= ${last?.seq ?? 0}`,
+            ),
+          )
+          .orderBy(desc(agentRunSteps.seq))
+          .limit(257);
+        const sourceMessages = await tx
+          .select({ id: messages.id, createdAt: messages.createdAt })
+          .from(messages)
+          .where(
+            and(
+              eq(messages.orgId, run.orgId),
+              eq(messages.channelId, run.channelId),
+              isNull(messages.deletedAt),
+              or(eq(messages.id, run.threadRootId), eq(messages.threadId, run.threadRootId)),
+            ),
+          )
+          .orderBy(desc(messages.createdAt), desc(messages.id))
+          .limit(129);
+        const memoryIds = [
+          ...new Set(
+            sourceEvents
+              .slice(0, 256)
+              .flatMap((step) =>
+                step.kind === "context" && Array.isArray(step.memoryItems)
+                  ? step.memoryItems.filter(
+                      (id): id is string =>
+                        typeof id === "string" &&
+                        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+                    )
+                  : [],
+              ),
+          ),
+        ].slice(0, 128);
+        const memoryRows = memoryIds.length
+          ? await tx
+              .select({
+                id: schema.contextItems.id,
+                version: schema.contextItems.version,
+                channelIds: schema.contextItems.channelIds,
+                scopeType: schema.contextItems.scopeType,
+              })
+              .from(schema.contextItems)
+              .where(
+                and(
+                  eq(schema.contextItems.orgId, run.orgId),
+                  inArray(schema.contextItems.id, memoryIds),
+                  eq(schema.contextItems.status, "active"),
+                  eq(schema.contextItems.agentId, run.agentId),
+                ),
+              )
+          : [];
+        const memoryRefs = memoryRows
+          .filter((row) => row.scopeType !== "person" && row.channelIds.every((id) => id === run.channelId))
+          .map(({ id, version }) => ({ id, version }));
+        const skillRows = tools.some((tool) => tool.name === "load_skill")
+          ? await tx
+              .select({ id: schema.skills.id, version: schema.skills.version })
+              .from(schema.agentSkills)
+              .innerJoin(schema.skills, eq(schema.skills.id, schema.agentSkills.skillId))
+              .where(
+                and(
+                  eq(schema.agentSkills.orgId, run.orgId),
+                  eq(schema.agentSkills.agentId, run.agentId),
+                  eq(schema.agentSkills.enabled, true),
+                  eq(schema.skills.orgId, run.orgId),
+                  isNull(schema.skills.deletedAt),
+                ),
+              )
+              .orderBy(desc(schema.skills.id))
+              .limit(129)
+          : [];
+        t.continuityCheckpoint = {
+          schema: "quota-cut-checkpoint/1",
+          orgId: run.orgId,
+          runId: run.id,
+          channelId: run.channelId,
+          agentId: run.agentId,
+          goal: goal ? { state: "reference", messageId: goal.id } : { state: "unknown" },
+          task: "unknown",
+          executionOwner: "unknown",
+          constraints: "unknown",
+          completed: "unknown",
+          pending: "unknown",
+          decisions: "unknown",
+          tests: "unknown",
+          fileVersions: "unknown",
+          dependencies: "unknown",
+          effects: "unknown",
+          portable: {
+            schema: "portable-run-references/1",
+            complete: false,
+            dispatch: "hold",
+            events: sourceEvents
+              .slice(0, 256)
+              .reverse()
+              .map(({ id, seq, kind }) => ({ id, seq, kind })),
+            eventsTruncated: sourceEvents.length > 256,
+            messages: sourceMessages
+              .slice(0, 128)
+              .reverse()
+              .map(({ id, createdAt }) => ({ id, createdAt: createdAt.toISOString() })),
+            messagesTruncated: sourceMessages.length > 128,
+            memories: memoryRefs,
+            skills: skillRows.slice(0, 128),
+            transcript: { runId: run.id, messageCount: t.messages.length, complete: false },
+            gaps: [
+              "reauthorize_sources",
+              "shared_and_person_memories_excluded",
+              ...(sourceEvents.slice(0, 256).some((step) => step.memoryOversized) ? ["memory_refs_oversized"] : []),
+              "non_atomic_read_snapshot",
+              "history_completeness",
+              "effects_and_execution_owner",
+              "task_and_worktree",
+              "file_versions",
+              "acceptance_and_pending_steps",
+              ...(skillRows.length > 128 ? ["skills_truncated"] : []),
+              ...(memoryIds.length === 128 ? ["memories_may_be_truncated"] : []),
+            ],
+          },
+          source: { throughSeq: last?.seq ?? 0, capturedAt: new Date(now).toISOString(), complete: false },
+          nextSafeAction: "reconcile_effects_and_qualify_route",
+          dispatch: "hold",
+        };
+        await addRunStep(tx, run, "context", { continuityCheckpoint: t.continuityCheckpoint });
+        await enqueue(tx, {
+          orgId: run.orgId,
+          kind: "agent_run.execute",
+          payload: { runId: run.id, wait: waitId },
+          dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+          runAt,
+          maxAttempts: 4,
+        });
+        const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+          transcript: storedTranscript(t),
+          waitingMachineId: null,
+        });
+        if (!moved) throw new PermanentJobError("run changed state while executing");
+      });
+    } else if (u.reserve) {
+      await db.transaction(async (tx) => {
+        await addRunStep(tx, run, "error", {
+          reason: "usage_wait",
+          code: u.code,
+          message: u.message,
+          ...(u.pause ? { pause: u.pause } : {}),
+          until: runAt.toISOString(),
+          ...(resetsAt ? { resetsAt } : {}),
+        });
+        await enqueue(tx, {
+          orgId: run.orgId,
+          kind: "agent_run.execute",
+          payload: { runId: run.id, wait: waitId },
+          dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+          runAt,
+          maxAttempts: 4,
+        });
+        const moved = await transitionRun(tx, run.id, "running", "waiting_input", {
+          transcript: storedTranscript(t),
+          waitingMachineId: null,
+        });
+        if (!moved) throw new PermanentJobError("run changed state while executing");
+      });
+    } else {
+      await addRunStep(db, run, "error", {
+        reason: "usage_wait",
+        code: u.code,
+        message: u.message,
+        ...(u.pause ? { pause: u.pause } : {}),
+        until: runAt.toISOString(),
+        ...(resetsAt ? { resetsAt } : {}),
+      });
+      await enqueue(db, {
+        orgId: run.orgId,
+        kind: "agent_run.execute",
+        payload: { runId: run.id, wait: waitId },
+        dedupeKey: `agent_run.execute:${run.id}:usage:${waitId}`,
+        runAt,
+        maxAttempts: 4,
+      });
+      if (!u.soon) {
+        const base = known ? at : now + LINE_SAFETY_MS;
+        await retimeLine(
+          db,
+          line.behind,
+          (i) => new Date(base + RESUME_AFTER_MS + RESUME_GAP_MS * (line.place + 1 + i)),
+        );
+      }
+      const moved = await transitionRun(db, run.id, "running", "waiting_input", {
+        transcript: storedTranscript(t),
+        waitingMachineId: null,
+      });
+      if (!moved) throw new PermanentJobError("run changed state while executing");
     }
-    const moved = await transitionRun(db, run.id, "running", "waiting_input", {
-      transcript: storedTranscript(t),
-      waitingMachineId: null,
-    });
-    if (!moved) throw new PermanentJobError("run changed state while executing");
+    // Constructed from persisted native references without a model, after the wait is durably stored.
+    // Failure leaves the original valid wait intact.
+    const checkpoint = await captureQuotaContinuity(
+      db,
+      run,
+      thinker,
+      plan,
+      {
+        waitId,
+        code: u.code,
+        resetsAt,
+        usedPercent: u.pause?.used,
+      },
+      Boolean(t.hostAcpUncertain),
+    ).catch(() => null);
+    if (checkpoint) {
+      const [kept] = await db
+        .update(agentRuns)
+        .set({ transcript: quotaContinuityTranscript(sql`coalesce(${agentRuns.transcript}, '{}'::jsonb)`, checkpoint) })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "waiting_input")))
+        .returning({ transcript: agentRuns.transcript })
+        .catch(() => []);
+      if (kept) t.metadata = (kept.transcript as { metadata?: unknown } | null)?.metadata;
+    }
     if (note) {
       const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
       if (view) await publishMessageCreated(deps.pubsub, view);
     }
-    if (joined) await publishMessageCreated(deps.pubsub, messageView(joined));
+    for (const shared of joined) await publishMessageCreated(deps.pubsub, messageView(shared));
     // A routine's run says nothing in the conversation: its people hear it once per outage instead, and a widget's
     // refresh says on its widget what it waits for.
     if (firstPark && !budget) await routineRunWaitingForPlan({ db, pubsub: deps.pubsub }, run).catch(() => {});
@@ -3906,6 +4990,43 @@ async function executeRunInner(
     await finished("waiting_input", undefined, undefined, undefined, undefined, usage);
   };
 
+  const reservePending = (transcript as Transcript).quotaReservePending;
+  if (
+    reservePending ||
+    (!plan.unavailable &&
+      isHandoffKind(plan.kind) &&
+      !isRightHand(agent) &&
+      deps.quotaCliContinuation &&
+      plan.quotaReserve?.state === "low")
+  ) {
+    const reserve = plan.quotaReserve;
+    const samePool =
+      !reservePending ||
+      (reserve?.pool.machineId === reservePending.pool.machineId &&
+        reserve?.pool.kind === reservePending.pool.kind &&
+        reserve?.pool.accountId === reservePending.pool.accountId);
+    await addRunStep(db, run, "context", { quotaReserveWarning: reserve });
+    const reserveHandled =
+      samePool && isHandoffKind(plan.kind) && !isRightHand(agent) && deps.quotaCliContinuation
+        ? await brainUnavailable(
+            {
+              code: "quota_reserve",
+              message: "The source account is near its configured reserve.",
+              quotaReserve: true,
+            },
+            "first",
+          )
+        : "no";
+    if (reserveHandled === "canceled") return stopCanceled("");
+    if (reserveHandled === "waited" || reserveHandled === "failed") return;
+    if (reserveHandled === "no") {
+      // Owner policy 2026-11-14: a reserve reading is not exhaustion. With no qualified alternate the task keeps
+      // working on its own plan (its real limit still parks it), and its next turn refreshes the reading.
+      const used = samePool && reserve?.state === "low" ? reserve.usedPercent : reservePending?.usedPercent;
+      delete (transcript as Transcript).quotaReservePending;
+      await addRunStep(db, run, "context", { quotaReserveContinues: { usedPercent: used ?? null } });
+    }
+  }
   if (plan.unavailable) {
     // A run back from waiting for its computer has waited for it already, unless the computer fell asleep since.
     const handled = await brainUnavailable(plan.unavailable, backFromComputerWait ? "again" : "first");
@@ -4181,6 +5302,23 @@ async function executeRunInner(
       if (run.workId && plan.kind === "model" && Date.now() - claimedAt > WORK_JOB_YIELD_MS) return yieldWorkJob();
       // Long work near its limit parks here, between steps: nothing is in flight and the next step reads on.
       const pause = await longWorkPause();
+      if (
+        pause &&
+        pause.source === "plan" &&
+        isHandoffKind(plan.kind) &&
+        !isRightHand(agent) &&
+        deps.quotaCliContinuation
+      ) {
+        // Between steps nothing is in flight: try a qualified route before parking the task.
+        const moved = await brainUnavailable({
+          code: "quota_reserve",
+          message: `The plan is at ${pause.used}%.`,
+          quotaReserve: true,
+        } as BrainUnavailability & { quotaReserve: true });
+        if (moved === "canceled") return stopCanceled("");
+        if (moved === "fallback") continue;
+        if (moved === "waited" || moved === "failed") return;
+      }
       if (pause) {
         return waitForUsage({
           code: "usage_pause",
@@ -4320,15 +5458,18 @@ async function executeRunInner(
         steerable: (steer) => live.steerable(steer),
       };
       const prompt = plan.kind === "model" ? triggerText : (nextPrompt ?? triggerText);
+      let bridgeEpochId: string | undefined;
       // A computer brain's turn: the transcript is saved (the bridge's pauses join it), and the turn's
       // tool token goes in `brain.turn.mcp.token` so the runner bridge maps its calls to this run.
       if (plan.kind !== "model") {
         await deferred;
+        bridgeEpochId = Bun.randomUUIDv7();
         turnToken.current = await issueRunToolToken(db, {
           orgId: run.orgId,
           agentId: run.agentId,
           machineId: plan.session?.machineId ?? agent.machineId ?? "",
           runId: run.id,
+          tokenId: bridgeEpochId,
         });
         transcript.turnPrompt = prompt;
         await saveTranscript(db, transcript);
@@ -4341,8 +5482,64 @@ async function executeRunInner(
       const executedNow: { id: string; name: string; input: unknown; result?: ToolResult }[] = [];
       /** Files the brain's own tools made this turn (`file` events), on their way to the Drive. */
       const sharing: Promise<void>[] = [];
+      // A started native tool has an unknown effect until this turn reports a matching successful result. This is
+      // in-memory evidence for the caught-turn path only; it does not fence a crash before this process records it.
+      const startedNow = new Map<string, { id: string; name: string; input: unknown }>();
+      const stopOnClosedEpochHold = async (hold: { runId: string; turn: number; tools: string[] }, partial: string) => {
+        transcript.effectUncertain = hold;
+        const [row] = await db.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id));
+        if (row?.status === "canceled") return stopCanceled(deltas.text(), deltas.answer());
+        if (row?.status === "waiting_approval" || row?.status === "waiting_input")
+          return suspendedByBridge(row.status, partial, deltas.text() ? deltas.textBefore : undefined);
+        return interruptedAfterTools(
+          turnPlan.kind,
+          { code: "bridge_effect_unknown", message: "tool outcome unknown" },
+          hold.tools,
+          partial,
+          true,
+        );
+      };
+      const holdUnknownWhileWaiting = async (pending: NonNullable<Transcript["pending"]>["calls"], settled = false) => {
+        let unresolved: Awaited<ReturnType<typeof executedSince>>;
+        try {
+          // A settled turn reports each call once: by its end when it ended, by its start only when it never did.
+          const reported = settled
+            ? [...executedNow, ...[...startedNow.values()].filter((call) => !finishedIds.has(call.id))]
+            : [...executedNow, ...startedNow.values()];
+          unresolved = await executedSince(db, run.id, turnStepSeq, reported, pending, settled);
+        } catch {
+          // A transient evidence read failure is not evidence of no effects. Persist a hold if the DB can accept it.
+          // If persistence also fails, callers must treat this run as unreconciled; no stronger fence is implied.
+          unresolved = [{ name: "tool evidence unavailable", label: "tool evidence unavailable", uncertain: true }];
+        }
+        if (unresolved.some((c) => c.uncertain)) {
+          const marker = {
+            runId: run.id,
+            turn,
+            tools: [...new Set(unresolved.filter((c) => c.uncertain).map((c) => c.name))],
+          };
+          await db.transaction(async (tx) => {
+            const [held] = await tx
+              .update(agentRuns)
+              .set({
+                transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectUncertain}', coalesce(nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb), ${JSON.stringify(marker)}::jsonb), true)`,
+                updatedAt: new Date(),
+              })
+              .where(and(eq(agentRuns.id, run.id), inArray(agentRuns.status, ["waiting_approval", "waiting_input"])))
+              .returning({ id: agentRuns.id });
+            if (!held) throw new PermanentJobError("run changed state before unknown effect could be recorded");
+            await addRunStep(tx, run, "error", { reason: "effect_unknown_waiting", tools: marker.tools });
+          });
+          transcript.effectUncertain = marker;
+        }
+      };
+      const conflictingStarts = new Set<string>();
+      const seenStarts = new Set<string>();
       /** Its own calls whose step line went out as they started (`tool_started`): not again as they end. */
       const stepTold = new Set<string>();
+      const startedNames = new Map<string, string>();
+      const finishedIds = new Set<string>();
+      let conflictingNativeStarts = false;
       /** A call of its own (not ours through the bridge, which says its step as it starts) is the step line now. */
       const ownStep = (call: { id: string; name: string }) => {
         if (run.background || turnTools.some((t) => t.name === call.name)) return;
@@ -4399,10 +5596,15 @@ async function executeRunInner(
       try {
         // A plan brain's turn costs nothing through the gateway: its person's limit is checked here.
         if (personId && turnPlan.kind !== "model") await assertPersonUnderLimit(db, run.orgId, personId);
+        const hostAcpHistory =
+          turnPlan.kind === "antigravity" && turnPlan.account?.provider === HOST_ANTIGRAVITY_PROVIDER
+            ? await hostAcpHistoryFor(db, run)
+            : undefined;
         result = await thinkOnce(
           brain,
           // Memory and wiki once per run: its first turn, or a session started afresh.
           brainTurnOf(run, thinker, transcript, turnTools, prompt, turnPlan, {
+            hostAcpHistory,
             unattended,
             found: computerTurns === 0 || !turnPlan.session?.resume,
             personId,
@@ -4458,10 +5660,27 @@ async function executeRunInner(
             },
             ...(deps.planLimitGraceMs !== undefined ? { limitGraceMs: deps.planLimitGraceMs } : {}),
             onStarted: (call) => {
+              if (seenStarts.has(call.id)) conflictingStarts.add(call.id);
+              seenStarts.add(call.id);
+              startedNow.set(call.id, { ...call, input: undefined });
+              if (startedNames.has(call.id) || finishedIds.has(call.id)) conflictingNativeStarts = true;
+              startedNames.set(call.id, call.name);
               stepTold.add(call.id);
               ownStep(call);
             },
             onExecuted: (call) => {
+              const started = startedNow.get(call.id);
+              if (
+                started &&
+                started.name === call.name &&
+                call.result &&
+                !call.result.isError &&
+                !conflictingStarts.has(call.id)
+              )
+                startedNow.delete(call.id);
+              if (finishedIds.has(call.id) || (startedNames.has(call.id) && startedNames.get(call.id) !== call.name))
+                conflictingNativeStarts = true;
+              finishedIds.add(call.id);
               executedNow.push(call);
               // A brain that tells its calls only once they ended (Codex, an older runner) says the step now.
               if (!stepTold.delete(call.id)) ownStep(call);
@@ -4482,6 +5701,33 @@ async function executeRunInner(
                   })
                   .catch(() => {}),
               );
+            },
+            onHostAcpModelSelection: async (selection) => {
+              await addRunStep(db, run, "context", {
+                hostAcpModelSelection: {
+                  ...selection,
+                  turn,
+                  orgId: run.orgId,
+                  agentId: run.agentId,
+                  accountId: turnPlan.account?.id ?? null,
+                  machineId: turnPlan.session?.machineId ?? null,
+                  provider: turnPlan.account?.provider,
+                },
+              });
+            },
+            onHostAcpUnknown: async (message) => {
+              const fence = { runId: run.id, turn, message };
+              await addRunStep(db, run, "context", {
+                hostAcpToolStop: {
+                  ...fence,
+                  effect: "unknown",
+                  source: "runner_result",
+                  accountId: turnPlan.account?.id,
+                  machineId: turnPlan.session?.machineId,
+                },
+              });
+              transcript.hostAcpUncertain = fence;
+              await saveTranscript(db, transcript);
             },
             onSteerRead: (uuids) => {
               deltas.messageRead();
@@ -4548,8 +5794,39 @@ async function executeRunInner(
       } catch (error) {
         await deltas.flush();
         await deferred;
+        const epochHold = bridgeEpochId
+          ? await closeBridgeEffectEpoch(
+              db,
+              run.id,
+              bridgeEpochId,
+              turn,
+              [...startedNow.values()].map((c) => c.name),
+            )
+          : null;
         // Canceled mid-stream: the gateway recorded the usage so far; keep the text so far.
         if (await isCanceled()) return stopCanceled(deltas.text(), deltas.answer());
+        if (epochHold) {
+          // A plan cut with a started tool of unknown outcome keeps the task: a scoped checkpoint hold that waits
+          // for reconciliation (never a replay), instead of failing the run.
+          const cutMachine = turnPlan.session?.machineId ?? agent.machineId ?? null;
+          if (error instanceof BrainFailure && error.code === "plan_limit" && !run.background && cutMachine) {
+            transcript.effectUncertain = epochHold;
+            const prev = transcript.interruptedTurn;
+            transcript.interruptedTurn = {
+              prompt: prev?.prompt ?? prompt,
+              executed: [...new Set([...(prev?.executed ?? []), ...epochHold.tools])],
+              drops: prev?.drops ?? 0,
+              cause: "plan_limit",
+            };
+            return waitForUsage({
+              code: "plan_limit",
+              message: error.message,
+              effectUnknown: true,
+              ...(await refusalOf(cutMachine, error)),
+            });
+          }
+          return stopOnClosedEpochHold(epochHold, deltas.lastText());
+        }
         // Keep the sequence moving: a retried turn must not reuse numbers the app already saw (it drops them).
         if (error instanceof BrainFailure) {
           const cause = accountFailureCause(error.code, error.provider.cause);
@@ -4582,8 +5859,13 @@ async function executeRunInner(
           mergeToolEffects(transcript, await takeBridgeEffects(db, run.id).catch(() => null));
           // A bridged call paused the run before the brain failed: the run waits for the person, with the
           // pending calls the bridge wrote (no fallback, no failure; the decision resumes the session).
-          const [row] = await db.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id));
+          const [row] = await db
+            .select({ status: agentRuns.status, transcript: agentRuns.transcript })
+            .from(agentRuns)
+            .where(eq(agentRuns.id, run.id));
           if (row?.status === "waiting_approval" || row?.status === "waiting_input") {
+            const pending = (row.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
+            await holdUnknownWhileWaiting(pending);
             return suspendedByBridge(row.status, deltas.lastText(), deltas.text() ? deltas.textBefore : undefined);
           }
         }
@@ -4597,9 +5879,28 @@ async function executeRunInner(
         // transcript): neither the model brain (fallback) nor a retried job may redo the turn from scratch,
         // they would run them again. Post what the brain said and what it did instead, and end the run there.
         if (turnPlan.kind !== "model") {
-          const executed = await executedSince(db, run.id, turnStepSeq, executedNow);
-          // The computer dropped mid-turn: the turn resumes there when it is back (its session keeps what it did).
+          const executed = await executedSince(db, run.id, turnStepSeq, [...executedNow, ...startedNow.values()]);
+          // A recorded gateway intent without a successful result may have produced an effect even if it returned
+          // an error. Never resume the interrupted turn or fall back until the effect has been reconciled.
           const machineId = turnPlan.session?.machineId;
+          // A foreground quota cut with uncertain effects is durably held by waitForUsage below. Other uncertain
+          // interruptions retain the existing failure path until their own durable recovery is implemented.
+          const quotaHold =
+            machineId && !run.background && error instanceof BrainFailure && error.code === "plan_limit";
+          if (executed.some((call) => call.uncertain) && !quotaHold) {
+            const failure =
+              error instanceof BrainFailure
+                ? { code: error.code, message: error.message }
+                : { code: "brain_failed", message: error instanceof Error ? error.message : String(error) };
+            return interruptedAfterTools(
+              turnPlan.kind,
+              failure,
+              [...new Set(executed.map((c) => c.name))],
+              deltas.lastText(),
+              true,
+            );
+          }
+          // The computer dropped mid-turn: the turn resumes there when it is back (its session keeps what it did).
           if (
             machineId &&
             error instanceof BrainFailure &&
@@ -4625,11 +5926,19 @@ async function executeRunInner(
           // The plan refused the rest of a turn that worked (the runner says so; an older one is taken as having
           // worked): never ended there nor handed to the API, which can't see what it did. It waits for the plan and
           // the same session finishes the turn.
+          const uncertainPlanCut =
+            error instanceof BrainFailure &&
+            error.code === "plan_limit" &&
+            (executed.some((call) => call.uncertain) ||
+              conflictingNativeStarts ||
+              stepTold.size > 0 ||
+              executedNow.some((call) => !call.result || call.result.isError === true) ||
+              (await uncertainGatewayCallsSince(db, run.id, turnStepSeq, executedNow).catch(() => true)));
           if (
             machineId &&
             error instanceof BrainFailure &&
             error.code === "plan_limit" &&
-            (error.worked !== false || executed.length > 0)
+            (error.worked !== false || executed.length > 0 || uncertainPlanCut)
           ) {
             const prev = transcript.interruptedTurn;
             transcript.interruptedTurn = {
@@ -4638,7 +5947,12 @@ async function executeRunInner(
               drops: prev?.drops ?? 0,
               cause: "plan_limit",
             };
-            return waitForUsage({ code: "plan_limit", message: error.message, ...(await refusalOf(machineId, error)) });
+            return waitForUsage({
+              code: "plan_limit",
+              message: error.message,
+              ...(uncertainPlanCut ? { effectUnknown: true } : {}),
+              ...(await refusalOf(machineId, error)),
+            });
           }
           // The right hand's CLI killed at a tool of its own (ADR 0137 §4): nothing of that turn is posted, only its
           // DM's line (`brainUnavailable`), whatever it did through the bridge before.
@@ -4758,6 +6072,11 @@ async function executeRunInner(
       if (result.imagesLeftOut) transcript.filesTextOnly = true;
       if (result.timings) prof.brain.push(result.timings);
       await deferred;
+      // A turn that completed: the CLI waited for its own tools, so their outcome is known even when a result was an
+      // error (a failing `npm test`) or an older runner did not relay it. Only bridge receipts can still be open here;
+      // a cut turn (the catch path) keeps native starts as unknown.
+      const epochHold = bridgeEpochId ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, []) : null;
+      if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);
       // Side effects of the tools a computer brain ran through the bridge (cards, a `react`): for this reply.
@@ -4803,6 +6122,8 @@ async function executeRunInner(
       if (counted[0]) run = counted[0];
       // A computer brain's call through the bridge paused the run during the turn: it waits now.
       if (turnPlan.kind !== "model" && (run.status === "waiting_approval" || run.status === "waiting_input")) {
+        const pending = (run.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
+        await holdUnknownWhileWaiting(pending, true);
         return suspendedByBridge(run.status, turnText, deltas.text() ? deltas.textBefore : undefined);
       }
 
@@ -5414,8 +6735,41 @@ async function executeRunInner(
   }
 }
 
+// Result metadata stays with the original brain; the wrapper alone remains the execution path (ADR 0185).
+const brainResultSources = new WeakMap<Brain, Brain>();
+
 /** Builds the brain of this kind (`resolveBrain` picks it): a registered factory, else the built-in model brain. */
 function createBrain(
+  deps: EngineDeps,
+  agent: Agent,
+  run: AgentRun,
+  kind: BrainKind,
+  token: { current: string },
+  transcript: () => Transcript,
+  trigger: Message | null | undefined,
+): Brain {
+  const brain = createUnboundBrain(deps, agent, run, kind, token, transcript);
+  // A firing is background and carries server-written routine markers. Only a known foreground origin skips
+  // the routine join; raw or malformed markers still take the guard, even when compatibility is turned off.
+  const meta = trigger?.meta;
+  if (
+    run.background === false &&
+    run.workId === null &&
+    run.status === "running" &&
+    trigger?.id === run.triggerMessageId &&
+    trigger.orgId === run.orgId &&
+    meta !== null &&
+    typeof meta === "object" &&
+    !Array.isArray(meta) &&
+    !["routineBrief", "routine", "viaRoutine", "background"].some((key) => key in meta)
+  )
+    return brain;
+  const guarded = paperclipProjectBrain({ db: deps.db, enabled: deps.paperclipCompatibilityEnabled }, brain);
+  brainResultSources.set(guarded, brain);
+  return guarded;
+}
+
+function createUnboundBrain(
   deps: EngineDeps,
   agent: Agent,
   run: AgentRun,
@@ -5470,6 +6824,111 @@ export const computerMediaNote = (tools: string[]) =>
  * why it was called, what was found for this trigger) comes as "# This turn"
  * at the top of every turn's prompt (`thisTurn`, ADR 0053 §10).
  */
+async function hostAcpHistoryFor(db: Database, run: AgentRun): Promise<HostAcpHistory> {
+  if ((run.transcript as unknown as Transcript | null)?.hostAcpUncertain)
+    throw new BrainFailure(
+      "antigravity_delivery_unknown",
+      "An earlier host tool call has unknown effects. Inspect the native receipt before continuing; no command or replay was dispatched.",
+      false,
+    );
+  const rows = await db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(
+      and(
+        eq(schema.agentRunSteps.orgId, run.orgId),
+        eq(schema.agentRunSteps.runId, run.id),
+        inArray(schema.agentRunSteps.kind, ["tool_call", "tool_result"]),
+      ),
+    )
+    .orderBy(schema.agentRunSteps.seq)
+    .limit(513);
+  if (rows.length > 512)
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native tool history exceeds the continuation bound. Inspect the native receipts; do not replay completed actions.",
+      false,
+    );
+  const observations: HostAcpHistory["observations"] = [];
+  const results = rows.filter((row) => row.kind === "tool_result").reverse();
+  const callIds = rows.filter((row) => row.kind === "tool_call").map((row) => String(row.data.toolUseId));
+  // Refusal/expiry/cancellation never pass through executeApproved, so they have no tool_result.
+  // Their durable native decision is proof of NONexecution only while no execution was claimed.
+  // Scope by org/run/agent and match the exact call below; never infer completion from missing data.
+  const decisions = callIds.length
+    ? await db
+        .select()
+        .from(approvals)
+        .where(
+          and(
+            eq(approvals.orgId, run.orgId),
+            eq(approvals.runId, run.id),
+            eq(approvals.agentId, run.agentId),
+            inArray(approvals.toolUseId, callIds),
+            inArray(approvals.status, ["refused", "expired", "canceled"]),
+            isNull(approvals.executedAt),
+            isNull(approvals.result),
+          ),
+        )
+        .limit(129)
+    : [];
+  if (decisions.length > 128)
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native approval history exceeds the continuation bound. Inspect the native receipts; do not replay actions.",
+      false,
+    );
+  for (const call of rows) {
+    if (call.kind !== "tool_call" || !(HOST_ACP_TOOL_NAMES as readonly unknown[]).includes(call.data.name)) continue;
+    const result = results.find(
+      (row) =>
+        row.kind === "tool_result" &&
+        row.seq > call.seq &&
+        row.data.toolUseId === call.data.toolUseId &&
+        row.data.name === call.data.name,
+    );
+    const matching = decisions.filter(
+      (decision) => decision.toolUseId === call.data.toolUseId && decision.tool === call.data.name,
+    );
+    // A real result always wins, including an uncertain one. Ambiguous decisions are not receipts.
+    const decision = !result && matching.length === 1 ? matching[0] : undefined;
+    const content =
+      typeof result?.data.content === "string"
+        ? result.data.content
+        : decision
+          ? `${toolResultFor(decision).content}\nNative approval decision (not executed): ${JSON.stringify({
+              approvalId: decision.id,
+              status: decision.status,
+              decidedByUserId: decision.decidedByUserId,
+              decidedForUserId: decision.decidedForUserId,
+              decidedAt: decision.decidedAt,
+              reason: decision.reason,
+            })}`
+          : "No native completion receipt exists. Inspect this call; do not replay it.";
+    const isError = decision !== undefined || result?.data.isError === true;
+    const data = result?.data.data as Record<string, unknown> | undefined;
+    observations.push({
+      seq: call.seq,
+      callId: String(call.data.toolUseId),
+      name: String(call.data.name),
+      input: call.data.input as Record<string, unknown>,
+      content,
+      isError,
+      state: decision || (result && knownBridgeResult({ content, isError, data })) ? "completed" : "unknown",
+      // Native run steps keep bounded text excerpts, never image blocks or a promise of a full read.
+      partial: true,
+    });
+  }
+  const history = { runId: run.id, observations };
+  if (!isHostAcpHistory(history, run.id))
+    throw new BrainFailure(
+      "antigravity_failed",
+      "Incomplete: native tool receipts cannot fit the safe continuation bound. Inspect the native run before continuing; do not replay actions.",
+      false,
+    );
+  return history;
+}
+
 function brainTurnOf(
   run: AgentRun,
   agent: Agent,
@@ -5478,6 +6937,7 @@ function brainTurnOf(
   trigger: string,
   plan: BrainPlan,
   options: {
+    hostAcpHistory?: HostAcpHistory;
     found?: boolean;
     code?: Promise<CodeSetup | null>;
     personId?: string | null;
@@ -5496,6 +6956,7 @@ function brainTurnOf(
     return thisTurnParts([...t.system, ...lost], new Date(), options);
   };
   return {
+    ...(options.hostAcpHistory ? { hostAcpHistory: options.hostAcpHistory } : {}),
     runId: run.id,
     orgId: run.orgId,
     agentId: run.agentId,
@@ -5623,6 +7084,9 @@ async function thinkOnce(
     limitGraceMs?: number;
     /** A call the brain already ran (through the bridge, or its own tools). */
     onExecuted?(call: { id: string; name: string; input: unknown; result?: ToolResult }): void;
+    /** Validated CLI selection evidence, never application work or a shortened harness label. */
+    onHostAcpModelSelection?(selection: Record<string, unknown>): Promise<void>;
+    onHostAcpUnknown?(message: string): Promise<void>;
     /** A call of its own the brain started (`tool_started`): its `onExecuted` follows. */
     onStarted?(call: { id: string; name: string }): void;
     /** A file a tool of the brain's own made in the agent's folder (`file`). */
@@ -5678,6 +7142,68 @@ async function thinkOnce(
     if (event.type === "text_delta") onDelta(event.text);
     else if (event.type === "tool_started") hooks.onStarted?.(event);
     else if (event.type === "tool_call") {
+      if (
+        brain.kind === "antigravity" &&
+        turn.account?.provider === HOST_ANTIGRAVITY_PROVIDER &&
+        event.name === "host_acp_model_selection"
+      ) {
+        let value: Record<string, unknown>;
+        try {
+          if (
+            event.id !== `${turn.runId}:model-selection` ||
+            !event.executed ||
+            event.executed.isError ||
+            event.executed.pause ||
+            event.executed.content.length > 4096
+          )
+            throw new Error("invalid envelope");
+          const parsed = JSON.parse(event.executed.content);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid evidence");
+          value = parsed;
+        } catch {
+          throw new BrainFailure("antigravity_failed", "Invalid host ACP model selection evidence", false);
+        }
+        const id = (v: unknown) => typeof v === "string" && /^[a-zA-Z0-9-]{1,256}$/.test(v);
+        const exact = value?.selectionMode === "config_readback" || value?.selectionMode === "session_readback";
+        const pair =
+          value?.selectionMode === "config_pair_readback" &&
+          turn.model === "gemini-4-argon-high" &&
+          value?.selectedModel === "gemini-4-argon" &&
+          value?.thoughtLevel === "high";
+        if (
+          !value ||
+          value.source !== "cli_response" ||
+          value.runId !== turn.runId ||
+          !turn.session ||
+          value.nativeSessionId !== turn.session.id ||
+          !id(value.acpSessionId) ||
+          !turn.model ||
+          value.requestedModel !== turn.model ||
+          !(pair || (exact && value.selectedModel === turn.model && value.thoughtLevel === undefined)) ||
+          !hooks.onHostAcpModelSelection
+        )
+          throw new BrainFailure("antigravity_failed", "Invalid host ACP model selection evidence", false);
+        // Persist only qualified nonsecret fields, binding native identities from the resolved turn.
+        try {
+          await hooks.onHostAcpModelSelection({
+            source: "cli_response",
+            runId: turn.runId,
+            nativeSessionId: turn.session.id,
+            acpSessionId: value.acpSessionId,
+            requestedModel: turn.model,
+            selectedModel: value.selectedModel,
+            selectionMode: value.selectionMode,
+            ...(pair ? { thoughtLevel: "high" } : {}),
+          });
+        } catch {
+          throw new BrainFailure(
+            "antigravity_failed",
+            "Host ACP model selection evidence could not be persisted; inspect the native run before continuing.",
+            false,
+          );
+        }
+        continue;
+      }
       // Executed elsewhere (a computer brain through the runner bridge, which recorded its steps): shown only.
       if (event.executed) {
         executedCount++;
@@ -5697,6 +7223,27 @@ async function thinkOnce(
         };
       }
     } else if (event.type === "error") {
+      if (
+        brain.kind === "antigravity" &&
+        turn.account?.provider === HOST_ANTIGRAVITY_PROVIDER &&
+        event.code === "antigravity_delivery_unknown"
+      ) {
+        if (!hooks.onHostAcpUnknown)
+          throw new BrainFailure(
+            event.code,
+            "Unknown host tool effect could not be recorded; inspect the native run before continuing.",
+            false,
+          );
+        try {
+          await hooks.onHostAcpUnknown(event.message);
+        } catch {
+          throw new BrainFailure(
+            event.code,
+            "Unknown host tool effect could not be persisted; inspect the native run before continuing.",
+            false,
+          );
+        }
+      }
       // After a `limit`, whatever ended the turn was the plan's refusal. Without one, only before anything ran: the
       // words of a later failure can be a command's own.
       const untouched = executedCount === 0 && toolCalls.length === 0;
@@ -5725,8 +7272,9 @@ async function thinkOnce(
     }
   }
   if (text === null) throw new Error(`The ${brain.kind} brain ended the turn without an answer`);
-  if (brain instanceof ModelBrain && brain.last) {
-    const r = brain.last;
+  const resultSource = brainResultSources.get(brain) ?? brain;
+  if (resultSource instanceof ModelBrain && resultSource.last) {
+    const r = resultSource.last;
     return {
       content: r.content,
       stopReason: r.stopReason,
@@ -5779,18 +7327,105 @@ async function lastStepSeq(db: Executor, runId: string): Promise<number> {
   return Number(row?.seq ?? 0);
 }
 
+/** Positive evidence only: unmatched, duplicate, malformed or errored gateway records are not safe to replay. */
+async function uncertainGatewayCallsSince(
+  db: Executor,
+  runId: string,
+  fromSeq: number,
+  reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
+): Promise<boolean> {
+  const rows = await db
+    .select({ kind: agentRunSteps.kind, data: agentRunSteps.data })
+    .from(agentRunSteps)
+    .where(
+      and(
+        eq(agentRunSteps.runId, runId),
+        inArray(agentRunSteps.kind, ["tool_call", "tool_result"]),
+        sql`${agentRunSteps.seq} > ${fromSeq}`,
+      ),
+    )
+    .orderBy(agentRunSteps.seq)
+    .limit(513);
+  // A partial record can never prove absence of uncertainty.
+  if (rows.length > 512 || reported.length > 512) return true;
+  const calls = new Map<string, { name: string; input: unknown; result: boolean }>();
+  for (const row of rows) {
+    const id = row.data.toolUseId;
+    const name = row.data.name;
+    if (typeof id !== "string" || !id || typeof name !== "string" || !name) return true;
+    if (row.kind === "tool_call") {
+      if (calls.has(id)) return true;
+      calls.set(id, { name, input: row.data.input, result: false });
+    } else {
+      const call = calls.get(id);
+      if (!call || call.name !== name || call.result || row.data.isError !== false) return true;
+      call.result = true;
+    }
+  }
+  const seen = new Set<string>();
+  for (const call of reported) {
+    if (!call.id || !call.name || seen.has(call.id) || !call.result || call.result.isError === true) return true;
+    seen.add(call.id);
+    const durable = calls.get(call.id);
+    if (durable && (durable.name !== call.name || JSON.stringify(durable.input) !== JSON.stringify(call.input)))
+      return true;
+  }
+  return [...calls.values()].some((call) => !call.result);
+}
+
 /**
  * The tools a computer-brain turn already ran: the bridge's successful calls
  * after `fromSeq` (the gateway records a `tool_call` and a `tool_result` step
  * for each) and the calls the brain reported as executed. Once per call: its
  * name, and `label` with what it ran on (`executedLabel`).
  */
-async function executedSince(
+// JSONB may reorder object keys. Reject non-JSON inputs instead of equating omissions or redactions.
+function canonicalToolInput(value: unknown): string | null {
+  const seen = new Set<object>();
+  const normalize = (v: unknown): unknown => {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v !== "object" || seen.has(v)) throw new Error("non-JSON tool input");
+    if (!Array.isArray(v) && Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null)
+      throw new Error("non-JSON tool input");
+    const keys = Reflect.ownKeys(v);
+    if (keys.some((key) => typeof key !== "string")) throw new Error("non-JSON tool input");
+    const values = Object.getOwnPropertyDescriptors(v);
+    const readValue = (key: string) => {
+      const descriptor = values[key];
+      if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("non-JSON tool input");
+      return normalize(descriptor.value);
+    };
+    seen.add(v);
+    let result: unknown;
+    if (Array.isArray(v)) {
+      if (keys.length !== v.length + 1 || !keys.includes("length")) throw new Error("non-JSON tool input");
+      result = Array.from({ length: v.length }, (_, i) => readValue(String(i)));
+    } else {
+      result = Object.fromEntries((keys as string[]).sort().map((key) => [key, readValue(key)]));
+    }
+    seen.delete(v);
+    return result;
+  };
+  try {
+    return JSON.stringify(normalize(value));
+  } catch {
+    return null;
+  }
+}
+
+export async function executedSince(
   db: Executor,
   runId: string,
   fromSeq: number,
-  reported: { id: string; name: string; input?: unknown }[],
-): Promise<{ name: string; label: string }[]> {
+  reported: { id: string; name: string; input?: unknown; result?: ToolResult }[],
+  pending: NonNullable<Transcript["pending"]>["calls"] = [],
+  /**
+   * The turn ended on its own (a bridged call paused it), not cut: a reported error or pause is a known outcome and a
+   * call reported both as it started and as it ended counts once. A cut turn keeps every such case unknown.
+   */
+  settled = false,
+): Promise<{ name: string; label: string; uncertain: boolean }[]> {
   const steps = await db
     .select({ kind: schema.agentRunSteps.kind, data: schema.agentRunSteps.data })
     .from(schema.agentRunSteps)
@@ -5802,20 +7437,141 @@ async function executedSince(
       ),
     )
     .orderBy(schema.agentRunSteps.seq);
-  const inputs = new Map<string, unknown>();
-  const calls = new Map<string, { name: string; label: string }>();
+  type Evidence = {
+    name: string;
+    label: string;
+    input: unknown;
+    intents: number;
+    results: number;
+    conflict: boolean;
+    /** The pause the server recorded as this call's result (a question or decision waiting for a person). */
+    pauseId?: string;
+  };
+  const calls = new Map<string, Evidence>();
   for (const { kind, data } of steps) {
     const id = typeof data.toolUseId === "string" ? data.toolUseId : null;
     if (kind === "tool_call") {
-      if (id) inputs.set(id, data.input);
+      const name = typeof data.name === "string" ? data.name : "unknown tool";
+      const key = id ?? `step:${calls.size}`;
+      const prior = calls.get(key);
+      calls.set(
+        key,
+        prior
+          ? { ...prior, intents: prior.intents + 1, conflict: true }
+          : {
+              name,
+              label: executedLabel(name, data.input),
+              input: data.input,
+              intents: 1,
+              results: 0,
+              conflict: !id || typeof data.name !== "string",
+            },
+      );
       continue;
     }
-    if (data.isError === true || typeof data.name !== "string") continue;
-    const input = id ? inputs.get(id) : undefined;
-    calls.set(id ?? `step:${calls.size}`, { name: data.name, label: executedLabel(data.name, input) });
+    const previous = id ? calls.get(id) : undefined;
+    const name = typeof data.name === "string" ? data.name : "unknown tool";
+    calls.set(id ?? `step:${calls.size}`, {
+      name: previous?.name ?? name,
+      label: previous?.label ?? executedLabel(name, undefined),
+      input: previous?.input,
+      intents: previous?.intents ?? 0,
+      results: (previous?.results ?? 0) + 1,
+      ...(typeof (data.data as { pause?: { id?: unknown } } | undefined)?.pause?.id === "string"
+        ? { pauseId: (data.data as { pause: { id: string } }).pause.id }
+        : {}),
+      conflict:
+        previous?.conflict === true ||
+        !previous ||
+        previous.name !== name ||
+        (!settled && data.isError !== false) ||
+        (previous?.results ?? 0) > 0,
+    });
   }
-  for (const c of reported) calls.set(c.id, { name: c.name, label: executedLabel(c.name, c.input) });
-  return [...new Map([...calls.values()].map((c) => [c.label, c])).values()];
+  const evidence = new Map<string, { name: string; label: string; input?: unknown; uncertain: boolean }>();
+  for (const [id, c] of calls)
+    evidence.set(id, {
+      name: c.name,
+      label: c.label,
+      input: c.input,
+      uncertain: c.conflict || c.intents !== 1 || c.results !== 1,
+    });
+  const reportedIds = new Set<string>();
+  for (const c of reported) {
+    if (settled && reportedIds.has(c.id)) continue;
+    const previous = evidence.get(c.id);
+    // Inputs are compared conservatively: unequal JSON values, including redaction or aliases, require
+    // reconciliation. Their contents are never included in the handoff message.
+    const stored = previous && canonicalToolInput(previous.input);
+    const sameInput = stored != null && stored === canonicalToolInput(c.input);
+    evidence.set(c.id, {
+      name: previous?.name ?? c.name,
+      label: previous?.label ?? executedLabel(c.name, c.input),
+      input: previous?.input ?? c.input,
+      uncertain:
+        previous?.uncertain === true ||
+        (previous !== undefined && previous.name !== c.name) ||
+        (calls.has(c.id) && !sameInput) ||
+        reportedIds.has(c.id) ||
+        !c.result ||
+        (!settled && c.result.isError === true),
+    });
+    reportedIds.add(c.id);
+  }
+  // Exclude only the uniquely evidenced still-pending call itself. An ID collision, a previous result, a mismatched
+  // tool or a conflicting runner report is not proof of a harmless approval request and must stay unknown.
+  for (const p of pending) {
+    const c = calls.get(p.toolUseId);
+    const reports = reported.filter((r) => r.id === p.toolUseId);
+    const pendingId = p.approvalId ?? p.questionId ?? p.secretRequestId ?? p.waitId;
+    const uniquePending = pending.filter((other) => other.toolUseId === p.toolUseId).length === 1;
+    const consistentReport =
+      reports.length <= 1 &&
+      reports.every((r) => {
+        const stored = c && canonicalToolInput(c.input);
+        const sameInput = stored != null && stored === canonicalToolInput(r.input);
+        return (
+          r.name === p.name &&
+          r.result?.isError !== true &&
+          !!pendingId &&
+          r.result?.pause?.id === pendingId &&
+          sameInput
+        );
+      });
+    // A settled turn: the server itself recorded this call once, with the very pause the run waits on as its result
+    // (a mission's ask_decision). That is the pending request, not an unknown effect.
+    const serverRecordedPause =
+      settled &&
+      !!c &&
+      !!pendingId &&
+      c.intents === 1 &&
+      c.results === 1 &&
+      c.pauseId === pendingId &&
+      c.name === p.name &&
+      reports.every((r) => r.name === p.name && r.result?.isError !== true);
+    if (
+      uniquePending &&
+      c &&
+      c.name === p.name &&
+      ((!c.conflict && c.intents === 1 && c.results === 0 && consistentReport) || serverRecordedPause)
+    ) {
+      evidence.delete(p.toolUseId);
+    } else {
+      const prior = evidence.get(p.toolUseId);
+      evidence.set(p.toolUseId, {
+        name: prior?.name ?? p.name,
+        label: prior?.label ?? p.name,
+        input: prior?.input,
+        uncertain: true,
+      });
+    }
+  }
+  const labels = new Map<string, { name: string; label: string; uncertain: boolean }>();
+  for (const c of evidence.values()) {
+    const prior = labels.get(c.label);
+    labels.set(c.label, { ...c, uncertain: c.uncertain || prior?.uncertain === true });
+  }
+  return [...labels.values()];
 }
 
 /**
@@ -6147,6 +7903,7 @@ const withFallback = (t: Transcript, meta: Record<string, unknown> | undefined) 
  */
 export function continuedTranscript(stopped: Transcript, line: string): Transcript {
   const t: Transcript = {
+    ...(stopped.hostAcpUncertain ? { hostAcpUncertain: { ...stopped.hostAcpUncertain } } : {}),
     system: stopped.system,
     messages: structuredClone(stopped.messages),
     postedUpTo: 0,

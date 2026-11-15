@@ -345,4 +345,22 @@ describe("computer brains through the runner bridge", () => {
     expect("images" in frame).toBe(false);
     expect(frame.ok && frame.text).toContain("too big together to pass to this computer");
   });
+
+  test("typed ACP state preserves native images while warning the text-only adapter", () => {
+    const picture = { mediaType: "image/png", data: "FAKE_IMAGE" };
+    const frame = mcpResultFrame(
+      "c1",
+      { ok: true, text: "picture", images: [picture], runState: "completed", imageOmitted: false },
+      65,
+    );
+    expect(frame).toMatchObject({ runState: "completed", imageOmitted: true, images: [picture] });
+    const huge = { mediaType: "image/png", data: "A".repeat(4_500_000) };
+    const suspended = mcpResultFrame(
+      "c2",
+      { ok: true, text: "waiting", images: [huge, huge], runState: "suspended", imageOmitted: true },
+      65,
+    );
+    expect(suspended).toMatchObject({ runState: "suspended", imageOmitted: true });
+    expect("images" in suspended).toBe(false);
+  });
 });

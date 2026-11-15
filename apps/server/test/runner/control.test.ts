@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,6 +11,7 @@ import { DEFAULT_LIMITS, RunnerDaemon } from "../../runner/daemon";
 import { RUNNER_VERSION } from "../../runner/errors";
 import { ORG_LOGO_MAX_BYTES, orgLogoPath } from "../../runner/org-logo";
 import type { FetchFn } from "../../runner/pairing";
+import { PhoneManager } from "../../runner/phones";
 import { askStandby, standbyAcked } from "../../runner/standby";
 import { removeDirs, tempDir, waitFor } from "./helpers";
 
@@ -155,6 +156,18 @@ function control(
 const sharedGrant = () => ({ path: expect.stringMatching(/[\\/]shared$/), agents: ["*"] });
 
 const stored = (home: string) => JSON.parse(readFileSync(configPath(home), "utf8")) as Record<string, unknown>;
+
+test("the desktop app honors persisted phone discovery disable at daemon startup", async () => {
+  const { home } = pairedHome({ phonesDisabled: true });
+  const start = spyOn(PhoneManager.prototype, "start").mockImplementation(() => {});
+  try {
+    const c = control(home, { phones: { platform: "linux", dirs: [], env: { PATH: "" } } });
+    await c.connect();
+    expect(start).not.toHaveBeenCalled();
+  } finally {
+    start.mockRestore();
+  }
+});
 
 test("hello carries what this computer builds with and the phones it reaches; a phone found after it goes out", async () => {
   const { home } = pairedHome();

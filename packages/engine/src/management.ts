@@ -30,6 +30,7 @@ import {
   mediaSettingsFrom,
 } from "./media";
 import { can, lockOrgMembers, requireActiveMembership, requirePermission } from "./organizations";
+import { privatePublicationPendingCount, privatePublicationSql } from "./private-skill-publication";
 import { isRightHand, rightHandPermanent } from "./right-hand";
 import {
   agentBudgetsThisMonth,
@@ -41,6 +42,7 @@ import {
   workspaceBudgetPercent,
 } from "./usage";
 import { resumeBudgetWaits } from "./usage-pause";
+import { WEB_USAGE_PROVIDER } from "./web-tools";
 import { isWorkspaceMode, WORKSPACE_MODES, type WorkspaceMode, workspaceModeCacheKey } from "./workspace-mode";
 
 const {
@@ -315,7 +317,7 @@ export async function orgOverview(db: Database, actorId: string, orgId: string, 
     agents: agentCount?.n ?? 0,
     /** This month's spend of the workspace's agents over the sum of their budgets (no money). */
     budgetUsedPercent: await workspaceBudgetPercent(db, orgId, now),
-    approvalsWaitingForMe: pending?.n ?? 0,
+    approvalsWaitingForMe: (pending?.n ?? 0) + (await privatePublicationPendingCount(db, orgId, actorId)),
     proposalsWaitingForMe: await proposalsWaitingFor(db, actorId, orgId),
   };
 }
@@ -350,7 +352,14 @@ export async function agentDetail(db: Database, actorId: string, orgId: string, 
   const [pending] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(approvals)
-    .where(and(eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
+    .where(
+      and(
+        eq(approvals.orgId, orgId),
+        eq(approvals.agentId, agentId),
+        eq(approvals.status, "pending"),
+        sql`not ${privatePublicationSql()}`,
+      ),
+    );
   const channelsOf = await listAgentChannels(db, actorId, orgId, agentId);
   const budget = await agentBudgetState(db, orgId, agentId, now);
   const budgetNanoUsd = await effectiveAgentBudget(db, agent);
@@ -627,6 +636,27 @@ async function requireUsageAccess(db: Database, actorId: string, orgId: string, 
   throw new ForbiddenError();
 }
 
+export interface RunUsageBreakdown {
+  scope: "all_run_usage_records";
+  inputScope: "cache_inclusive";
+  cachedScope: "cache_read_subset";
+  messageScope: "agent_non_web";
+  counterSource: "recorded_may_include_estimates";
+  /** Runs do not expose money. Recorded plan zeroes are not proof of zero cash cost. */
+  costScope: "not_exposed_not_actual_cash";
+  byKind: {
+    kind: string;
+    providerScope: "web" | "non_web";
+    /** Usage records, not necessarily the number of underlying provider requests. */
+    records: number;
+    partialRecords: number;
+    inputTokens: number;
+    cachedTokens: number;
+    outputTokens: number;
+    costNanoUsd: null;
+  }[];
+}
+
 export interface RunSummary {
   id: string;
   agentId: string;
@@ -657,6 +687,8 @@ export interface RunSummary {
   repo: string | null;
   /** A GitHub repository it was refused (not in the agent's list), if any. */
   deniedRepo: string | null;
+  /** Readable getRun only; absent on history lists and unreadable conversations. */
+  usageBreakdown?: RunUsageBreakdown;
 }
 
 /** Run history, newest first, with tokens and cost from the usage records of each run. */
@@ -664,7 +696,16 @@ export async function listRuns(
   db: Database,
   actorId: string,
   orgId: string,
-  options: { agentId?: string; runId?: string; status?: string; before?: Date; since?: Date; limit?: number } = {},
+  options: {
+    agentId?: string;
+    runId?: string;
+    status?: string;
+    before?: Date;
+    since?: Date;
+    limit?: number;
+    /** Internal getRun projection; not a history-list query parameter. */
+    withUsageBreakdown?: boolean;
+  } = {},
 ): Promise<RunSummary[]> {
   await requireUsageAccess(db, actorId, orgId, options.agentId);
   const limit = Math.min(options.limit ?? 50, 200);
@@ -685,9 +726,16 @@ export async function listRuns(
     .limit(limit);
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
+  const providerScope = sql<
+    "web" | "non_web"
+  >`case when ${usageRecords.provider} = ${WEB_USAGE_PROVIDER} then 'web' else 'non_web' end`;
   const usage = await db
     .select({
       runId: usageRecords.runId,
+      kind: usageRecords.kind,
+      providerScope,
+      records: sql<number>`count(*)::int`,
+      partialRecords: sql<number>`count(*) filter (where ${usageRecords.partial})::int`,
       input: sql<string>`sum(${usageRecords.inputTokens} + ${usageRecords.cacheReadTokens} + ${usageRecords.cacheWriteTokens})`,
       cached: sql<string>`sum(${usageRecords.cacheReadTokens})`,
       output: sql<string>`sum(${usageRecords.outputTokens})`,
@@ -695,8 +743,38 @@ export async function listRuns(
     })
     .from(usageRecords)
     .where(and(eq(usageRecords.orgId, orgId), inArray(usageRecords.runId, ids)))
-    .groupBy(usageRecords.runId);
-  const byRun = new Map(usage.map((u) => [u.runId, u]));
+    .groupBy(usageRecords.runId, usageRecords.kind, usageRecords.provider);
+  const byRun = new Map<
+    string | null,
+    { input: number; cached: number; output: number; cost: number; byKind: RunUsageBreakdown["byKind"] }
+  >();
+  for (const row of usage) {
+    const total = byRun.get(row.runId) ?? { input: 0, cached: 0, output: 0, cost: 0, byKind: [] };
+    total.input += Number(row.input);
+    total.cached += Number(row.cached);
+    total.output += Number(row.output);
+    total.cost += Number(row.cost);
+    const group = total.byKind.find((g) => g.kind === row.kind && g.providerScope === row.providerScope);
+    if (group) {
+      group.records += row.records;
+      group.partialRecords += row.partialRecords;
+      group.inputTokens += Number(row.input);
+      group.cachedTokens += Number(row.cached);
+      group.outputTokens += Number(row.output);
+    } else {
+      total.byKind.push({
+        kind: row.kind,
+        providerScope: row.providerScope,
+        records: row.records,
+        partialRecords: row.partialRecords,
+        inputTokens: Number(row.input),
+        cachedTokens: Number(row.cached),
+        outputTokens: Number(row.output),
+        costNanoUsd: null,
+      });
+    }
+    byRun.set(row.runId, total);
+  }
   const triggers = await db
     .select({ id: messages.id, body: messages.body, meta: messages.meta })
     .from(messages)
@@ -740,6 +818,21 @@ export async function listRuns(
       finishedAt: r.finishedAt,
       repo: typeof r.transcript?.repo === "string" ? r.transcript.repo : null,
       deniedRepo: typeof r.transcript?.deniedRepo === "string" ? r.transcript.deniedRepo : null,
+      ...(!hidden && options.withUsageBreakdown
+        ? {
+            usageBreakdown: {
+              scope: "all_run_usage_records" as const,
+              inputScope: "cache_inclusive" as const,
+              cachedScope: "cache_read_subset" as const,
+              messageScope: "agent_non_web" as const,
+              counterSource: "recorded_may_include_estimates" as const,
+              costScope: "not_exposed_not_actual_cash" as const,
+              byKind: (u?.byKind ?? []).sort(
+                (a, b) => a.kind.localeCompare(b.kind) || a.providerScope.localeCompare(b.providerScope),
+              ),
+            },
+          }
+        : {}),
     };
   });
 }
@@ -752,7 +845,7 @@ export async function getRun(db: Database, actorId: string, orgId: string, runId
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)));
   if (!run) throw new NotFoundError("Run not found");
   await requireUsageAccess(db, actorId, orgId, run.agentId);
-  const [summary] = await listRuns(db, actorId, orgId, { agentId: run.agentId, runId });
+  const [summary] = await listRuns(db, actorId, orgId, { agentId: run.agentId, runId, withUsageBreakdown: true });
   if (!summary || summary.private) return { run: summary, steps: [] };
   const steps = await db
     .select({

@@ -60,6 +60,7 @@ import { getMessage, insertMessageWithRuns, messageView, replyExcerpt } from "./
 import { resolveRoutinePaused } from "./notification-producers";
 import { can, getMembership, requirePermission } from "./organizations";
 import { PermanentJobError } from "./outbox";
+import { paperclipRunRefusal } from "./paperclip-routine-state";
 import { maySql } from "./permissions";
 import { isRightHand } from "./right-hand";
 import {
@@ -140,6 +141,7 @@ export type RoutineTarget =
    */
   | { type: "widget"; widgetId: string; dashboardId: string };
 export const ROUTINE_EVENTS = [
+  "paperclip.received",
   "sentry.issue_created",
   "github.pr_opened",
   "issue.created",
@@ -395,6 +397,8 @@ export type RoutineTriggerInput =
     };
 
 export interface RoutineDeps {
+  /** Explicit opt-in for executing migrated Paperclip receipts; absent is off. */
+  paperclipCompatibilityEnabled?: boolean;
   db: Database;
   pubsub: PubSub;
   /** Reads schedule phrases (`schedulesOf`: the org's cheap model, `kind=summary`). */
@@ -1946,6 +1950,16 @@ export async function queueRoutineRun(
 export async function runRoutineNow(deps: RoutineDeps, actorId: string, orgId: string, id: string) {
   const routine = await loadRoutine(deps.db, orgId, id);
   await requireRoutineManager(deps.db, actorId, orgId, routine.agentId);
+  const [mapped] = await deps.db
+    .select({ id: schema.paperclipRoutineMappings.id })
+    .from(schema.paperclipRoutineMappings)
+    .where(and(eq(schema.paperclipRoutineMappings.orgId, orgId), eq(schema.paperclipRoutineMappings.routineId, id)))
+    .limit(1);
+  if (mapped)
+    throw new ConflictError(
+      "Dispatch this migrated routine through its receipt-backed migration API",
+      "paperclip.receipt_required",
+    );
   // A person is waiting on this one: told now, where a scheduled slot just passes.
   await assertCanWork(deps.db, orgId, routine.agentId);
   await queueRoutineRun(deps, routine, new Date(), "manual");
@@ -2129,6 +2143,8 @@ async function fireClaimedRun(deps: RoutineDeps, run: RunRow) {
   if (!routine || routine.deletedAt) return skip("deleted");
   // A widget's change request is a person's ask too: it runs while a person keeps that routine paused (ADR 0135 §6).
   if (!routine.active && run.trigger !== "manual" && !isWidgetChangeRun(run)) return skip("paused");
+  const paperclipRefusal = await paperclipRunRefusal(db, run, routine, deps.paperclipCompatibilityEnabled);
+  if (paperclipRefusal) return skip(paperclipRefusal);
   // Its workspace is on hold or suspended, or its agent held: the slot passes, the routine keeps its
   // schedule (`standing.ts`).
   const refusal = await standingRefusal(db, run.orgId, routine.agentId);

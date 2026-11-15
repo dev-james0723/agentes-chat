@@ -299,6 +299,7 @@ export class RunnerConnection {
         if (watchdog) clearTimeout(watchdog);
         if (this.live === send) this.live = null;
         runner.close();
+        void opts.context.hostMcp?.disconnect().catch(() => log("Host MCP cleanup requires owner attention"));
         tasks?.detach();
         opts.mcp?.detach();
         socket?.close();

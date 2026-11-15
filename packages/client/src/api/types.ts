@@ -644,6 +644,10 @@ export interface EndpointModel {
   /** Absent: unpriced (its calls cost 0, so no budget limits them). */
   prices?: EndpointPrices;
   check?: EndpointCheckResult;
+  /** Admin opt-in; only a passing server check enables JSON-schema calls. Absent means disabled. */
+  structuredOutput?: boolean;
+  /** Server-owned, ignored on input. */
+  structuredOutputCheck?: "ok" | "failed";
 }
 
 export interface EndpointCheck {
@@ -651,6 +655,8 @@ export interface EndpointCheck {
   check: EndpointCheckResult;
   /** The server's words, when it failed. */
   error?: string;
+  structuredOutputCheck?: "ok" | "failed";
+  structuredOutputError?: string;
 }
 
 /** Who can talk to an agent: everyone, some people, or only its owner. */
@@ -1917,6 +1923,18 @@ export type ApprovalStatus = "pending" | "approved" | "refused" | "expired" | "c
 /** A sensitive action waiting for a person (apps/server/src/routes/app/approvals.ts). */
 export interface Approval {
   id: string;
+  /** Private publication summaries contain no draft. Only the protected owner GET supplies `publication`. */
+  publicationRequired?: true;
+  publication?: {
+    fingerprint: string;
+    destination: "organization_skill_library";
+    skillId: string;
+    skillName: string;
+    baseVersion: number;
+    body: string;
+    bodyHash: string;
+    baseCurrent: boolean;
+  };
   /** Null when a mission's executor asked (`missionId`). */
   runId: string | null;
   /** A mission's executor asked (ADR 0029). */
@@ -2694,7 +2712,7 @@ export interface CustomServer {
   label: string;
   /** The account as the provider names it ("Acme"), when it says. */
   accountLabel?: string | null;
-  authType: "oauth" | "api_key";
+  authType: "oauth" | "api_key" | "machine_mcp";
   /** The server's own icon, kept and served by the backend (`/api/app/connector-icons/…`); null = a monogram. */
   iconUrl?: string | null;
   /** A service through Composio (ADR 0107): its address means nothing to people. */
@@ -3610,7 +3628,8 @@ export interface Issue {
     | { type: "manual" }
     | { type: "message"; channelId: string; messageId: string }
     | { type: "agent"; agentId: string }
-    | { type: "webhook"; provider: string };
+    | { type: "webhook"; provider: string }
+    | { type: "routine"; routineId: string; receiptId: string };
   /** The channel it lives in (from a message, or chosen). */
   channelId: string | null;
   /**
@@ -3730,7 +3749,12 @@ export interface IssueColumn {
   position: number;
 }
 
-export type RoutineEvent = "sentry.issue_created" | "github.pr_opened" | "issue.created" | "deploy.succeeded";
+export type RoutineEvent =
+  | "sentry.issue_created"
+  | "github.pr_opened"
+  | "issue.created"
+  | "deploy.succeeded"
+  | "paperclip.received";
 
 /**
  * The rule as the API sends it: monthly/yearly positions are in `byWeekday`

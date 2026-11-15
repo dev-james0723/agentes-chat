@@ -1078,7 +1078,7 @@ function rightHandCards(deps: { pubsub?: PubSub }): ToolDefinition[] {
           if (named.missing.length > 0) return noAgents(ctx, named.missing);
           const only = new Set(named.rows.map((a) => a.id));
           const waiting = (await listApprovals(ctx.db, forUserId, ctx.orgId, { status: "pending", limit: 200 }))
-            .filter((a) => a.canDecide && (only.size === 0 || only.has(a.agentId)))
+            .filter((a) => !a.publicationRequired && a.canDecide && (only.size === 0 || only.has(a.agentId)))
             .slice(0, MAX_ROWS_PER_CARD);
           if (waiting.length === 0) return { content: "Nothing waits for their decision: no card was posted." };
           const at = await cardPlace(ctx);

@@ -65,10 +65,10 @@ const say = (v: unknown) => (typeof v === "string" || typeof v === "number" ? St
  * title stays only for a tool whose name holds no verb: there it is the one name the tool has.
  */
 export const approvalTitle = (t: TFunction, approval: TitledApproval): string =>
-  wordedTitle(t, approval) ?? approval.title;
+  approval.publicationRequired ? t("privatePublication.title") : (wordedTitle(t, approval) ?? approval.title);
 
 type TitledApproval = Pick<Approval, "tool" | "title" | "params" | "email"> &
-  Partial<Pick<Approval, "connector" | "scope">>;
+  Partial<Pick<Approval, "connector" | "scope" | "publicationRequired">>;
 
 function wordedTitle(t: TFunction, approval: TitledApproval): string | null {
   if (approval.email) {

@@ -141,19 +141,48 @@ test("a chat turn's guard: init with our server's tools alone; a tool of its own
   expect(isOurAgyTool(`evil_${CODEX_MCP_SERVER}/x`)).toBe(false);
 });
 
-test("a turn that went wrong: AGY_ERROR's quota is a plan limit with its reset, a refused sign-in, anything else", () => {
+test("a turn that went wrong: explicit usage limit with its reset, a refused sign-in, anything else", () => {
   const quota = parseAgyError(
-    'note\nAGY_ERROR: {"status":"RESOURCE_EXHAUSTED","code":429,"retryable":true,"message":"Quota exceeded. Resets in 2h 5m."}\n',
+    'note\nAGY_ERROR: {"status":"RESOURCE_EXHAUSTED","code":429,"retryable":true,"message":"Weekly usage limit reached. Resets in 2h 5m."}\n',
   );
-  expect(quota).toEqual({ message: "Quota exceeded. Resets in 2h 5m.", limit: true, auth: false });
-  expect(antigravityProblem(quota?.message ?? "", { limit: true, worked: true, now: NOW })).toEqual([
+  expect(quota).toEqual({
+    message: "Weekly usage limit reached. Resets in 2h 5m.",
+    limit: true,
+    auth: false,
+    ambiguous: true,
+  });
+  expect(antigravityProblem(quota?.message ?? "", { worked: true, now: NOW })).toEqual([
     { type: "limit", resetsAt: "2026-11-04T14:05:00.000Z" },
-    { type: "error", code: "plan_limit", message: "Quota exceeded. Resets in 2h 5m.", retryable: true, worked: true },
+    {
+      type: "error",
+      code: "plan_limit",
+      message: "Weekly usage limit reached. Resets in 2h 5m.",
+      retryable: true,
+      worked: true,
+    },
   ]);
   expect(parseAgyError('AGY_ERROR: {"status":"UNAUTHENTICATED","code":401}')).toMatchObject({ auth: true });
   expect(antigravityProblem("Error: authentication required")[0]).toMatchObject({ code: "not_logged_in" });
   expect(antigravityProblem("boom")[0]).toMatchObject({ code: "antigravity_failed" });
   expect(parseAgyError("plain failure")).toBeNull();
+});
+
+test("antigravity: generic RESOURCE_EXHAUSTED and 429 are not subscription exhaustion", () => {
+  const parsed = parseAgyError('AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","code":429,"message":"Too many requests"}');
+  expect(parsed?.limit).toBe(false);
+  expect(antigravityProblem(parsed?.message ?? "", { ambiguous: parsed?.ambiguous, worked: true })).toEqual([
+    { type: "error", code: "antigravity_failed", message: "Too many requests", retryable: false },
+  ]);
+  for (const text of [
+    "Quota exceeded",
+    "out of credits",
+    "rate limit reached",
+    "Your weekly usage limit was not reached",
+  ]) {
+    expect(antigravityProblem(text, { worked: true })).toEqual([
+      { type: "error", code: "antigravity_failed", message: text, retryable: false },
+    ]);
+  }
 });
 
 test("the CLI's words: its models, its sign-in status, its sign-in link and its /usage quotas", () => {
@@ -303,6 +332,18 @@ async function run(ctx: AntigravityBrainContext, req: AntigravityBrainTurnReques
   return events;
 }
 
+test.skipIf(!posix)(
+  "an expired local host account cannot fall back to a managed account with the same id",
+  async () => {
+    const root = tempDir("brain-agy-host-expired-");
+    dirs.push(root);
+    const { ctx, accountDir } = turnContext(root);
+    signIn(accountDir);
+    const events = await run({ ...ctx, hostAccountStatus: () => ({ id: ACCOUNT, loggedIn: false }) }, turn());
+    expect(events).toMatchObject([{ type: "error", code: "not_logged_in" }]);
+  },
+);
+
 const logOf = (file: string) =>
   readFileSync(file, "utf8")
     .trim()
@@ -390,6 +431,9 @@ test.skipIf(!posix)(
     const limited = await run(ctx, turn({ runId: RUN.replace(/1$/, "6"), prompt: "LIMIT" }));
     expect(limited.find((e) => e.type === "limit")).toMatchObject({ resetsAt: expect.any(String) });
     expect(limited.at(-1)).toMatchObject({ type: "error", code: "plan_limit" });
+    const ambiguous = await run(ctx, turn({ runId: RUN.replace(/1$/, "7"), prompt: "THROTTLE" }));
+    expect(ambiguous.find((e) => e.type === "limit")).toBeUndefined();
+    expect(ambiguous.at(-1)).toMatchObject({ type: "error", code: "antigravity_failed", retryable: false });
     expect(await final({}, { ...ctx, platform: "darwin" })).toMatchObject({ code: "unsupported" });
   },
   20_000,

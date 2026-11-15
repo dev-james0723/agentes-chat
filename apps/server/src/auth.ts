@@ -51,6 +51,7 @@ import { setSessionCookie } from "better-auth/cookies";
 import { z } from "zod";
 import { listOf } from "./app-links";
 import { desktopSignIn, FRESH_SIGN_IN_MS } from "./desktop-sign-in";
+import { rejectForwardedLocal } from "./dual-origin-guard";
 import { humanCheckRefusal } from "./http/human-check";
 import type { Logger } from "./logger";
 import { ownerSignIn } from "./owner-claim";
@@ -123,7 +124,9 @@ export function createAuth(deps: {
 
   return betterAuth({
     appName: "agentes.chat",
-    baseURL: config.PUBLIC_URL,
+    baseURL: config.LOCAL_HTTP_LOGIN
+      ? { allowedHosts: [config.PUBLIC_URL, `http://localhost:${config.PORT}`], protocol: "auto" }
+      : config.PUBLIC_URL,
     basePath: "/api/auth",
     // Over HTTP each would tell any session whether a password is right, with none of the limit `deletionProof` keeps:
     // a stolen session could guess the account's password there, then sign in with it anywhere, or delete with it on
@@ -133,7 +136,13 @@ export function createAuth(deps: {
     // Derived from AGENTES_SECRET so self-hosters manage a single secret.
     secret: deriveSecret(config.AGENTES_SECRET, "sessions"),
     // Apple posts the sign-in result back from its own origin (`response_mode=form_post`).
-    trustedOrigins: [config.PUBLIC_URL, ...devOrigins, ...appOrigins, ...(apple ? [APPLE_ORIGIN] : [])],
+    trustedOrigins: [
+      config.PUBLIC_URL,
+      ...(config.LOCAL_HTTP_LOGIN ? [`http://localhost:${config.PORT}`] : []),
+      ...devOrigins,
+      ...appOrigins,
+      ...(apple ? [APPLE_ORIGIN] : []),
+    ],
     plugins: [
       expo(),
       phoneSignIn,
@@ -290,6 +299,13 @@ export function createAuth(deps: {
     },
     advanced: {
       ipAddress: { trustedProxies: config.TRUSTED_PROXIES },
+      ...(config.LOCAL_HTTP_LOGIN
+        ? {
+            crossSubDomainCookies: { enabled: true },
+            defaultCookieAttributes: { domain: undefined },
+            trustedProxyHeaders: false,
+          }
+        : {}),
     },
     // Better Auth answers what its endpoints throw with a 500 of its own, so the app's onError never sees it: this
     // is that error's log line, and its report (ADR 0104). Its refusals (below 500) stay quiet, as before.
@@ -432,11 +448,23 @@ function noteProviderEmail(profile: { email?: unknown }) {
  * the sign-in page with the provider's address, so the page can offer that account a new password by email; the
  * second as `PROVIDER_EMAIL_UNVERIFIED`, since a new password changes nothing there.
  */
-export function authHandler(auth: Auth, db: Database) {
+export function authHandler(auth: Auth, db: Database, config: Config) {
   return (request: Request) => {
     const seen: { email?: string } = {};
     return providerEmail.run(seen, async () => {
-      const res = await auth.handler(request);
+      const rejected = rejectForwardedLocal(config, request);
+      if (rejected) return rejected;
+      let effective = request;
+      if (config.LOCAL_HTTP_LOGIN) {
+        const publicUrl = new URL(config.PUBLIC_URL);
+        const host = request.headers.get("host") ?? new URL(request.url).host;
+        const local = `localhost:${config.PORT}`;
+        if (host !== publicUrl.host && host !== local) return new Response("Unknown host", { status: 421 });
+        const origin = host === local ? `http://${local}` : publicUrl.origin;
+        const url = new URL(request.url);
+        effective = new Request(new URL(url.pathname + url.search, origin).href, request);
+      }
+      const res = await auth.handler(effective);
       const location = res.headers.get("location");
       if (!seen.email || !location) return res;
       const back = new URL(location, "http://localhost");

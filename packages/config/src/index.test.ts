@@ -339,3 +339,21 @@ describe("FIREBASE_SERVICE_ACCOUNT", () => {
     expect(message).not.toContain("MIIEvQ");
   });
 });
+
+describe("SKILL_READ_CANARY", () => {
+  const a = "01a1d702-7759-77c3-aa48-7a9fcae361f6";
+  const s = "01a1dbe5-5926-717c-b484-22ca8b36eaa4";
+  test("off by default", () => {
+    expect(loadConfig(valid).SKILL_READ_CANARY).toEqual([]);
+  });
+  test("exact agent:skill pairs, load_skill only", () => {
+    expect(loadConfig({ ...valid, SKILL_READ_CANARY: ` ${a}:${s} ,${s}:${a}` }).SKILL_READ_CANARY).toEqual([
+      { agentId: a, skillId: s, operation: "load_skill" },
+      { agentId: s, skillId: a, operation: "load_skill" },
+    ]);
+  });
+  test("anything but two UUIDs is refused at start", () => {
+    for (const bad of [a, `${a}:`, `${a}:not-a-uuid`, `${a}:${s}:stored_text`, `*:${s}`])
+      expect(() => loadConfig({ ...valid, SKILL_READ_CANARY: bad })).toThrow(/SKILL_READ_CANARY/);
+  });
+});

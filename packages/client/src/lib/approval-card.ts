@@ -20,7 +20,7 @@ export function approvalCardItems(list: readonly Approval[] | undefined, message
  */
 export function approveAllScope(items: readonly Approval[], now = Date.now()) {
   const waiting = items.filter((a) => a.status === "pending" && new Date(a.expiresAt).getTime() > now);
-  const ids = waiting.filter((a) => a.canDecide).map((a) => a.id);
+  const ids = waiting.filter((a) => a.canDecide && !a.publicationRequired).map((a) => a.id);
   return { ids, waiting: waiting.length, blocked: waiting.length - ids.length };
 }
 
@@ -117,4 +117,11 @@ export function approvalRuns(items: readonly Approval[]): Approval[][] {
 export function approveAlwaysAlso(card: readonly Approval[], a: Approval): string[] {
   if (!a.approveAlways) return [];
   return card.filter((x) => x.id !== a.id && x.status === "pending" && x.canDecide && sameKind(x, a)).map((x) => x.id);
+}
+
+/** A private draft is visible and actionable only after this screen's successful, settled protected GET. */
+export function publicationPreview(summary: Approval, detail: Approval | undefined, fresh: boolean): Approval {
+  if (!summary.publicationRequired) return summary;
+  if (fresh && detail?.id === summary.id && detail.publicationRequired && detail.publication) return detail;
+  return { ...summary, publication: undefined, canDecide: false, canCancel: false };
 }

@@ -21,6 +21,7 @@ import {
   MisconfiguredError,
   postPersonMessage,
   revokeConnection,
+  setAgentAccess,
   setAgentScopes,
   startOAuth,
   TokenRefused,
@@ -85,7 +86,7 @@ describe("connections", () => {
     expect(active.map((c) => c.id)).toEqual([second.id]);
   });
 
-  test("a new connection is every agent's at Ler e escrever, each in the audit log; reconnecting keeps what people chose", async () => {
+  test("a new connection grants no access; reconnecting preserves explicitly chosen grants", async () => {
     f = await setup();
     const [ops, gone] = await f.db
       .insert(schema.agents)
@@ -108,19 +109,11 @@ describe("connections", () => {
       connector: "github",
       apiKey: "ghp_secret_123456",
     });
-    // The whole connection (`connector:*`), sensitive tools included: they still ask a person on every call.
-    expect(await grantsOn(first.id)).toEqual([
-      ["dev", "connector:*", f.owner.id],
-      ["ops", "connector:*", f.owner.id],
-    ]);
+    expect(await grantsOn(first.id)).toEqual([]);
     expect(gone?.archivedAt).not.toBeNull();
-    const details = { connectionId: first.id, label: "GitHub", level: "write" };
-    expect(await audited()).toEqual([
-      ["dev", f.owner.id, details],
-      ["ops", f.owner.id, details],
-    ]);
+    expect(await audited()).toEqual([]);
 
-    // Someone narrows Dev to reading pull requests; a new key for the same connector keeps that and grants nothing.
+    // Explicitly grant Dev pull-request reads; a new key preserves that without opening Ops access.
     await setAgentScopes(
       f.db,
       f.owner.id,
@@ -137,11 +130,8 @@ describe("connections", () => {
       apiKey: "ghp_rotated_654321",
     });
     expect((await f.db.select().from(schema.approvalRules)).map((r) => r.connectionId)).toEqual([second.id]);
-    expect(await grantsOn(second.id)).toEqual([
-      ["dev", "github:pr.read", f.owner.id],
-      ["ops", "connector:*", f.owner.id],
-    ]);
-    expect(await audited()).toHaveLength(2);
+    expect(await grantsOn(second.id)).toEqual([["dev", "github:pr.read", f.owner.id]]);
+    expect(await audited()).toHaveLength(0);
   });
 
   test("grants must name a scope of the connection's catalog, in this org", async () => {
@@ -262,7 +252,14 @@ describe("MCP tools through the Tool Gateway", () => {
     });
 
     const gateway = createToolGateway({ sources: [source] });
-    // A new connection is every agent's, whole (the merge still asks a person, below).
+    expect(await gateway.list(ctx)).toEqual([]);
+    // Explicit whole-connector access still respects sensitive-action approvals.
+    await setAgentAccess(f.db, f.owner.id, f.org.id, f.agent.id, {
+      all: false,
+      connectors: { [c.id]: true },
+      scopes: [],
+      tools: { allow: [], deny: [] },
+    });
     expect((await gateway.list(ctx)).map((t) => t.name).sort()).toEqual([
       "github_issue_read",
       "github_merge_pull_request",
@@ -335,7 +332,16 @@ describe("MCP tools through the Tool Gateway", () => {
   test("deleting a repository and adding a ruleset ask a person; creating one, labels and discussions don't", async () => {
     f = await setup();
     const mcp = fakeGithubMcp({ writes: true });
-    await createApiKeyConnection(depsOf(f), f.owner.id, f.org.id, { connector: "github", apiKey: "ghp_secret_123456" });
+    const c = await createApiKeyConnection(depsOf(f), f.owner.id, f.org.id, {
+      connector: "github",
+      apiKey: "ghp_secret_123456",
+    });
+    await setAgentAccess(f.db, f.owner.id, f.org.id, f.agent.id, {
+      all: false,
+      connectors: { [c.id]: true },
+      scopes: [],
+      tools: { allow: [], deny: [] },
+    });
     const source = createConnectorToolSource({ ...depsOf(f), connect: mcp.connect });
     const msg = await postPersonMessage({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, f.general.id, {
       body: "x",

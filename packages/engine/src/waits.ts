@@ -11,6 +11,8 @@ import { enqueue } from "./outbox";
 import type { DetachedWait, StoredTranscript } from "./run-resume";
 import type { AgentRun } from "./runs";
 
+import { keepRunMarkers } from "./sticky-transcript";
+
 const { agentConsultations, agentRuns, agents, browserHandoffs } = schema;
 
 /** What a person's message did to the wait of the run it reached (`agent.run.wait_message`). */
@@ -153,7 +155,7 @@ export async function detachWaits(db: Database, runId: string, waits: Detach[]):
     ];
     await tx
       .update(agentRuns)
-      .set({ transcript: t as Record<string, unknown>, updatedAt: new Date() })
+      .set({ transcript: keepRunMarkers(t as Record<string, unknown>), updatedAt: new Date() })
       .where(eq(agentRuns.id, runId));
     // Once per detach (a fresh key: the same wait may be waited on, and detached, again later).
     await enqueue(tx, {

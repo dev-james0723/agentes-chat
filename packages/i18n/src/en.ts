@@ -8,6 +8,19 @@ import type { Widen } from "./widen";
  */
 export const en = {
   app: { name: "agentes" },
+  privatePublication: {
+    title: "Review sharing a private draft",
+    destination: "Destination: organization skill library",
+    warning: "People who can read this skill will see this complete draft.",
+    approve: "Share this exact version once",
+    loading: "Loading the protected preview…",
+    failed: "The protected preview could not be verified. Open it again to retry.",
+    stale: "This skill changed. Ask for a new sharing request.",
+    body: "Complete skill body",
+    review: "Review private draft",
+    withdraw: "Withdraw sharing approval",
+  },
+
   common: {
     close: "Close",
     joinSentences: "{{a}} {{b}}",
@@ -8335,6 +8348,7 @@ export const en = {
       "sentry.issue_created": "New Sentry error",
       "github.pr_opened": "PR opened on GitHub",
       "issue.created": "Task created in agentes",
+      "paperclip.received": "Paperclip request received",
       "deploy.succeeded": "Deploy finished",
     },
     when: { event: "When: {{event}}" },
@@ -12682,6 +12696,8 @@ export const en = {
     agentSub: "By connector and subject. By default, sensitive actions ask for approval.",
   },
   connectFlow: {
+    accessRequired:
+      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
     steps: "Steps",
     step: { "0": "Connect", "1": "What it does", "2": "Who can use it" },
     connectTitle: "Connect {{name}}",
@@ -12758,6 +12774,10 @@ export const en = {
     /** The end of connecting: a short confirmation. "Adjust" opens the detail (tools, then who uses it). */
     done: {
       title: "{{name}} connected",
+      accessRequired:
+        "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+      accessPending:
+        "Review the tools, then choose agent access in Adjust. Existing All tools permissions still apply.",
       everyone: "Every agent can use it.",
       /** A server by address whose tools no one gave a level yet: "Continue" saves the ones we suggest. */
       waiting: "Agents get the tools only when you continue, at the levels we suggest.",

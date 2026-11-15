@@ -74,7 +74,8 @@ export const traitKey = (trait: keyof typeof TRAIT_ICON, personal: boolean) =>
  */
 export function approvalTitleText(
   t: TFunction,
-  a: Pick<Approval, "tool" | "title" | "params" | "email"> & Partial<Pick<Approval, "connector">>,
+  a: Pick<Approval, "tool" | "title" | "params" | "email"> &
+    Partial<Pick<Approval, "connector" | "publicationRequired">>,
 ) {
   return approvalTitle(t, a);
 }
@@ -139,7 +140,11 @@ export function useApproveNow(a: Approval, onApproved?: () => void) {
   const name = dir.agentById.get(a.agentId)?.name ?? "";
   const g = genderOf(name);
   const high = approvalRisk(a) === "high";
-  const approve = (always = false) =>
+  const approve = (always = false) => {
+    if (a.publicationRequired) {
+      router.push(`/approval/${a.id}`);
+      return;
+    }
     decide.mutate(
       { id: a.id, decision: "approve", always },
       {
@@ -161,6 +166,7 @@ export function useApproveNow(a: Approval, onApproved?: () => void) {
         onError: () => toast({ title: t("mobile.app.failed"), icon: "x" }),
       },
     );
+  };
   return { approve, pending: decide.isPending, high };
 }
 
@@ -195,7 +201,7 @@ export function useRefuseApproval(a: Approval, onRefused?: () => void) {
       },
     );
   const refuse = () => {
-    if (Platform.OS !== "ios") {
+    if (a.publicationRequired || Platform.OS !== "ios") {
       router.push(`/approval/${a.id}?mode=refuse`);
       return;
     }

@@ -19,7 +19,7 @@ import { isAutoModel } from "@agenteschat/providers";
 import { autoPlanModel, claudeCodeModel, planOf } from "@agenteschat/providers/plans";
 import { getAgentCached } from "./agents";
 import { recordAudit } from "./audit";
-import { createAgentRuns, eligibleChannelAgents } from "./dispatch";
+import { eligibleChannelAgents, startOrJoinRun } from "./dispatch";
 import { publishChannelEvent, publishMessageCreated } from "./events";
 import { cutText } from "./format";
 import { routineDeliveryBlock } from "./hand-off";
@@ -42,7 +42,7 @@ import { lineLocale, personBehindCall } from "./requester";
 import { routineBriefOf } from "./routine-brief";
 import { issueRunToolToken } from "./run-tool-tokens";
 import { runnerUpdateWay } from "./runner-update";
-import { replyThreadOf } from "./runs";
+import { type AgentRun, replyThreadOf } from "./runs";
 import { hopLimitReached, runStretchOf } from "./stretch";
 import type { ToolContext } from "./tools/types";
 
@@ -1387,11 +1387,30 @@ export async function wakeConversationForTask(deps: TaskDeps, taskId: string, op
       // result is command output, so the run it wakes counts as having read outside (ADR 0117).
       meta: { ...notice.meta, machineTask, readOutside: true },
     });
-    const runs =
-      !blocked && eligible.length > 0 && !(await hopLimitReached(tx, message, options.maxHops))
-        ? await createAgentRuns(tx, message, [row.agentId], "mention")
-        : [];
-    return { message, runs };
+    // createAgentRuns returns only newly created runs; an empty array can also mean a successful join.
+    // Keep the outcome alongside the one durable notice, in this transaction, without retrying a task.
+    let continuation: { state: "created" | "joined" | "blocked" | "unconfirmed"; runId?: string; reason?: string };
+    let runs: AgentRun[] = [];
+    if (blocked) continuation = { state: "blocked", reason: `routine_${blocked}` };
+    else if (eligible.length === 0) continuation = { state: "blocked", reason: "agent_ineligible" };
+    else if (await hopLimitReached(tx, message, options.maxHops))
+      continuation = { state: "blocked", reason: "hop_limit" };
+    else {
+      const started = await startOrJoinRun(tx, message, row.agentId, "mention");
+      if (started && "created" in started) {
+        runs = [started.created];
+        continuation = { state: "created", runId: started.created.id };
+      } else if (started && "joined" in started) continuation = { state: "joined", runId: started.joined };
+      // This includes a stretch held by the native pause-card job, and must not be reported as scheduled.
+      else continuation = { state: "unconfirmed", reason: "dispatch_not_confirmed" };
+    }
+    const [recorded] = await tx
+      .update(schema.messages)
+      .set({ meta: { ...message.meta, machineTask: { ...machineTask, continuation } } })
+      .where(and(eq(schema.messages.orgId, row.orgId), eq(schema.messages.id, message.id)))
+      .returning();
+    if (!recorded) throw new Error("task callback receipt could not be saved");
+    return { message: recorded, runs };
   });
   if (!result) return null;
   if (deps.pubsub) await publishMessageCreated(deps.pubsub, messageView(result.message));

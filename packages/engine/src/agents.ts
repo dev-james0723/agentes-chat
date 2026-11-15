@@ -31,18 +31,12 @@ import { can, getMembership, type Membership, requireActiveMembership, requirePe
 import { isRightHand, RIGHT_HAND_EDITABLE, refuseRightHand, rightHandPermanent } from "./right-hand";
 import { newSetup, type SetupExtras, setupOf } from "./setup-checklist";
 import { APPROVALS_LEVELS, type ApprovalsLevel } from "./tools/run-policy";
-import {
-  CONNECTOR_ALL,
-  DEFAULT_AGENT_SCOPES,
-  dropForeignMailGrants,
-  grantScopes,
-  PERSONAL_AGENT_SCOPES,
-} from "./tools/scopes";
+import { DEFAULT_AGENT_SCOPES, dropForeignMailGrants, grantScopes, PERSONAL_AGENT_SCOPES } from "./tools/scopes";
 import { resyncBudgetCounter } from "./usage";
 import { resumeBudgetWaits } from "./usage-pause";
 import { isPersonalWorkspace } from "./workspace-mode";
 
-const { agents, connectorConnections, importItems, machines, organizationMembers, providerCredentials } = schema;
+const { agents, importItems, machines, organizationMembers, providerCredentials } = schema;
 
 export type Agent = typeof agents.$inferSelect;
 
@@ -288,23 +282,14 @@ export async function createAgent(
       agent.id,
       DEFAULT_AGENT_SCOPES.map((scope) => ({ connectionId: null, scope })),
     );
-    // A personal workspace's agent starts with broad access (ADR 0159 §3a): every app connected there and its
-    // calendar. Only from someone who may give access, so a family member's own agent starts as a team's does.
-    // Sensitive tools still ask a person on every call; mail, databases and the computer keep their own switches.
-    const broad = personal && can(membership, "manage_agents");
-    if (broad) {
-      const apps = await db
-        .select({ id: connectorConnections.id })
-        .from(connectorConnections)
-        .where(eq(connectorConnections.orgId, orgId));
+    // Personal calendar defaults remain separate; connector access is always explicitly granted.
+    const personalCalendar = personal && can(membership, "manage_agents");
+    if (personalCalendar) {
       await grantScopes(
         db,
         orgId,
         agent.id,
-        [
-          ...PERSONAL_AGENT_SCOPES.map((scope) => ({ connectionId: null, scope })),
-          ...apps.map((c) => ({ connectionId: c.id, scope: CONNECTOR_ALL })),
-        ],
+        PERSONAL_AGENT_SCOPES.map((scope) => ({ connectionId: null, scope })),
         actorId,
       );
     }
@@ -340,7 +325,7 @@ export async function createAgent(
         handle: agent.handle,
         model: agent.model,
         ...(autonomy ? { autonomy } : {}),
-        ...(broad ? { access: "broad" } : {}),
+        ...(personalCalendar ? { access: "calendar_defaults" } : {}),
         ...(options.via ? { via: options.via } : {}),
       },
     });

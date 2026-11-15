@@ -1,12 +1,35 @@
 import type { BlobStoreResolver, PubSub } from "@agenteschat/adapters";
-import { and, type Database, desc, eq, gt, inArray, isNull, lt, or, rowsOf, schema, sql } from "@agenteschat/db";
+import {
+  and,
+  asc,
+  type Database,
+  desc,
+  type Executor,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  or,
+  rowsOf,
+  schema,
+  sql,
+} from "@agenteschat/db";
 import { recordAgentActions } from "../agent-actions";
+import { NATIVE_PUBLICATION_EXECUTION } from "../contextual-skill-native-read-proof";
 import { runCalls } from "../continuation";
-import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
+import { sha256 } from "../crypto";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors";
 import type { Judge } from "../judge";
 import { notifySkillUpdate } from "../notification-producers";
 import { requirePermission } from "../organizations";
 import { enqueue } from "../outbox";
+import {
+  claimPrivatePublication,
+  classifySkillPublication,
+  PRIVATE_PUBLICATION_DEFER,
+  preflightPrivatePublication,
+} from "../private-skill-publication";
 import { restoreSkillSnapshot, type SkillSnapshot } from "../skill-updates";
 import {
   agentSkillByName,
@@ -152,6 +175,17 @@ export async function changeSkillAsAgent(
   asked?: { person: string | null; decides: boolean },
 ): Promise<SkillChange> {
   const name = slug.trim().toLowerCase();
+  const publicationCtx = ctx as ToolContext;
+  if (!publicationCtx.privatePublicationApprovalId) {
+    const input =
+      typeof change === "string"
+        ? { name, body: change }
+        : { name, ...change, ...(!change.files?.length ? { files: undefined } : {}) };
+    if ((await classifySkillPublication(publicationCtx, input)).kind !== "ordinary")
+      throw new ForbiddenError(PRIVATE_PUBLICATION_DEFER);
+  } else {
+    await preflightPrivatePublication(publicationCtx, name, typeof change === "string" ? change : change.body);
+  }
   const { body: rawBody, files = [] } = typeof change === "string" ? { body: change } : change;
   const edits = files.map((e) => ({ ...e, path: cleanSkillPath(e.path.trim()) }));
   const text = rawBody?.trim();
@@ -161,8 +195,9 @@ export async function changeSkillAsAgent(
     if (looksLikeSecret(t)) throw new ValidationError("This looks like a credential, so it can't go in a skill.");
   const reads = await readsInRun(ctx, name);
   if (!reads.loaded) throw new ValidationError(`Load the skill ${name} with load_skill first, then change it.`);
-  const skill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, name);
-  if (!skill) throw new NotFoundError(`No skill named ${name} is enabled for you.`);
+  const foundSkill = await agentSkillByName(ctx.db, ctx.orgId, ctx.agentId, name);
+  if (!foundSkill) throw new NotFoundError(`No skill named ${name} is enabled for you.`);
+  let skill: SkillRow = foundSkill;
   const own = skill.origin === "agent";
   if (own) {
     if (skill.ownerAgentId !== ctx.agentId) throw new ForbiddenError("That skill belongs to another agent.");
@@ -208,7 +243,7 @@ export async function changeSkillAsAgent(
   const why =
     trust === "low"
       ? "outside"
-      : own || asked?.decides
+      : own || asked?.decides || publicationCtx.privatePublicationApprovalId
         ? undefined
         : skill.locked
           ? "locked"
@@ -228,12 +263,17 @@ export async function changeSkillAsAgent(
     const blobs = deps.blobs && textFiles.length > 0 ? await pinBlobs(deps.blobs, ctx.orgId) : deps.blobs;
     next = await ctx.db.transaction(async (tx) => {
       const db = tx as unknown as Database;
+      if (publicationCtx.privatePublicationApprovalId) {
+        if (trust !== "high" || edits.length) throw new ForbiddenError(PRIVATE_PUBLICATION_DEFER);
+        skill = await claimPrivatePublication(db, publicationCtx, skill!.id, text!);
+        await assertSkillChangeRoom(db, ctx, skill.id);
+      }
       const row = await writeSkillChange({ db, blobs }, skill, {
         body: bodyChanged ? (text as string) : skill.body,
         files: textFiles.map((f) => ({ path: f.path, data: new TextEncoder().encode(f.content) })),
       });
       const before = snapshotOf(skill);
-      await recordAgentActions(db, ctx, [
+      const actionIds = await recordAgentActions(db, ctx, [
         {
           kind: "skill.updated",
           target: { type: "skill", id: skill.id, title: skill.name },
@@ -256,6 +296,68 @@ export async function changeSkillAsAgent(
         })
         .where(eq(skills.id, skill.id))
         .returning();
+      if (publicationCtx.privatePublicationApprovalId) {
+        const [approval] = await db
+          .select()
+          .from(schema.approvals)
+          .where(
+            and(
+              eq(schema.approvals.orgId, ctx.orgId),
+              eq(schema.approvals.id, publicationCtx.privatePublicationApprovalId),
+            ),
+          );
+        const actionId = actionIds[0];
+        const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+        const result = approval?.result;
+        if (
+          !approval ||
+          !actionId ||
+          (result !== null && !plain(result)) ||
+          (result?.data !== undefined && !plain(result.data)) ||
+          (plain(result?.data) && Object.hasOwn(result.data, "nativePublicationExecution"))
+        )
+          throw new ConflictError("The native publication execution cannot be linked safely.");
+        const data = plain(result?.data) ? result.data : {};
+        if (data.version !== undefined && data.version !== row.version)
+          throw new ConflictError("The native publication result belongs to another version.");
+        const execution = {
+          contract: NATIVE_PUBLICATION_EXECUTION,
+          approvalId: approval.id,
+          actionId,
+          orgId: ctx.orgId,
+          agentId: ctx.agentId,
+          runId: ctx.runId,
+          toolUseId: approval.toolUseId,
+          skillId: row.id,
+          version: row.version,
+          bodyHash: sha256(row.body),
+        };
+        // Private linkage is bookkeeping, never public action.params. Both writes roll back with publication.
+        const linked = await db
+          .update(agentActions)
+          .set({
+            state: sql`jsonb_set(${agentActions.state}, '{nativePublicationExecution}', ${JSON.stringify(execution)}::jsonb)`,
+          })
+          .where(
+            and(
+              eq(agentActions.id, actionId),
+              eq(agentActions.orgId, ctx.orgId),
+              sql`NOT (${agentActions.state} ? 'nativePublicationExecution')`,
+            ),
+          )
+          .returning({ id: agentActions.id });
+        if (linked.length !== 1) throw new ConflictError("The native publication execution cannot be linked safely.");
+        await db
+          .update(schema.approvals)
+          .set({
+            result: {
+              ...result,
+              content: result?.content ?? "The exact approved skill draft was published.",
+              data: { ...data, version: row.version, nativePublicationExecution: execution },
+            },
+          })
+          .where(and(eq(schema.approvals.orgId, ctx.orgId), eq(schema.approvals.id, approval.id)));
+      }
       return marked ?? row;
     });
     if (!own && deps.pubsub)
@@ -349,6 +451,77 @@ const SKILL_SCHEMA = {
   additionalProperties: false,
 };
 
+/** Skills have no source-audience ACL. Only complete, currently public ordinary-channel sources may lose that
+ * boundary through automatic promotion (ADR 0188). Empty or missing provenance is not proof of public content. */
+async function publicPromotionNotes(db: Executor, orgId: string, notes: ContextItem[], lock = false) {
+  const sourceIds = [...new Set(notes.flatMap((n) => n.sourceIds))];
+  if (sourceIds.length === 0) return [];
+  const sourcesQuery = () =>
+    db
+      .select({ id: schema.messages.id, channelId: schema.messages.channelId })
+      .from(schema.messages)
+      .where(
+        and(
+          eq(schema.messages.orgId, orgId),
+          inArray(schema.messages.id, sourceIds),
+          isNull(schema.messages.deletedAt),
+        ),
+      )
+      .orderBy(asc(schema.messages.id));
+  const located = await sourcesQuery();
+  const channelIds = [...new Set([...notes.flatMap((n) => n.channelIds), ...located.map((m) => m.channelId)])];
+  if (channelIds.length === 0) return [];
+  const channelsQuery = db
+    .select()
+    .from(schema.channels)
+    .where(and(eq(schema.channels.orgId, orgId), inArray(schema.channels.id, channelIds)))
+    .orderBy(asc(schema.channels.id));
+  // Channel then message locks follow channel deletion's parent→child order. The second source read catches a
+  // moved/deleted source; share locks keep classification/deletion stable through this publication transaction.
+  const channels = await (lock ? channelsQuery.for("share") : channelsQuery);
+  const sources = lock ? await sourcesQuery().for("share") : located;
+  const publicChannels = new Set(
+    channels
+      .filter(
+        (c) =>
+          c.visibility === "public" &&
+          c.kind === "channel" &&
+          c.dmKey === null &&
+          c.audienceRoleIds.length === 0 &&
+          c.archivedAt === null,
+      )
+      .map((c) => c.id),
+  );
+  const bySource = new Map(sources.map((m) => [m.id, m.channelId]));
+  return notes.filter(
+    (n) =>
+      n.scopeType === "agent" &&
+      n.scopeId === n.agentId &&
+      n.sourceIds.length > 0 &&
+      n.channelIds.every((id) => publicChannels.has(id)) &&
+      n.sourceIds.every((id) => {
+        const channelId = bySource.get(id);
+        return channelId !== undefined && publicChannels.has(channelId);
+      }),
+  );
+}
+
+const promotionInput = (n: ContextItem) =>
+  JSON.stringify({
+    agentId: n.agentId,
+    scopeType: n.scopeType,
+    scopeId: n.scopeId,
+    title: n.title,
+    content: n.content,
+    subject: n.subjectKey,
+    trust: n.trust,
+    disputed: n.disputed,
+    recurrence: n.recurrence,
+    relevance: n.relevance,
+    sourceIds: [...n.sourceIds].sort(),
+    channelIds: [...n.channelIds].sort(),
+  });
+
 /**
  * How-tos reused enough become a skill of their agent (ADR 0120): a note with `recurrence` (plus 2 per positive
  * outcome of a run that used it) at least `skillAfter`, high trust, not disputed, relevant, and no negative outcome
@@ -358,7 +531,7 @@ const SKILL_SCHEMA = {
  */
 export async function promoteHowTos(deps: ContextDeps, orgId: string, skillAfter: number) {
   const { db } = deps;
-  const notes = await db
+  const candidates = await db
     .select()
     .from(contextItems)
     .where(
@@ -370,6 +543,8 @@ export async function promoteHowTos(deps: ContextDeps, orgId: string, skillAfter
         sql`${contextItems.agentId} is not null`,
       ),
     );
+  // Filter before clustering and before the summary call: a private sibling must not ride with a public note.
+  const notes = await publicPromotionNotes(db, orgId, candidates);
   if (notes.length === 0) return 0;
   const ids = sql.join(
     notes.map((n) => sql`${n.id}::uuid`),
@@ -478,7 +653,28 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
     )
     .orderBy(desc(contextUsage.createdAt))
     .limit(1);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    const current = await tx
+      .select()
+      .from(contextItems)
+      .where(
+        and(
+          eq(contextItems.orgId, orgId),
+          inArray(
+            contextItems.id,
+            cluster.map((n) => n.id),
+          ),
+        ),
+      )
+      .orderBy(asc(contextItems.id))
+      .for("update");
+    const before = new Map(cluster.map((n) => [n.id, promotionInput(n)]));
+    if (
+      current.length !== cluster.length ||
+      current.some((n) => n.status !== "active" || n.supersededBy || promotionInput(n) !== before.get(n.id))
+    )
+      return false;
+    if ((await publicPromotionNotes(tx, orgId, current, true)).length !== cluster.length) return false;
     const [skill] = await tx
       .insert(skills)
       .values({
@@ -525,8 +721,8 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
           },
         ],
       );
+    return true;
   });
-  return true;
 }
 
 /**

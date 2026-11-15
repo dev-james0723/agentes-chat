@@ -235,11 +235,11 @@ const OUR_TOOL_PREFIX = "mcp__agentes__";
 // ── Stream parsing ───────────────────────────────────────────────────────────
 
 /**
- * Claude Code says the plan's usage is exhausted (a result text, older and newer wordings: "You've hit your
- * session limit", "…weekly limit", "…Opus limit", "…Sonnet limit", "monthly spend limit").
+ * Explicit usage exhaustion in a provider's error text. A bare "rate limit", an unchecked/negated usage limit,
+ * and a spend cap do not establish that a subscription pool is exhausted. Ambiguous text stays unclassified.
  */
 export const LIMIT_TEXT =
-  /usage limit|hit your (?:[\w-]+ )?limit|limit reached|out of extra usage|spend limit|rate limit/i;
+  /^(?![\s\S]*\b(?:not|never|no|before|without|haven't|hasn't|isn't|wasn't)\b[\s\S]{0,80}\blimit\b)[\s\S]*(?:\bhit your (?:usage|session|weekly|opus|sonnet) limit\b|\b(?:reached|exceeded) (?:your |the )?(?:[\w-]+ )?usage limit\b|\busage limit (?:is |was |has been )?(?:reached|exceeded|exhausted)\b)/i;
 /** The server throttling everyone, which it says is no plan limit. */
 export const NOT_LIMIT_TEXT = /not your usage limit/i;
 /** Claude Code can't authenticate (not logged in, a revoked token, a bad key). */
@@ -381,7 +381,6 @@ export class ClaudeStreamParser {
   private sawDelta = false;
   /** The API message whose text streamed (`message_start`): Claude Code says it in one `assistant` per block. */
   private streamedMessage: string | null = null;
-  private limited = false;
   /** A `rate_limit_event` said `rejected`: the plan itself refused, whatever the result's text. */
   private rejected = false;
   private limitSent = false;
@@ -399,7 +398,6 @@ export class ClaudeStreamParser {
     this.tools.clear();
     this.sawDelta = false;
     this.streamedMessage = null;
-    this.limited = false;
     this.rejected = false;
     this.limitSent = false;
     this.worked = false;
@@ -438,7 +436,6 @@ export class ClaudeStreamParser {
           this.authFailed = true;
           return { events: [], authRetry: true };
         }
-        if (ev.subtype === "api_retry" && ev.error === "rate_limit") this.limited = true;
         // Claude Code says `init` as each turn starts (also one it starts by itself).
         if (ev.subtype === "init") return { events: [], turnStart: true };
         if (ev.subtype === "compact_boundary" && main) {
@@ -467,7 +464,6 @@ export class ClaudeStreamParser {
       case "assistant": {
         if (!main) return { events: [] };
         if (ev.error === "authentication_failed") this.authFailed = true;
-        if (ev.error === "rate_limit") this.limited = true;
         const content = isObj(ev.message) && Array.isArray(ev.message.content) ? ev.message.content : [];
         // Claude Code's own frame for a provider's error (its `error` word set): its text is the provider's answer.
         if (typeof ev.error === "string") {
@@ -535,7 +531,6 @@ export class ClaudeStreamParser {
       case "rate_limit_event": {
         const info = isObj(ev.rate_limit_info) ? ev.rate_limit_info : {};
         if (info.status !== "rejected") return { events: [], rateLimit: info };
-        this.limited = true;
         this.rejected = true;
         this.failure = { cause: "quota" };
         this.resetsAt = resetIso(info.resetsAt);
@@ -590,7 +585,9 @@ export class ClaudeStreamParser {
       const said = providerFailure({ status: ev.api_error_status, text });
       const httpStatus = said.httpStatus ?? this.failure.httpStatus;
       const http = httpStatus ? { httpStatus } : {};
-      if (this.rejected || ((this.limited || LIMIT_TEXT.test(text)) && !NOT_LIMIT_TEXT.test(text))) {
+      // A generic 429 or rate_limit retry only establishes throttling, not an exhausted subscription. It must not
+      // synthesize a rejected plan-usage reading or enter the plan-reset queue without specific evidence.
+      if (this.rejected || (LIMIT_TEXT.test(text) && !NOT_LIMIT_TEXT.test(text))) {
         const legacy = /\|(\d{10})\b/.exec(text)?.[1];
         const resetsAt = this.resetsAt ?? (legacy ? resetIso(Number(legacy)) : undefined);
         if (!this.limitSent) events.push({ type: "limit", ...(resetsAt ? { resetsAt } : {}) });
@@ -1654,6 +1651,8 @@ export interface DelegatedTurn {
 }
 
 export interface BrainTurnContext {
+  /** Optional owner-registered workspace guard, checked immediately before process creation. */
+  beforeLaunch?: (cwd: string) => Promise<void>;
   agent: AgentScope;
   /** The agent's folder (real path). */
   folder: string;
@@ -1979,6 +1978,11 @@ export class BrainManager {
     await yieldRoute("claude_code", ctx.accountHome);
     const sig = this.signature(cwd, req, ctx);
     let live = this.live.get(key);
+    // A registered project run must start its own guarded process; never reuse an existing session.
+    if (ctx.beforeLaunch) {
+      if (live) return errorEvent("workspace_session_busy", "The project session is already active.", false);
+      return this.oneShot(key, session, cwd, req, ctx, sig, false, false);
+    }
     // A turn Claude Code runs by itself there (or one due): its output would read as this turn's. Wait for
     // its end (output discarded) and keep the process, with the agent's background jobs; kill only a stuck one.
     if (live && live.sig === sig && live.proc.onItsOwn) live = await this.awaitOwnTurn(live, session, ctx);
@@ -2420,6 +2424,7 @@ export class BrainManager {
     });
     // Claimed before it starts: a CLI that dies in its first turn still left a transcript that is this agent's.
     if (delegated && !resume) claimSession(delegated.room, session, ctx.agent.id, String(req.account));
+    await ctx.beforeLaunch?.(launched?.cwd ?? cwd);
     const proc = new ClaudeProcess(
       launched?.command ?? this.opts.claudeCommand ?? ["claude"],
       args,

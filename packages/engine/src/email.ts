@@ -41,6 +41,7 @@ import { dayAndTime } from "./format";
 import { adminIds } from "./gateway";
 import { publicHostAddress, type ResolveHost, resolveHostDns } from "./net-guard";
 import { enqueue, PermanentJobError } from "./outbox";
+import { privatePublicationSql } from "./private-skill-publication";
 import { billingHold } from "./standing";
 import { isAgentesCloud } from "./telemetry";
 import { budgetPercent } from "./usage";
@@ -1327,6 +1328,7 @@ export async function queueApprovalDigests(db: Database, publicUrl: string, afte
       and(
         eq(approvals.status, "pending"),
         isNull(approvals.remindedAt),
+        sql`not ${privatePublicationSql()}`,
         lt(approvals.createdAt, new Date(now.getTime() - afterHours * 3600_000)),
       ),
     )

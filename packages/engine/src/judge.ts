@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { modelInfo } from "@agenteschat/providers";
 import { cutText } from "./format";
 import type { ModelGateway } from "./gateway";
 import { callJev, type JevKeySource } from "./jev-key";
+import { InvalidJudgeAnswerError, validateJudgeAnswers } from "./judge-answer";
 import { jevCostNanoUsd } from "./router-jev";
 
 /**
@@ -87,6 +89,31 @@ export interface Judge {
   ask(request: JudgeRequest): Promise<Record<string, JudgeAnswer>>;
 }
 
+/** Local evidence only: no raw state, prompts, credentials or invented authorization. */
+export interface JudgmentReceipt {
+  version: "judge/1";
+  kind: string;
+  inputDigest: string;
+  questionDigest: string;
+  requestedModel: string;
+  resolvedModel: string | null;
+  usageRecordId: string | null;
+  telemetry: "measured" | "partial" | "unrecorded";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costNanoUsd: number | null;
+  latencyMs: number;
+  outcome: "answered" | "invalid";
+}
+
+const RECEIPT = Symbol("judgment-receipt");
+/** Metadata is non-enumerable: existing answer iteration/serialization is unchanged. */
+export const judgmentReceiptOf = (value: object): JudgmentReceipt | undefined =>
+  (value as { [RECEIPT]?: JudgmentReceipt })[RECEIPT];
+const withReceipt = <T extends object>(value: T, receipt: JudgmentReceipt): T =>
+  Object.defineProperty(value, RECEIPT, { value: receipt });
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
 /** The model call a judge made, as an error report tags it (`judgeCallOf`). */
 export interface JudgeCallTags {
   judge_provider: string;
@@ -117,6 +144,8 @@ function boxOf(v: unknown): JudgeBox {
   return { top, left, bottom: Math.max(top, clamp(b.bottom)), right: Math.max(left, clamp(b.right)) };
 }
 
+const tokenCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
 /** TypeSafe Jev (`POST /v1/systemone`): one request, all questions answered in parallel. */
 export function createJevJudge(options: {
   /** Read on every call (`jev-key.ts`): without one it throws `JevOffError`. */
@@ -134,6 +163,7 @@ export function createJevJudge(options: {
   return {
     name: "jev",
     async ask(request) {
+      const startedAt = Date.now();
       const vision = judgeSeesImages(request);
       const model = vision ? (options.visionModel ?? "jev-preview") : (options.model ?? "jev-latest");
       const assets = Object.fromEntries(
@@ -163,20 +193,57 @@ export function createJevJudge(options: {
       }).catch((error: unknown) => {
         throw withJudgeCall(error, model, "typesafe");
       });
-      const inputTokens = body.usage?.input_tokens ?? 0;
-      await options.gateway
+      const inputTokens = tokenCount(body.usage?.input_tokens) ? body.usage.input_tokens : 0;
+      const outputTokens = tokenCount(body.usage?.output_tokens) ? body.usage.output_tokens : 0;
+      const resolvedModel = typeof body.model === "string" && body.model.trim() ? body.model : null;
+      let recorded = false;
+      const usageRecordId = await options.gateway
         .recordExternalUsage({
           orgId: request.orgId,
           agentId: request.agentId,
           runId: request.runId,
           kind: "router",
+          purpose: request.kind,
           provider: "typesafe",
-          model: body.model ?? model,
+          model: resolvedModel ?? model,
+          requestedModel: model,
           inputTokens,
-          outputTokens: body.usage?.output_tokens ?? 0,
+          outputTokens,
+          partial: !tokenCount(body.usage?.input_tokens) || !tokenCount(body.usage?.output_tokens) || !resolvedModel,
           costNanoUsd: jevCostNanoUsd(inputTokens),
         })
-        .catch(() => {});
+        .then((id) => {
+          recorded = id !== null;
+          return id;
+        })
+        .catch(() => null);
+      const receipt: JudgmentReceipt = {
+        version: "judge/1",
+        kind: request.kind,
+        inputDigest: digest(request.state),
+        questionDigest: digest(request.questions),
+        requestedModel: model,
+        resolvedModel,
+        usageRecordId,
+        telemetry: !recorded
+          ? "unrecorded"
+          : !tokenCount(body.usage?.input_tokens) || !tokenCount(body.usage?.output_tokens) || !resolvedModel
+            ? "partial"
+            : "measured",
+        inputTokens: tokenCount(body.usage?.input_tokens) ? inputTokens : null,
+        outputTokens: tokenCount(body.usage?.output_tokens) ? outputTokens : null,
+        costNanoUsd: recorded && tokenCount(body.usage?.input_tokens) ? jevCostNanoUsd(inputTokens) : null,
+        latencyMs: Date.now() - startedAt,
+        outcome: "answered",
+      };
+      try {
+        validateJudgeAnswers(request.questions, body.answers);
+      } catch (error) {
+        throw withReceipt(withJudgeCall(error, resolvedModel ?? model, "typesafe") as Error, {
+          ...receipt,
+          outcome: "invalid",
+        });
+      }
       const out: Record<string, JudgeAnswer> = {};
       for (const [id, q] of Object.entries(request.questions)) {
         const a = body.answers?.[id];
@@ -197,7 +264,7 @@ export function createJevJudge(options: {
           };
         }
       }
-      return out;
+      return withReceipt(out, receipt);
     },
   };
 }
@@ -262,23 +329,33 @@ export function createLlmJudge(deps: {
       let parsed: Record<string, unknown> = {};
       try {
         const text = result.text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
-        parsed = JSON.parse(text) as Record<string, unknown>;
+        const value: unknown = JSON.parse(text);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not an answer object");
+        parsed = value as Record<string, unknown>;
       } catch {
-        throw withJudgeCall(new Error("judge: the model didn't answer with JSON"), model, provider);
+        throw withJudgeCall(
+          new InvalidJudgeAnswerError("judge: the model didn't answer with a JSON object"),
+          model,
+          provider,
+        );
       }
-      const out: Record<string, JudgeAnswer> = {};
-      for (const [id, q] of Object.entries(request.questions)) {
-        if (q.type === "choice") {
-          const choice =
-            typeof parsed[id] === "string" && parsed[id] in q.criteria ? (parsed[id] as string) : undefined;
-          out[id] = { choice, probabilities: choice ? { [choice]: 1 } : {} };
-        } else if (q.type === "score") {
-          const level = typeof parsed[id] === "number" ? Math.round(parsed[id] as number) : 0;
-          const score = Math.min(q.criteria.length - 1, Math.max(0, level));
-          out[id] = { score, probabilities: { [String(score)]: 1 } };
-        } else out[id] = { noul: clamp(parsed[id]) };
+      try {
+        const out: Record<string, JudgeAnswer> = {};
+        for (const [id, q] of Object.entries(request.questions)) {
+          if (q.type === "choice") {
+            const choice = typeof parsed[id] === "string" ? (parsed[id] as string) : undefined;
+            out[id] = { choice, probabilities: choice ? { [choice]: 1 } : {} };
+          } else if (q.type === "score") {
+            const score = parsed[id];
+            if (typeof score !== "number" || !Number.isInteger(score))
+              throw new InvalidJudgeAnswerError("judge: invalid answer (score)");
+            out[id] = { score, probabilities: { [String(score)]: 1 } };
+          } else out[id] = { noul: parsed[id] as number };
+        }
+        return validateJudgeAnswers(request.questions, out);
+      } catch (error) {
+        throw withJudgeCall(error, model, provider);
       }
-      return out;
     },
   };
 }
@@ -296,7 +373,7 @@ export function withJudgeFallback(primary: Judge, fallback: Judge, primaryOn: ()
       try {
         return await primary.ask(request);
       } catch (error) {
-        if (request.calibrated) throw error;
+        if (request.calibrated || error instanceof InvalidJudgeAnswerError) throw error;
         return fallback.ask(request);
       }
     },

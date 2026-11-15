@@ -45,7 +45,7 @@ export interface MachinePlanUsage {
  */
 export interface MachineExecutors {
   /** `loggedIn`/`authMethod`/`plan`: from `claude auth status` (protocol 8; absent = unknown). */
-  claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string };
+  claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string; claudeOrgId?: string };
   codex?: { version: string };
   /** Cursor's CLI (protocol 36, ADR 0114) and the models its sign-in lists; `inPlan`: the CLI said the plan includes it. */
   cursor?: { version: string; models?: { id: string; label?: string; inPlan?: boolean }[] };
@@ -54,7 +54,7 @@ export interface MachineExecutors {
   /** Grok Build, xAI's CLI (protocol 43, ADR 0142), and the models it lists. */
   grok?: { version: string; models?: { id: string; label?: string }[] };
   /** Google's Antigravity CLI (protocol 44, ADR 0143), and the models it lists. */
-  antigravity?: { version: string; models?: { id: string; label?: string }[] };
+  antigravity?: { version: string; models?: { id: string; label?: string }[]; hostAuth?: true };
   /** `hello.browser` (ADR 0040): whether the agent browser can run there; absent = not reported. */
   browser?: {
     available: boolean;

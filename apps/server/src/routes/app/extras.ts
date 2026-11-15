@@ -6,6 +6,7 @@ import type {
   GifKey,
   GitHubAppSettings,
   GitProxyDeps,
+  InternalDatabaseTarget,
   JevKey,
   McpConnect,
   ModelGateway,
@@ -25,6 +26,7 @@ import type {
  * app's own routes don't have to provide them.
  */
 export interface AppExtras {
+  internalDatabaseTargets?: readonly InternalDatabaseTarget[];
   /** Outbound HTTP: OAuth token exchanges, provider key checks (tests inject a fake). */
   http?: typeof fetch;
   /** How to open MCP sessions (tests: in-process servers). */

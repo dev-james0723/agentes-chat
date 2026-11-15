@@ -7,7 +7,7 @@ import type { CommandProfile } from "@agenteschat/adapters/command-policy";
 import type { AgentScope, BrainEffort } from "@agenteschat/adapters/machine-protocol";
 import { isAccountId } from "@agenteschat/adapters/machine-protocol";
 import { ACCOUNT_MISSING_MESSAGE, accountEnv, withoutContainers, withoutSignIns } from "./accounts";
-import { ClaudeStreamParser, LIMIT_TEXT } from "./brain";
+import { ClaudeStreamParser } from "./brain";
 import { type CodexBrainEvent, CodexThreads, chatFolder, codexProfileOf, codexThreadKey } from "./brain-codex";
 import { cursorPrompt } from "./brain-cursor";
 import { RunnerError } from "./errors";
@@ -15,6 +15,7 @@ import { killTree } from "./exec";
 import { GROK_BIN, resolveCommand } from "./executors";
 import { CODEX_MCP_ENV, CODEX_MCP_SERVER, redactDeep } from "./mcp";
 import { resolveForAgent } from "./paths";
+import { ambiguousLimit, explicitPlanLimit } from "./plan-limit-evidence";
 import type { Spawn } from "./scope-gate";
 import { agentSecrets } from "./secrets";
 
@@ -251,19 +252,24 @@ export function grokChatBreach(ev: Record<string, unknown>, sawInit: boolean): s
   return null;
 }
 
-const GROK_LIMIT = /usage limit|rate.?limit|quota|weekly (?:limit|pool)|out of (?:credits|usage)|upgrade your plan/i;
 /** Grok can't authenticate (signed out, a refused token). */
 export const GROK_AUTH =
   /not (?:authenticated|logged in|signed in)|grok login|unauthori[sz]ed|\b401\b|invalid (?:token|credentials)/i;
 const SESSION_GONE = /session[^\n]*(?:not found|does not exist|no such)|no session/i;
 
 /** How a turn that went wrong ends: `limit` then `plan_limit`, `not_logged_in`, or `grok_failed`. */
-export function grokProblem(problem: string, worked = false): CodexBrainEvent[] {
-  if (GROK_LIMIT.test(problem) || LIMIT_TEXT.test(problem)) {
+export function grokProblem(
+  problem: string,
+  worked = false,
+  ambiguous = false,
+  providerWords = problem,
+): CodexBrainEvent[] {
+  if (explicitPlanLimit(providerWords)) {
     return [{ type: "limit" }, { type: "error", code: "plan_limit", message: problem, retryable: true, worked }];
   }
-  if (GROK_AUTH.test(problem)) return [{ type: "error", code: "not_logged_in", message: problem, retryable: true }];
-  return [{ type: "error", code: "grok_failed", message: problem, retryable: true }];
+  if (GROK_AUTH.test(providerWords))
+    return [{ type: "error", code: "not_logged_in", message: problem, retryable: true }];
+  return [{ type: "error", code: "grok_failed", message: problem, retryable: !(ambiguous || ambiguousLimit(problem)) }];
 }
 
 export interface GrokTurnInput {
@@ -367,6 +373,13 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
       }
     };
     let final: CodexBrainEvent | undefined;
+    let limitEvent: Extract<CodexBrainEvent, { type: "limit" }> | undefined;
+    let resultWords = "";
+    let assistantErrorWords = "";
+    const pendingNativeTools = new Set<string>();
+    const seenNativeTools = new Set<string>();
+    let uncertainNativeTool = false;
+    let ambiguous = false;
     let sawInit = false;
     let breach: string | null = null;
     const lines = createInterface({ input: child.stdout as NonNullable<ChildProcess["stdout"]> });
@@ -387,9 +400,53 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
         }
       }
       if (ev.type === "system" && ev.subtype === "init") sawInit = true;
+      if (
+        (ev.type === "system" &&
+          ev.subtype === "api_retry" &&
+          (ev.error === "rate_limit" || ev.error_status === 429)) ||
+        (ev.type === "assistant" && ev.error === "rate_limit")
+      )
+        ambiguous = true;
+      // Classify only raw provider error words. The shared parser may synthesize a plan-limit message when the
+      // CLI result is empty; that generated default is not independent evidence of the account's quota.
+      if (
+        ev.type === "result" &&
+        (ev.is_error === true || (typeof ev.subtype === "string" && ev.subtype !== "success"))
+      ) {
+        resultWords =
+          typeof ev.result === "string" && ev.result
+            ? ev.result
+            : Array.isArray(ev.errors)
+              ? ev.errors.filter((x): x is string => typeof x === "string").join("\n")
+              : "";
+      }
+      if (
+        ev.type === "assistant" &&
+        (ev.parent_tool_use_id === null || ev.parent_tool_use_id === undefined) &&
+        typeof ev.error === "string" &&
+        isRecord(ev.message) &&
+        Array.isArray(ev.message.content)
+      ) {
+        assistantErrorWords = ev.message.content
+          .map((x) => (isRecord(x) && x.type === "text" && typeof x.text === "string" ? x.text : ""))
+          .join("\n");
+      } else if (
+        ev.type === "assistant" &&
+        (ev.parent_tool_use_id === null || ev.parent_tool_use_id === undefined) &&
+        typeof ev.error !== "string"
+      ) {
+        assistantErrorWords = "";
+      }
       const parsed = parser.push(line);
       if (parser.session) opts.chats.set(chatKey, parser.session);
       for (const event of parsed.events as CodexBrainEvent[]) {
+        // The shared Claude parser can infer a plan limit from a generic 429. Hold that event until Grok's own
+        // error text establishes a specific plan limit; otherwise the engine must not learn a fictional reset.
+        if (event.type === "limit") {
+          limitEvent = event;
+          ambiguous = true;
+          continue;
+        }
         if (event.type === "text_delta") {
           flush(event.text, false);
           continue;
@@ -397,6 +454,16 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
         // Our bridge's calls: the engine ran them.
         if ((event.type === "tool_call" || event.type === "tool_started") && GROK_META_TOOLS.includes(event.name))
           continue;
+        if (event.type === "tool_started") {
+          if (seenNativeTools.has(event.id)) uncertainNativeTool = true;
+          seenNativeTools.add(event.id);
+          pendingNativeTools.add(event.id);
+        }
+        if (event.type === "tool_call") {
+          if (!pendingNativeTools.has(event.id) || !event.executed || event.executed.isError)
+            uncertainNativeTool = true;
+          else pendingNativeTools.delete(event.id);
+        }
         flush("", true);
         opts.emit(
           event.type === "tool_call"
@@ -438,6 +505,18 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
     lines.close();
     if (opts.signal.aborted) return fail("canceled", "The turn was canceled.");
     if (breach) return fail("tools_not_locked", breach);
+    // A native tool started but produced no result. Its effect is unknown: do not mark the turn complete or send
+    // it to automatic plan-resume or fallback paths. Manual reconciliation still requires a durable fence.
+    if (pendingNativeTools.size > 0 || uncertainNativeTool) {
+      flush("", true);
+      opts.emit({
+        type: "error",
+        code: "grok_failed",
+        message: "Grok stopped with a native tool's effect uncertain; reconcile it before continuing.",
+        retryable: false,
+      });
+      return;
+    }
     if (exit.error) {
       const missing = (exit.error as NodeJS.ErrnoException).code === "ENOENT";
       return fail(
@@ -458,16 +537,22 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
     }
     const why =
       final?.type === "error"
-        ? final.message
+        ? resultWords ||
+          assistantErrorWords ||
+          stderr.trim().slice(-500) ||
+          "Grok Build ended without a provider error detail"
         : exit.code === 0
           ? "Grok Build ended without finishing the turn"
           : `Grok Build exited with code ${exit.code ?? "?"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`;
     // The parser named it Claude's: it is Grok's, by Grok's words.
-    const events =
-      final?.type === "error" && (final.code === "plan_limit" || final.code === "not_logged_in")
-        ? [final]
-        : grokProblem(clean(why), final?.type === "error" ? final.worked : false);
-    for (const event of events) opts.emit(event);
+    const providerWords = resultWords || assistantErrorWords;
+    const events = grokProblem(
+      clean(why),
+      final?.type === "error" ? final.worked : false,
+      ambiguous || !providerWords,
+      providerWords,
+    );
+    for (const event of events) opts.emit(event.type === "limit" && limitEvent ? limitEvent : event);
     return;
   }
 }

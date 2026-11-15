@@ -74,6 +74,7 @@ import {
   memoryBudget,
   meterComposio,
   moveIssueComments,
+  parseInternalDatabaseTargets,
   publicHttpsFetch,
   queueEmbeddingBackfill,
   relayCredentials,
@@ -89,11 +90,11 @@ import {
   vapidSubject,
   widenDmHowTos,
 } from "@agenteschat/engine";
-
 import { type AgentesModule, type Edition, type ModuleContext, resolveAdapters } from "@agenteschat/modules";
 import { createModelProviders, enableOpenRouterModels } from "@agenteschat/providers";
 import { createApp } from "./app";
 import { createAuth } from "./auth";
+import { rejectForwardedLocal } from "./dual-origin-guard";
 import { buildEngine } from "./engine";
 import { startFreezeWatch } from "./freeze-watch";
 import { checkHumanCheckAtBoot } from "./http/human-check";
@@ -198,6 +199,11 @@ async function boot(
   release: string,
   errors: ErrorReporter,
 ) {
+  const internalDatabaseTargets = parseInternalDatabaseTargets(
+    config.DATABASE_INTERNAL_TARGETS,
+    edition,
+    config.ALLOW_SIGNUP,
+  );
   log.info("starting agentes.chat", { version: release, edition, config: redactConfig(config) });
   log.info(
     "error reports",
@@ -379,6 +385,7 @@ async function boot(
   const engine = buildEngine({
     db: database.db,
     config,
+    internalDatabaseTargets,
     adapters,
     modelProviders,
     onTiming: (name, ms, attrs) => log.info("latency", { metric: name, ms, ...attrs }),
@@ -510,6 +517,7 @@ async function boot(
       adapters,
       wakeWorkers: workers.wakeAll,
       extras: {
+        internalDatabaseTargets,
         embed: engine.gateway.embed,
         storage: engine.storage,
         artifacts: engine.artifacts,
@@ -556,6 +564,7 @@ async function boot(
     const host = req.headers.get("host") ?? "";
     if (!ownHosts || host === publicUrl.host) return null;
     if (!ownHosts.has(host)) return new Response("This server answers only at its own address.\n", { status: 421 });
+    if (config.LOCAL_HTTP_LOGIN && host === `localhost:${config.PORT}`) return null;
     if (req.method !== "GET" || !req.headers.get("accept")?.includes("text/html")) return null;
     const { pathname, search } = new URL(req.url);
     return Response.redirect(new URL(pathname + search, publicUrl).href, 302);
@@ -579,7 +588,8 @@ async function boot(
         // Bun's default (10 s) cuts a request still waiting on its answer: opening a site in an agent's
         // browser waits for the page, and a closed browser starts first (up to 90 s on the computer).
         idleTimeout: 120,
-        fetch: (req, srv) => ownHostAnswer(req) ?? realtime.fetch(req, srv, (r) => app.fetch(r)),
+        fetch: (req, srv) =>
+          rejectForwardedLocal(config, req) ?? ownHostAnswer(req) ?? realtime.fetch(req, srv, (r) => app.fetch(r)),
         websocket: realtime.websocket,
         // What the HTTP app doesn't answer itself: a WebSocket upgrade that failed before the socket opened.
         error(error) {
