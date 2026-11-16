@@ -1,4 +1,5 @@
 import { and, type Executor, eq, isNull, schema, sql } from "@agenteschat/db";
+import { reconcileBridgeCalls } from "./effect-readback";
 
 const { runToolTokens, agentRuns } = schema;
 
@@ -93,6 +94,16 @@ export async function closeBridgeEffectEpoch(
   turnCompleted = false,
 ): Promise<{ runId: string; turn: number; tools: string[] } | null> {
   const settled = turnCompleted ? ["completed", "unknown"] : ["completed"];
+  // A cut turn: calls answered without proof whose effect can be read back are settled first (`effect-readback`).
+  // A failed read settles nothing: those calls keep holding, as before.
+  if (!turnCompleted) {
+    await db
+      .select({ id: agentRuns.id, orgId: agentRuns.orgId, agentId: agentRuns.agentId })
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId))
+      .then(([run]) => run && reconcileBridgeCalls(db, run, epochId))
+      .catch(() => {});
+  }
   // Closing admission and recording uncertainty happen in that order. If the marker write fails, the durable
   // closed_unknown state still blocks resumption; late receipts cannot silently clear it.
   const [closed] = await db

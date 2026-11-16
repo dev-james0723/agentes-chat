@@ -1,5 +1,5 @@
 import { MESSAGE_HAS, type MessageHas } from "@agenteschat/adapters";
-import { and, desc, eq, inArray, schema } from "@agenteschat/db";
+import { and, desc, eq, inArray, ne, schema } from "@agenteschat/db";
 import {
   addContextItemByPerson,
   addReaction,
@@ -424,7 +424,8 @@ export function knowledgeRoutes(deps: AppDeps) {
       const rows = await db
         .select()
         .from(o)
-        .where(and(eq(o.orgId, orgId), agentId ? eq(o.agentId, agentId) : undefined))
+        // How each run ended is for learning and routing; listed, it would flood what people read here.
+        .where(and(eq(o.orgId, orgId), ne(o.source, "run"), agentId ? eq(o.agentId, agentId) : undefined))
         .orderBy(desc(o.createdAt))
         .limit(200);
       // What a run did in a conversation is quoted only to who reads it, as on the run history.

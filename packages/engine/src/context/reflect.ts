@@ -168,6 +168,7 @@ export async function reflectThread(
   const agentIds = [...new Set(thread.messages.flatMap((m) => (m.authorAgentId ? [m.authorAgentId] : [])))];
   const outcomeRows = await outcomesForThread(db, input.orgId, {
     threadRootId: input.threadRootId,
+    channelId: thread.root.channelId,
     agentIds,
     since: new Date(thread.root.createdAt.getTime() - 7 * 86_400_000),
   });

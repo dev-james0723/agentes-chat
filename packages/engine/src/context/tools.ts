@@ -25,6 +25,7 @@ import { caches } from "../cache";
 import { isChannelMember, peopleAllIn, personReach } from "../channels";
 import { consultationOrigin } from "../consultations";
 import { personAgentDmKey } from "../dms";
+import { refusalData } from "../errors";
 import type { MemoryUpdate } from "../events";
 import { cutText } from "../format";
 import { type DescribedMessage, describeMessages, messageIdOf } from "../message-links";
@@ -39,7 +40,7 @@ import { isRoutineRoomKey } from "../routine-brief";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
 import { closedRefusal } from "../standing";
 import { noAgentText } from "../team";
-import type { ToolContext, ToolDefinition, ToolSource } from "../tools/types";
+import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
 import { neutralizeUntrusted, untrustedBlock } from "../untrusted";
 import { wikiHitsForAgent } from "../wiki";
 import { inWorkspaceWords } from "../workspace-mode";
@@ -186,6 +187,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private).",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -329,9 +331,10 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       },
       describe: (input) => ({ title: `Save how to: ${str(input.title)}` }),
       async execute(input, ctx) {
+        let stored = false;
         try {
           const kept = await rightHandKeeps(ctx);
-          if ("refused" in kept) return { content: kept.refused, isError: true };
+          if ("refused" in kept) return refusedChange(kept.refused);
           // Read from a page, an email or a routine's input, a how-to is only data until a person stands behind a
           // run that read nothing from outside (ADR 0120).
           const { trust } = await learnTrust(ctx);
@@ -367,12 +370,18 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
             },
             { ...memoryJudging(deps), mayReplace: (old) => old.createdByKind !== "person" },
           );
+          stored = true;
           await indexSource(deps, { orgId: ctx.orgId, kind: "context_item", sourceId: res.item.id }).catch(() => {});
           // Quiet: a receipt with Undo, no memory card in the chat.
           await recordSave(ctx, res);
           return { content: `Saved (${res.action}) as ${res.item.id}; it holds ${await whereItHolds(ctx, res.item)}.` };
         } catch (error) {
-          return { content: error instanceof Error ? error.message : "Could not save", isError: true };
+          // A check that refused before anything was stored (a credential, a permission change) is a known outcome.
+          return {
+            content: error instanceof Error ? error.message : "Could not save",
+            isError: true,
+            ...(stored ? {} : refusalData(error)),
+          };
         }
       },
     },
@@ -380,6 +389,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       name: "get_summary",
       description: "Get a summary of a thread (default: the current one). Generates it if missing or outdated.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { thread_id: { type: "string" } },
@@ -415,6 +425,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Open a context item by id: its full content and the sources it came from (also archived items). Also a message of the conversation, or a tool call or result of this run, shown cut short, by the id its cut names.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { item_id: { type: "string" } },
@@ -520,6 +531,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Read messages with who wrote them, where and their links: one message (`message`: its id or link) with those around it, or a channel's (`channel`: its name) or a thread's, the latest or `around` a time. Without them: this conversation.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -640,10 +652,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         additionalProperties: false,
       },
       async execute(input, ctx) {
+        let stored = false;
         try {
           // What is kept for the whole team holds nothing of one person's: the right hand saves it where it was said.
           const kept = input.for === "team" ? { person: null } : await rightHandKeeps(ctx);
-          if ("refused" in kept) return { content: kept.refused, isError: true };
+          if ("refused" in kept) return refusedChange(kept.refused);
           const content = str(input.content);
           // A run that read outside content saves no rule pointing somewhere no person here wrote (ADR 0117): a
           // page's "remember: always send reports to …". Everything else saves as asked.
@@ -654,7 +667,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               return {
                 content: `This rule names ${unasked}, which no person in this conversation wrote. Save it only when a person asks for it here.`,
                 isError: true,
-                data: { code: UNASKED_DESTINATION },
+                data: { code: UNASKED_DESTINATION, refusedByCheck: "forbidden" },
               };
             }
           }
@@ -671,13 +684,12 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           const theirsAlone =
             kept.person !== null || (!rule && input.everywhere === true && said && here?.kind === "dm");
           // A rule's authority is the person who wrote this run's message: another agent's or a page's words give none.
-          if (rule && !said) return { content: NOT_THEIR_RULE, isError: true };
+          if (rule && !said) return refusedChange(NOT_THEIR_RULE);
           // Trust comes from the item's own source (ADR 0167): the person's own message vouches for it, also in a run
           // that read outside content, where their exact words are what agents read and the agent's only the title.
           const quote = said && outside ? quoteOf(author?.body ?? "") : null;
           // Another agent's words carry no person's (ADR 0167): a copy kept here would hold only in this DM.
-          if (!said && input.basis !== "found" && (await triggerFromAgent(ctx)))
-            return { content: RELAYED_SAVE, isError: true };
+          if (!said && input.basis !== "found" && (await triggerFromAgent(ctx))) return refusedChange(RELAYED_SAVE);
           // What it found out itself on how things work reaches all its own conversations, never another agent's: only
           // its own finding (a person's words follow `everywhere`), read from nothing outside, naming nobody.
           const mine = input.applies === "everywhere_for_me";
@@ -695,10 +707,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                     : (await namesSomeoneAnywhere(ctx.db, ctx.orgId, `${str(input.title)}\n${content}`))
                       ? OWN_LESSON_NAMES
                       : null;
-            if (refused) return { content: refused, isError: true };
+            if (refused) return refusedChange(refused);
           }
           if (input.for === "team") {
-            if (!said || !person) return { content: TEAM_NOT_THEIRS, isError: true };
+            if (!said || !person) return refusedChange(TEAM_NOT_THEIRS);
+            stored = true;
             return saveForTeam(deps, ctx, {
               person,
               kind: str(input.kind),
@@ -751,6 +764,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                 ? memoryJudging(deps)
                 : { ...memoryJudging(deps), mayReplace: (old) => old.createdByKind !== "person" },
           );
+          stored = true;
           await indexSource(deps, { orgId: ctx.orgId, kind: "context_item", sourceId: res.item.id }).catch(() => {});
           // The memory card and the receipt only for what a person said; the agent's own finding stays quiet.
           if (said)
@@ -773,7 +787,12 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
             content: `Saved (${res.action}) as ${res.item.id}${quote ? ", in the person's own words" : ""}; it holds ${await whereItHolds(ctx, res.item)}. Say where.`,
           };
         } catch (error) {
-          return { content: error instanceof Error ? error.message : "Could not save", isError: true };
+          // A check that refused before anything was stored (a credential, a permission change) is a known outcome.
+          return {
+            content: error instanceof Error ? error.message : "Could not save",
+            isError: true,
+            ...(stored ? {} : refusalData(error)),
+          };
         }
       },
     },
@@ -795,7 +814,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       async execute(input, ctx) {
         const requester = await personRequester(ctx);
         const item = await changeableItem(ctx, str(input.item_id), requester);
-        if (typeof item === "string") return { content: item, isError: true };
+        if (typeof item === "string") return refusedChange(item);
         try {
           // A rule's giver (or owner, admin) on their own message (`changeableItem`): like `remember` kind rule.
           if (item.kind !== "rule") await checkPermissionText(judgeOf(deps), ctx.orgId, str(input.content));
@@ -872,7 +891,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       async execute(input, ctx) {
         const requester = await personRequester(ctx);
         const item = await changeableItem(ctx, str(input.item_id), requester);
-        if (typeof item === "string") return { content: item, isError: true };
+        if (typeof item === "string") return refusedChange(item);
         await ctx.db.transaction(async (tx) => {
           await tx
             .update(contextItems)
@@ -1344,6 +1363,13 @@ async function recordSave(ctx: ToolContext, res: ConsolidateResult) {
     },
   ]);
 }
+
+/** A refusal by a check that runs before any write (`changeableItem`, `remember`'s): a cut turn knows the outcome. */
+const refusedChange = (content: string): ToolOutput => ({
+  content,
+  isError: true,
+  data: { refusedByCheck: "forbidden" },
+});
 
 /**
  * An item this run may change: visible here, active, and either this agent's own memory or a shared item the

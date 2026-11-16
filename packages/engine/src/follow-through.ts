@@ -330,7 +330,10 @@ export function createFollowUpToolSource(deps: { pubsub?: PubSub }): ToolSource 
         if (!run) return refused("Only a conversation's run can come back to it.");
         const channel = await getChannelCached(ctx.db, run.orgId, run.channelId);
         if (channel && isAgentOnlyDm(channel))
-          return refused("Answer the agent that asked now: no person reads this conversation to come back to.");
+          return {
+            ...refused("Answer the agent that asked now: no person reads this conversation to come back to."),
+            data: { refusedByCheck: "forbidden" },
+          };
         // Its wake is one more run this agent starts on its own (ADR 0089): past the stretch's limits it would be held.
         const atLimit = await refusedAtLimit(ctx.db, run, run.agentId);
         if (atLimit) return atLimit;
