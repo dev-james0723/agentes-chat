@@ -340,3 +340,5 @@ export * from "./workspace-mode";
 export * from "./workspace-tools";
 export * from "./zip";
 export * from "./quota-qualifier";
+
+export * from "./communication-policy";

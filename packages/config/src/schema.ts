@@ -327,6 +327,57 @@ export const envVars = {
     section: "Agents",
     example: "off",
   },
+  COMMUNICATION_ENABLED: {
+    schema: z.stringbool().default(false),
+    description:
+      "Enable the reviewed communication pilot only for its explicit organization, task and feature allowlists. Does not grant access or enable a release.",
+    section: "Agents",
+  },
+  COMMUNICATION_ORG_IDS: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.uuid()).max(100)),
+    description:
+      "Comma-separated organization UUIDs admitted to the communication pilot. Empty means none; wildcards are not allowed.",
+    section: "Agents",
+  },
+  COMMUNICATION_TASK_IDS: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.uuid()).max(100)),
+    description:
+      "Comma-separated native task UUIDs admitted to the communication pilot. Both organization and task must match. Empty means none.",
+    section: "Agents",
+  },
+  COMMUNICATION_FEATURES: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) =>
+        value
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.enum(["founderUpdates", "handoffs", "verifiedLearning", "economics"])).max(4)),
+    description:
+      "Comma-separated reviewed pilot features: founderUpdates, handoffs, verifiedLearning, economics. Empty means none. Existing memory safeguards remain in force when disabled.",
+    section: "Agents",
+  },
   AGENT_DEFAULT_MODEL: {
     schema: modelId.default("claude-sonnet-5-5"),
     description:
