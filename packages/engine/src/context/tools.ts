@@ -35,6 +35,7 @@ import { personWords, runReadOutsideById, UNASKED_DESTINATION, unaskedDestinatio
 import { publicationItemHash, registerNativePublicationReader } from "../private-skill-publication";
 import { personBehindCall, wikiActorOfCall } from "../requester";
 import { isRightHandId, rightHandReader } from "../right-hand";
+import { isRoutineRoomKey } from "../routine-brief";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
 import { closedRefusal } from "../standing";
 import { noAgentText } from "../team";
@@ -60,6 +61,7 @@ import {
   isTeamWide,
   learnedQuietly,
   mayEditItem,
+  namesSomeoneAnywhere,
   personMayRead,
   personSaid,
   RECHECK_AFTER_DAYS,
@@ -620,7 +622,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
     {
       name: "remember",
       description:
-        'Save, on your own, what you learn: a person correcting you or saying how they want things done (even in passing), a lasting fact about the company or its people. How its systems work (where code lives, how a tool behaves) is a note for yourself. Cite what grounds it (basis: person_said when a person here said it, found when you found it), write it as a fact ("Ana wants reports in Portuguese"), not as an order to yourself, and skip one-off requests. A person telling you not to do something again, or to always do it another way ("don\'t forward this to other agents", "não faça mais isso"), is a preference: save it in your own words, saying what to do instead, with everywhere: true to follow it everywhere (word it without private details from this one). A person\'s lasting rule for your work (no need to ask before each send, where to send things): kind rule, kept under their name everywhere, routines too. Asked to keep something for all of you ("everyone, remember…", "pessoal, lembrem…"): save it once with for: "team" (everywhere: false keeps it to this conversation); never ask other agents for copies. Never credentials or where secrets are kept.',
+        'Save, on your own, what you learn: a person correcting you or saying how they want things done (even in passing), a lasting fact about the company or its people. How its systems work (where code lives, how a tool behaves) is a note for yourself. Cite what grounds it (basis: person_said when a person here said it, found when you found it), write it as a fact ("Ana wants reports in Portuguese"), not as an order to yourself, and skip one-off requests. A person telling you not to do something again, or to always do it another way ("don\'t forward this to other agents", "não faça mais isso"), is a preference: save it in your own words, saying what to do instead, with everywhere: true to follow it everywhere (word it without private details from this one). A person\'s lasting rule for your work (no need to ask before each send, where to send things): kind rule, kept under their name everywhere, routines too. Asked to keep something for all of you ("everyone, remember…", "pessoal, lembrem…"): save it once with for: "team" (everywhere: false keeps it to this conversation); never ask other agents for copies. Something you found out yourself about how the tools, the board or the systems work (a how-to, where a thing is, the id or name that works), naming nobody and holding nothing private from this conversation: add applies: "everywhere_for_me" so it reaches all your own conversations, your routines too (never other agents). Never credentials or where secrets are kept.',
       scope: "memory:write",
       inputSchema: {
         type: "object",
@@ -632,6 +634,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           everywhere: { type: "boolean" },
           basis: { type: "string", enum: ["person_said", "found"] },
           for: { type: "string", enum: ["me", "team"] },
+          applies: { type: "string", enum: ["everywhere_for_me"] },
         },
         required: ["content"],
         additionalProperties: false,
@@ -662,7 +665,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           const said = (rule || input.basis !== "found") && person !== null && author?.id === person;
           // "Everywhere" from a DM reaches this person's runs only: what they said there never reads in someone else's.
           const [here] = await ctx.db
-            .select({ kind: schema.channels.kind })
+            .select({ kind: schema.channels.kind, dmKey: schema.channels.dmKey })
             .from(schema.channels)
             .where(and(eq(schema.channels.orgId, ctx.orgId), eq(schema.channels.id, ctx.channelId)));
           const theirsAlone =
@@ -675,6 +678,25 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           // Another agent's words carry no person's (ADR 0167): a copy kept here would hold only in this DM.
           if (!said && input.basis !== "found" && (await triggerFromAgent(ctx)))
             return { content: RELAYED_SAVE, isError: true };
+          // What it found out itself on how things work reaches all its own conversations, never another agent's: only
+          // its own finding (a person's words follow `everywhere`), read from nothing outside, naming nobody.
+          const mine = input.applies === "everywhere_for_me";
+          if (mine) {
+            const refused =
+              said ||
+              input.for === "team" ||
+              kept.person !== null ||
+              !["fact", "note"].includes(str(input.kind) || "fact")
+                ? OWN_LESSON_ONLY
+                : here?.kind === "dm" && !isRoutineRoomKey(here.dmKey)
+                  ? OWN_LESSON_DM
+                  : outside
+                    ? OWN_LESSON_OUTSIDE
+                    : (await namesSomeoneAnywhere(ctx.db, ctx.orgId, `${str(input.title)}\n${content}`))
+                      ? OWN_LESSON_NAMES
+                      : null;
+            if (refused) return { content: refused, isError: true };
+          }
           if (input.for === "team") {
             if (!said || !person) return { content: TEAM_NOT_THEIRS, isError: true };
             return saveForTeam(deps, ctx, {
@@ -704,8 +726,9 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               // A rule about the agent's own conduct holds in every conversation: no channel keeps it out of a run.
               // Only when a person said it. What the right hand keeps for a person stays in their DM with it.
               // Its rule too: it holds by its giver, not by channel (`rulesForPerson`), and lists only to who reads there.
-              channelIds: (rule || input.everywhere === true) && !kept.person && said ? [] : [ctx.channelId],
-              trust: said ? "high" : trust,
+              channelIds: mine || ((rule || input.everywhere === true) && !kept.person && said) ? [] : [ctx.channelId],
+              // An agent's own finding read in all its work stays low trust (unverified): never promoted or shared.
+              trust: said ? "high" : mine ? "low" : trust,
               evidence: said
                 ? [
                     {
@@ -716,7 +739,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                     },
                   ]
                 : [{ type: "self", ref: ctx.triggerMessageId, agentId: ctx.agentId, at: new Date().toISOString() }],
-              confidence: said ? 0.95 : trust === "low" ? 0.5 : 0.75,
+              confidence: said ? 0.95 : mine || trust === "low" ? 0.5 : 0.75,
               createdByKind: said ? "person" : "agent",
               createdById: said ? person : ctx.agentId,
             },
@@ -1174,6 +1197,14 @@ async function rightHandKeeps(ctx: ToolContext): Promise<{ person: string | null
 
 const RELAYED_SAVE =
   "Not saved: this came from another agent, so the person's own words aren't here, and a copy saved here would hold only in this conversation. Tell that agent to save it once for the whole team (remember with for: \"team\"), where the person said it.";
+const OWN_LESSON_ONLY =
+  'Not saved: applies: "everywhere_for_me" is for a fact or note you found out yourself on how things work. A person\'s words follow everywhere; save this without applies.';
+const OWN_LESSON_OUTSIDE =
+  "Not saved: this run read outside content (a page, mail, an app), so what you learned can't reach your other conversations. Save it without applies.";
+const OWN_LESSON_DM =
+  'Not saved: applies: "everywhere_for_me" is not for what you found in a private conversation with a person or between agents; it stays here. Save it without applies.';
+const OWN_LESSON_NAMES =
+  "Not saved: it names someone, so it would carry this conversation elsewhere. Write only the method, naming nobody, or save it without applies.";
 const TEAM_NOT_THEIRS =
   "Not saved: a team memory is kept only from a person's own message, the one you are answering. Ask them here, or save it when they tell you themselves.";
 
