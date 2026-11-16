@@ -326,7 +326,7 @@ export type NativeIssueForFounder = {
 /** Call only after getIssueDetail has authorized the actor. Raw communication/tool metadata is deliberately ignored. */
 export function projectNativeIssueUpdate(
   issue: NativeIssueForFounder,
-  scope: FounderPreferences & { orgId: string; audience: string },
+  scope: FounderPreferences & { orgId: string; audience: string; decisionPending?: boolean },
 ): FounderProjection {
   const owner = issue.assignee;
   return projectFounderUpdate(
@@ -360,7 +360,9 @@ export function projectNativeIssueUpdate(
                 : "Open the task conversation for the required next step",
           }
         : null,
-      decisionNeeded: issue.work?.state === "waiting_input" || issue.work?.state === "waiting_approval",
+      // Waiting for a computer, budget or provider does not mean a person has a decision.
+      // The authenticated API supplies this only after checking native pending requests for this viewer.
+      decisionNeeded: scope.decisionPending === true,
       howToTry: null,
     },
     [],

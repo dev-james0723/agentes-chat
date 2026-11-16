@@ -15,6 +15,7 @@ import {
   getIssueDetail,
   type IssueDeps,
   issueFromMessage,
+  listApprovals,
   listIssueActivity,
   listIssueColumns,
   listIssueProjects,
@@ -211,7 +212,7 @@ export function issueRoutes(deps: AppDeps) {
       })
     )
       return issue;
-    const [style, [profile]] = await Promise.all([
+    const [style, [profile], pendingApprovals] = await Promise.all([
       agentStyleOf(db, orgId, userId),
       db
         .select({
@@ -226,6 +227,9 @@ export function issueRoutes(deps: AppDeps) {
         )
         .leftJoin(schema.organizationSettings, eq(schema.organizationSettings.orgId, orgId))
         .where(eq(schema.users.id, userId)),
+      issue.work?.runId
+        ? listApprovals(db, userId, orgId, { status: "pending", runId: issue.work.runId, limit: 20 })
+        : Promise.resolve([]),
     ]);
     return {
       ...issue,
@@ -235,6 +239,10 @@ export function issueRoutes(deps: AppDeps) {
         locale: profile?.locale ?? "en",
         timeZone: profile?.timeZone ?? profile?.orgTimeZone ?? "UTC",
         style: style ?? "simple",
+        // Native viewer ACL and canDecide must both hold; a run status alone is never a request.
+        decisionPending: pendingApprovals.some(
+          (approval) => approval.canDecide && Date.parse(approval.expiresAt) > Date.now(),
+        ),
       }),
     };
   };

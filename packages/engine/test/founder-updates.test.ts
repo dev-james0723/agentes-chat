@@ -213,6 +213,26 @@ describe("deterministic founder projection", () => {
     expect(blocked.blocker?.ownerRef).toBeNull();
   });
 
+  test("system waiting does not claim the viewer has an action to take", () => {
+    const issue = {
+      id: "task-1",
+      revision: 3,
+      status: "in_progress",
+      project: null,
+      assignee: null,
+      criteria: [],
+      updatedAt: task.generatedAt,
+      work: { runId: "run-1", state: "waiting_input" },
+    };
+    const viewer = { orgId: "org-1", audience: "person-1", ...preferences };
+    expect(projectNativeIssueUpdate(issue, viewer).decisionNeeded).toBe(false);
+    expect(
+      projectNativeIssueUpdate({ ...issue, work: { ...issue.work, state: "waiting_approval" } }, viewer).decisionNeeded,
+    ).toBe(false);
+    expect(projectNativeIssueUpdate(issue, { ...viewer, decisionPending: true }).decisionNeeded).toBe(true);
+    expect(projectNativeIssueUpdate(issue, { ...viewer, decisionPending: false }).decisionNeeded).toBe(false);
+  });
+
   test("style and locale are per viewer without altering evidence facts", () => {
     const simple = projectFounderUpdate(task, [], preferences);
     const technical = projectFounderUpdate(task, [], { locale: "en", style: "technical" });
