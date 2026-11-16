@@ -695,6 +695,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
         additionalProperties: false,
       },
       async execute(input, ctx) {
+        let wrote = false;
         try {
           // The right hand comments for the person in their DM, on a task they see (ADR 0137 §13).
           if (await rightHandAway(ctx)) return ONLY_IN_DM;
@@ -702,10 +703,13 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
           if (reader)
             await getIssue(deps.db, { type: "person", userId: reader }, ctx.orgId, issueKey(str(input.issue)));
           const current = await find(deps, ctx, str(input.issue));
+          // Files brought, or the comment posted: a failure after that is no refusal before a write.
+          wrote = (givenFiles(input) ?? []).length > 0;
           const files = await bringToTask(deps, ctx, current.id, givenFiles(input) ?? []);
           await commentIssue(deps, actorOf(ctx), ctx.orgId, current.id, str(input.text), {
             linkFileIds: files.brought,
           });
+          wrote = true;
           const note =
             files.brought.length || files.refused.length ? filesNote(await find(deps, ctx, current.id), files) : "";
           return {
@@ -713,6 +717,8 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
             data: { issue: { id: current.id, number: current.number } },
           };
         } catch (error) {
+          if (wrote)
+            return { content: `Failed: ${error instanceof Error ? error.message : String(error)}`, isError: true };
           return failed(error);
         }
       },

@@ -6,7 +6,6 @@ import {
   eq,
   gte,
   inArray,
-  isNull,
   notInArray,
   or,
   schema,
@@ -146,7 +145,7 @@ export async function attributeSubject(db: Database, orgId: string, subject: str
  * Outcomes relevant to a thread: recorded in it, or by its agents since `since`. What says nothing about the work is
  * left out: a run that simply finished (`run_done`) or was canceled, and a failure of the infrastructure (a provider,
  * a plan, the computer). A run's or a task's outcome carries its own words (an error, a task's title), so one from
- * another conversation reaches this one only when it belongs to no conversation (`channelId`).
+ * another conversation never reaches this one (a task with no channel, maybe shared with chosen people, neither).
  */
 export async function outcomesForThread(
   db: Database,
@@ -163,7 +162,6 @@ export async function outcomesForThread(
         sql`not (${outcomes.kind} = 'run_failed' and coalesce(${outcomes.details}->>'infra', '') = 'true')`,
         or(
           notInArray(outcomes.source, ["run", "issue"]),
-          isNull(outcomes.channelId),
           input.channelId ? eq(outcomes.channelId, input.channelId) : undefined,
         ),
         or(

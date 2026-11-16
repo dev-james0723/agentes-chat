@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { count, eq, schema } from "@agenteschat/db";
+import { count, eq, schema, sql } from "@agenteschat/db";
 import {
   createAgent,
   createArtifactToolSource,
@@ -8,6 +8,7 @@ import {
   createContextToolSource,
   createFollowUpToolSource,
   createHandOffToolSource,
+  createIssue,
   createIssueToolSource,
   createScheduleToolSource,
   createToolGateway,
@@ -285,4 +286,23 @@ describe("our write tools that refuse before any write say so in a typed refusal
     expect(out.data).toMatchObject({ refusedByCheck: "forbidden" });
     expect(knownBridgeResult(out)).toBe(true);
   });
+});
+
+test("comment_issue: once the comment is posted, a failure after it is never called a refusal", async () => {
+  f = await setup();
+  const ctx = await runContext(f);
+  const issue = await createIssue({ db: f.db, pubsub: f.pubsub }, { type: "person", userId: f.owner.id }, f.org.id, {
+    title: "Login",
+  });
+  // The task goes away as the comment lands: the files note's lookup after it then finds nothing.
+  await f.db.execute(sql`create function drop_task() returns trigger language plpgsql as $$
+    begin delete from issues where conversation_channel_id = new.channel_id; return new; end $$`);
+  await f.db.execute(sql`create trigger drop_task after insert on messages for each row execute function drop_task()`);
+  const def = (await createIssueToolSource(f.artifactDeps).tools(ctx)).find((t) => t.name === "comment_issue");
+  const out = await def?.execute({ issue: `#${issue.number}`, text: "Done.", files: [crypto.randomUUID()] }, ctx);
+  expect(out?.isError).toBe(true);
+  const posted = await f.db.select().from(schema.messages).where(eq(schema.messages.body, "Done."));
+  expect(posted).toHaveLength(1);
+  expect(out?.data?.refusedByCheck).toBeUndefined();
+  if (out) expect(knownBridgeResult(out)).toBe(false);
 });
