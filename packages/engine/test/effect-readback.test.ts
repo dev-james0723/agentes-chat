@@ -110,6 +110,38 @@ describe("unknown bridge effects read back before they hold the run", () => {
     expect((await u.epochRow())?.effectCalls).toMatchObject({ lost: { state: "completed", reconciled: "not_done" } });
   });
 
+  test("comment_issue reads the reference as the tool does; one it can't read stays held", async () => {
+    f = await setup({ machines: true });
+    const t = await heldTurn();
+    const text = "Done.";
+    // A pasted number brings an invisible character at its end; the tool still finds the task.
+    await t.call("c1", "comment_issue", { issue: `#${t.issue.number}\u200b`, text }, () =>
+      commentIssue(deps(), t.agent, f.org.id, t.issue.id, text),
+    );
+    await t.call("c2", "comment_issue", { issue: "ABC-1", text: "x" });
+    expect(await closeBridgeEffectEpoch(f.db, t.run.id, t.epoch, 1)).toMatchObject({
+      tools: ["unresolved bridge effect"],
+    });
+    expect((await t.epochRow())?.effectCalls).toMatchObject({
+      c1: { state: "completed", reconciled: "done" },
+      c2: { state: "unknown" },
+    });
+  });
+
+  test("create_issue is done only when the task is tied to this run while another run of the agent works", async () => {
+    f = await setup({ machines: true });
+    const t = await heldTurn();
+    // Another run of the same agent, working at the same time, makes the task with that title.
+    const other = await heldTurn();
+    await t.call("made", "create_issue", { title: "Write the release notes" }, () =>
+      createIssue(deps(), other.agent, f.org.id, { title: "Write the release notes" }),
+    );
+    expect(await closeBridgeEffectEpoch(f.db, t.run.id, t.epoch, 1)).toMatchObject({
+      tools: ["unresolved bridge effect"],
+    });
+    expect((await t.epochRow())?.effectCalls).toMatchObject({ made: { state: "unknown" } });
+  });
+
   test("ambiguous evidence, a tool with no read-back or a call never finished: still held", async () => {
     f = await setup({ machines: true });
     const t = await heldTurn();

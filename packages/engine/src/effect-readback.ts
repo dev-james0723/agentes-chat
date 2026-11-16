@@ -1,6 +1,7 @@
-import { and, type Executor, eq, gte, schema, sql } from "@agenteschat/db";
+import { and, type Executor, eq, gte, isNotNull, isNull, ne, or, schema, sql } from "@agenteschat/db";
+import { issueKey } from "./issue-key";
 
-const { agentRunSteps, issues, messages, runToolTokens } = schema;
+const { agentRuns, agentRunSteps, issues, messages, runToolTokens } = schema;
 
 /**
  * What a read-back found for one call whose effect was unknown: it happened (`done`), it surely did not
@@ -18,7 +19,6 @@ interface UnknownCall {
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Read-backs for tools whose effect the platform can check deterministically. Each one says `done` only on an exact
@@ -29,7 +29,7 @@ const READ_BACKS: Record<string, (db: Executor, call: UnknownCall) => Promise<Re
   async create_issue(db, call) {
     const title = str(call.input.title).trim().slice(0, 300);
     const made = await db
-      .select({ title: issues.title })
+      .select({ id: issues.id, title: issues.title })
       .from(issues)
       .where(
         and(
@@ -39,16 +39,47 @@ const READ_BACKS: Record<string, (db: Executor, call: UnknownCall) => Promise<Re
         ),
       );
     if (made.length === 0) return "not_done";
-    return title && made.length === 1 && made[0]?.title === title ? "done" : "unknown";
+    const [task] = made;
+    if (!title || made.length > 1 || task?.title !== title) return "unknown";
+    // Tied to this run (`linkRun`), it is this call's. Otherwise only when no other run of the agent worked meanwhile:
+    // that run could have made it.
+    const [linked] = await db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, call.runId), eq(agentRuns.issueId, task.id)));
+    if (linked) return "done";
+    const [other] = await db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(
+        and(
+          eq(agentRuns.orgId, call.orgId),
+          eq(agentRuns.agentId, call.agentId),
+          ne(agentRuns.id, call.runId),
+          isNotNull(agentRuns.startedAt),
+          or(isNull(agentRuns.finishedAt), gte(agentRuns.finishedAt, call.since)),
+        ),
+      )
+      .limit(1);
+    return other ? "unknown" : "done";
   },
   async comment_issue(db, call) {
-    const ref = str(call.input.issue).trim();
-    const number = /^#?(\d{1,9})$/.exec(ref)?.[1];
-    if (!number && !UUID.test(ref)) return "not_done";
+    // Read as the tool reads it (`issueKey`); a reference it can't read could have named any task.
+    let key: ReturnType<typeof issueKey>;
+    try {
+      key = issueKey(str(call.input.issue));
+    } catch {
+      return "unknown";
+    }
     const [issue] = await db
       .select({ channelId: issues.conversationChannelId })
       .from(issues)
-      .where(and(eq(issues.orgId, call.orgId), number ? eq(issues.number, Number(number)) : eq(issues.id, ref)));
+      .where(
+        and(
+          eq(issues.orgId, call.orgId),
+          key.number !== undefined ? eq(issues.number, key.number) : eq(issues.id, key.id ?? ""),
+        ),
+      );
     // No such task, or it never got its conversation: the comment had nowhere to go.
     if (!issue?.channelId) return "not_done";
     const body = str(call.input.text).trim().slice(0, 20_000);

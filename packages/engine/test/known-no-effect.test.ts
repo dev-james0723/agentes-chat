@@ -85,12 +85,12 @@ describe("errors of our own tools that cannot have had an effect are known outco
     expect(await known(tool("probe_status", "", lost, { readOnly: true }))).toBe(true);
   });
 
-  test("our own write tools: a typed refusal raised before any write", async () => {
+  test("a typed error thrown by a write tool is not proof by itself: the tool may have written first", async () => {
     f = await setup();
     const refused = async (): Promise<ToolOutput> => {
       throw new NotFoundError("No such memory");
     };
-    expect(await known(tool("probe_write", "memory:write", refused))).toBe(true);
+    expect(await known(tool("probe_write", "memory:write", refused))).toBe(false);
   });
 
   test("update_memory and forget: a memory this run may not change is refused before any write", async () => {

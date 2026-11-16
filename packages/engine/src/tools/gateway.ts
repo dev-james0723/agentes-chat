@@ -40,7 +40,7 @@ import {
 } from "../contextual-skill-native-read";
 import { sha256 } from "../crypto";
 import { provenReadOnly } from "../databases/guard";
-import { isUnexpectedError, refusalData, ToolOffError } from "../errors";
+import { isUnexpectedError, ToolOffError } from "../errors";
 import { cutMarked, cutText, pgSafeJson, pgSafeText } from "../format";
 import { mergeReposOfCall, recordMergeDone, reposOfGithubCall } from "../git/repos";
 import { recordRead } from "../outbound";
@@ -692,12 +692,10 @@ export function createToolGateway(deps: {
       const hint =
         deps.faultHint && !tool.external && !tool.connectionId && isUnexpectedError(error) ? deps.faultHint : "";
       // An MCP server's error text is its own words too.
-      // Our own tool's typed refusal (raised by a check before any write), or any failure of one that only reads, is a
-      // known outcome; a connected app's or anything else's failure stays unknown.
-      const own = !tool.external && !tool.connectionId && !tool.connector;
+      // Any failure of our own tool that only reads is a known outcome. A typed error thrown by any other tool is not
+      // proof by itself (it may have written first): only the tool can say it refused before writing (`refusalData`).
       const data = {
         ...(error instanceof ToolOffError ? { toolOff: error.toolOff } : {}),
-        ...(own ? refusalData(error).data : {}),
         ...(noEffectOnError(tool) ? { noEffect: "read" } : {}),
       };
       return {
