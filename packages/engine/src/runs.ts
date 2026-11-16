@@ -1,6 +1,7 @@
 import { and, type Executor, eq, type SQL, schema, sql } from "@agenteschat/db";
 import { PROVIDERS, type ProviderCause, ProviderError, providerCause } from "@agenteschat/providers";
 import { BRAIN_NAMES, type ComputerBrainKind, planName } from "./brains/types";
+import { recordRunOutcome } from "./context/outcomes";
 import { cutText, pgSafeJson } from "./format";
 import { recordRunFinished } from "./operator-events";
 import { standingErrorDetail } from "./standing";
@@ -488,13 +489,12 @@ export async function transitionRun(
     )
     .returning();
   if (row && isTerminal(to)) {
-    await recordRunFinished(
-      db,
-      row,
+    const failed =
       to === "failed"
         ? { code: failure?.code ?? runErrorDetail(row.error)?.errorCode ?? null, cause: failure?.cause ?? null }
-        : undefined,
-    );
+        : undefined;
+    await recordRunFinished(db, row, failed);
+    await recordRunOutcome(db, row, failed);
     await releaseProfileTurns(db, row.id);
   }
   return row ?? null;

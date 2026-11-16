@@ -21,6 +21,7 @@ import { audienceError, canTalkTo, speakerFor } from "./audience";
 import { recordAudit } from "./audit";
 import { runAuthorityById, runPerson } from "./authority";
 import { requireChannelAccess } from "./channels";
+import { recordOutcome } from "./context/outcomes";
 import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import {
   publishChannelEvent,
@@ -1296,6 +1297,14 @@ export async function updateIssue(
     const [updated] = await tx.update(issues).set(set).where(eq(issues.id, current.id)).returning();
     if (!updated) throw new NotFoundError("Issue not found");
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
+    // Done work taken back to the board: against the agent it was assigned to (a cancel is not a reopen).
+    if (current.status === "done" && updated.status !== "done" && updated.status !== "canceled")
+      await recordOutcome(tx, {
+        ...taskOutcome(updated, actor),
+        kind: "issue_reopened",
+        summary: updated.title,
+        details: { issueId: updated.id, from: current.status, to: updated.status, by: author },
+      });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
     if (set.description !== undefined && (set.description.includes("[[") || current.description.includes("[["))) {
       await syncWikiLinks(tx, orgId, { type: "issue", id: updated.id, channelId: updated.channelId }, set.description);
@@ -1376,6 +1385,16 @@ async function startedWork(deps: IssueDeps, issue: IssueRow, agentId: string, ru
   });
 }
 
+/** Who a task's outcome is about: its agent assignee, else the agent acting; where it lives. */
+const taskOutcome = (issue: IssueRow, actor: IssueActor) => ({
+  orgId: issue.orgId,
+  agentId: issue.assigneeType === "agent" ? issue.assigneeId : actor.type === "agent" ? actor.agentId : null,
+  runId: actor.type === "agent" ? (actor.runId ?? null) : null,
+  subject: `issue#${issue.number}`,
+  source: "issue" as const,
+  channelId: issue.channelId,
+});
+
 /** Checks or unchecks one acceptance criterion. */
 export async function setCriterion(
   deps: IssueDeps,
@@ -1405,6 +1424,14 @@ export async function setCriterion(
       event: "criterion_checked",
       data: { criterionId, done, text: cutText(criterion.text, 80) },
     });
+    // The last one checked: every acceptance criterion met, and who checked each (a person's check weighs more).
+    if (done && !criterion.done && criteria.every((c) => c.done))
+      await recordOutcome(tx, {
+        ...taskOutcome(updated, actor),
+        kind: "criteria_met",
+        summary: updated.title,
+        details: { issueId: updated.id, checkedBy: criteria.map((c) => c.doneBy ?? null) },
+      });
     return updated;
   });
   await linkRun(deps, actor, row);
