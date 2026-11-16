@@ -348,6 +348,143 @@ describe("reflect (capture)", () => {
     const [state] = await f.db.select().from(schema.threadReflections);
     expect(state?.runs).toBe(5);
   });
+
+  test("what the job derives starts low and stays in the channel unless a person said it or an outcome backs it; a one-off instruction is no standing preference", async () => {
+    const item = (req: ModelRequest, content: string, cite: string, more: Record<string, unknown> = {}) => ({
+      kind: "preference",
+      subject: content,
+      content,
+      confidence: 0.9,
+      sources: [refOf(req, cite)],
+      about_agent: "",
+      scope: "org",
+      lasting: true,
+      ...more,
+    });
+    f = await setup({
+      reply: (req) =>
+        isReflect(req)
+          ? {
+              chunks: [
+                JSON.stringify({
+                  summary: "",
+                  items: [
+                    item(req, "Only continue tasks when explicitly asked.", "only continue"),
+                    item(req, "Pushing code is not approved.", "push_refused"),
+                    item(req, "Add at least 4 new tests to the truncate change.", "4 new tests", { lasting: false }),
+                    item(req, "Reports are written in Portuguese.", "Portuguese"),
+                    {
+                      ...item(req, "Restate findings before closing a task.", "only continue"),
+                      kind: "lesson",
+                      about_agent: "dev",
+                      scope: "agent",
+                    },
+                    {
+                      ...item(req, "Check the build before closing a task.", "Portuguese"),
+                      kind: "lesson",
+                      scope: "team",
+                    },
+                  ],
+                  entities: [],
+                }),
+              ],
+            }
+          : { chunks: ["ok"] },
+    });
+    const root = await post(f, "@dev for the truncate change add at least 4 new tests");
+    await post(f, "and from now on we write reports in Portuguese", root.id);
+    await agentSays(f, f.agent.id, "Noted: I will only continue tasks when explicitly asked.", root.id);
+    await recordOutcome(f.db, {
+      orgId: f.org.id,
+      kind: "approval_refused",
+      agentId: f.agent.id,
+      summary: "push_refused",
+      source: "tool",
+      threadRootId: root.id,
+    });
+
+    const r = await reflectThread(f.context, { orgId: f.org.id, threadRootId: root.id });
+    expect(r.rejected).toEqual([{ content: "Add at least 4 new tests to the truncate change.", reason: "one_off" }]);
+    const rows = await f.db.select().from(schema.contextItems);
+    const by = (content: string) => rows.find((i) => i.content === content);
+    // An agent's word, an outcome or the job alone never makes a standing preference or rule.
+    for (const content of [
+      "Only continue tasks when explicitly asked.",
+      "Pushing code is not approved.",
+      "Restate findings before closing a task.",
+    ]) {
+      expect([content, by(content)?.trust, by(content)?.verified]).toEqual([content, "low", false]);
+      expect(by(content)?.scopeType).not.toBe("org");
+    }
+    // A person's own words keep their weight, team-wide as the model proposed.
+    expect(by("Reports are written in Portuguese.")).toMatchObject({ trust: "high", verified: true, scopeType: "org" });
+    expect(by("Check the build before closing a task.")).toMatchObject({ trust: "high", verified: true });
+  });
+
+  test("only an outcome a person stands behind backs what the job derives: a run's end or an agent's own ticks never do", async () => {
+    const lesson = (req: ModelRequest, content: string, cite: string) => ({
+      kind: "lesson",
+      subject: content,
+      content,
+      confidence: 0.9,
+      sources: [refOf(req, cite)],
+      about_agent: "",
+      scope: "org",
+      lasting: true,
+    });
+    f = await setup({
+      reply: (req) =>
+        isReflect(req)
+          ? {
+              chunks: [
+                JSON.stringify({
+                  summary: "",
+                  items: [
+                    lesson(req, "Retry the export when a run fails.", "provider outage"),
+                    lesson(req, "Tick the criteria once the report is posted.", "agent ticked"),
+                    lesson(req, "Name the criteria a reviewer checks.", "person ticked"),
+                    lesson(req, "Ask before deleting a branch.", "delete refused"),
+                  ],
+                  entities: [],
+                }),
+              ],
+            }
+          : { chunks: ["ok"] },
+    });
+    const root = await post(f, "@dev post the weekly report");
+    await agentSays(f, f.agent.id, "Posted the report.", root.id);
+    const outcome = (kind: string, polarity: string, source: string, summary: string, details = {}) => ({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      kind,
+      polarity,
+      source,
+      summary,
+      details,
+      threadRootId: root.id,
+    });
+    await f.db.insert(schema.outcomes).values([
+      outcome("run_failed", "negative", "run", "provider outage", { code: "provider", cause: "outage" }),
+      outcome("criteria_met", "positive", "issue", "agent ticked", {
+        checkedBy: [{ type: "agent", id: f.agent.id }],
+      }),
+      outcome("criteria_met", "positive", "issue", "person ticked", {
+        checkedBy: [
+          { type: "person", id: f.owner.id },
+          { type: "person", id: f.owner.id },
+        ],
+      }),
+      outcome("approval_refused", "negative", "approval", "delete refused"),
+    ]);
+
+    await reflectThread(f.context, { orgId: f.org.id, threadRootId: root.id });
+    const rows = await f.db.select().from(schema.contextItems);
+    const by = (content: string) => rows.find((i) => i.content === content);
+    for (const content of ["Retry the export when a run fails.", "Tick the criteria once the report is posted."])
+      expect([content, by(content)?.trust, by(content)?.scopeType]).toEqual([content, "low", "channel"]);
+    for (const content of ["Name the criteria a reviewer checks.", "Ask before deleting a branch."])
+      expect([content, by(content)?.trust, by(content)?.scopeType]).toEqual([content, "high", "org"]);
+  });
 });
 
 describe("feedback", () => {
