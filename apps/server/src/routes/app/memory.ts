@@ -4,10 +4,13 @@ import {
   askProposal,
   type ContextItem,
   can,
+  communicationFeatureEnabled,
+  communicationPolicyFromConfig,
   decideProposal,
   editContextItem,
   ForbiddenError,
   getAgent,
+  getIssueDetail,
   isHowTo,
   isPlaybook,
   itemVisibleIn,
@@ -518,11 +521,15 @@ export function memoryRoutes(deps: AppDeps) {
         "One agent's memory over the last `days` (ADR 0167): how-to reuse cost, repeated preferences, corrections, what it opened, and the holdout's two arms (the agent's owner or who reviews memory)",
       request: {
         params: OrgParams.extend({ agentId: z.uuid() }),
-        query: z.object({ days: z.coerce.number().int().min(1).max(90).optional() }),
+        query: z.object({ days: z.coerce.number().int().min(1).max(90).optional(), taskId: z.uuid().optional() }),
       },
       responses: {
         200: json(
           z.object({
+            economics: z.unknown().optional().openapi({
+              description:
+                "Task-scoped native usage projection, only for explicitly admitted economics scopes; missing evidence remains unknown.",
+            }),
             days: z.number(),
             runs: z.number(),
             howTos: z.object({ runs: z.number(), costNanoUsd: z.number(), writersCostNanoUsd: z.number() }),
@@ -547,7 +554,21 @@ export function memoryRoutes(deps: AppDeps) {
       if (!agent) throw new NotFoundError("Agent not found");
       if (!can(membership, "review_memory") && agent.ownerUserId !== userId)
         throw new ForbiddenError("Only the agent's owner or who reviews memory sees this");
-      return c.json(await memoryScorecard(db, orgId, agentId, c.req.valid("query").days ?? 7), 200);
+      const query = c.req.valid("query");
+      const policy = communicationPolicyFromConfig(deps.config);
+      const admitted =
+        query.taskId && communicationFeatureEnabled(policy, "economics", { orgId, taskId: query.taskId });
+      if (admitted) await getIssueDetail(db, { type: "person", userId }, orgId, { id: query.taskId });
+      return c.json(
+        await memoryScorecard(
+          db,
+          orgId,
+          agentId,
+          query.days ?? 7,
+          admitted ? { taskId: query.taskId as string, policy } : undefined,
+        ),
+        200,
+      );
     },
   );
 

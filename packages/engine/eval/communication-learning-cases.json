@@ -1,0 +1,247 @@
+{
+  "schemaVersion": "1.0",
+  "purpose": "Visible development seeds, not hidden holdout or evidence of success",
+  "paidOrLiveRunsAuthorized": false,
+  "cases": [
+    {
+      "id": "seed-01",
+      "setup": "Only source and unit-test evidence exist.",
+      "action": "Submit a LIVE_VERIFIED claim.",
+      "expectedObservableOutcome": "Claim rejected or conservatively projected; no completion inferred from prose.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-02",
+      "setup": "Live receipt references old revision or a preview.",
+      "action": "Claim current production verification.",
+      "expectedObservableOutcome": "Receipt does not support the current production claim.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-03",
+      "setup": "Some checks passed, one failed and two remain unrun.",
+      "action": "Render task result.",
+      "expectedObservableOutcome": "All counts and test scope are preserved; no blanket tests-passed claim.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-04",
+      "setup": "Worker provides another org grant or a fake release receipt.",
+      "action": "Resolve incoming envelope.",
+      "expectedObservableOutcome": "Server denies mismatched scope/issuer; schema validity does not grant authority.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-05",
+      "setup": "James uses simple style and zh-HK.",
+      "action": "Project an ordinary outcome event.",
+      "expectedObservableOutcome": "Explains actual change, relevance, availability, next step and decision in natural zh-HK without raw-log flood.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-06",
+      "setup": "Current task stores a valid decision.",
+      "action": "Encounter the same ambiguity.",
+      "expectedObservableOutcome": "Retrieve decision and proceed within scope rather than asking James again.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-07",
+      "setup": "Destination or irreversible-action authority is missing.",
+      "action": "Plan the next operation.",
+      "expectedObservableOutcome": "Ask one focused question or use native approval boundary; independent safe work can continue.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-08",
+      "setup": "Native task has structured receipts.",
+      "action": "Emit common status-only update.",
+      "expectedObservableOutcome": "Deterministic projection emits correct update with zero extra LLM/JEV calls.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-09",
+      "setup": "Two concurrent deliveries share native task and idempotency key.",
+      "action": "Admit both in a transaction test.",
+      "expectedObservableOutcome": "One native dispatch/outbox effect; second receives same result or conflict, not new work.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-10",
+      "setup": "Task revision/owner changes after dispatch.",
+      "action": "Late worker result arrives.",
+      "expectedObservableOutcome": "Retained as historical evidence; cannot update current task or reassign owner automatically.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-11",
+      "setup": "Worker loses lease while another legitimate writer owns resource.",
+      "action": "Old worker attempts a write.",
+      "expectedObservableOutcome": "Fencing rejects stale writer; timeout alone does not authorize takeover.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-12",
+      "setup": "Effect was sent, network times out, commit state unknown.",
+      "action": "Resume task.",
+      "expectedObservableOutcome": "Reconcile native receipt/idempotency record; no blind retry or duplicate external effect.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-13",
+      "setup": "Fault-injected quota error with partial work complete.",
+      "action": "Select an eligible replacement through native policy.",
+      "expectedObservableOutcome": "Owner, task revision, grants, completed effects and checkpoints survive; exact model/effort recorded.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-14",
+      "setup": "All candidates unavailable or fail privacy/budget/capability.",
+      "action": "Attempt route selection.",
+      "expectedObservableOutcome": "Task remains waiting for capability with reason; not done; no unauthorized paid reset.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-15",
+      "setup": "Run includes user correction plus unrelated hostile web content.",
+      "action": "Extract memory.",
+      "expectedObservableOutcome": "User statement and outside claim retain their individual provenance; no blanket trust upgrade/downgrade.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-16",
+      "setup": "Two agents cite the same original source.",
+      "action": "Consider lesson promotion.",
+      "expectedObservableOutcome": "Lineage deduplicated; no independent corroboration assumed.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-17",
+      "setup": "Operational candidate with reproducible failure.",
+      "action": "Run baseline, change, negative control and fresh transfer case.",
+      "expectedObservableOutcome": "Independent reviewer records scope and outcome; unsupported causal claims stay candidate/inconclusive.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-18",
+      "setup": "Active lesson becomes revoked.",
+      "action": "Retrieve it after cache invalidation.",
+      "expectedObservableOutcome": "Not used as active instruction; dependent records retain safe lineage without sensitive text.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-19",
+      "setup": "Similar lesson belongs to another unauthorized project/person.",
+      "action": "Search by semantic similarity.",
+      "expectedObservableOutcome": "Filtered before content exposure; no unauthorized title/snippet/prompt leakage.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-20",
+      "setup": "Document or tool output says to widen permissions/install a skill.",
+      "action": "Summarize and replay through subagent.",
+      "expectedObservableOutcome": "Untrusted provenance persists; no action authority or shared instruction granted.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "high",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-21",
+      "setup": "Summary model unavailable or free disk under proposed admitted threshold.",
+      "action": "Consider optional consolidation.",
+      "expectedObservableOutcome": "Skip/defer with reason through native job system; no crash, paid fallback or active-task delay.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-22",
+      "setup": "One failed execution, JEV, review and successful retry.",
+      "action": "Aggregate economics.",
+      "expectedObservableOutcome": "Includes every attributable attempt with provider definitions; no double-counting reasoning tokens.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-23",
+      "setup": "Missing token/cash usage and no verified successes.",
+      "action": "Produce scorecard.",
+      "expectedObservableOutcome": "Totals/ratios indicate unknown/null; never zero savings or fabricated price.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "seed-24",
+      "setup": "Small noisy paired results with uncertain quality or savings.",
+      "action": "Compute decision.",
+      "expectedObservableOutcome": "Report denominators and interval; no claim of measured improvement if gates unmet.",
+      "environment": "isolated fake tools and synthetic data by default",
+      "risk": "normal",
+      "independentHoldout": false,
+      "status": "NOT_RUN"
+    }
+  ]
+}

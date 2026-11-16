@@ -1,4 +1,6 @@
 import { and, type Database, eq, gt, inArray, rowsOf, schema, sql } from "@agenteschat/db";
+import { type CommunicationPolicy, communicationFeatureEnabled } from "../communication-policy";
+import { type NativeHarnessEconomics, nativeHarnessEconomics } from "../harness-economics-native";
 import { itemWords } from "./items";
 
 const { contextItems } = schema;
@@ -13,6 +15,8 @@ export const memoryArmOf = (runId: string): "with" | "without" =>
   Number.parseInt(runId.replace(/-/g, "").slice(-6), 16) % HOLDOUT_EVERY === 0 ? "with" : "without";
 
 export interface MemoryScorecard {
+  /** Present only for an admitted, viewer-authorized native task scope. */
+  economics?: NativeHarnessEconomics;
   days: number;
   runs: number;
   /** Runs that carried one of its how-tos, and their average cost, against the average cost of the runs that wrote them. */
@@ -39,6 +43,7 @@ export async function memoryScorecard(
   orgId: string,
   agentId: string,
   days = 7,
+  options?: { taskId: string; policy: CommunicationPolicy },
 ): Promise<MemoryScorecard> {
   const since = new Date(Date.now() - days * 86_400_000);
   const [counts] = rowsOf<{
@@ -118,7 +123,16 @@ export async function memoryScorecard(
   ]);
   const corrected = lessons.filter((l) => itemWords(l).how === "corrected").length;
   const without = c.runs - c.with_runs;
+  const economics =
+    options &&
+    communicationFeatureEnabled(options.policy, "economics", {
+      orgId,
+      taskId: options.taskId,
+    })
+      ? await nativeHarnessEconomics(db, orgId, agentId, options.taskId, since)
+      : undefined;
   return {
+    ...(economics ? { economics } : {}),
     days,
     runs: c.runs,
     howTos: { runs: c.used_runs, costNanoUsd: Math.round(c.used_cost), writersCostNanoUsd: Math.round(c.writers_cost) },
