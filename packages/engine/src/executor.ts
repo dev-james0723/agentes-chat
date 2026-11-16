@@ -616,10 +616,11 @@ export async function thinkerIsLocal(db: Database, thinker: Pick<Agent, "credent
     .select({ provider: providerCredentials.provider, options: providerCredentials.options })
     .from(providerCredentials)
     .where(and(eq(providerCredentials.id, thinker.credentialId), isNull(providerCredentials.revokedAt)));
-  const endpoint = (row?.options as { endpoint?: unknown } | null)?.endpoint;
-  if (row?.provider !== "custom" || typeof endpoint !== "string") return false;
+  // The credential keeps its endpoint as an object (`StoredEndpoint`): the address is its `baseURL`.
+  const baseURL = row?.options?.endpoint?.baseURL;
+  if (row?.provider !== "custom" || typeof baseURL !== "string") return false;
   try {
-    return LOCAL_HOSTS.has(new URL(endpoint).hostname);
+    return LOCAL_HOSTS.has(new URL(baseURL).hostname);
   } catch {
     return false;
   }

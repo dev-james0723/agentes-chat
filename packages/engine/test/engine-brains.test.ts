@@ -6186,14 +6186,15 @@ test("a computer brain's 'balance exhausted' refusal is the plan's limit, not an
 
 test("only a local model endpoint counts as the free last-resort route", async () => {
   f = await setup();
-  const mk = async (endpoint: string, provider = "custom") => {
+  // As a credential keeps its endpoint (`StoredEndpoint`): an object with the address in `baseURL`.
+  const mk = async (baseURL: string, provider = "custom") => {
     const [row] = await f.db
       .insert(schema.providerCredentials)
       .values({
         ...(await f.db.select().from(schema.providerCredentials).limit(1))[0],
         id: Bun.randomUUIDv7(),
         provider,
-        options: { endpoint },
+        options: { endpoint: { style: "openai", baseURL, models: [{ id: "qwen3:8b" }] } },
       } as never)
       .returning();
     return row?.id ?? null;
