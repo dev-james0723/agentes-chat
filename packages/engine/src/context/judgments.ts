@@ -1,7 +1,14 @@
 import { and, desc, type Executor, eq, inArray, isNull, schema } from "@agenteschat/db";
 import { cutText } from "../format";
 import type { Judge, JudgeQuestion } from "../judge";
-import { type ContextItem, type ContextKind, evidenceWeight, type NewContextItem, normalizeSubject } from "./items";
+import {
+  type ContextItem,
+  type ContextKind,
+  evidenceWeight,
+  type NewContextItem,
+  normalizeSubject,
+  sameGiverCorrection,
+} from "./items";
 
 const { contextItems } = schema;
 
@@ -102,8 +109,8 @@ export async function findCandidates(db: Executor, input: NewContextItem, limit 
         eq(contextItems.scopeType, input.scopeType),
         // A rule holds by its giver (`rulesForPerson`): the same words from someone else are their own rule.
         input.kind === "rule" ? eq(contextItems.createdById, input.createdById ?? "") : undefined,
-        // One person's items are never another's candidates: the judge would read them and could link the two.
-        input.scopeType === "person" ? eq(contextItems.scopeId, input.scopeId ?? "") : undefined,
+        // Entity/project identity is part of the authorization boundary before a judge sees any text.
+        input.scopeId == null ? isNull(contextItems.scopeId) : eq(contextItems.scopeId, input.scopeId),
       ),
     )
     .orderBy(desc(contextItems.updatedAt))
@@ -171,10 +178,11 @@ export type Plan =
   | { action: "supersede"; target: ContextItem; relation: "refines" | "updates" }
   /**
    * A contradiction resolves itself: the stronger evidence wins (a person's word over an agent's
-   * claim), and on a tie the newer one (the latest word is how things are now). The loser stays as
+   * claim). Equal authority stays disputed unless the same person explicitly corrects their statement. The loser stays as
    * history, linked, and a person can bring it back.
    */
-  | { action: "resolve"; target: ContextItem; winner: "new" | "old" };
+  | { action: "resolve"; target: ContextItem; winner: "new" | "old" }
+  | { action: "dispute"; target: ContextItem };
 
 const best = (list: Judged[], relations: Relation[], min: number) =>
   list
@@ -201,7 +209,9 @@ export function decide(input: NewContextItem, judged: Judged[]): Plan {
     const strength = (evidence: ContextItem["evidence"], trust: string | undefined) =>
       evidenceWeight(evidence) - (trust === "low" ? 10 : 0);
     const fresh = strength(input.evidence ?? [], input.trust);
-    return { action: "resolve", target: old, winner: fresh >= strength(old.evidence, old.trust) ? "new" : "old" };
+    const previous = strength(old.evidence, old.trust);
+    if (fresh === previous && !sameGiverCorrection(old, input)) return { action: "dispute", target: old };
+    return { action: "resolve", target: old, winner: fresh >= previous ? "new" : "old" };
   }
   const related = judged
     .filter((j) => j.relation !== "unrelated" && j.p >= THRESHOLDS.related)

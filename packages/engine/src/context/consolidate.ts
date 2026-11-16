@@ -5,10 +5,10 @@ import {
   accessSql,
   type ContextItem,
   isVerified,
+  memoryRevisionMatches,
   mergeEvidence,
   type NewContextItem,
-  SAME_ITEM_SIMILARITY,
-  similarity,
+  sameMemoryText,
 } from "./items";
 import { decide, findCandidates, judgeRelations } from "./judgments";
 import { learnConfig } from "./learn";
@@ -60,9 +60,9 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
     if (item.kind === "thread_summary" || item.kind === "period_summary" || item.kind === "entity_profile") continue;
     // What is kept for one person, or a rule one person gave, never merges into another person's: the survivor
     // reads only in its own person's runs, so the other would lose theirs.
-    const person = item.scopeType === "person" ? item.scopeId : "";
+    const scope = item.scopeId;
     const giver = item.kind === "rule" ? item.createdById : "";
-    const key = `${item.kind}|${item.agentId ?? ""}|${item.scopeType}|${person ?? ""}|${giver ?? ""}`;
+    const key = JSON.stringify([item.kind, item.agentId, item.scopeType, scope, giver, [...item.channelIds].sort()]);
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   const archived = new Set<string>();
@@ -72,7 +72,8 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
       if (!keep || archived.has(keep.id)) continue;
       for (let j = i + 1; j < items.length; j++) {
         const dup = items[j];
-        if (!dup || archived.has(dup.id) || similarity(keep.content, dup.content) < SAME_ITEM_SIMILARITY) continue;
+        if (!dup || keep.disputed || dup.disputed || archived.has(dup.id) || !sameMemoryText(keep.content, dup.content))
+          continue;
         const evidence = mergeEvidence(keep.evidence, dup.evidence);
         await db.transaction(async (tx) => {
           await tx
@@ -251,6 +252,8 @@ const asNew = (item: ContextItem): NewContextItem => ({
   evidence: item.evidence,
   trust: item.trust as NewContextItem["trust"],
   confidence: item.confidence,
+  createdByKind: item.createdByKind as NewContextItem["createdByKind"],
+  createdById: item.createdById,
 });
 
 /**
@@ -314,7 +317,28 @@ export async function consolidateByMeaning(deps: ContextDeps, orgId: string, now
         out.linked += plan.related.length;
         return [];
       }
-      const target = plan.target;
+      const [target] = await tx
+        .select()
+        .from(contextItems)
+        .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, plan.target.id)))
+        .for("update");
+      if (!target || !memoryRevisionMatches(target, plan.target)) return [];
+      if (plan.action === "dispute") {
+        for (const [claim, other] of [
+          [item, target],
+          [target, item],
+        ] as const) {
+          await tx
+            .update(contextItems)
+            .set({ disputed: true, relatedIds: [...new Set([...claim.relatedIds, other.id])], updatedAt: now })
+            .where(
+              and(eq(contextItems.orgId, orgId), eq(contextItems.id, claim.id), eq(contextItems.status, "active")),
+            );
+          await enqueue(tx, { orgId, kind: "search.index", payload: { kind: "context_item", sourceId: claim.id } });
+        }
+        out.linked += 2;
+        return [];
+      }
       // merge: the older keeps both; supersede, or a resolve the newer wins: the newer stays.
       const [winner, loser] =
         plan.action === "merge" || (plan.action === "resolve" && plan.winner === "old")

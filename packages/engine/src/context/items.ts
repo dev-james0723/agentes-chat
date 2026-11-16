@@ -1,6 +1,7 @@
 import {
   and,
   arrayContained,
+  arrayContains,
   type Database,
   desc,
   type Executor,
@@ -19,7 +20,7 @@ import { getAgent } from "../agents";
 import { agentIdsSeen, isPlaybook, readsPlaybook, seesAgentDetails } from "../audience";
 import { caches, rulesPresenceKey } from "../cache";
 import { isAgentOnlyDm } from "../dms";
-import { ForbiddenError, NotFoundError, ValidationError } from "../errors";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../errors";
 import { type Judge, triesToChangePermissions } from "../judge";
 import { InvalidJudgeAnswerError } from "../judge-answer";
 import { can, getMembership, type Membership, requirePermission } from "../organizations";
@@ -401,20 +402,78 @@ export async function insertContextItem(tx: Executor, input: NewContextItem): Pr
   return row;
 }
 
-/** Replaces `old` by a new version (history kept: `superseded_by`, archived). */
+/** Source-bearing fields, not popularity counters, identify the revision a writer actually read. */
+export const memoryRevisionMatches = (current: ContextItem, expected: ContextItem) =>
+  current.id === expected.id &&
+  current.orgId === expected.orgId &&
+  current.version === expected.version &&
+  current.updatedAt.getTime() === expected.updatedAt.getTime() &&
+  current.status === expected.status &&
+  current.supersededBy === expected.supersededBy &&
+  current.content === expected.content &&
+  current.title === expected.title &&
+  current.scopeType === expected.scopeType &&
+  current.scopeId === expected.scopeId &&
+  current.agentId === expected.agentId &&
+  current.trust === expected.trust &&
+  current.verified === expected.verified &&
+  JSON.stringify(current.channelIds) === JSON.stringify(expected.channelIds) &&
+  JSON.stringify(current.sourceIds) === JSON.stringify(expected.sourceIds) &&
+  JSON.stringify(current.evidence) === JSON.stringify(expected.evidence);
+
+const changedMemory = () =>
+  new ConflictError(
+    "This memory changed since it was read. Read its current version before trying again.",
+    "memory.version_conflict",
+  );
+
+/** Replaces a locked, still-current revision; a stale writer creates neither an orphan nor a second successor. */
 export async function supersede(tx: Executor, old: ContextItem, next: NewContextItem): Promise<ContextItem> {
+  if (
+    next.orgId !== old.orgId ||
+    next.scopeType !== old.scopeType ||
+    (next.scopeId ?? null) !== old.scopeId ||
+    (next.agentId ?? null) !== old.agentId
+  )
+    throw new ValidationError(
+      "A correction cannot change the memory's organization or owner scope",
+      "memory.scope_change",
+    );
+  const [current] = await tx
+    .select()
+    .from(contextItems)
+    .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)))
+    .for("update");
+  if (!current || current.supersededBy || !memoryRevisionMatches(current, old)) throw changedMemory();
   const row = await insertContextItem(tx, next);
   await tx
     .update(contextItems)
-    .set({ version: old.version + 1 })
-    .where(eq(contextItems.id, row.id));
+    .set({ version: current.version + 1 })
+    .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, row.id)));
   await tx
     .update(contextItems)
     .set({ supersededBy: row.id, status: "archived", updatedAt: new Date() })
-    .where(eq(contextItems.id, old.id));
+    .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)));
   await enqueueIndex(tx, { orgId: old.orgId, kind: "context_item", sourceId: old.id });
-  return { ...row, version: old.version + 1 };
+  return { ...row, version: current.version + 1 };
 }
+
+/** Only exact text after Unicode/spacing normalization is an automatic duplicate; negations and symbols stay. */
+export const sameMemoryText = (a: string, b: string) =>
+  a.normalize("NFC").trim().replace(/\s+/gu, " ") === b.normalize("NFC").trim().replace(/\s+/gu, " ");
+
+/** A person's explicit correction replaces that same person's earlier statement, never another person's guess. */
+export const sameGiverCorrection = (old: ContextItem, next: NewContextItem) =>
+  next.trust !== "low" &&
+  next.createdByKind === "person" &&
+  old.createdByKind === "person" &&
+  Boolean(next.createdById) &&
+  next.createdById === old.createdById &&
+  (next.evidence ?? []).some((e) => e.type === "human");
+
+/** Recency alone is not evidence. This is only the conflict policy, not a source-verification claim. */
+export const strongerMemoryEvidence = (old: ContextItem, next: NewContextItem) =>
+  next.trust !== "low" && (old.trust === "low" || evidenceWeight(next.evidence ?? []) > evidenceWeight(old.evidence));
 
 export type ConsolidateResult = {
   /**
@@ -485,8 +544,14 @@ export async function consolidateItem(
           eq(contextItems.scopeType, input.scopeType),
           // A rule holds by its giver (`rulesForPerson`): the same words from someone else are their own rule.
           input.kind === "rule" ? eq(contextItems.createdById, input.createdById ?? "") : undefined,
-          // One person's preference never merges into another's: it would read in that person's runs.
-          input.scopeType === "person" ? eq(contextItems.scopeId, input.scopeId ?? "") : undefined,
+          // The same name in another project/entity/channel is not the same memory.
+          input.scopeId == null ? isNull(contextItems.scopeId) : eq(contextItems.scopeId, input.scopeId),
+          input.channelIds?.length
+            ? and(
+                arrayContained(contextItems.channelIds, input.channelIds),
+                arrayContains(contextItems.channelIds, input.channelIds),
+              )
+            : sql`${contextItems.channelIds} = '{}'::uuid[]`,
           or(eq(contextItems.subjectKey, subjectKey), sql`${contextItems.content} = ${input.content}`),
         ),
       )
@@ -496,10 +561,14 @@ export async function consolidateItem(
     const old = existing[0];
     if (!old) return { action: "created", item: await insertContextItem(tx, input) };
 
-    if (similarity(old.content, input.content) >= SAME_ITEM_SIMILARITY) {
+    if (sameMemoryText(old.content, input.content)) {
       return { action: "merged", item: await mergeInto(tx, old, input) };
     }
-    if (judging.mayReplace && !judging.mayReplace(old)) return keepBeside(tx, old, input);
+    if (
+      (judging.mayReplace && !judging.mayReplace(old)) ||
+      (!sameGiverCorrection(old, input) && !strongerMemoryEvidence(old, input))
+    )
+      return keepBeside(tx, old, input);
     const item = await supersede(tx, old, { ...input, subject: input.subject ?? old.subjectKey });
     return { action: "superseded", item, previous: old };
   });
@@ -586,10 +655,19 @@ async function applyPlan(
     .select()
     .from(contextItems)
     .where(
-      and(eq(contextItems.id, plan.target.id), eq(contextItems.status, "active"), isNull(contextItems.supersededBy)),
+      and(
+        eq(contextItems.orgId, input.orgId),
+        eq(contextItems.id, plan.target.id),
+        eq(contextItems.scopeType, input.scopeType),
+        input.scopeId == null ? isNull(contextItems.scopeId) : eq(contextItems.scopeId, input.scopeId),
+        input.agentId ? eq(contextItems.agentId, input.agentId) : isNull(contextItems.agentId),
+        eq(contextItems.status, "active"),
+        isNull(contextItems.supersededBy),
+      ),
     )
     .for("update");
-  if (!target) return null;
+  if (!target || !memoryRevisionMatches(target, plan.target)) return null;
+  if (plan.action === "dispute") return keepBeside(tx, target, input);
   if (plan.action === "merge") return { action: "merged", item: await mergeInto(tx, target, input) };
   if (mayReplace && !mayReplace(target) && (plan.action === "supersede" || plan.winner === "new"))
     return keepBeside(tx, target, input);
@@ -789,77 +867,100 @@ export async function editContextItem(
   actorId: string,
   orgId: string,
   itemId: string,
-  input: { content?: string; title?: string; pinned?: boolean; archived?: boolean; confirmed?: boolean },
+  input: {
+    content?: string;
+    title?: string;
+    pinned?: boolean;
+    archived?: boolean;
+    confirmed?: boolean;
+    expectedVersion?: number;
+  },
   judge?: Judge,
 ): Promise<ContextItem> {
   const item = await loadItem(db, orgId, itemId);
-  // Confirmar (ADR 0167): who may edit it, or the person who said it, for that alone.
   const onlyConfirms =
     input.confirmed === true &&
     input.content === undefined &&
+    input.title === undefined &&
     input.pinned === undefined &&
     input.archived === undefined;
   if (!onlyConfirms || !(await saidBy(db, actorId, item))) await requireEdit(db, actorId, item);
-  // A rule passes `requireEdit` only for its giver, the agent's owner or an admin: people who may give it anyway.
-  if (input.content !== undefined && input.content !== item.content && item.kind !== "rule") {
-    await checkPermissionText(judge, orgId, `${input.title ?? item.title ?? ""}\n${input.content}`);
-  }
-  let current = item;
-  if (input.content !== undefined && input.content !== item.content) {
-    current = await db.transaction((tx) =>
-      supersede(tx, item, {
+  // Permission precedes conflict details, including optional caller-supplied versions.
+  if (
+    input.expectedVersion !== undefined &&
+    (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1)
+  )
+    throw new ValidationError("expectedVersion must be a positive integer", "memory.invalid_version");
+  if (input.expectedVersion !== undefined && input.expectedVersion !== item.version) throw changedMemory();
+  const contentChanged = input.content !== undefined && input.content !== item.content;
+  const titleChanged = input.title !== undefined && input.title !== item.title;
+  if ((contentChanged || titleChanged) && item.kind !== "rule")
+    await checkPermissionText(judge, orgId, `${input.title ?? item.title}\n${input.content ?? item.content}`);
+  return db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, itemId)))
+      .for("update");
+    if (!locked || !memoryRevisionMatches(locked, item)) throw changedMemory();
+    const authorityDb = tx as Database;
+    if (!onlyConfirms || !(await saidBy(authorityDb, actorId, locked))) await requireEdit(authorityDb, actorId, locked);
+    let current = locked;
+    if (contentChanged || titleChanged) {
+      current = await supersede(tx, locked, {
         orgId,
-        kind: item.kind,
-        scopeType: item.scopeType as NewContextItem["scopeType"],
-        scopeId: item.scopeId,
-        agentId: item.agentId,
-        subject: item.subjectKey,
-        // A summary of the old text would sit above the new one: kept only when the person edited it too.
-        title: input.title ?? "",
-        content: input.content ?? item.content,
-        sourceIds: item.sourceIds,
-        channelIds: item.channelIds,
+        kind: locked.kind,
+        scopeType: locked.scopeType as NewContextItem["scopeType"],
+        scopeId: locked.scopeId,
+        agentId: locked.agentId,
+        subject: locked.subjectKey,
+        title: input.title ?? (contentChanged ? "" : locked.title),
+        content: input.content ?? locked.content,
+        sourceIds: locked.sourceIds,
+        channelIds: locked.channelIds,
         trust: "high",
-        evidence: mergeEvidence(item.evidence, [{ type: "human", ref: actorId, at: new Date().toISOString() }]),
-        confidence: Math.max(item.confidence, 0.9),
-        pinned: input.pinned ?? item.pinned,
+        evidence: mergeEvidence(locked.evidence, [{ type: "human", ref: actorId, at: new Date().toISOString() }]),
+        confidence: Math.max(locked.confidence, 0.9),
+        pinned: input.pinned ?? locked.pinned,
         createdByKind: "person",
-        // A rule holds by its giver (`rulesForPerson`): an owner's or admin's edit keeps it the giver's.
-        createdById: item.kind === "rule" && item.createdByKind === "person" ? (item.createdById ?? actorId) : actorId,
-      }),
-    );
-  }
-  // Confirmar vouches for what came from outside or isn't verified yet (ADR 0167); saving an app-sent item's text
-  // unchanged confirms it too (ADR 0119 item 5).
-  const confirms =
-    current === item &&
-    ((input.confirmed === true && (item.trust === "low" || !item.verified)) ||
-      (input.content !== undefined &&
-        item.trust !== "low" &&
-        item.evidence.some((e) => e.type === "app") &&
-        !isVerified(item.evidence)));
-  if (confirms || input.pinned !== undefined || input.archived !== undefined) {
-    const evidence = confirms
-      ? mergeEvidence(item.evidence, [{ type: "human", ref: actorId, at: new Date().toISOString() }])
-      : undefined;
-    const [row] = await db
-      .update(contextItems)
-      .set({
-        ...(evidence
-          ? { evidence, trust: "high" as const, verified: true, confidence: Math.max(item.confidence, 0.9) }
-          : {}),
-        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
-        ...(input.archived !== undefined
-          ? { status: input.archived ? ("archived" as const) : ("active" as const) }
-          : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(contextItems.id, current.id))
-      .returning();
-    if (row) current = row;
-    await enqueueIndex(db, { orgId, kind: "context_item", sourceId: current.id });
-  }
-  return current;
+        createdById:
+          locked.kind === "rule" && locked.createdByKind === "person" ? (locked.createdById ?? actorId) : actorId,
+      });
+    }
+    const confirms =
+      current.id === locked.id &&
+      ((input.confirmed === true && (locked.trust === "low" || !locked.verified)) ||
+        (input.content !== undefined &&
+          locked.trust !== "low" &&
+          locked.evidence.some((e) => e.type === "app") &&
+          !isVerified(locked.evidence)));
+    if (confirms || input.pinned !== undefined || input.archived !== undefined) {
+      if (input.archived === false && current.supersededBy) throw changedMemory();
+      const evidence = confirms
+        ? mergeEvidence(current.evidence, [{ type: "human", ref: actorId, at: new Date().toISOString() }])
+        : undefined;
+      const [row] = await tx
+        .update(contextItems)
+        .set({
+          ...(evidence
+            ? { evidence, trust: "high" as const, verified: true, confidence: Math.max(current.confidence, 0.9) }
+            : {}),
+          ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
+          ...(input.archived !== undefined
+            ? { status: input.archived ? ("archived" as const) : ("active" as const) }
+            : {}),
+          // Metadata revisions also fence a later expectedVersion edit.
+          version: current.id === locked.id ? current.version + 1 : current.version,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, current.id)))
+        .returning();
+      if (!row) throw changedMemory();
+      current = row;
+      await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: current.id });
+    }
+    return current;
+  });
 }
 
 /** A person deletes an item for good (explicit; automatic jobs only archive or supersede). */

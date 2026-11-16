@@ -115,10 +115,26 @@ describe("memory judgments: policy", () => {
 
   test("a contradiction resolves itself: stronger evidence wins, and on a tie the newer word", async () => {
     f = await setup();
-    const personSaid = await insertContextItem(f.db, fact(f, "Deploys are on Fridays.", { evidence: [human("m1")] }));
+    const personSaid = await insertContextItem(
+      f.db,
+      fact(f, "Deploys are on Fridays.", {
+        evidence: [human("m1")],
+        createdByKind: "person",
+        createdById: "author-one",
+      }),
+    );
     const j: Judged[] = [{ candidate: personSaid, relation: "contradicts", p: 0.9 }];
     // A person again, later: the latest word is how things are now.
-    expect(decide(fact(f, "Never deploy on Fridays.", { evidence: [human("m2")] }), j)).toMatchObject({
+    expect(
+      decide(
+        fact(f, "Never deploy on Fridays.", {
+          evidence: [human("m2")],
+          createdByKind: "person",
+          createdById: "author-one",
+        }),
+        j,
+      ),
+    ).toMatchObject({
       action: "resolve",
       winner: "new",
     });
@@ -209,13 +225,28 @@ describe("memory judgments: consolidateItem carries out the plan", () => {
 
   test("contradictions resolve themselves; the loser stays as history, linked", async () => {
     f = await setup();
-    const old = await consolidateItem(f.db, fact(f, "Deploys are on Fridays.", { evidence: [human("m1")] }));
+    const old = await consolidateItem(
+      f.db,
+      fact(f, "Deploys are on Fridays.", {
+        evidence: [human("m1")],
+        createdByKind: "person",
+        createdById: "author-one",
+      }),
+    );
     const judge = judgeBy({ "Deploys are on Fridays.": "contradicts" });
     // A person's newer word wins.
-    const won = await consolidateItem(f.db, fact(f, "Never deploy on Fridays.", { evidence: [human("m2")] }), {
-      judge,
-      semantic: true,
-    });
+    const won = await consolidateItem(
+      f.db,
+      fact(f, "Never deploy on Fridays.", {
+        evidence: [human("m2")],
+        createdByKind: "person",
+        createdById: "author-one",
+      }),
+      {
+        judge,
+        semantic: true,
+      },
+    );
     expect(won).toMatchObject({ action: "superseded", previous: { id: old.item.id } });
     // An agent's claim against it loses: the person's word stays current, the claim is history.
     const judge2 = judgeBy({ "Never deploy on Fridays.": "contradicts" });
@@ -309,7 +340,14 @@ describe("memory judgments: the daily pass", () => {
 
   test("a contradiction resolves by evidence; related items are linked once", async () => {
     f = await setup();
-    const personSaid = await insertContextItem(f.db, fact(f, "Deploys are on Fridays.", { evidence: [human("m1")] }));
+    const personSaid = await insertContextItem(
+      f.db,
+      fact(f, "Deploys are on Fridays.", {
+        evidence: [human("m1")],
+        createdByKind: "person",
+        createdById: "author-one",
+      }),
+    );
     const claim = await insertContextItem(
       f.db,
       fact(f, "Fridays are bad for deploys.", { evidence: [agentClaim("m2")] }),
