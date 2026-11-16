@@ -1,12 +1,17 @@
+import { and, eq, schema } from "@agenteschat/db";
 import {
+  agentStyleOf,
   askAgentToImplement,
   commentIssue,
+  communicationFeatureEnabled,
+  communicationPolicyFromConfig,
   createIssue,
   createIssueColumn,
   createIssueProject,
   deleteIssue,
   deleteIssueColumn,
   deleteIssueProject,
+  FounderProjectionSchema,
   getIssueDetail,
   type IssueDeps,
   issueFromMessage,
@@ -16,6 +21,7 @@ import {
   listIssues,
   openTaskConversation,
   PROJECT_NAME_MAX,
+  projectNativeIssueUpdate,
   ROLE_COLORS,
   setCriterion,
   setIssueAudience,
@@ -83,6 +89,7 @@ const Conversation = ConversationRef.extend({
 const Issue = z
   .object({
     id: z.uuid(),
+    revision: z.number().int().nonnegative(),
     number: z.number(),
     title: z.string(),
     description: z.string(),
@@ -152,6 +159,7 @@ const Issue = z
   .openapi("Issue");
 
 const IssueDetail = Issue.extend({
+  founderUpdate: FounderProjectionSchema.optional(),
   subIssues: z.array(
     z.object({ id: z.uuid(), number: z.number(), title: z.string(), status: Status, assignee: Actor.nullable() }),
   ),
@@ -194,6 +202,42 @@ export function issueRoutes(deps: AppDeps) {
   app.use("/organizations/*", requireSession(deps.auth));
   const issues: IssueDeps = { db, pubsub: adapters.pubsub };
   const person = (userId: string) => ({ type: "person" as const, userId });
+  const detailForViewer = async (userId: string, orgId: string, ref: { id?: string; number?: number }) => {
+    const issue = await getIssueDetail(db, person(userId), orgId, ref);
+    if (
+      !communicationFeatureEnabled(communicationPolicyFromConfig(deps.config), "founderUpdates", {
+        orgId,
+        taskId: issue.id,
+      })
+    )
+      return issue;
+    const [style, [profile]] = await Promise.all([
+      agentStyleOf(db, orgId, userId),
+      db
+        .select({
+          locale: schema.users.locale,
+          timeZone: schema.organizationMembers.timezone,
+          orgTimeZone: schema.organizationSettings.timezone,
+        })
+        .from(schema.users)
+        .innerJoin(
+          schema.organizationMembers,
+          and(eq(schema.organizationMembers.userId, schema.users.id), eq(schema.organizationMembers.orgId, orgId)),
+        )
+        .leftJoin(schema.organizationSettings, eq(schema.organizationSettings.orgId, orgId))
+        .where(eq(schema.users.id, userId)),
+    ]);
+    return {
+      ...issue,
+      founderUpdate: projectNativeIssueUpdate(issue, {
+        orgId,
+        audience: userId,
+        locale: profile?.locale ?? "en",
+        timeZone: profile?.timeZone ?? profile?.orgTimeZone ?? "UTC",
+        style: style ?? "simple",
+      }),
+    };
+  };
 
   app.openapi(
     createRoute({
@@ -241,7 +285,7 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, number } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { number }), 200);
+      return c.json(await detailForViewer(c.get("user").id, orgId, { number }), 200);
     },
   );
 
@@ -257,7 +301,7 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, issueId } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { id: issueId }), 200);
+      return c.json(await detailForViewer(c.get("user").id, orgId, { id: issueId }), 200);
     },
   );
 
