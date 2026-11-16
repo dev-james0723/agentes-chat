@@ -688,11 +688,27 @@ describe("issues", () => {
       expect(out.data).toMatchObject({ refusedByCheck: "not_found" });
       expect(await run("list_issues", { query: big })).toEqual({ content: "No issues." });
     }
+    // The lookup itself finds nothing there, whoever asks (the app's own route by number too); the largest number
+    // the column holds is asked for like any other.
+    for (const number of [2_147_483_648, 99_999_999_999, 1.5])
+      await expect(getIssue(f.db, person(f.owner.id), f.org.id, { number })).rejects.toBeInstanceOf(NotFoundError);
+    const last = await run("list_issues", { issue: "2147483647" });
+    expect(last).toMatchObject({ content: "Failed: Issue not found", isError: true });
+    // A character that can't be seen at an end of the reference (a pasted number brings one) names nothing, like a
+    // space. Inside it, the reference is refused and says so: a number is never put together from pieces.
+    for (const ref of [`#${issue.number}​`, `﻿${issue.id}`])
+      expect((await run("list_issues", { issue: ref })).content).toContain(`#${issue.number} [`);
+    const pieces = await run("update_issue", { issue: `1​${issue.number}`, priority: "high" });
+    expect(pieces.isError).toBe(true);
+    expect(pieces.content).toContain(
+      `"1${issue.number}" (shown without the characters in it that can't be seen) is not a task number or id`,
+    );
+    expect(pieces.data).toMatchObject({ refusedByCheck: "not_found" });
     // Only spaces: once read as no reference at all, which matched the first task of the workspace.
     const blank = await run("update_issue", { issue: " ", priority: "high" });
     expect(blank.isError).toBe(true);
     expect(blank.content).toContain("Issue not found");
-    // A refusal is one that wrote nothing: the project a write would create isn't made for a task that isn't there.
+    // A reference to no task is refused before anything is written: the project a write would create isn't made.
     for (const ref of ["ABC-7", crypto.randomUUID()]) {
       const out = await run("update_issue", { issue: ref, project: "Relatórios", new_project: true });
       expect(out.data).toMatchObject({ refusedByCheck: "not_found" });

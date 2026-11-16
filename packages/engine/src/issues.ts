@@ -1008,6 +1008,9 @@ export async function findVisible(
   where: { id?: string; number?: number },
 ) {
   await requireOrgMember(db, actor, orgId);
+  // A number the column can't hold (past its range, or not whole) is no task's, whoever asks and by which way in.
+  if (where.number !== undefined && !(Number.isInteger(where.number) && where.number <= MAX_ISSUE_NUMBER))
+    throw new NotFoundError("Issue not found");
   const [row] = await db
     .select()
     .from(issues)
