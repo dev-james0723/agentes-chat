@@ -1633,6 +1633,8 @@ export async function retrieveForRun(
       kinds: ["context_item"],
       limit: 15,
       match: "any",
+      maxDistance: RUN_MAX_DISTANCE,
+      maxDistanceFromBest: RUN_DISTANCE_FROM_BEST,
     }).catch(() => []);
     const rank = new Map(hits.map((h, i) => [h.sourceId, i]));
     searched = (
@@ -1758,6 +1760,15 @@ const ALSO_SHOWN = 5;
 const ACCESS_IN_PROMPT = 8;
 /** Memory in a run's prompt, at most (characters), pinned items aside. */
 export const MEMORY_BUDGET_CHARS = 3500;
+
+/**
+ * A run's memory by vectors: only neighbours nearer than this cosine distance, and within `RUN_DISTANCE_FROM_BEST` of
+ * the nearest. Measured on a workspace's own memories with Qwen3-Embedding-0.6B (Cantonese and Chinese requests
+ * worded unlike the memory): every wanted memory was nearer than 0.53 and at most 0.08 past the nearest, while the
+ * default 0.75 let about seven unrelated memories into a request about nothing stored. A person's search keeps 0.75.
+ */
+export const RUN_MAX_DISTANCE = 0.55;
+export const RUN_DISTANCE_FROM_BEST = 0.1;
 /** One item's content in the prompt, at most (pinned ones: 600). */
 const MEMORY_ITEM_CHARS = 240;
 
