@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -127,4 +136,168 @@ test("text output keeps a failing observation exit code", (t) => {
   });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /remote_unavailable/);
+});
+
+test("network observation reads a provider callback, never repo Git transport or credential helpers", (t) => {
+  const root = fixture(t),
+    binary = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
+  const marker = join(root, "transport-ran"),
+    bin = join(root, "test-bin");
+  mkdirSync(bin);
+  // Any old ls-remote path is caught locally; this test cannot contact GitHub.
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh\nfor arg in "$@"; do\nif [ "$arg" = "ls-remote" ]; then\nprintf called > '${marker}'\nexit 1\nfi\ndone\nexec '${binary}' "$@"\n`,
+    { mode: 0o755 },
+  );
+  const old = process.env.PATH;
+  process.env.PATH = `${bin}:${old}`;
+  t.after(() => {
+    process.env.PATH = old;
+  });
+  let calls = 0;
+  const head = git(root, "rev-parse", "HEAD").trim();
+  const o = implementation.observe(root, {
+    network: true,
+    providerRefLookup: ({ repository, branch }) => {
+      calls++;
+      assert.equal(repository, "example/app");
+      assert.equal(branch, "feat/task");
+      return { sha: head, observedAt: new Date().toISOString(), source: "github_api" };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(existsSync(marker), false);
+  assert.equal(o.remote.status, "matches");
+});
+
+test("provider observation cannot stay stable after same-HEAD branch or remote drift", (t) => {
+  const root = fixture(t),
+    head = git(root, "rev-parse", "HEAD").trim();
+  const o = implementation.observe(root, {
+    network: true,
+    providerRefLookup: () => {
+      git(root, "branch", "-m", "feat/other");
+      git(root, "remote", "set-url", "origin", "https://github.com/example/other.git");
+      return { sha: head, observedAt: new Date().toISOString(), source: "github_api" };
+    },
+  });
+  assert.equal(o.stable, false);
+});
+
+test("provider callback data is fresh and from the expected API", (t) => {
+  const root = fixture(t),
+    head = git(root, "rev-parse", "HEAD").trim();
+  const o = implementation.observe(root, {
+    network: true,
+    providerRefLookup: () => ({ sha: head, observedAt: "2000-01-01T00:00:00Z", source: "agent_receipt" }),
+  });
+  assert.equal(o.remote.status, "unknown");
+  assert.ok(o.errors.includes("remote_observation_failed"));
+});
+
+test("GitHub provider read uses built-in gh API and never shell or repository transport", () => {
+  assert.equal(typeof implementation.collectProviderRef, "function");
+  const seen = [],
+    sha = "a".repeat(40);
+  const r = implementation.collectProviderRef(
+    { repository: "example/app", branch: "feat/task" },
+    {
+      run: (exe, args, options) => {
+        seen.push({ exe, args, options });
+        return { status: 0, stdout: JSON.stringify({ object: { type: "commit", sha } }) };
+      },
+    },
+  );
+  assert.equal(r.sha, sha);
+  assert.equal(seen[0].exe, "gh");
+  assert.ok(seen[0].args.includes("repos/example/app/git/ref/heads/feat%2Ftask"));
+  assert.equal(seen[0].options.shell, false);
+});
+
+test("inherited Git environment cannot retarget the selected repository or its worktree", (t) => {
+  const selected = fixture(t),
+    redirected = fixture(t);
+  git(redirected, "remote", "set-url", "origin", "https://github.com/example/redirected.git");
+  git(redirected, "branch", "-m", "feat/redirected");
+  writeFileSync(join(redirected, "base.txt"), "a different repository\n");
+  git(redirected, "add", "base.txt");
+  git(redirected, "commit", "-m", "different repository identity");
+  const head = git(selected, "rev-parse", "HEAD").trim();
+  const old = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+  t.after(() => {
+    for (const [name, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  process.env.GIT_DIR = join(redirected, ".git");
+  process.env.GIT_WORK_TREE = selected;
+  const result = observe(selected);
+  assert.equal(result.repository, "example/app", "the chosen root must not borrow another repository's Git directory");
+  assert.equal(result.head, head);
+  assert.equal(result.branch, "feat/task");
+  assert.equal(result.worktree, realpathSync(selected));
+  assert.equal(result.stable, true);
+  assert.deepEqual(result.errors, []);
+});
+
+test("CLI rejects FIFO input without waiting for a writer", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "delivery-fifo-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const inputPath = join(root, "input.json");
+  const made = spawnSync("mkfifo", [inputPath], { encoding: "utf8", shell: false });
+  assert.equal(made.status, 0, made.stderr);
+  // No writer exists. A blocking read would hang until this test's child timeout.
+  const r = spawnSync(process.execPath, [fileURLToPath(modulePath), "inspect-macos", "--input", inputPath], {
+    encoding: "utf8",
+    shell: false,
+    timeout: 2_000,
+    killSignal: "SIGKILL",
+  });
+  assert.equal(r.status, 2, "non-regular JSON input must be rejected before attempting a blocking read");
+  assert.equal(r.signal, null);
+  assert.equal(r.stdout, "");
+});
+
+test("CLI bounds JSON bytes for input, release evidence and checkpoint scope", (t) => {
+  const root = fixture(t),
+    inputPath = join(root, "oversized.json");
+  writeFileSync(inputPath, JSON.stringify({ padding: "x".repeat(128 * 1024) }));
+  const calls = [
+    ["inspect-macos", "--input", inputPath],
+    ["check-release", "--evidence", inputPath],
+    ["check-checkpoint", "--root", root, "--scope", inputPath],
+  ];
+  for (const args of calls) {
+    const r = spawnSync(process.execPath, [fileURLToPath(modulePath), ...args], {
+      encoding: "utf8",
+      shell: false,
+      timeout: 5_000,
+    });
+    assert.equal(r.status, 2, `${args[0]} must reject oversized JSON before evaluating it`);
+    assert.equal(r.stdout, "");
+  }
+});
+
+test("CLI malformed JSON errors never echo input payloads", (t) => {
+  const root = fixture(t),
+    inputPath = join(root, "malformed.json");
+  // A synthetic marker, not a credential: native parser messages must not echo it.
+  writeFileSync(inputPath, "SECRET_TEST_CANARY_no_real_secret\n");
+  const calls = [
+    ["inspect-macos", "--input", inputPath],
+    ["check-release", "--evidence", inputPath],
+    ["check-checkpoint", "--root", root, "--scope", inputPath],
+  ];
+  for (const args of calls) {
+    const r = spawnSync(process.execPath, [fileURLToPath(modulePath), ...args], {
+      encoding: "utf8",
+      shell: false,
+      timeout: 5_000,
+    });
+    assert.equal(r.status, 2, `${args[0]} must report invalid input`);
+    assert.equal(r.stdout, "");
+    assert.doesNotMatch(r.stderr, /SECRET_|CANARY|no_real_secret/, "input payloads must not appear in error output");
+  }
 });

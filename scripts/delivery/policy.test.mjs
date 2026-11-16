@@ -136,13 +136,6 @@ for (const [name, change, code] of [
     "foreign_staged_path",
   ],
   [
-    "bulk deletion",
-    (o) => {
-      o.deletedPaths = Array.from({ length: 21 }, (_, i) => `src/${i}.ts`);
-    },
-    "bulk_deletion",
-  ],
-  [
     "proportionate deletion",
     (o) => {
       o.trackedCount = 4;
@@ -225,8 +218,10 @@ test("unrelated unstaged files are left alone", () => {
     true,
   );
 });
-test("merge evidence is eligible only with every explicit gate", () => {
-  assert.equal(release().ok, true);
+test("complete serialized evidence passes structural assessment but grants no release authority", () => {
+  assert.equal(release().assessment.ok, true);
+  assert.equal(release().ok, false);
+  assert.ok(release().blockers.includes("trusted_publisher_required"));
 });
 for (const [name, change, code] of [
   [

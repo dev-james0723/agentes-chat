@@ -47,7 +47,7 @@ export function protectedPath(path) {
 function freshness(value, now, maxAge) {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT.*(?:Z|[+-]\d\d:\d\d)$/.test(value)) return "invalid";
   const date = Date.parse(value);
-  if (!Number.isFinite(date) || date > now + 30_000) return "invalid";
+  if (!Number.isFinite(date) || date > now) return "invalid";
   return now - date <= maxAge ? "fresh" : "stale";
 }
 
@@ -62,7 +62,7 @@ export function checkCheckpoint(observation, scope, { now = Date.now() } = {}) {
   if (typeof o.branch !== "string" || !o.branch || PROTECTED_BRANCHES.test(o.branch)) blockers.push("protected_branch");
   if (typeof s.branch !== "string" || s.branch !== o.branch) blockers.push("branch_mismatch");
   if (!SHA.test(o.head ?? "") || !SHA.test(s.head ?? "") || o.head !== s.head) blockers.push("head_mismatch");
-  const age = freshness(o.observedAt, now, 600_000);
+  const age = freshness(o.observedAt, now, 10_000);
   if (age !== "fresh") blockers.push(age === "stale" ? "stale_observation" : "invalid_observation_time");
   if (o.stable !== true) blockers.push("unstable_observation");
   if (!Array.isArray(o.errors) || o.errors.length) blockers.push("collection_failed");
@@ -92,8 +92,20 @@ export function checkCheckpoint(observation, scope, { now = Date.now() } = {}) {
     blockers.push("unsafe_path");
   if (scopedChanges.some((row) => row.conflict === true || row.index === "U" || row.worktree === "U"))
     blockers.push("unresolved_conflict");
+  // Whole-file authorization cannot establish ownership of an already staged patch.
+  // Preserve both versions; a separately reviewed patch handoff must resolve this first.
+  if (scopedChanges.some((row) => ![" ", "?", "."].includes(row.index) && ![" ", "."].includes(row.worktree)))
+    blockers.push("partial_staging_requires_patch_handoff");
   if (paths.some((p) => !scopedChanges.some((row) => row.path === p))) blockers.push("scope_has_no_change");
-  const deleted = list(o.deletedPaths);
+  // Assess this task's deletions. A redundant inventory field cannot hide a
+  // deletion recorded in porcelain status, and unrelated work stays untouched.
+  const deleted = [
+    ...new Set([
+      ...list(o.deletedPaths).filter((path) => paths.includes(path)),
+      ...scopedChanges.filter((row) => row.index === "D" || row.worktree === "D").map((row) => row.path),
+    ]),
+  ];
+  if (deleted.some((path) => !list(s.reviewedDeletions).includes(path))) blockers.push("unreviewed_deletion");
   if (deleted.length > 20 || deleted.length > o.trackedCount * 0.2) blockers.push("bulk_deletion");
   return result("checkpoint_eligible", blockers);
 }
@@ -146,5 +158,13 @@ export function checkRelease(evidence, { now = Date.now() } = {}) {
   ]) {
     if (e[field] !== true) blockers.push(code);
   }
-  return result("release_eligible", blockers);
+  // This public, pure function receives serialized data. No caller-supplied flag
+  // can turn it into native authorization or authenticate a check's producer.
+  // Keep the structural assessment useful, but require the real publisher to
+  // collect trusted facts and enforce authority/lease at its existing boundary.
+  return {
+    ...result("release_eligible", [...blockers, "trusted_publisher_required"]),
+    assessment: result("evidence_complete", blockers),
+    authorityGranted: false,
+  };
 }

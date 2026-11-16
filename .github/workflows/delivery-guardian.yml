@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [feat/delivery-guardian-20261116]
+    branches: [feat/delivery-guardian-20261116, feat/delivery-guardian-cross-project-v11-20261116]
   workflow_dispatch:
 permissions:
   contents: read
