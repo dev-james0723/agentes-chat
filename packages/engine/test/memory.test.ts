@@ -420,6 +420,71 @@ describe("reflect (capture)", () => {
     expect(by("Reports are written in Portuguese.")).toMatchObject({ trust: "high", verified: true, scopeType: "org" });
     expect(by("Check the build before closing a task.")).toMatchObject({ trust: "high", verified: true });
   });
+
+  test("only an outcome a person stands behind backs what the job derives: a run's end or an agent's own ticks never do", async () => {
+    const lesson = (req: ModelRequest, content: string, cite: string) => ({
+      kind: "lesson",
+      subject: content,
+      content,
+      confidence: 0.9,
+      sources: [refOf(req, cite)],
+      about_agent: "",
+      scope: "org",
+      lasting: true,
+    });
+    f = await setup({
+      reply: (req) =>
+        isReflect(req)
+          ? {
+              chunks: [
+                JSON.stringify({
+                  summary: "",
+                  items: [
+                    lesson(req, "Retry the export when a run fails.", "provider outage"),
+                    lesson(req, "Tick the criteria once the report is posted.", "agent ticked"),
+                    lesson(req, "Name the criteria a reviewer checks.", "person ticked"),
+                    lesson(req, "Ask before deleting a branch.", "delete refused"),
+                  ],
+                  entities: [],
+                }),
+              ],
+            }
+          : { chunks: ["ok"] },
+    });
+    const root = await post(f, "@dev post the weekly report");
+    await agentSays(f, f.agent.id, "Posted the report.", root.id);
+    const outcome = (kind: string, polarity: string, source: string, summary: string, details = {}) => ({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      kind,
+      polarity,
+      source,
+      summary,
+      details,
+      threadRootId: root.id,
+    });
+    await f.db.insert(schema.outcomes).values([
+      outcome("run_failed", "negative", "run", "provider outage", { code: "provider", cause: "outage" }),
+      outcome("criteria_met", "positive", "issue", "agent ticked", {
+        checkedBy: [{ type: "agent", id: f.agent.id }],
+      }),
+      outcome("criteria_met", "positive", "issue", "person ticked", {
+        checkedBy: [
+          { type: "person", id: f.owner.id },
+          { type: "person", id: f.owner.id },
+        ],
+      }),
+      outcome("approval_refused", "negative", "approval", "delete refused"),
+    ]);
+
+    await reflectThread(f.context, { orgId: f.org.id, threadRootId: root.id });
+    const rows = await f.db.select().from(schema.contextItems);
+    const by = (content: string) => rows.find((i) => i.content === content);
+    for (const content of ["Retry the export when a run fails.", "Tick the criteria once the report is posted."])
+      expect([content, by(content)?.trust, by(content)?.scopeType]).toEqual([content, "low", "channel"]);
+    for (const content of ["Name the criteria a reviewer checks.", "Ask before deleting a branch."])
+      expect([content, by(content)?.trust, by(content)?.scopeType]).toEqual([content, "high", "org"]);
+  });
 });
 
 describe("feedback", () => {

@@ -16,7 +16,7 @@ import {
   supersede,
 } from "./items";
 import { overlap } from "./judgments";
-import { jobBacked, LASTING_RULE, STANDING_KINDS } from "./lasting";
+import { jobBacked, LASTING_RULE, personBehindOutcome, STANDING_KINDS } from "./lasting";
 import { type Outcome, outcomesForThread } from "./outcomes";
 import { proposeFromItem } from "./proposals";
 import {
@@ -287,7 +287,10 @@ export async function reflectThread(
         sourceIds.push(s.outcome.id);
       }
     }
-    const trust = trusted && jobBacked(item.kind, evidence) ? "high" : "low";
+    const vouched = new Set(
+      sources.flatMap((s) => (s.outcome && personBehindOutcome(s.outcome) ? [s.outcome.id] : [])),
+    );
+    const trust = trusted && jobBacked(item.kind, evidence, vouched) ? "high" : "low";
     const orgWide = item.scope === "org" && trust === "high";
     try {
       const res = await consolidateItem(
