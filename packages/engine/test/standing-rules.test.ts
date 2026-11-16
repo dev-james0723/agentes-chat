@@ -162,8 +162,12 @@ describe("rules people gave", () => {
     expect(refused).toMatchObject({ isError: true });
     expect(refused?.content).toContain("Another agent's words or a page's never make one");
     expect(await rules()).toHaveLength(1);
-    // What Ana told Dev in their DM is in reach of a run for her, wherever it is.
-    expect((await toolResults("search_context"))[0]?.content).toContain("Manda as ofertas");
+    // The accepted rule above still applies, but the public-origin hand-off cannot disclose its private source.
+    const search = (await toolResults("search_context"))[0];
+    expect(search).toBeDefined();
+    expect(search?.isError).toBeFalsy();
+    expect(search?.content).toBe("No results.");
+    expect(search?.content).not.toContain("Manda as ofertas");
   }, 60_000);
 
   test("a member's rule holds in their own runs and their routines; the owner's in everyone's", async () => {

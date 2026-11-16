@@ -312,7 +312,7 @@ export async function agentSearchChannels(
  * The conversation the routine of this room reports to, when its creator is still a member of it and of the
  * workspace: its runs summarize it, so they read what the creator reads there and nothing else. Null otherwise.
  */
-async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
+export async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
   const routineId = roomKey.match(/\|r:([^|]+)$/)?.[1];
   if (!routineId) return null;
   const [routine] = await db
@@ -444,7 +444,7 @@ export async function searchVisible(
           .catch(() => null)
       : null;
   const index = await deps.search.forOrg(input.orgId);
-  return index.query({
+  const hits = await index.query({
     text: input.text,
     embedding: embedded?.vectors[0] ?? null,
     embeddingModel: embedded?.model,
@@ -462,6 +462,39 @@ export async function searchVisible(
     messages: input.messages,
     sort: input.sort,
   });
+  const ids = hits.filter((h) => h.kind === "context_item").map((h) => h.sourceId);
+  const canonical = ids.length
+    ? await deps.db
+        .select()
+        .from(contextItems)
+        .where(
+          and(
+            eq(contextItems.orgId, input.orgId),
+            inArray(contextItems.id, ids),
+            eq(contextItems.status, "active"),
+            isNull(contextItems.supersededBy),
+          ),
+        )
+    : [];
+  const current = new Map(
+    canonical
+      .filter((item) => item.channelIds.every((id) => input.visibleChannelIds.includes(id)))
+      .map((item) => [item.id, item]),
+  );
+  return hits
+    .filter((hit) => hit.kind !== "context_item" || current.has(hit.sourceId))
+    .map((hit) => {
+      const item = hit.kind === "context_item" ? current.get(hit.sourceId) : undefined;
+      return item
+        ? {
+            ...hit,
+            channelIds: item.channelIds,
+            title: `${item.kind}${item.title ? `: ${item.title}` : ""}`,
+            snippet: cutText(item.content, 500),
+            createdAt: item.createdAt,
+          }
+        : hit;
+    });
 }
 
 /** A person's search filters (ADR 0123): what `searchForUser` takes besides the words. */

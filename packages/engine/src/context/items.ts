@@ -205,6 +205,22 @@ export const accessSql = () =>
 export const personMayRead = (item: ContextItem | undefined, person: string | null, agentId: string) =>
   !item || ((!item.agentId || item.agentId === agentId) && (item.scopeType !== "person" || item.scopeId === person));
 
+/** Current canonical eligibility; index ACLs and snippets are candidate hints, never authority. */
+export const currentItemVisible = (
+  item: ContextItem | undefined,
+  orgId: string,
+  agentId: string,
+  channelIds: readonly string[],
+) =>
+  Boolean(
+    item &&
+      item.orgId === orgId &&
+      item.status === "active" &&
+      !item.supersededBy &&
+      (!item.agentId || item.agentId === agentId) &&
+      item.channelIds.every((id) => channelIds.includes(id)),
+  );
+
 export const learnedQuietly = (i: Pick<ContextItem, "kind" | "agentId" | "scopeType" | "createdByKind" | "evidence">) =>
   isPlaybook(i) || !i.evidence.some((e) => e.type === "human");
 /**
@@ -941,16 +957,129 @@ export async function listTeamMemories(db: Database, actorId: string, orgId: str
 }
 
 /**
+ * A review-memory role does not declassify private sources. Until memory has its own reviewed publication
+ * artifact, whole-team promotion accepts only live public sources. Walk native source IDs, with a hard bound;
+ * missing, private, withdrawn or untyped sources require an explicit publication decision instead.
+ */
+export async function requirePublicMemorySources(
+  db: Executor,
+  orgId: string,
+  item: Pick<ContextItem, "id" | "scopeType" | "channelIds" | "sourceIds"> &
+    Partial<Pick<ContextItem, "agentId" | "createdByKind" | "createdById" | "evidence">>,
+) {
+  const refuse = () => {
+    throw new ForbiddenError(
+      "This memory needs a reviewed publication decision before it can be shared with the whole team.",
+      "context.private_publication_required",
+    );
+  };
+  const requireKnownScope = (node: typeof item) => {
+    if (node.scopeType === "person") refuse();
+    const nativeManualOrgItem =
+      node.scopeType === "org" &&
+      node.agentId === null &&
+      node.createdByKind === "person" &&
+      Boolean(node.createdById) &&
+      node.evidence?.some((e) => e.type === "human" && e.ref === node.createdById);
+    if (!node.sourceIds.length && !node.channelIds.length && !nativeManualOrgItem) refuse();
+  };
+  requireKnownScope(item);
+  const channels = new Set(item.channelIds);
+  const seen = new Set<string>();
+  const dependencies = new Map<string, string[]>([[item.id, item.sourceIds]]);
+  let pending = [...new Set(item.sourceIds)];
+  let inspected = 0;
+  while (pending.length) {
+    const ids = pending.filter((id) => !seen.has(id));
+    if (!ids.length) break;
+    inspected += ids.length;
+    if (inspected > 64) refuse();
+    for (const id of ids) seen.add(id);
+    const [sourceMessages, sourceOutcomes, sourceItems] = await Promise.all([
+      db
+        .select({ id: messages.id, channelId: messages.channelId, deletedAt: messages.deletedAt })
+        .from(messages)
+        .where(and(eq(messages.orgId, orgId), inArray(messages.id, ids))),
+      db
+        .select({ id: schema.outcomes.id, channelId: schema.outcomes.channelId })
+        .from(schema.outcomes)
+        .where(and(eq(schema.outcomes.orgId, orgId), inArray(schema.outcomes.id, ids))),
+      db
+        .select()
+        .from(contextItems)
+        .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, ids))),
+    ]);
+    if (new Set([...sourceMessages, ...sourceOutcomes, ...sourceItems].map((s) => s.id)).size !== ids.length) refuse();
+    for (const source of sourceMessages) {
+      if (source.deletedAt) refuse();
+      channels.add(source.channelId);
+    }
+    for (const source of sourceOutcomes) {
+      if (!source.channelId) refuse();
+      else channels.add(source.channelId);
+    }
+    pending = [];
+    for (const source of sourceItems) {
+      requireKnownScope(source);
+      if (source.status !== "active" || source.supersededBy || source.scopeType === "person") refuse();
+      for (const id of source.channelIds) channels.add(id);
+      dependencies.set(source.id, source.sourceIds);
+      pending.push(...source.sourceIds);
+    }
+    pending = [...new Set(pending)];
+  }
+  const done = new Set<string>();
+  const visiting = new Set<string>();
+  let edges = 0;
+  const visit = (id: string) => {
+    if (++edges > 512 || visiting.has(id)) refuse();
+    if (done.has(id)) return;
+    visiting.add(id);
+    for (const child of dependencies.get(id) ?? []) visit(child);
+    visiting.delete(id);
+    done.add(id);
+  };
+  visit(item.id);
+  const ids = [...channels];
+  if (!ids.length) return;
+  const publicSources = await db
+    .select({ id: schema.channels.id })
+    .from(schema.channels)
+    .where(
+      and(
+        eq(schema.channels.orgId, orgId),
+        inArray(schema.channels.id, ids),
+        eq(schema.channels.kind, "channel"),
+        eq(schema.channels.visibility, "public"),
+        isNull(schema.channels.archivedAt),
+        isNull(schema.channels.deletedAt),
+      ),
+    );
+  if (publicSources.length !== ids.length) refuse();
+}
+
+/**
  * "Tornar do time": an agent's fact, decision, preference or rule becomes the team's, read by every agent, and the
  * copies agents kept of the same thing go (archived behind it, restorable). Who reviews memory. The person who said
  * it stays its author.
  */
 export async function makeTeamMemory(db: Database, actorId: string, orgId: string, itemId: string) {
   await requirePermission(db, actorId, orgId, "review_memory");
-  const item = await loadItem(db, orgId, itemId);
-  if (!item.agentId || item.status !== "active" || !(TEAM_KINDS as readonly string[]).includes(item.kind))
-    throw new ValidationError("Only an agent's current fact, decision, preference or rule can become the team's");
   return db.transaction(async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, itemId)))
+      .for("update");
+    if (!item) throw new NotFoundError("Item not found");
+    if (
+      !item.agentId ||
+      item.status !== "active" ||
+      item.supersededBy ||
+      !(TEAM_KINDS as readonly string[]).includes(item.kind)
+    )
+      throw new ValidationError("Only an agent's current fact, decision, preference or rule can become the team's");
+    await requirePublicMemorySources(tx, orgId, item);
     const team = await insertContextItem(tx, {
       orgId,
       kind: item.kind,
