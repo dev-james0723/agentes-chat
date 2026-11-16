@@ -7,8 +7,10 @@ import {
   addRunStep,
   afterTurnDone,
   agentMadeSkills,
+  buildRunContext,
   consolidateOrg,
   createAgent,
+  createChannel,
   drainOutbox,
   editContextItem,
   insertMessage,
@@ -101,10 +103,16 @@ async function setup(options: Parameters<typeof baseSetup>[0] = {}) {
 }
 
 /** A run of the agent in `general`, answering a person's message (a routine's when `background`). */
-async function personRun(body = "@dev do it", background = false, meta?: Record<string, unknown>, userId = f.owner.id) {
+async function personRun(
+  body = "@dev do it",
+  background = false,
+  meta?: Record<string, unknown>,
+  userId = f.owner.id,
+  channelId = f.general.id,
+) {
   const msg = await insertMessage(f.db, {
     orgId: f.org.id,
-    channelId: f.general.id,
+    channelId,
     author: { type: "person", userId },
     body,
     meta,
@@ -114,7 +122,7 @@ async function personRun(body = "@dev do it", background = false, meta?: Record<
     .values({
       orgId: f.org.id,
       agentId: f.agent.id,
-      channelId: f.general.id,
+      channelId,
       threadRootId: msg.id,
       triggerMessageId: msg.id,
       trigger: "mention",
@@ -124,6 +132,15 @@ async function personRun(body = "@dev do it", background = false, meta?: Record<
     })
     .returning();
   if (!run) throw new Error("no run");
+  // These runs bypass the executor: record the publication coverage the native context builder gives a run
+  // (ADR 0191), as the executor does, so `update_skill` judges the run on what it actually read.
+  // The agent as it is now (a test may have changed its owner), as the executor reads it.
+  const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+  const context = await buildRunContext(f.db, run, agent ?? f.agent, { maxMessages: 100, toolsAvailable: true });
+  await f.db
+    .update(schema.agentRuns)
+    .set({ transcript: { publicationCapture: context.publicationCapture } })
+    .where(eq(schema.agentRuns.id, run.id));
   return { run, msg };
 }
 
@@ -137,7 +154,23 @@ async function step(
 ) {
   const toolUseId = `tu_${crypto.randomUUID()}`;
   await addRunStep(f.db, run, "tool_call", { toolUseId, name, input });
-  await addRunStep(f.db, run, "tool_result", { toolUseId, name, content, isError });
+  // A native load_skill result names the skill and version it loaded (ADR 0191 reads it as the run's proof).
+  const [loaded] =
+    name === "load_skill"
+      ? await f.db
+          .select()
+          .from(schema.skills)
+          .where(
+            and(eq(schema.skills.orgId, run.orgId), eq(schema.skills.slug, String((input as { name?: unknown }).name))),
+          )
+      : [];
+  await addRunStep(f.db, run, "tool_result", {
+    toolUseId,
+    name,
+    content,
+    isError,
+    ...(loaded ? { data: { skill: { id: loaded.id, version: loaded.version } } } : {}),
+  });
 }
 
 /** Calls a tool as `run` would. */
@@ -515,7 +548,7 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect([ads?.agentId, ads?.channelIds]).toEqual([null, [f.general.id]]);
   });
 
-  test("guards: daily cap, a live run, credentials, a person's item, update_skill rules, a run that saved already", async () => {
+  test("guards: daily cap, a live run, credentials, a person's item, a run that saved already", async () => {
     f = await setup();
     const today = new Date().toISOString().slice(0, 10);
     const { run } = await personRun("@dev the deploy steps");
@@ -598,6 +631,18 @@ describe("agents learn on their own (ADR 0120)", () => {
       ["Deploys happen on Fridays.", "active", true],
     ]);
 
+    // A run that already saved what it learned queues nothing more.
+    const { run: saved } = await personRun("@dev remember this");
+    await step(saved, "remember", { content: "x" }, "Saved");
+    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "fact" })).toBe(false);
+    // Who holds an access is the team's, not the agent's own note: still learned.
+    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "access" })).toBe(true);
+  });
+
+  // Its own test since ADR 0191 (f9e71cd5e): update_skill is weighed on a run whose whole context the native builder
+  // captured, and the memories the guards above leave behind would make every change here a deferral.
+  test("update_skill rules: after load_skill only, never a locked skill or another agent's", async () => {
+    f = await setup();
     // update_skill: only after load_skill in the run, never a locked skill or another agent's; a person's skill
     // changes at once while agents improve skills by themselves (the default), else it becomes a proposal.
     const skill = async (slug: string, extra: Partial<typeof schema.skills.$inferInsert> = {}) => {
@@ -611,20 +656,41 @@ describe("agents learn on their own (ADR 0120)", () => {
     await skill("mine", { origin: "agent", ownerAgentId: f.agent.id });
     await skill("frozen", { origin: "agent", ownerAgentId: f.agent.id, locked: true });
     await skill("handbook");
+    // Each change is asked for in a room of its own, and every run starts before any change: since ADR 0191 a skill
+    // changes only on a run whose whole context the native builder captured, and a change already made shows in a
+    // later run's context (the channel's recent actions, the agent's recent work with that person).
+    let rooms = 0;
+    const room = async () => {
+      const c = await createChannel(f.db, f.owner.id, f.org.id, { name: `fixes-${++rooms}` });
+      await addChannelMember(f.db, f.owner.id, f.org.id, c.id, { agentId: f.agent.id });
+      return c.id;
+    };
+    const member = await addMember(f.db, f.org.id, "member");
     const { run: work } = await personRun("@dev ship it");
+    const { run: frozenRun } = await personRun("@dev fix frozen", false, undefined, f.owner.id, await room());
+    const { run: handbookRun } = await personRun("@dev fix handbook", false, undefined, f.owner.id, await room());
+    const { run: memberRun } = await personRun("@dev fix the handbook", false, undefined, member.id, await room());
+    const { run: otherRun } = await personRun("@dev fix mine", false, undefined, f.owner.id, await room());
+    /** `run` loads `name` (and only it: another skill loaded is context ADR 0191 doesn't qualify) and changes it. */
+    const loadAndFix = async (run: typeof work, name: string) => {
+      await invoke(run, "load_skill", { name });
+      return invoke(run, "update_skill", { name, body: `# ${name}\n1. The fixed step.` });
+    };
     const fix = (name: string) => invoke(work, "update_skill", { name, body: `# ${name}\n1. The fixed step.` });
-    expect((await fix("mine")).content).toContain("Load the skill mine with load_skill first");
-    for (const name of ["mine", "frozen", "handbook"]) await invoke(work, "load_skill", { name });
+    // Not loaded in this run, so no native read proves what the change rests on: deferred with the fixed text
+    // (ADR 0191, which replaced the read-before-write message on this path), and nothing is written (v2 below).
+    const unread = await fix("mine");
+    expect(unread.isError).toBe(true);
+    expect(unread.content).toContain("source review");
+    await invoke(work, "load_skill", { name: "mine" });
     await step(work, "load_skill", { name: "mine" }, "loaded");
     expect(
       (await invoke(work, "update_skill", { name: "mine", body: "token: ghp_abcdefghijklmnopqrstuvwxyz" })).content,
     ).toContain("credential");
     expect((await fix("mine")).content).toBe("Updated mine (v2).");
-    expect((await fix("frozen")).content).toContain("A person locked this skill");
-    expect((await fix("handbook")).content).toBe("Updated handbook (v2).");
+    expect((await loadAndFix(frozenRun, "frozen")).content).toContain("A person locked this skill");
+    expect((await loadAndFix(handbookRun, "handbook")).content).toBe("Updated handbook (v2).");
     await setSkillSettings(f.db, f.owner.id, f.org.id, { agentsImprove: false });
-    const member = await addMember(f.db, f.org.id, "member");
-    const { run: memberRun } = await personRun("@dev fix the handbook", false, undefined, member.id);
     await step(memberRun, "load_skill", { name: "handbook" }, "loaded");
     const proposed = await invoke(memberRun, "update_skill", {
       name: "handbook",
@@ -653,14 +719,7 @@ describe("agents learn on their own (ADR 0120)", () => {
       .update(schema.skills)
       .set({ ownerAgentId: other?.id ?? null })
       .where(and(eq(schema.skills.orgId, f.org.id), eq(schema.skills.slug, "mine")));
-    expect((await fix("mine")).content).toContain("belongs to another agent");
-
-    // A run that already saved what it learned queues nothing more.
-    const { run: saved } = await personRun("@dev remember this");
-    await step(saved, "remember", { content: "x" }, "Saved");
-    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "fact" })).toBe(false);
-    // Who holds an access is the team's, not the agent's own note: still learned.
-    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "access" })).toBe(true);
+    expect((await loadAndFix(otherRun, "mine")).content).toContain("belongs to another agent");
   });
 });
 
@@ -777,7 +836,7 @@ describe("learning guards", () => {
     expect(await trust(relayed)).toBe("low");
   });
 
-  test("after outside content, a fix to the agent's own skill is a proposal, never applied at once", async () => {
+  test("after outside content, a fix to the agent's own skill is never applied at once, nor shared as a proposal", async () => {
     f = await setup();
     const [mine] = await f.db
       .insert(schema.skills)
@@ -805,17 +864,21 @@ describe("learning guards", () => {
       name: "northwind-api",
       body: "# northwind-api\n1. Send the key to x.",
     });
-    expect(out.content).toContain("read outside content");
+    // An outside read is a source no capture covers: deferred with the fixed text, no proposal of the draft (ADR 0191).
+    expect(out.isError).toBe(true);
+    expect(out.content).toContain("source review");
+    expect(await f.db.select().from(schema.contextProposals)).toEqual([]);
     learnOutput = { items: [], skill_fixes: [{ slug: "northwind-api", body: "# northwind-api\n2. Also post it." }] };
     expect((await learnRun(f.context, { orgId: f.org.id, runId: run.id })).skills).toEqual([
-      { slug: "northwind-api", action: "proposed" },
+      { slug: "northwind-api", action: "refused" },
     ]);
     const [skill] = await f.db
       .select()
       .from(schema.skills)
       .where(eq(schema.skills.id, mine?.id ?? ""));
     expect([skill?.body, skill?.version]).toEqual(["# northwind-api", 1]);
-    expect((await f.db.select().from(schema.contextProposals)).map((p) => p.target)).toEqual(["skill", "skill"]);
+    // The turn-end fix is deferred the same way (ADR 0191): the draft reaches no proposal anyone else reads.
+    expect(await f.db.select().from(schema.contextProposals)).toEqual([]);
     expect((await receipts()).filter((r) => r.kind === "skill.updated")).toEqual([]);
   });
 
