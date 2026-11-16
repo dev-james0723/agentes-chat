@@ -283,6 +283,29 @@ export async function namesSomeone(db: Executor, orgId: string, text: string): P
   return people.some((p) => wordList(p.name).some((w) => w.length >= 3 && said.has(w)));
 }
 
+/** Runs of Chinese, Japanese or Korean letters: nothing splits their words, so a name hides inside a longer run. */
+const CJK_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu;
+
+/**
+ * `namesSomeone`, stricter, for what leaves the conversation it was learned in: a member's name of 2 letters or more
+ * as a word, and one written in Chinese, Japanese or Korean (2 characters or more) anywhere inside the text
+ * ("陳大文嘅報告").
+ */
+export async function namesSomeoneAnywhere(db: Executor, orgId: string, text: string): Promise<boolean> {
+  if (hasContact(text)) return true;
+  const said = new Set(wordList(text));
+  const people = await db
+    .select({ name: schema.users.name })
+    .from(schema.organizationMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.organizationMembers.userId))
+    .where(eq(schema.organizationMembers.orgId, orgId));
+  return people.some(
+    (p) =>
+      wordList(p.name).some((w) => w.length >= 2 && said.has(w)) ||
+      (p.name.match(CJK_RUN) ?? []).some((run) => text.includes(run)),
+  );
+}
+
 /**
  * Where a how-to saved in `channel` is read (ADR 0167): one worked out in an agents' DM that names nobody reaches the
  * agent's other work; anything else stays where it was worked out.

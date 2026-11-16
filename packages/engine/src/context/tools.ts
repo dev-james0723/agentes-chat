@@ -35,6 +35,7 @@ import { personWords, runReadOutsideById, UNASKED_DESTINATION, unaskedDestinatio
 import { publicationItemHash, registerNativePublicationReader } from "../private-skill-publication";
 import { personBehindCall, wikiActorOfCall } from "../requester";
 import { isRightHandId, rightHandReader } from "../right-hand";
+import { isRoutineRoomKey } from "../routine-brief";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
 import { closedRefusal } from "../standing";
 import { noAgentText } from "../team";
@@ -60,7 +61,7 @@ import {
   isTeamWide,
   learnedQuietly,
   mayEditItem,
-  namesSomeone,
+  namesSomeoneAnywhere,
   personMayRead,
   personSaid,
   RECHECK_AFTER_DAYS,
@@ -664,7 +665,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           const said = (rule || input.basis !== "found") && person !== null && author?.id === person;
           // "Everywhere" from a DM reaches this person's runs only: what they said there never reads in someone else's.
           const [here] = await ctx.db
-            .select({ kind: schema.channels.kind })
+            .select({ kind: schema.channels.kind, dmKey: schema.channels.dmKey })
             .from(schema.channels)
             .where(and(eq(schema.channels.orgId, ctx.orgId), eq(schema.channels.id, ctx.channelId)));
           const theirsAlone =
@@ -687,11 +688,13 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               kept.person !== null ||
               !["fact", "note"].includes(str(input.kind) || "fact")
                 ? OWN_LESSON_ONLY
-                : outside
-                  ? OWN_LESSON_OUTSIDE
-                  : (await namesSomeone(ctx.db, ctx.orgId, `${str(input.title)}\n${content}`))
-                    ? OWN_LESSON_NAMES
-                    : null;
+                : here?.kind === "dm" && !isRoutineRoomKey(here.dmKey)
+                  ? OWN_LESSON_DM
+                  : outside
+                    ? OWN_LESSON_OUTSIDE
+                    : (await namesSomeoneAnywhere(ctx.db, ctx.orgId, `${str(input.title)}\n${content}`))
+                      ? OWN_LESSON_NAMES
+                      : null;
             if (refused) return { content: refused, isError: true };
           }
           if (input.for === "team") {
@@ -724,7 +727,8 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               // Only when a person said it. What the right hand keeps for a person stays in their DM with it.
               // Its rule too: it holds by its giver, not by channel (`rulesForPerson`), and lists only to who reads there.
               channelIds: mine || ((rule || input.everywhere === true) && !kept.person && said) ? [] : [ctx.channelId],
-              trust: said ? "high" : trust,
+              // An agent's own finding read in all its work stays low trust (unverified): never promoted or shared.
+              trust: said ? "high" : mine ? "low" : trust,
               evidence: said
                 ? [
                     {
@@ -735,7 +739,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                     },
                   ]
                 : [{ type: "self", ref: ctx.triggerMessageId, agentId: ctx.agentId, at: new Date().toISOString() }],
-              confidence: said ? 0.95 : trust === "low" ? 0.5 : 0.75,
+              confidence: said ? 0.95 : mine || trust === "low" ? 0.5 : 0.75,
               createdByKind: said ? "person" : "agent",
               createdById: said ? person : ctx.agentId,
             },
@@ -1197,6 +1201,8 @@ const OWN_LESSON_ONLY =
   'Not saved: applies: "everywhere_for_me" is for a fact or note you found out yourself on how things work. A person\'s words follow everywhere; save this without applies.';
 const OWN_LESSON_OUTSIDE =
   "Not saved: this run read outside content (a page, mail, an app), so what you learned can't reach your other conversations. Save it without applies.";
+const OWN_LESSON_DM =
+  'Not saved: applies: "everywhere_for_me" is not for what you found in a private conversation with a person or between agents; it stays here. Save it without applies.';
 const OWN_LESSON_NAMES =
   "Not saved: it names someone, so it would carry this conversation elsewhere. Write only the method, naming nobody, or save it without applies.";
 const TEAM_NOT_THEIRS =
