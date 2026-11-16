@@ -440,7 +440,7 @@ describe("reflect (capture)", () => {
                 JSON.stringify({
                   summary: "",
                   items: [
-                    lesson(req, "Retry the export when a run fails.", "provider outage"),
+                    lesson(req, "Retry the export when a run fails.", "tests failed"),
                     lesson(req, "Tick the criteria once the report is posted.", "agent ticked"),
                     lesson(req, "Name the criteria a reviewer checks.", "person ticked"),
                     lesson(req, "Ask before deleting a branch.", "delete refused"),
@@ -462,9 +462,11 @@ describe("reflect (capture)", () => {
       summary,
       details,
       threadRootId: root.id,
+      // Outcomes of the thread's own conversation: those of another reach no reflection here.
+      channelId: root.channelId,
     });
     await f.db.insert(schema.outcomes).values([
-      outcome("run_failed", "negative", "run", "provider outage", { code: "provider", cause: "outage" }),
+      outcome("run_failed", "negative", "run", "tests failed", { code: "tests_failed", cause: "work" }),
       outcome("criteria_met", "positive", "issue", "agent ticked", {
         checkedBy: [{ type: "agent", id: f.agent.id }],
       }),
