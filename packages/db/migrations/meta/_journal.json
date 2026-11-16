@@ -1891,6 +1891,20 @@
       "when": 1794745400009,
       "tag": "0271_usage_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 272,
+      "version": "7",
+      "when": 1794846834423,
+      "tag": "0272_native_capability_foundry",
+      "breakpoints": true
+    },
+    {
+      "idx": 273,
+      "version": "7",
+      "when": 1794847375031,
+      "tag": "0273_foundry_recovery_revision",
+      "breakpoints": true
     }
   ]
 }

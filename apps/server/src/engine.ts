@@ -48,6 +48,7 @@ import {
   createFeedbackToolSource,
   createFindAgentToolSource,
   createFollowUpToolSource,
+  createFoundryToolSource,
   createGitHubAppSettings,
   createGitToolSource,
   createHandOffToolSource,
@@ -477,6 +478,8 @@ export function buildEngine(o: EngineOptions) {
         judge: context.judge,
         computer: sandbox,
       }),
+      // Drafts default off. A connected computer is never a qualified Foundry executor.
+      createFoundryToolSource({ db, blobs: artifacts.blobs, enabled: config.FOUNDRY_ENABLED }),
       createCalendarToolSource({ db, pubsub: adapters.pubsub, publicUrl: config.PUBLIC_URL }),
       createScheduleToolSource({
         pubsub: adapters.pubsub,

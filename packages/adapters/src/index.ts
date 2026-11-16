@@ -23,6 +23,7 @@ export * from "./database";
 export * from "./email";
 export * from "./error-reports";
 export * from "./error-scrub";
+export * from "./foundry-executor";
 export * from "./gifs";
 export { cleanOutside, decodeEntities, hasInvisible, htmlToText, replaceDisguised } from "./html-text";
 export * from "./human-check";

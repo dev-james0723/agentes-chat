@@ -373,6 +373,15 @@ export const envVars = {
       "Jev model for judgments over images (an agent finding a target on a screenshot of its browser or desktop). Needs a release that takes images.",
     section: "Agents",
   },
+  FOUNDRY_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    description:
+      "Enable task-scoped capability drafts and native review tools. Off by default. Execution additionally requires an independently qualified server adapter and protected evaluator; this flag grants no execution authority.",
+    section: "Agents",
+  },
   SKILL_READ_CANARY: {
     schema: z
       .string()
