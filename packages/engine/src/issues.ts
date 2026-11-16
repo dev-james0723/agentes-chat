@@ -998,6 +998,9 @@ export async function publishDeferredIssueCreated(deps: IssueDeps, orgId: string
   if (row) await announce(deps, orgId, await one(deps.db, row), "issue.created");
 }
 
+/** The largest number an issue can have (an integer column): no task has one past it, and comparing it fails the query. */
+export const MAX_ISSUE_NUMBER = 2_147_483_647;
+
 export async function findVisible(
   db: Database,
   actor: IssueActor,
@@ -1005,6 +1008,9 @@ export async function findVisible(
   where: { id?: string; number?: number },
 ) {
   await requireOrgMember(db, actor, orgId);
+  // A number the column can't hold (past its range, or not whole) is no task's, whoever asks and by which way in.
+  if (where.number !== undefined && !(Number.isInteger(where.number) && where.number <= MAX_ISSUE_NUMBER))
+    throw new NotFoundError("Issue not found");
   const [row] = await db
     .select()
     .from(issues)
@@ -1093,7 +1099,9 @@ export async function listIssues(
           ? or(
               sql`${issues.title} ilike ${`%${q}%`}`,
               sql`${issues.description} ilike ${`%${q}%`}`,
-              /^#?\d+$/.test(q) ? eq(issues.number, Number(q.replace("#", ""))) : undefined,
+              /^#?\d+$/.test(q) && Number(q.replace("#", "")) <= MAX_ISSUE_NUMBER
+                ? eq(issues.number, Number(q.replace("#", "")))
+                : undefined,
             )
           : undefined,
       ),

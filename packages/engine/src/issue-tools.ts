@@ -6,7 +6,7 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
-import { refusalData } from "./errors";
+import { NotFoundError, refusalData } from "./errors";
 import { projectByName } from "./issue-projects";
 import {
   askAgentToImplement,
@@ -138,11 +138,25 @@ async function describeIssue(deps: IssueDeps, ctx: ToolContext, i: IssueView) {
     .join("\n");
 }
 
-/** Resolves `issue` as an id or a number (`131`, `#131`). */
-/** An issue's number (#131) or id, as `getIssue` takes it. */
+/**
+ * An issue's number (`131`, `#131`) or id, as `getIssue` takes it. Anything else names no task, and is refused here:
+ * the id column is a UUID, so other text there fails the query (its SQL shown to the agent, the outcome unknown to
+ * the run) instead of finding nothing. A number past its column's range finds nothing in the lookup itself
+ * (`findVisible`). A key in another tracker's style ("ABC-131") is not read as #131: that number could be any tracker's.
+ */
 const issueKey = (ref: string) => {
-  const n = /^#?(\d+)$/.exec(ref.trim());
-  return n ? { number: Number(n[1]) } : { id: ref.trim() };
+  // Characters that can't be seen (control and format ones: a zero-width space, a byte order mark) name nothing at
+  // either end, like spaces: a pasted number often brings one.
+  const text = ref.replace(/^[\s\p{Cc}\p{Cf}]+|[\s\p{Cc}\p{Cf}]+$/gu, "");
+  const n = /^#?(\d+)$/.exec(text);
+  if (n) return { number: Number(n[1]) };
+  if (UUID.test(text)) return { id: text };
+  // Said back as it can be read, saying so when part of it can't, and with no example that is itself a number.
+  const shown = text.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  const unseen = shown.length === text.length ? "" : " (shown without the characters in it that can't be seen)";
+  throw new NotFoundError(
+    `Issue not found: "${shown.slice(0, 64)}"${unseen} is not a task number or id. Give its number as list_issues shows it, or its id; list_issues finds a task by words (query).`,
+  );
 };
 
 async function find(deps: IssueDeps, ctx: ToolContext, ref: string) {
@@ -638,6 +652,8 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
             if (refused) return { content: refused, isError: true };
           }
           const due = typeof input.due_date === "string" ? input.due_date.trim() : undefined;
+          // Before anything is written (a new project, just below): a reference to no task ends the call here.
+          await find(deps, ctx, str(input.issue));
           const projectId = await chosenProject(deps, ctx, input);
           let before: Record<string, unknown> = {};
           const asked = givenFiles(input) ?? [];
