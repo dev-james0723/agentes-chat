@@ -1424,8 +1424,9 @@ export async function setCriterion(
       event: "criterion_checked",
       data: { criterionId, done, text: cutText(criterion.text, 80) },
     });
-    // The last one checked: every acceptance criterion met, and who checked each (a person's check weighs more).
-    if (done && !criterion.done && criteria.every((c) => c.done))
+    // The last one checked: every acceptance criterion met, and who checked each.
+    // People vouch for each one: an agent ticking its own criteria is no outcome.
+    if (done && !criterion.done && criteria.every((c) => c.done && c.doneBy?.type === "person"))
       await recordOutcome(tx, {
         ...taskOutcome(updated, actor),
         kind: "criteria_met",

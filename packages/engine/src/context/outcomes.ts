@@ -1,4 +1,17 @@
-import { and, type Database, desc, type Executor, eq, gte, inArray, ne, or, schema } from "@agenteschat/db";
+import {
+  and,
+  type Database,
+  desc,
+  type Executor,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  notInArray,
+  or,
+  schema,
+  sql,
+} from "@agenteschat/db";
 
 const { outcomes } = schema;
 
@@ -82,7 +95,7 @@ type FinishedRun = Pick<
 export async function recordRunOutcome(
   db: Executor,
   run: FinishedRun,
-  failure?: { code: string | null; cause: string | null },
+  failure?: { code: string | null; cause: string | null; infra?: boolean },
 ): Promise<void> {
   const hold = (run.transcript as { effectUncertain?: { tools?: unknown } | null } | null)?.effectUncertain;
   const kind: OutcomeKind | null =
@@ -103,7 +116,7 @@ export async function recordRunOutcome(
     runId: run.id,
     summary: run.status === "done" ? "" : (run.error ?? ""),
     details: {
-      ...(failure ? { code: failure.code, cause: failure.cause } : {}),
+      ...(failure ? { code: failure.code, cause: failure.cause, ...(failure.infra ? { infra: true } : {}) } : {}),
       ...(hold && Array.isArray(hold.tools) ? { tools: hold.tools } : {}),
       ...(run.issueId ? { issueId: run.issueId } : {}),
     },
@@ -130,13 +143,15 @@ export async function attributeSubject(db: Database, orgId: string, subject: str
 }
 
 /**
- * Outcomes relevant to a thread: recorded in it, or by its agents since `since`. A run that simply finished
- * (`run_done`) teaches nothing on its own and would crowd out the outcomes that do.
+ * Outcomes relevant to a thread: recorded in it, or by its agents since `since`. What says nothing about the work is
+ * left out: a run that simply finished (`run_done`) or was canceled, and a failure of the infrastructure (a provider,
+ * a plan, the computer). A run's or a task's outcome carries its own words (an error, a task's title), so one from
+ * another conversation reaches this one only when it belongs to no conversation (`channelId`).
  */
 export async function outcomesForThread(
   db: Database,
   orgId: string,
-  input: { threadRootId: string; agentIds: string[]; since: Date; limit?: number },
+  input: { threadRootId: string; channelId?: string; agentIds: string[]; since: Date; limit?: number },
 ) {
   return db
     .select()
@@ -144,7 +159,13 @@ export async function outcomesForThread(
     .where(
       and(
         eq(outcomes.orgId, orgId),
-        ne(outcomes.kind, "run_done"),
+        notInArray(outcomes.kind, ["run_done", "run_canceled"]),
+        sql`not (${outcomes.kind} = 'run_failed' and coalesce(${outcomes.details}->>'infra', '') = 'true')`,
+        or(
+          notInArray(outcomes.source, ["run", "issue"]),
+          isNull(outcomes.channelId),
+          input.channelId ? eq(outcomes.channelId, input.channelId) : undefined,
+        ),
         or(
           eq(outcomes.threadRootId, input.threadRootId),
           input.agentIds.length > 0

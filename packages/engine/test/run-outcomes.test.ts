@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import {
   createIssue,
+  NO_AI,
   outcomesForThread,
   postPersonMessage,
   recordOutcome,
@@ -111,6 +112,93 @@ describe("a terminal outcome for every run, from what the platform knows", () =>
     });
     expect(rows.map((r) => r.kind)).toEqual(["approval_refused"]);
   });
+
+  test("reflection leaves out cancels and failures of the infrastructure, not failures of the work", async () => {
+    f = await setup();
+    const thread = (await runningRun()).threadRootId;
+    const runIn = async () => {
+      const msg = await postPersonMessage(deps(), f.owner.id, f.org.id, f.general.id, {
+        body: "again",
+        threadId: thread,
+      });
+      const [run] = await f.db
+        .insert(schema.agentRuns)
+        .values({
+          orgId: f.org.id,
+          agentId: f.agent.id,
+          channelId: f.general.id,
+          threadRootId: thread,
+          triggerMessageId: msg.id,
+          trigger: "mention",
+          hop: 1,
+          status: "running",
+          startedAt: new Date(),
+        })
+        .returning();
+      if (!run) throw new Error("no run");
+      return run;
+    };
+    await transitionRun(f.db, (await runIn()).id, "running", "failed", { error: "too_many_tool_calls" });
+    await transitionRun(f.db, (await runIn()).id, "running", "failed", { error: "x", failure: { code: "plan_limit" } });
+    await transitionRun(f.db, (await runIn()).id, "running", "failed", { error: "gave_up: overloaded" });
+    await transitionRun(f.db, (await runIn()).id, "running", "failed", { error: NO_AI });
+    await transitionRun(f.db, (await runIn()).id, "running", "canceled", { error: "canceled_by:someone" });
+    const rows = await outcomesForThread(f.db, f.org.id, {
+      threadRootId: thread,
+      channelId: f.general.id,
+      agentIds: [f.agent.id],
+      since: new Date(0),
+    });
+    expect(rows.map((r) => [r.kind, r.summary])).toEqual([["run_failed", "too_many_tool_calls"]]);
+  });
+
+  test("a run's outcome from a private conversation never reaches another conversation's reflection", async () => {
+    f = await setup();
+    const [dm] = await f.db
+      .insert(schema.channels)
+      .values({ orgId: f.org.id, name: "dm-private", kind: "dm", visibility: "private" })
+      .returning();
+    if (!dm) throw new Error("dm");
+    const msg = await postPersonMessage(deps(), f.owner.id, f.org.id, f.general.id, { body: "public" });
+    const [run] = await f.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        channelId: dm.id,
+        threadRootId: crypto.randomUUID(),
+        triggerMessageId: msg.id,
+        trigger: "mention",
+        hop: 1,
+        status: "running",
+        startedAt: new Date(),
+      })
+      .returning();
+    if (!run) throw new Error("run");
+    await transitionRun(f.db, run.id, "running", "failed", { error: "salary of Ana is late: too_many_tool_calls" });
+    const rows = await outcomesForThread(f.db, f.org.id, {
+      threadRootId: msg.id,
+      channelId: f.general.id,
+      agentIds: [f.agent.id],
+      since: new Date(0),
+    });
+    expect(rows).toEqual([]);
+  });
+
+  test("an outcome that can't be written never fails the run's end, alone or in the caller's transaction", async () => {
+    f = await setup();
+    await f.db.execute(sql`create function refuse_outcome() returns trigger language plpgsql as $$
+      begin raise exception 'outcomes are down'; end $$`);
+    await f.db.execute(sql`create trigger refuse_outcome before insert on outcomes
+      for each row execute function refuse_outcome()`);
+    const alone = await runningRun();
+    expect(await transitionRun(f.db, alone.id, "running", "done", {})).toMatchObject({ status: "done" });
+    const inside = await runningRun();
+    await f.db.transaction((tx) => transitionRun(tx, inside.id, "running", "failed", { error: "too_many_tool_calls" }));
+    const [row] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, inside.id));
+    expect(row?.status).toBe("failed");
+    expect(await outcomesOf(alone.id)).toEqual([]);
+  });
 });
 
 describe("task outcomes", () => {
@@ -120,7 +208,7 @@ describe("task outcomes", () => {
       .from(schema.outcomes)
       .where(and(eq(schema.outcomes.orgId, f.org.id), eq(schema.outcomes.subject, `issue#${number}`)));
 
-  test("the last acceptance criterion checked records criteria_met with who checked each", async () => {
+  test("criteria_met only when people checked every acceptance criterion: an agent's own tick is no outcome", async () => {
     f = await setup();
     const issue = await createIssue(deps(), owner(), f.org.id, {
       title: "Ship it",
@@ -131,8 +219,12 @@ describe("task outcomes", () => {
     if (!a || !b) throw new Error("criteria");
     const agent = { type: "agent" as const, agentId: f.agent.id, channelId: f.general.id };
     await setCriterion(deps(), agent, f.org.id, issue.id, a.id, true);
-    expect(await issueOutcomes(issue.number)).toEqual([]);
     await setCriterion(deps(), owner(), f.org.id, issue.id, b.id, true);
+    // All checked, but the agent ticked one itself.
+    expect(await issueOutcomes(issue.number)).toEqual([]);
+    // A person checks that one too: now people vouch for every criterion.
+    await setCriterion(deps(), owner(), f.org.id, issue.id, a.id, false);
+    await setCriterion(deps(), owner(), f.org.id, issue.id, a.id, true);
     expect(await issueOutcomes(issue.number)).toMatchObject([
       {
         kind: "criteria_met",
@@ -142,16 +234,12 @@ describe("task outcomes", () => {
         details: {
           issueId: issue.id,
           checkedBy: [
-            { type: "agent", id: f.agent.id },
+            { type: "person", id: f.owner.id },
             { type: "person", id: f.owner.id },
           ],
         },
       },
     ]);
-    // Unchecked and checked again: met again, a second outcome.
-    await setCriterion(deps(), owner(), f.org.id, issue.id, b.id, false);
-    await setCriterion(deps(), owner(), f.org.id, issue.id, b.id, true);
-    expect((await issueOutcomes(issue.number)).length).toBe(2);
   });
 
   test("a task moved back from done records issue_reopened against its agent", async () => {
