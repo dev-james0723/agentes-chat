@@ -925,6 +925,11 @@ export interface Transcript {
     targetSessionId: string;
     machineId: string;
     model: string;
+    /**
+     * The effort the run keeps on this route, when the agent's is `auto`: the judge's reading of the work
+     * (`autoModel`). Absent: the level the agent set itself, or the route's own default.
+     */
+    effort?: AutoModelRecord["effort"];
     sourcePool: string;
     targetPool: string;
     evidence: string;
@@ -3273,7 +3278,9 @@ async function executeRunInner(
             replyThreadId ?? run.channelId,
             { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
           ).catch(() => null);
-          return resumed && resumed.kind === h.targetKind && !resumed.missionId ? resumed : null;
+          if (!resumed || resumed.kind !== h.targetKind || resumed.missionId) return null;
+          // The effort it moved with (the judge's, for an agent on `auto`) stays for the rest of the run.
+          return h.effort ? { ...resumed, effort: h.effort } : resumed;
         })()
       : null;
   if (resumedHandoff) brainPlan = resumedHandoff;
@@ -3845,6 +3852,10 @@ async function executeRunInner(
           const { proof, target } = pick;
           const kind = proof.targetKind;
           const sessionId = Bun.randomUUIDv7();
+          // The agent's effort on `auto` is the judge's reading of the work, not of one harness: it goes with the run,
+          // as the tier picked the model above. A level the agent set itself already did, through the resolver; left
+          // out, the route would think with its default whatever the task is.
+          const judgedEffort = isAutoModel(agent.brainEffort) ? t.autoModel?.effort : undefined;
           delete t.quotaReservePending;
           t.quotaCliHandoff = {
             schema: "quota-cli-handoff/1",
@@ -3860,6 +3871,7 @@ async function executeRunInner(
             targetSessionId: sessionId,
             machineId,
             model: proof.model,
+            ...(judgedEffort ? { effort: judgedEffort } : {}),
             sourcePool: proof.sourcePool,
             targetPool: proof.targetPool,
             evidence: proof.evidence,
@@ -3907,6 +3919,7 @@ async function executeRunInner(
           plan = {
             ...target,
             model: proof.model,
+            ...(judgedEffort ? { effort: judgedEffort } : {}),
             session: { id: sessionId, resume: false, machineId, cwd: session.cwd },
           };
           // Mid-run, the new harness has no native history: it reads the portable record and goes on from there.

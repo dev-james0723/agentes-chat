@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   ACCOUNTS_PROTOCOL,
+  type BrainEffort,
   CODEX_WINDOWS_PROTOCOL,
   channelTopic,
   MACHINE_PROTOCOL_VERSION,
@@ -5755,7 +5756,14 @@ test("a quota cut after multiple turns preserves scoped portable source referenc
 });
 
 // Owner policy 2026-11-14: Codex at its limit continues mid-task on the computer's Claude Code subscription sign-in.
-async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claudeUsed?: number; claudeAt?: string }) {
+async function midTaskQuotaFixture(o: {
+  authMethod: string;
+  goal: string;
+  claudeUsed?: number;
+  claudeAt?: string;
+  /** The agent's effort is `auto` and the judge reads the work as this. */
+  judged?: BrainEffort;
+}) {
   let writes = 0;
   const source: ToolSource = {
     name: "synthetic-handoff",
@@ -5774,10 +5782,22 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claude
   };
   f = await setup({
     toolSources: [source],
-    judge: (kind, _id, state) =>
-      kind === "follow_through" ? (String(state.reply).includes("vou") ? "continue" : "done") : undefined,
+    judge: (kind, id, state) =>
+      kind === "follow_through"
+        ? String(state.reply).includes("vou")
+          ? "continue"
+          : "done"
+        : kind === "auto_model" && o.judged
+          ? id === "tier"
+            ? "medium"
+            : o.judged
+          : undefined,
   });
-  const machineId = await computerAgent(f, { brain: "codex", brainExtraUsage: false });
+  const machineId = await computerAgent(f, {
+    brain: "codex",
+    brainExtraUsage: false,
+    ...(o.judged ? { brainEffort: "auto" } : {}),
+  });
   const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
   if (!machine) throw new Error("missing machine");
   const at = new Date().toISOString();
@@ -5799,10 +5819,12 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claude
     })
     .where(eq(schema.machines.id, machineId));
   let codexTurns = 0;
+  const codexEfforts: (BrainEffort | undefined)[] = [];
   const codex: Brain = {
     kind: "codex",
     async *run(turn) {
       codexTurns++;
+      codexEfforts.push(turn.effort);
       if (codexTurns === 1) {
         const result = await executeToolForRun(
           f.jobDeps,
@@ -5849,7 +5871,7 @@ async function midTaskQuotaFixture(o: { authMethod: string; goal: string; claude
   await drainOutbox(f.db, handlers);
   const [run] = await f.db.select().from(schema.agentRuns);
   const notices = (await timeline(f)).filter((m) => m.body.includes("this task switched to"));
-  return { run, codexTurns: () => codexTurns, claudeTurns, writes: () => writes, notices };
+  return { run, codexTurns: () => codexTurns, codexEfforts, claudeTurns, writes: () => writes, notices };
 }
 
 test("quota policy: Codex refused mid-task hands the same run to Claude, keeps its work and notifies once", async () => {
@@ -5863,6 +5885,8 @@ test("quota policy: Codex refused mid-task hands the same run to Claude, keeps i
   expect(turn?.runId).toBe(r.run?.id);
   expect(turn?.agentId).toBe(f.agent.id);
   expect(turn?.session?.resume).toBe(false);
+  // The agent set no effort and the judge never read the run: the route's own default, none made up.
+  expect(turn?.effort).toBeUndefined();
   const sent = JSON.stringify(turn);
   expect(sent).toContain("SYNTH_GOAL");
   expect(sent).toContain("handoff_write");
@@ -5878,6 +5902,33 @@ test("quota policy: Codex refused mid-task hands the same run to Claude, keeps i
       model: "opus",
     },
   });
+}, 30_000);
+
+test("quota policy: the effort the judge chose for the work goes with the run to the plan that takes over", async () => {
+  // The agent's effort is `auto`: on its own plan every turn thinks with the judge's reading of the work.
+  const r = await midTaskQuotaFixture({
+    authMethod: "claude.ai",
+    goal: "@dev SYNTH_GOAL do step one then step two",
+    judged: "low",
+  });
+  expect(r.run?.status).toBe("done");
+  expect(r.run?.brain).toBe("claude_code");
+  expect(r.codexEfforts).toEqual(["low", "low"]);
+  // That reading is about the work, not about one harness: the plan that takes over thinks with it too, instead of
+  // its default for whatever the task is.
+  expect(r.claudeTurns).toHaveLength(1);
+  expect(r.claudeTurns[0]?.effort).toBe("low");
+  // Kept on the run's record of the handoff, and in its steps: what the run really thought with can be read later.
+  expect(r.run?.transcript).toMatchObject({
+    autoModel: { tier: "medium", effort: "low", source: "judge" },
+    quotaCliHandoff: { sourceKind: "codex", targetKind: "claude_code", model: "opus", effort: "low" },
+  });
+  const steps = await f.db
+    .select()
+    .from(schema.agentRunSteps)
+    .where(eq(schema.agentRunSteps.runId, r.run?.id ?? ""));
+  const moved = steps.map((s) => (s.data as { quotaCliHandoff?: { effort?: string } }).quotaCliHandoff).find(Boolean);
+  expect(moved?.effort).toBe("low");
 }, 30_000);
 
 test("quota policy: a Claude API-key login is a paid path and is never used; the task waits", async () => {
@@ -6210,12 +6261,20 @@ async function reserveFixture(o: {
   qualify: boolean;
   targetFirst?: BrainEvent[];
   sourceLimit?: boolean;
+  /** The agent's effort is `auto` and the judge reads the work as this. */
+  judged?: BrainEffort;
 }) {
-  f = await setup();
+  const judged = o.judged;
+  f = await setup(
+    judged
+      ? { judge: (kind, id) => (kind === "auto_model" ? (id === "tier" ? "medium" : judged) : undefined) }
+      : undefined,
+  );
   const machineId = await computerAgent(f, {
     brain: "codex",
     brainExtraUsage: false,
     brainFallback: Boolean(o.sourceLimit),
+    ...(judged ? { brainEffort: "auto" } : {}),
   });
   const at = new Date().toISOString();
   const resetsAt = new Date(Date.now() + 3600_000).toISOString();
@@ -6334,6 +6393,27 @@ test("quota policy: a run that pauses after its handoff resumes on the route it 
   expect(r.sourceTurns).toHaveLength(0);
   expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
   expect(r.targetTurns.at(-1)?.session?.id).toBe(handoff?.targetSessionId);
+}, 60_000);
+
+test("quota policy: a run that resumes on the route it moved to keeps the effort it moved with", async () => {
+  // As above, with the agent's effort on `auto`: the retry after "busy" is a new job, which reads the handoff's record.
+  const r = await reserveFixture({
+    codexOnline: true,
+    qualify: true,
+    judged: "low",
+    targetFirst: [{ type: "error", code: "busy", message: "Waiting in line for the computer.", retryable: true }],
+  });
+  await post(f, "@dev pick an option and continue");
+  await drainOutbox(f.db, r.handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.brain).toBe("claude_code");
+  expect(parked?.status).not.toBe("done");
+  for (let i = 1; i <= 3; i++) await drainOutbox(f.db, r.handlers, { now: new Date(Date.now() + i * 10 * 60_000) });
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("done");
+  expect(r.sourceTurns).toHaveLength(0);
+  expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
+  expect(r.targetTurns.map((t) => t.effort)).toEqual(r.targetTurns.map(() => "low"));
 }, 60_000);
 
 test("a turn that asks a person after a failed command waits for the answer with no unknown effect", async () => {
