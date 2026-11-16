@@ -1551,6 +1551,24 @@ const PLAN_DENY = ["Edit", "Write", "NotebookEdit"];
 export function claudePermissionSettings(
   mode: "plan" | "work" | "chat",
   missionAllow: string[] = [],
+  missionFolder?: string,
+  opts: Parameters<typeof claudeRules>[3] & {
+    /**
+     * The machine's folder allow-list (`readsOnlyInFolders` in the runner's config): Claude Code's Read, Grep, Glob
+     * and LSP refuse paths outside its working directories (its cwd and `--add-dir`s) in every mode, and a shell
+     * command naming such a path is asked about (Claude Code 2.1.257+; read only from `--settings` at launch).
+     */
+    readsOnlyInFolders?: boolean;
+  } = {},
+) {
+  const settings = claudeRules(mode, missionAllow, missionFolder, opts);
+  if (!opts.readsOnlyInFolders) return settings;
+  return { permissions: { ...settings.permissions, blockReadsOutsideWorkingDirectories: true as const } };
+}
+
+function claudeRules(
+  mode: "plan" | "work" | "chat",
+  missionAllow: string[] = [],
   /** An item's mission folder when it runs elsewhere (its worktree or subfolder). */
   missionFolder?: string,
   opts: {
