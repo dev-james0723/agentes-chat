@@ -635,6 +635,56 @@ describe("issues", () => {
     expect(row?.assignee).toEqual({ type: "agent", id: f.agent.id });
   });
 
+  test("a reference that is neither a number nor an id is a not-found the agent can act on, not a database error", async () => {
+    f = await setup();
+    const deps = { db: f.db, pubsub: f.pubsub };
+    const ctx = {
+      db: f.db,
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      runId: crypto.randomUUID(),
+      channelId: f.general.id,
+      threadRootId: crypto.randomUUID(),
+      triggerMessageId: crypto.randomUUID(),
+    };
+    const tools = await createIssueToolSource(f.artifactDeps).tools(ctx);
+    const run = (name: string, input: Record<string, unknown>) => {
+      const tool = tools.find((t) => t.name === name);
+      if (!tool) throw new Error(`no ${name}`);
+      return tool.execute(input, ctx);
+    };
+    const issue = await createIssue(deps, person(f.owner.id), f.org.id, { title: "Exportar o relatório" });
+    const activity = () => listIssueActivity(f.db, person(f.owner.id), f.org.id, issue.id);
+    const before = (await activity()).length;
+    // A key in another tracker's style ("ABC-131") names no task here: its number could be anyone's, so it isn't guessed.
+    const refs = [`ABC-${issue.number}`, "the export task", `${issue.id}-x`];
+    for (const [name, more] of [
+      ["list_issues", {}],
+      ["update_issue", { priority: "high" }],
+      ["comment_issue", { text: "Feito." }],
+    ] as const) {
+      for (const ref of refs) {
+        const out = await run(name, { issue: ref, ...more });
+        expect(out.isError).toBe(true);
+        expect(out.content).toContain("Issue not found");
+        // Says what a reference looks like, so the next call is the right one.
+        expect(out.content).toContain(`"${ref}" is not a task number or id`);
+        // The id column is a UUID: any other text there fails the query and shows its SQL.
+        expect(out.content).not.toContain("Failed query");
+        // A check refused it before any write, so a computer turn that ends here has a known outcome.
+        expect(out.data).toMatchObject({ refusedByCheck: "not_found" });
+      }
+    }
+    // The number and the id still open it, and a well-formed id of no task is the plain not-found.
+    for (const ref of [`${issue.number}`, `#${issue.number}`, ` #${issue.number} `, issue.id, issue.id.toUpperCase()])
+      expect((await run("list_issues", { issue: ref })).content).toContain(`#${issue.number} [`);
+    const none = await run("list_issues", { issue: crypto.randomUUID() });
+    expect(none).toMatchObject({ content: "Failed: Issue not found", isError: true });
+    // Nothing above changed the task.
+    expect((await getIssue(f.db, person(f.owner.id), f.org.id, { id: issue.id })).priority).not.toBe("high");
+    expect(await activity()).toHaveLength(before);
+  });
+
   test("assigning a task to another agent says it doesn't start it, and how to hand it the job", async () => {
     f = await setup();
     await createAgent(f.db, f.owner.id, f.org.id, { name: "Bia", handle: "bia" }, { model: "claude-sonnet-5-5" });

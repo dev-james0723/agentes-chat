@@ -6,7 +6,7 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
-import { refusalData } from "./errors";
+import { NotFoundError, refusalData } from "./errors";
 import { projectByName } from "./issue-projects";
 import {
   askAgentToImplement,
@@ -139,10 +139,20 @@ async function describeIssue(deps: IssueDeps, ctx: ToolContext, i: IssueView) {
 }
 
 /** Resolves `issue` as an id or a number (`131`, `#131`). */
-/** An issue's number (#131) or id, as `getIssue` takes it. */
+/**
+ * An issue's number (#131) or id, as `getIssue` takes it. Anything else names no task, and is refused here: the id
+ * column is a UUID, so other text there fails the query (its SQL shown to the agent, the outcome unknown to the run)
+ * instead of finding nothing. A key in another tracker's style ("ABC-131") is not read as #131: that number could be
+ * any tracker's.
+ */
 const issueKey = (ref: string) => {
-  const n = /^#?(\d+)$/.exec(ref.trim());
-  return n ? { number: Number(n[1]) } : { id: ref.trim() };
+  const text = ref.trim();
+  const n = /^#?(\d+)$/.exec(text);
+  if (n) return { number: Number(n[1]) };
+  if (UUID.test(text)) return { id: text };
+  throw new NotFoundError(
+    `Issue not found: "${text.slice(0, 64)}" is not a task number or id. Give its number as list_issues shows it (#131) or its id; list_issues finds a task by words (query).`,
+  );
 };
 
 async function find(deps: IssueDeps, ctx: ToolContext, ref: string) {
