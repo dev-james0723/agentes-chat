@@ -444,6 +444,49 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(await f.db.select().from(schema.skills)).toEqual([]);
   });
 
+  test("a preference, lesson or decision the job draws from tool calls alone stays low and its own; a one-off request is no standing preference", async () => {
+    f = await setup();
+    const { run } = await personRun("@dev ship the fix today; we always squash merge here");
+    await step(run, "run_command", { cmd: "git push" }, "refused: no approval to push");
+    const rule = (kind: string, content: string, refs: string[], lasting = true) => ({
+      kind,
+      scope: "team",
+      about_person: "",
+      title: content,
+      key: content,
+      content,
+      refs,
+      lasting,
+    });
+    learnOutput = {
+      items: [
+        rule("preference", "Code is not pushed without approval.", ["s1"]),
+        rule("lesson", "Only continue tasks when explicitly asked.", ["s1"]),
+        rule("decision", "Pushing is on hold.", ["s1"]),
+        rule("preference", "Ship the fix today.", ["m1"], false),
+        rule("preference", "The team squash merges.", ["m1"]),
+      ],
+      skill_fixes: [],
+    };
+    const learned = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(learned.rejected).toEqual([{ content: "Ship the fix today.", reason: "one_off" }]);
+    const rows = await items();
+    const by = (content: string) => rows.find((i) => i.content === content);
+    for (const content of [
+      "Code is not pushed without approval.",
+      "Only continue tasks when explicitly asked.",
+      "Pushing is on hold.",
+    ])
+      expect([content, by(content)?.trust, by(content)?.scopeType, by(content)?.verified]).toEqual([
+        content,
+        "low",
+        "agent",
+        false,
+      ]);
+    // What a person said in the run keeps its weight and reach.
+    expect([by("The team squash merges.")?.trust, by("The team squash merges.")?.scopeType]).toEqual(["high", "org"]);
+  });
+
   test("who holds which access becomes a workspace fact every agent reads, from a browser run too, kept current", async () => {
     f = await setup();
     const ops = await createAgent(

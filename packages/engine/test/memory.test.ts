@@ -348,6 +348,78 @@ describe("reflect (capture)", () => {
     const [state] = await f.db.select().from(schema.threadReflections);
     expect(state?.runs).toBe(5);
   });
+
+  test("what the job derives starts low and stays in the channel unless a person said it or an outcome backs it; a one-off instruction is no standing preference", async () => {
+    const item = (req: ModelRequest, content: string, cite: string, more: Record<string, unknown> = {}) => ({
+      kind: "preference",
+      subject: content,
+      content,
+      confidence: 0.9,
+      sources: [refOf(req, cite)],
+      about_agent: "",
+      scope: "org",
+      lasting: true,
+      ...more,
+    });
+    f = await setup({
+      reply: (req) =>
+        isReflect(req)
+          ? {
+              chunks: [
+                JSON.stringify({
+                  summary: "",
+                  items: [
+                    item(req, "Only continue tasks when explicitly asked.", "only continue"),
+                    item(req, "Pushing code is not approved.", "push_refused"),
+                    item(req, "Add at least 4 new tests to the truncate change.", "4 new tests", { lasting: false }),
+                    item(req, "Reports are written in Portuguese.", "Portuguese"),
+                    {
+                      ...item(req, "Restate findings before closing a task.", "only continue"),
+                      kind: "lesson",
+                      about_agent: "dev",
+                      scope: "agent",
+                    },
+                    {
+                      ...item(req, "Check the build before closing a task.", "Portuguese"),
+                      kind: "lesson",
+                      scope: "team",
+                    },
+                  ],
+                  entities: [],
+                }),
+              ],
+            }
+          : { chunks: ["ok"] },
+    });
+    const root = await post(f, "@dev for the truncate change add at least 4 new tests");
+    await post(f, "and from now on we write reports in Portuguese", root.id);
+    await agentSays(f, f.agent.id, "Noted: I will only continue tasks when explicitly asked.", root.id);
+    await recordOutcome(f.db, {
+      orgId: f.org.id,
+      kind: "approval_refused",
+      agentId: f.agent.id,
+      summary: "push_refused",
+      source: "tool",
+      threadRootId: root.id,
+    });
+
+    const r = await reflectThread(f.context, { orgId: f.org.id, threadRootId: root.id });
+    expect(r.rejected).toEqual([{ content: "Add at least 4 new tests to the truncate change.", reason: "one_off" }]);
+    const rows = await f.db.select().from(schema.contextItems);
+    const by = (content: string) => rows.find((i) => i.content === content);
+    // An agent's word, an outcome or the job alone never makes a standing preference or rule.
+    for (const content of [
+      "Only continue tasks when explicitly asked.",
+      "Pushing code is not approved.",
+      "Restate findings before closing a task.",
+    ]) {
+      expect([content, by(content)?.trust, by(content)?.verified]).toEqual([content, "low", false]);
+      expect(by(content)?.scopeType).not.toBe("org");
+    }
+    // A person's own words keep their weight, team-wide as the model proposed.
+    expect(by("Reports are written in Portuguese.")).toMatchObject({ trust: "high", verified: true, scopeType: "org" });
+    expect(by("Check the build before closing a task.")).toMatchObject({ trust: "high", verified: true });
+  });
 });
 
 describe("feedback", () => {
