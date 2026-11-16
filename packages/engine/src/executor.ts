@@ -33,6 +33,7 @@ import {
   type ModelResult,
   PROVIDERS,
   ProviderError,
+  parseCustomModel,
   type StopReason,
   type SystemBlock,
   type ToolImage,
@@ -610,17 +611,32 @@ export const isHandoffKind = (kind: BrainKind): kind is QuotaHandoffKind =>
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "host.docker.internal", "ollama"]);
 
-/** The agent's model brain (its own credential) runs on this host's local endpoint: free, no paid API. */
-export async function thinkerIsLocal(db: Database, thinker: Pick<Agent, "credentialId">): Promise<boolean> {
-  if (!thinker.credentialId) return false;
+/**
+ * The agent's model brain would answer from an endpoint on this computer (or its container network) at no price:
+ * its model is one a live endpoint of its workspace lists at no price (none set, or zero), at an address that is
+ * local by name. The endpoint is the one the model names, as the gateway resolves the call, never a key the agent
+ * also holds.
+ */
+export async function thinkerIsLocal(db: Database, thinker: Pick<Agent, "orgId" | "model">): Promise<boolean> {
+  const pinned = parseCustomModel(thinker.model);
+  if (!pinned) return false;
   const [row] = await db
-    .select({ provider: providerCredentials.provider, options: providerCredentials.options })
+    .select({ options: providerCredentials.options })
     .from(providerCredentials)
-    .where(and(eq(providerCredentials.id, thinker.credentialId), isNull(providerCredentials.revokedAt)));
-  const endpoint = (row?.options as { endpoint?: unknown } | null)?.endpoint;
-  if (row?.provider !== "custom" || typeof endpoint !== "string") return false;
+    .where(
+      and(
+        eq(providerCredentials.id, pinned.credentialId),
+        eq(providerCredentials.orgId, thinker.orgId),
+        eq(providerCredentials.provider, "custom"),
+        isNull(providerCredentials.revokedAt),
+      ),
+    );
+  // The credential keeps its endpoint as an object (`StoredEndpoint`): the address is its `baseURL`.
+  const endpoint = row?.options?.endpoint;
+  const listed = endpoint?.models.find((m) => m.id === pinned.model);
+  if (!endpoint || !listed || Object.values(listed.prices ?? {}).some((price) => price > 0)) return false;
   try {
-    return LOCAL_HOSTS.has(new URL(endpoint).hostname);
+    return LOCAL_HOSTS.has(new URL(endpoint.baseURL).hostname);
   } catch {
     return false;
   }

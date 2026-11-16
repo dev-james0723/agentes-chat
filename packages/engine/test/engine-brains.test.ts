@@ -8,7 +8,7 @@ import {
   orgTopic,
 } from "@agenteschat/adapters";
 import { and, desc, eq, schema, sql } from "@agenteschat/db";
-import { systemText } from "@agenteschat/providers";
+import { customModelId, systemText } from "@agenteschat/providers";
 import {
   activeRunsIn,
   addChannelMember,
@@ -6281,25 +6281,64 @@ test("a computer brain's 'balance exhausted' refusal is the plan's limit, not an
   expect(balanceRefusal("")).toBe(false);
 });
 
-test("only a local model endpoint counts as the free last-resort route", async () => {
+/** An endpoint saved the way an admin saves one, so its row is what the product writes: its credential's id. */
+async function savedEndpoint(baseURL: string, prices?: { input: number; output: number }) {
+  const saved = await createCredential(
+    f.db,
+    f.keyWrapper,
+    f.owner.id,
+    f.org.id,
+    {
+      provider: "custom",
+      label: baseURL,
+      apiKey: "",
+      endpoint: {
+        style: "openai",
+        baseURL,
+        models: [{ id: "qwen3:8b", ...(prices ? { prices: { ...prices, cacheRead: 0, cacheWrite: 0 } } : {}) }],
+      },
+    },
+    { net: { allowPrivate: true } },
+  );
+  return saved.id;
+}
+
+test("only a model of an endpoint on this computer counts as the free last-resort route", async () => {
   f = await setup();
-  const mk = async (endpoint: string, provider = "custom") => {
-    const [row] = await f.db
-      .insert(schema.providerCredentials)
-      .values({
-        ...(await f.db.select().from(schema.providerCredentials).limit(1))[0],
-        id: Bun.randomUUIDv7(),
-        provider,
-        options: { endpoint },
-      } as never)
-      .returning();
-    return row?.id ?? null;
-  };
-  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://host.docker.internal:11434/v1") })).toBe(true);
-  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://localhost:11434/v1") })).toBe(true);
-  expect(await thinkerIsLocal(f.db, { credentialId: await mk("https://api.example.com/v1") })).toBe(false);
-  expect(await thinkerIsLocal(f.db, { credentialId: await mk("http://localhost:1", "openai") })).toBe(false);
-  expect(await thinkerIsLocal(f.db, { credentialId: null })).toBe(false);
+  const isLocal = (credentialId: string, model = "qwen3:8b", orgId = f.org.id) =>
+    thinkerIsLocal(f.db, { orgId, model: customModelId(credentialId, model) });
+  const local = await savedEndpoint("http://host.docker.internal:11434/v1");
+  const remote = await savedEndpoint("https://api.example.com/v1");
+  expect(await isLocal(local)).toBe(true);
+  expect(await isLocal(await savedEndpoint("http://localhost:11434/v1"))).toBe(true);
+  expect(await isLocal(await savedEndpoint("http://[::1]:11434/v1"))).toBe(true);
+  // Elsewhere, or only named like here.
+  expect(await isLocal(remote)).toBe(false);
+  expect(await isLocal(await savedEndpoint("http://localhost.example.com/v1"))).toBe(false);
+  // A provider's own model answers from its API, whatever key sits beside it.
+  expect(await thinkerIsLocal(f.db, { orgId: f.org.id, model: "claude-haiku-5-5" })).toBe(false);
+  // A model the endpoint doesn't offer, one the workspace put a price on, another workspace's endpoint, a revoked one.
+  expect(await isLocal(local, "another-model")).toBe(false);
+  expect(await isLocal(await savedEndpoint("http://localhost:11435/v1", { input: 1, output: 1 }))).toBe(false);
+  expect(await isLocal(local, "qwen3:8b", Bun.randomUUIDv7())).toBe(false);
+  await f.db
+    .update(schema.providerCredentials)
+    .set({ revokedAt: new Date() })
+    .where(eq(schema.providerCredentials.id, local));
+  expect(await isLocal(local)).toBe(false);
+});
+
+test("the last-resort route is judged by the endpoint the model names, not by a key the agent also holds", async () => {
+  f = await setup();
+  const local = await savedEndpoint("http://localhost:11434/v1");
+  const remote = await savedEndpoint("https://api.example.com/v1");
+  // The call goes to the endpoint the model names, as the gateway resolves it: the local key beside a model of the
+  // other endpoint would reach that one.
+  const otherEndpointsModel = { orgId: f.org.id, model: customModelId(remote, "qwen3:8b"), credentialId: local };
+  expect(await thinkerIsLocal(f.db, otherEndpointsModel)).toBe(false);
+  // And a model picked from the list by an agent with no key of its own is as local as its endpoint.
+  const noKey = { orgId: f.org.id, model: customModelId(local, "qwen3:8b"), credentialId: null };
+  expect(await thinkerIsLocal(f.db, noKey)).toBe(true);
 });
 
 async function reserveFixture(o: {
@@ -6410,6 +6449,26 @@ test("quota policy: a plan cut with no qualified route never falls back to a pai
   expect(run?.brain).not.toBe("model");
   expect(run?.status).not.toBe("done");
   expect(r.targetTurns).toHaveLength(0);
+}, 30_000);
+
+test("quota policy: a plan cut with no qualified route stands in on the agent's own local endpoint model", async () => {
+  const r = await reserveFixture({ codexOnline: true, qualify: false, sourceLimit: true });
+  // The agent's own model is a local endpoint's, picked from the model list: no key of its own.
+  const local = await savedEndpoint("http://localhost:11434/v1");
+  await f.db
+    .update(schema.agents)
+    .set({ model: customModelId(local, "qwen3:8b"), credentialId: null })
+    .where(eq(schema.agents.id, f.agent.id));
+  await post(f, "@dev keep going");
+  await drainOutbox(f.db, r.handlers);
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.brain).toBe("model");
+  expect(run?.transcript).toMatchObject({ fallback: { from: "codex", code: "plan_limit" } });
+  expect(r.targetTurns).toHaveLength(0);
+  // And the stood-in turn really answered from that endpoint: its model, at its address.
+  expect(run?.status).toBe("done");
+  expect(f.provider.calls.at(-1)?.request.model).toBe(customModelId(local, "qwen3:8b"));
+  expect(f.provider.calls.at(-1)?.endpoint).toEqual({ style: "openai", baseURL: "http://localhost:11434/v1" });
 }, 30_000);
 
 test("quota policy: a run that pauses after its handoff resumes on the route it moved to", async () => {
