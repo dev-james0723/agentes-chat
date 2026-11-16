@@ -209,6 +209,15 @@ export function handoffModel(kind: BrainKind, top: string, tier: ModelTier | und
   return top;
 }
 
+/**
+ * The effort a run keeps when another subscription takes it (quota handoff), and when it resumes there: the judge's,
+ * while the agent leaves its effort to `auto`. A level the agent set itself reaches the new route through the
+ * resolver, and none stays none. `judged` may come from a run's record: only a level the judge gives counts.
+ */
+export function handoffEffort(agent: Pick<Agent, "brainEffort">, judged: unknown): AutoEffort | undefined {
+  return isAutoModel(agent.brainEffort) ? AUTO_EFFORTS.find((effort) => effort === judged) : undefined;
+}
+
 /** What auto sets for a run with this plan. */
 export interface AutoApplied {
   /** The API model, when the agent's model is `auto` (the model brain, and a fallback to it). */
