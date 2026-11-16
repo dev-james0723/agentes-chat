@@ -411,6 +411,26 @@ test.skipIf(!posix)("sign-in on the computer: Grok's device link and code, then 
   expect(m.accountDir("grok", id)).toBe(path.join(home, "accounts", "grok", id));
 });
 
+test.skipIf(!posix)(
+  "a status look that finds the sign-in's token expired looks again, and the renewed sign-in is signed in",
+  async () => {
+    const home = tempDir("grok-expired-");
+    dirs.push(home);
+    const root = path.join(home, "accounts");
+    const m = new AccountManager({ root, orgId: () => ORG, commands: { grok: [process.execPath, FAKE] } });
+    managers.push(m);
+    const signedIn = path.join(root, "grok", ACCOUNT);
+    mkdirSync(signedIn, { recursive: true });
+    writeFileSync(path.join(signedIn, "auth.json"), '{"expired":true}');
+    const gone = "0193eeee-0000-7000-8000-0000000000a2";
+    mkdirSync(path.join(root, "grok", gone), { recursive: true });
+    const list = await m.list();
+    expect(list.find((a) => a.id === ACCOUNT)).toMatchObject({ kind: "grok", loggedIn: true });
+    // No sign-in in the folder at all: still signed out.
+    expect(list.find((a) => a.id === gone)).toMatchObject({ kind: "grok", loggedIn: false });
+  },
+);
+
 test.skipIf(!posix)("grok: 429 in the stream never emits a fabricated limit or an automatic retry", async () => {
   const root = tempDir("grok-throttle-");
   dirs.push(root);
