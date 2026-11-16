@@ -238,6 +238,44 @@ describe("communication contract structure", () => {
     expect(validateEnvelope("LessonCandidate", { ...lesson, status: "approved" }).ok).toBe(false);
   });
 
+  test.each([
+    "https://example.test/%ZZ",
+    "https://example.test/%",
+    "https://example.test/%0",
+    " https://example.test/source",
+    "https://example.test/source ",
+    "https://example.test/so\turce",
+    "https://example.test/so\nurce",
+    "https://example.test/so\rurce",
+    "https://example.test/so\\urce",
+    "https://example.test/{source}",
+    "https://example.test/?query=bad|value",
+    "https://[2001:db8::gg]/source",
+    "https://[2001:db8::1/source",
+    "https://example.test:port/source",
+    "https://user@@example.test/source",
+    "/artifact/source-1",
+  ])("rejects malformed original RFC3986 URI %j", (uri) => {
+    expect(validateEnvelope("EvidenceRef", { ...evidence, uri }).ok).toBe(false);
+  });
+
+  test.each([
+    "https://example.test/a%20b?next=%2Fdocs#part%2f1",
+    "urn:artifact:source-1",
+    "artifact:source-1",
+    "artifact://store/source-1",
+    "https://[2001:db8::1]:8443/source",
+    "https://[::ffff:192.0.2.1]/source",
+    "http://[v1.fe80:future]/source",
+    "custom:/source",
+    "custom:",
+    "file:///source",
+  ])("preserves valid original RFC3986 URI %j", (uri) => {
+    const result = validateEnvelope("EvidenceRef", { ...evidence, uri });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.uri).toBe(uri);
+  });
+
   test("enforces collection, text and budget bounds", () => {
     for (const claims of [[], Array.from({ length: 21 }, () => update.claims[0])])
       expect(validateEnvelope("FounderUpdate", { ...update, claims }).ok).toBe(false);

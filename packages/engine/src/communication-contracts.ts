@@ -1,4 +1,46 @@
+import { isIP } from "node:net";
 import { z } from "zod";
+
+// RFC 3986 sections 3 and Appendix A: validate the submitted URI bytes without
+// WHATWG URL normalization. Scheme-specific resolution and access stay native.
+const uriToken = "(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})";
+const uriName = new RegExp(`^${uriToken}*$`);
+const uriUserInfo = new RegExp(`^(?:${uriToken}|:)*$`);
+const uriPath = new RegExp(`^(?:${uriToken}|[:@/])*$`);
+const uriQueryOrFragment = new RegExp(`^(?:${uriToken}|[:@/?])*$`);
+const uriFutureIP = /^v[0-9a-f]+\.[A-Za-z0-9._~!$&'()*+,;=:-]+$/i;
+
+function validUriAuthority(authority: string): boolean {
+  const at = authority.indexOf("@");
+  if (at !== -1 && !uriUserInfo.test(authority.slice(0, at))) return false;
+  const hostPort = authority.slice(at + 1);
+  if (hostPort.startsWith("[")) {
+    const end = hostPort.indexOf("]");
+    if (end === -1) return false;
+    const host = hostPort.slice(1, end);
+    const suffix = hostPort.slice(end + 1);
+    if (suffix !== "" && !/^:\d*$/.test(suffix)) return false;
+    // isIP also recognizes scoped IPv6 on some runtimes; RFC 3986 does not.
+    return uriFutureIP.test(host) || (/^[0-9a-f:.]+$/i.test(host) && isIP(host) === 6);
+  }
+  const colon = hostPort.lastIndexOf(":");
+  const host = colon === -1 ? hostPort : hostPort.slice(0, colon);
+  return uriName.test(host) && (colon === -1 || /^\d*$/.test(hostPort.slice(colon + 1)));
+}
+
+function validAbsoluteUri(value: string): boolean {
+  // Reject original whitespace, controls and non-ASCII before parsing; never
+  // repair a malformed reference or scan beyond the contract's input bound.
+  if (value.length > 2000 || /[^\x21-\x7e]/.test(value)) return false;
+  const parts = /^[A-Za-z][A-Za-z0-9+.-]*:(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(value);
+  if (!parts) return false;
+  const [, authority, path, query, fragment] = parts;
+  if (!uriPath.test(path) || !uriQueryOrFragment.test(query ?? "") || !uriQueryOrFragment.test(fragment ?? "")) {
+    return false;
+  }
+  if (authority === undefined) return !path.startsWith("//");
+  return (path === "" || path.startsWith("/")) && validUriAuthority(authority);
+}
 
 // JSON Schema length bounds count Unicode code points, rather than UTF-16 units.
 const text = (max: number) =>
@@ -29,10 +71,7 @@ export const EvidenceRefSchema = z.strictObject({
     "tool_receipt",
     "benchmark_result",
   ]),
-  uri: z
-    .url()
-    .max(2000)
-    .regex(/^[A-Za-z][A-Za-z0-9+.-]*:[^\s]*$/),
+  uri: z.string().max(2000).refine(validAbsoluteUri),
   sha256: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
