@@ -441,6 +441,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
       name: "list_issues",
       description: "List or find issues of the organization (by words, number or status). Also shows one in detail.",
       scope: "issues:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {

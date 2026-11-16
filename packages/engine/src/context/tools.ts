@@ -38,7 +38,7 @@ import { isRightHandId, rightHandReader } from "../right-hand";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
 import { closedRefusal } from "../standing";
 import { noAgentText } from "../team";
-import type { ToolContext, ToolDefinition, ToolSource } from "../tools/types";
+import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
 import { neutralizeUntrusted, untrustedBlock } from "../untrusted";
 import { wikiHitsForAgent } from "../wiki";
 import { inWorkspaceWords } from "../workspace-mode";
@@ -184,6 +184,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private).",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -378,6 +379,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       name: "get_summary",
       description: "Get a summary of a thread (default: the current one). Generates it if missing or outdated.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { thread_id: { type: "string" } },
@@ -413,6 +415,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Open a context item by id: its full content and the sources it came from (also archived items). Also a message of the conversation, or a tool call or result of this run, shown cut short, by the id its cut names.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { item_id: { type: "string" } },
@@ -518,6 +521,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       description:
         "Read messages with who wrote them, where and their links: one message (`message`: its id or link) with those around it, or a channel's (`channel`: its name) or a thread's, the latest or `around` a time. Without them: this conversation.",
       scope: "context:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -772,7 +776,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       async execute(input, ctx) {
         const requester = await personRequester(ctx);
         const item = await changeableItem(ctx, str(input.item_id), requester);
-        if (typeof item === "string") return { content: item, isError: true };
+        if (typeof item === "string") return refusedChange(item);
         try {
           // A rule's giver (or owner, admin) on their own message (`changeableItem`): like `remember` kind rule.
           if (item.kind !== "rule") await checkPermissionText(judgeOf(deps), ctx.orgId, str(input.content));
@@ -849,7 +853,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
       async execute(input, ctx) {
         const requester = await personRequester(ctx);
         const item = await changeableItem(ctx, str(input.item_id), requester);
-        if (typeof item === "string") return { content: item, isError: true };
+        if (typeof item === "string") return refusedChange(item);
         await ctx.db.transaction(async (tx) => {
           await tx
             .update(contextItems)
@@ -1313,6 +1317,13 @@ async function recordSave(ctx: ToolContext, res: ConsolidateResult) {
     },
   ]);
 }
+
+/** `changeableItem`'s refusal: its checks run before any write, so a cut turn knows the outcome (`refusedByCheck`). */
+const refusedChange = (content: string): ToolOutput => ({
+  content,
+  isError: true,
+  data: { refusedByCheck: "forbidden" },
+});
 
 /**
  * An item this run may change: visible here, active, and either this agent's own memory or a shared item the

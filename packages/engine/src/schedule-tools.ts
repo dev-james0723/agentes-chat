@@ -755,6 +755,7 @@ export function createScheduleToolSource(deps: Omit<RoutineDeps, "db">): ToolSou
       description:
         "List routines (recurring, not reminders): yours by default; another agent's with `agent` (its handle, e.g. @atlas), or every agent's with `agent: \"all\"`, to check what they do before you answer about them. Shows each one's state (active, paused and why, running, waiting for its computer, failing), when it runs and its next run, where it reports, its instructions and its last 5 runs with their coded outcome (reported, silent, failed, skipped… and why). `id` shows one in full. Read only: to change one when a person asks (yours, or another agent's the person may manage), use update_routine.",
       scope: SCHEDULE_SCOPE,
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -1035,6 +1036,7 @@ export function createScheduleToolSource(deps: Omit<RoutineDeps, "db">): ToolSou
       name: "list_reminders",
       description: "List the pending reminders of the person who asked (theirs only).",
       scope: SCHEDULE_SCOPE,
+      readOnly: true,
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       async execute(_input, ctx) {
         try {

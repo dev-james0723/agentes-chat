@@ -40,7 +40,7 @@ import {
 } from "../contextual-skill-native-read";
 import { sha256 } from "../crypto";
 import { provenReadOnly } from "../databases/guard";
-import { isUnexpectedError, ToolOffError } from "../errors";
+import { isUnexpectedError, refusalData, ToolOffError } from "../errors";
 import { cutMarked, cutText, pgSafeJson, pgSafeText } from "../format";
 import { mergeReposOfCall, recordMergeDone, reposOfGithubCall } from "../git/repos";
 import { recordRead } from "../outbound";
@@ -508,6 +508,10 @@ export type InvokeResult =
 const readsOutsideText = (tool: ToolDefinition, output: ToolOutput) =>
   Boolean(tool.external || tool.readsOutside) && output.content.trim() !== "";
 
+/** Our own tool that only reads, by its own mark (`readOnly`): a read scope alone is not proof. */
+export const noEffectOnError = (tool: ToolDefinition) =>
+  !tool.external && !tool.connectionId && !tool.connector && tool.readOnly === true;
+
 export function createToolGateway(deps: {
   sources: ToolSource[];
   /** Source-only scoped pilot: absent means legacy behavior. Never a model tool argument. */
@@ -642,7 +646,12 @@ export function createToolGateway(deps: {
   async function outputOf(tool: ToolDefinition, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput> {
     const done = startInFlight(`tool ${tool.name}`, ctx.runId);
     try {
-      const output = await tool.execute(input, ctx);
+      const executed = await tool.execute(input, ctx);
+      // A failure that can't have changed anything is a known outcome for a cut turn (`knownBridgeResult`).
+      const output =
+        executed.isError && noEffectOnError(tool)
+          ? { ...executed, data: { ...executed.data, noEffect: "read" } }
+          : executed;
       if (
         nativeSkillReadPending(ctx) &&
         (output.outcome ||
@@ -683,10 +692,18 @@ export function createToolGateway(deps: {
       const hint =
         deps.faultHint && !tool.external && !tool.connectionId && isUnexpectedError(error) ? deps.faultHint : "";
       // An MCP server's error text is its own words too.
+      // Our own tool's typed refusal (raised by a check before any write), or any failure of one that only reads, is a
+      // known outcome; a connected app's or anything else's failure stays unknown.
+      const own = !tool.external && !tool.connectionId && !tool.connector;
+      const data = {
+        ...(error instanceof ToolOffError ? { toolOff: error.toolOff } : {}),
+        ...(own ? refusalData(error).data : {}),
+        ...(noEffectOnError(tool) ? { noEffect: "read" } : {}),
+      };
       return {
         content: `Tool failed: ${tool.external ? wrapExternal(tool.name, message) : message}${hint && `\n${hint}`}`,
         isError: true,
-        ...(error instanceof ToolOffError ? { data: { toolOff: error.toolOff } } : {}),
+        ...(Object.keys(data).length ? { data } : {}),
       };
     } finally {
       done();
