@@ -27,3 +27,9 @@ A local hook is cooperative: administrators, direct API operations and `--no-ver
 Use the existing task ledger and dashboard, not a second orchestrator. Record coded, tested, committed, pushed, reviewed, merged, built, deployed and live-verified separately, with timestamp, exact source SHA, server digest, runner digest and real user-path checks. A container health response or image tag is not content identity. Unknown remains unknown. Preserve old images/data and coordinate the existing deployment lock. Remove only this task's exact installed hook to roll it back, never another process's lock or worktree.
 
 Publish generic code only. Keep account identifiers, absolute personal paths, credentials, environment files, internal receipts and private document packs outside a public repository.
+
+## Observation trust hardening
+
+Git reads clear inherited repository/index/config-injection variables, suppress replacement objects, hooks and external content filters without changing repository configuration. A configured filter makes the working-tree observation explicitly unverified instead of certifying potentially different filtered content. Observation never runs a commit or other write command. Existing-branch push checks use the server-advertised previous commit and require fast-forward ancestry, even if a cached tracking ref already contains the candidate. New-branch history still uses cached remote refs as a bounded supplementary scan, not an authenticated full-history secret guarantee. A maintained secret scanner and independent release checks remain required.
+
+A JSON file supplied to the CLI cannot authenticate its own checks: `check-release` is always an assessment-only, untrusted-file result. Its caller-provided `trustedChecks` flag is ignored. The pure policy function is for a future trusted native integration, not proof that such an integration is installed.

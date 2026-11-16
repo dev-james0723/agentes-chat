@@ -1,21 +1,11 @@
 #!/usr/bin/env node
 // Read-only delivery observation. This utility never commits, pushes, merges or deploys.
-import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createGitReader } from "./git-read.mjs";
 import { checkCheckpoint, checkRelease, safePath } from "./policy.mjs";
 
-function runGit(root, args) {
-  const r = spawnSync("git", ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", root, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat" },
-  });
-  if (r.error || r.status !== 0) throw new Error("Git observation failed");
-  return r.stdout;
-}
 const records = (text) => {
   if (text === "") return [];
   if (!text.endsWith("\0")) throw new Error("Truncated Git record");
@@ -60,15 +50,16 @@ export function observe(inputRoot, { remote = "origin", network = false } = {}) 
   if (typeof remote !== "string" || !/^[A-Za-z0-9_.-]+$/.test(remote) || remote.startsWith("-"))
     throw new Error("Invalid remote name");
   const root = realpathSync(inputRoot);
-  if (realpathSync(runGit(root, ["rev-parse", "--show-toplevel"]).trim()) !== root)
+  const reader = createGitReader(root);
+  if (realpathSync(reader.read(["rev-parse", "--show-toplevel"]).trim()) !== root)
     throw new Error("Select the exact repository root");
-  const startHead = runGit(root, ["rev-parse", "HEAD"]).trim();
-  const before = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  const errors = [];
+  const startHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const before = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const errors = reader.filtersSuppressed ? ["content_filters_unverified"] : [];
   let repository = null;
   try {
-    const fetchUrls = runGit(root, ["remote", "get-url", "--all", remote]).trim().split("\n");
-    const pushUrls = runGit(root, ["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
+    const fetchUrls = reader.read(["remote", "get-url", "--all", remote]).trim().split("\n");
+    const pushUrls = reader.read(["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
     if (fetchUrls.length !== 1 || pushUrls.length !== 1) errors.push("ambiguous_remote");
     repository = repoFromUrl(fetchUrls[0]);
     if (!repository) errors.push("unsupported_remote");
@@ -78,17 +69,17 @@ export function observe(inputRoot, { remote = "origin", network = false } = {}) 
   }
   const changes = parseStatus(before).map((row) => ({ ...row, ...pathInfo(root, row.path) }));
   const staged = records(
-    runGit(root, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z"]),
+    reader.read(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z"]),
   );
-  const trackedCount = records(runGit(root, ["ls-files", "-z"])).length;
-  const branch = runGit(root, ["branch", "--show-current"]).trim();
+  const trackedCount = records(reader.read(["ls-files", "-z"])).length;
+  const branch = reader.read(["branch", "--show-current"]).trim();
   const deletedPaths = [...new Set(changes.filter((c) => c.index === "D" || c.worktree === "D").map((c) => c.path))];
   const remoteState = { name: remote, status: "not_requested", head: null };
   if (network) {
     if (errors.length || !branch) remoteState.status = "blocked";
     else {
       try {
-        const lines = runGit(root, ["ls-remote", "--heads", remote, `refs/heads/${branch}`]).trim();
+        const lines = reader.read(["ls-remote", "--heads", remote, `refs/heads/${branch}`]).trim();
         if (!lines) remoteState.status = "branch_absent";
         else {
           const match = /^([a-f0-9]{40,64})\t([^\r\n]+)$/.exec(lines);
@@ -102,8 +93,8 @@ export function observe(inputRoot, { remote = "origin", network = false } = {}) 
       }
     }
   }
-  const endHead = runGit(root, ["rev-parse", "HEAD"]).trim();
-  const after = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const endHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const after = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   return {
     schema: "delivery-observation/v1",
     repository,
@@ -161,7 +152,12 @@ export function main(argv = process.argv.slice(2)) {
   if (command === "check-release") {
     if (!a["--evidence"] || a["--root"] || a["--scope"] || a["--network"] || a["--text"])
       throw new Error("check-release requires --evidence only");
-    value = checkRelease(JSON.parse(readFileSync(a["--evidence"], "utf8")));
+    const supplied = JSON.parse(readFileSync(a["--evidence"], "utf8"));
+    value = {
+      ...checkRelease({ ...supplied, trustedChecks: false }),
+      assessmentOnly: true,
+      proofSource: "untrusted_file",
+    };
   } else {
     if (!a["--root"] || a["--evidence"]) throw new Error("Select --root");
     const o = observe(a["--root"], { remote: a["--remote"] ?? "origin", network: a["--network"] ?? false });
