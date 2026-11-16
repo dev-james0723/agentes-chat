@@ -114,8 +114,9 @@ const size = (r: ModelRequest) =>
  * ADR 0137), and 47,631 with recall reading the asker's own DM with the agent from anywhere they ask, an empty search
  * never told as "the first time", and the DM rule saying what may be said of it elsewhere. Where each workspace gets its
  * own computer, `workspaceComputerText` adds 447 to that (48,078); the ceiling leaves a little room above both.
+ * `remember`'s `applies: "everywhere_for_me"` (an agent's own finding for all its conversations) adds 254 (48,332).
  */
-const OI_CEILING_CHARS = 48_200;
+const OI_CEILING_CHARS = 48_400;
 
 test("a DM 'oi' stays under the size ceiling", async () => {
   const [request] = await play(TURNS.find((t) => t.id === "greet-dm") as ScriptedTurn);
