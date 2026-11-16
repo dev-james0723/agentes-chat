@@ -998,6 +998,9 @@ export async function publishDeferredIssueCreated(deps: IssueDeps, orgId: string
   if (row) await announce(deps, orgId, await one(deps.db, row), "issue.created");
 }
 
+/** The largest number an issue can have (an integer column): no task has one past it, and comparing it fails the query. */
+export const MAX_ISSUE_NUMBER = 2_147_483_647;
+
 export async function findVisible(
   db: Database,
   actor: IssueActor,
@@ -1093,7 +1096,9 @@ export async function listIssues(
           ? or(
               sql`${issues.title} ilike ${`%${q}%`}`,
               sql`${issues.description} ilike ${`%${q}%`}`,
-              /^#?\d+$/.test(q) ? eq(issues.number, Number(q.replace("#", ""))) : undefined,
+              /^#?\d+$/.test(q) && Number(q.replace("#", "")) <= MAX_ISSUE_NUMBER
+                ? eq(issues.number, Number(q.replace("#", "")))
+                : undefined,
             )
           : undefined,
       ),

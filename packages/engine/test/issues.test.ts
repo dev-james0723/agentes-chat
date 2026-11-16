@@ -21,6 +21,7 @@ import {
   issueFromMessage,
   issueWorkBrief,
   listIssueActivity,
+  listIssueProjects,
   listIssues,
   NEW_AGENT_DEFAULTS,
   NotFoundError,
@@ -656,7 +657,7 @@ describe("issues", () => {
     const issue = await createIssue(deps, person(f.owner.id), f.org.id, { title: "Exportar o relatório" });
     const activity = () => listIssueActivity(f.db, person(f.owner.id), f.org.id, issue.id);
     const before = (await activity()).length;
-    // A key in another tracker's style ("ABC-131") names no task here: its number could be anyone's, so it isn't guessed.
+    // A key in another tracker's style ("ABC-131") names no task here: that number could be any tracker's.
     const refs = [`ABC-${issue.number}`, "the export task", `${issue.id}-x`];
     for (const [name, more] of [
       ["list_issues", {}],
@@ -680,8 +681,27 @@ describe("issues", () => {
       expect((await run("list_issues", { issue: ref })).content).toContain(`#${issue.number} [`);
     const none = await run("list_issues", { issue: crypto.randomUUID() });
     expect(none).toMatchObject({ content: "Failed: Issue not found", isError: true });
-    // Nothing above changed the task.
-    expect((await getIssue(f.db, person(f.owner.id), f.org.id, { id: issue.id })).priority).not.toBe("high");
+    // A number past the column's range is no task's either, as a reference or as the words of a search.
+    for (const big of ["99999999999", "#99999999999"]) {
+      const out = await run("list_issues", { issue: big });
+      expect(out).toMatchObject({ content: "Failed: Issue not found", isError: true });
+      expect(out.data).toMatchObject({ refusedByCheck: "not_found" });
+      expect(await run("list_issues", { query: big })).toEqual({ content: "No issues." });
+    }
+    // Only spaces: once read as no reference at all, which matched the first task of the workspace.
+    const blank = await run("update_issue", { issue: " ", priority: "high" });
+    expect(blank.isError).toBe(true);
+    expect(blank.content).toContain("Issue not found");
+    // A refusal is one that wrote nothing: the project a write would create isn't made for a task that isn't there.
+    for (const ref of ["ABC-7", crypto.randomUUID()]) {
+      const out = await run("update_issue", { issue: ref, project: "Relatórios", new_project: true });
+      expect(out.data).toMatchObject({ refusedByCheck: "not_found" });
+    }
+    expect((await listIssueProjects(f.db, f.owner.id, f.org.id)).projects).toHaveLength(0);
+    // Nothing above changed the task or commented on it (a comment is a reply in its conversation, not activity).
+    const after = await getIssue(f.db, person(f.owner.id), f.org.id, { id: issue.id });
+    expect(after.priority).not.toBe("high");
+    expect(after.conversation?.count ?? 0).toBe(0);
     expect(await activity()).toHaveLength(before);
   });
 

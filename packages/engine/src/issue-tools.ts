@@ -19,6 +19,7 @@ import {
   type IssueStatus,
   type IssueView,
   listIssues,
+  MAX_ISSUE_NUMBER,
   nameableIn,
   openTaskConversation,
   setCriterion,
@@ -138,20 +139,25 @@ async function describeIssue(deps: IssueDeps, ctx: ToolContext, i: IssueView) {
     .join("\n");
 }
 
-/** Resolves `issue` as an id or a number (`131`, `#131`). */
 /**
- * An issue's number (#131) or id, as `getIssue` takes it. Anything else names no task, and is refused here: the id
- * column is a UUID, so other text there fails the query (its SQL shown to the agent, the outcome unknown to the run)
- * instead of finding nothing. A key in another tracker's style ("ABC-131") is not read as #131: that number could be
- * any tracker's.
+ * An issue's number (`131`, `#131`) or id, as `getIssue` takes it. Anything else names no task, and is refused here:
+ * the columns are an integer and a UUID, so a number past the first's range, or other text in the second, fails the
+ * query (its SQL shown to the agent, the outcome unknown to the run) instead of finding nothing. A key in another
+ * tracker's style ("ABC-131") is not read as #131: that number could be any tracker's.
  */
 const issueKey = (ref: string) => {
   const text = ref.trim();
   const n = /^#?(\d+)$/.exec(text);
-  if (n) return { number: Number(n[1]) };
+  if (n) {
+    const number = Number(n[1]);
+    if (number > MAX_ISSUE_NUMBER) throw new NotFoundError("Issue not found");
+    return { number };
+  }
   if (UUID.test(text)) return { id: text };
+  // Said back without what can't be seen (control and format characters), and with no example that is itself a number.
+  const shown = text.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, 64);
   throw new NotFoundError(
-    `Issue not found: "${text.slice(0, 64)}" is not a task number or id. Give its number as list_issues shows it (#131) or its id; list_issues finds a task by words (query).`,
+    `Issue not found: "${shown}" is not a task number or id. Give its number as list_issues shows it, or its id; list_issues finds a task by words (query).`,
   );
 };
 
@@ -648,6 +654,9 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
             if (refused) return { content: refused, isError: true };
           }
           const due = typeof input.due_date === "string" ? input.due_date.trim() : undefined;
+          // Before anything is written (a new project, just below): a reference to no task ends the call here, so a
+          // refusal is one that wrote nothing.
+          await find(deps, ctx, str(input.issue));
           const projectId = await chosenProject(deps, ctx, input);
           let before: Record<string, unknown> = {};
           const asked = givenFiles(input) ?? [];
