@@ -130,6 +130,8 @@ export const contextItems = pgTable(
     /** `verified` needs an observed outcome or a person; agent claims alone stay `unverified`. */
     verified: boolean().notNull().default(true),
     evidence: jsonb().$type<ContextEvidence[]>().notNull().default([]),
+    /** Opted-in versioned verification metadata; null keeps native legacy memory behavior. */
+    lessonVerification: jsonb().$type<Record<string, unknown>>(),
     confidence: real().notNull().default(0.7),
     /** Grows when retrieved and used, decays with age and disuse. */
     relevance: real().notNull().default(0.5),

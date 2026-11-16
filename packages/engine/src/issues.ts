@@ -85,6 +85,8 @@ export type IssueSource =
 /** An issue as the app shows it. */
 export interface IssueView {
   id: string;
+  /** Database generation, not a timestamp or historical release version. */
+  revision: number;
   number: number;
   title: string;
   description: string;
@@ -579,6 +581,7 @@ async function views(db: Database, rows: IssueRow[], reader?: string): Promise<I
   ]);
   return rows.map((r) => ({
     id: r.id,
+    revision: r.revision,
     number: r.number,
     title: r.title,
     description: r.description,

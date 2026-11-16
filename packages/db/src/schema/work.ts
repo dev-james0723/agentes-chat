@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -93,6 +94,10 @@ export const issues = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     number: integer().notNull(),
+    /** Database-owned evidence generation; every update advances it, including legacy writers. */
+    revision: integer().notNull().default(1),
+    /** Versioned communication references only. Never permissions, receipts or lifecycle authority. */
+    communication: jsonb().$type<Record<string, unknown>>(),
     title: text().notNull(),
     description: text().notNull().default(""),
     status: issueStatusEnum().notNull().default("todo"),
@@ -145,6 +150,7 @@ export const issues = pgTable(
   },
   (t) => [
     unique().on(t.orgId, t.number),
+    check("issues_revision_positive", sql`${t.revision} > 0`),
     index().on(t.orgId, t.status),
     index().on(t.orgId, t.dueDate),
     index().on(t.orgId, t.projectId),
@@ -176,7 +182,15 @@ export const issueActivity = pgTable(
     data: jsonb().$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.issueId, t.createdAt)],
+  (t) => [
+    index().on(t.issueId, t.createdAt),
+    // The native activity receipt is the admission key; ordinary comments are unaffected.
+    uniqueIndex("issue_activity_communication_admission")
+      .on(t.orgId, t.issueId, sql`(${t.data}->>'idempotencyKey')`)
+      .where(
+        sql`${t.event} = 'communication_handoff_admitted' and ${t.data}->>'schemaVersion' = '1.0' and jsonb_typeof(${t.data}->'idempotencyKey') = 'string'`,
+      ),
+  ],
 );
 
 /**
