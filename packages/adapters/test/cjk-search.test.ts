@@ -25,6 +25,13 @@ describe("CJK bigrams (Lucene cjk_bigram style)", () => {
     expect(contentWords("the deploy pipeline")).toEqual(["deploy", "pipeline"]);
   });
 
+  test("a long Chinese message's pairs don't crowd out its other words and numbers under the cap", () => {
+    const long = `${"電郵登記網頁任務板跟進審查負責人拉取請求監視器標題提交合併檢查狀態".repeat(2)} teamkit #160`;
+    const words = contentWords(long);
+    expect(words).toHaveLength(30);
+    expect(words.slice(0, 2)).toEqual(["teamkit", "160"]);
+  });
+
   test("websearch text: a CJK run is replaced by its pairs, the rest left as written", () => {
     expect(cjkQueryText('"電郵登記" -spam')).toBe('"電郵 郵登 登記" -spam');
     expect(cjkQueryText("deploy staging")).toBe("deploy staging");

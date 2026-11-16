@@ -34,14 +34,19 @@ export const STOPWORDS: ReadonlySet<string> = new Set(`${PT} ${EN}`.split(/\s+/)
 
 /**
  * The distinct words of 3+ letters or digits in `text`, lowercased, without stopwords, at most `max`. Chinese,
- * Japanese and Korean come as their character pairs (`splitWord`), as the index has them.
+ * Japanese and Korean come as their character pairs (`splitWord`), as the index has them, after the other words.
  */
 export function contentWords(text: string, max = 30): string[] {
   const words: string[] = [];
+  const pairs: string[] = [];
   for (const [word] of text.toLowerCase().matchAll(WORD)) {
     for (const { cjk, parts } of splitWord(word)) {
-      for (const w of parts) if (cjk || (w.length >= 3 && !STOPWORDS.has(w))) words.push(w);
+      for (const w of parts) {
+        if (cjk) pairs.push(w);
+        else if (w.length >= 3 && !STOPWORDS.has(w)) words.push(w);
+      }
     }
   }
-  return [...new Set(words)].slice(0, max);
+  // Pairs come after: a long Chinese message's many pairs never push its names and numbers past `max`.
+  return [...new Set([...words, ...pairs])].slice(0, max);
 }

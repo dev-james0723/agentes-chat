@@ -53,6 +53,8 @@ describe("memory in Chinese, found by words (CJK pairs)", () => {
     // Shares only 任務 (in the title): not about it.
     expect(await retrieve("teamkit 交付嗰張任務單而家係咩狀態？")).not.toContain(fact.id);
     expect(await retrieve("每月發票幾時寄出？")).toEqual([other.id]);
+    // A request of one two-character word has one pair: that one is enough.
+    expect(await retrieve("發票")).toEqual([other.id]);
   });
 
   test("a document indexed before pairs is still found by its whole run of characters", async () => {

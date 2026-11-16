@@ -314,13 +314,14 @@ export function createPostgresSearchResolver(db: Database): SearchIndexResolver 
               ? sql`(${density} >= ${q.minTextRank} and (${inTitle} or (${sql.join(anyWords.map(matches), sql` + `)}) >= 2))`
               : undefined;
           // One shared pair of CJK characters ("任務", "一個") says little about what a text is about: a hit by pairs
-          // needs two of them, or a word of another script (which alone is enough, as before).
-          const hasPairs = useAny && anyWords.some(isCjk);
-          const enoughPairs = hasPairs
+          // needs two of them (one when the request has only one, "報價"), or a word of another script (which alone is
+          // enough, as before).
+          const pairs = useAny ? Math.min(2, anyWords.filter(isCjk).length) : 0;
+          const enoughPairs = pairs
             ? sql`(${sql.join(
-                anyWords.map((w) => (isCjk(w) ? matches(w) : sql`2 * ${matches(w)}`)),
+                anyWords.map((w) => (isCjk(w) ? matches(w) : sql`${pairs} * ${matches(w)}`)),
                 sql` + `,
-              )}) >= 2`
+              )}) >= ${pairs}`
             : undefined;
           const toHit = (row: typeof t.$inferSelect, score: number): SearchHit => ({
             kind: row.kind as SearchKind,
