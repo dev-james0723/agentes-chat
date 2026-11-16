@@ -93,15 +93,40 @@ async function paused(
               transcript: sql`jsonb_set(${schema.agentRuns.transcript}, '{metadata}', ${JSON.stringify(options.malformedMetadata)}::jsonb)`,
             })
             .where(eq(schema.agentRuns.id, turn.runId));
+        // The steps the bridge records for the two calls below: each call, then its result, named and marked
+        // successful (a result with no recorded call, or not known to succeed, is no proof the call completed: the cut
+        // would hold it as an unknown effect).
+        const one = { command: "synthetic no actual command" };
+        const two = { command: "synthetic second no actual command" };
         await f.db.insert(schema.agentRunSteps).values([
+          {
+            orgId: f.org.id,
+            runId: turn.runId,
+            seq: 28,
+            kind: "tool_call",
+            data: { toolUseId: "one", name: "Bash", input: one },
+          },
+          {
+            orgId: f.org.id,
+            runId: turn.runId,
+            seq: 29,
+            kind: "tool_call",
+            data: { toolUseId: "two", name: "Bash", input: two },
+          },
           {
             orgId: f.org.id,
             runId: turn.runId,
             seq: 30,
             kind: "tool_result",
-            data: { toolUseId: "one", content: "PRIVATE_TOOL_OUTPUT_SENTINEL" },
+            data: { toolUseId: "one", name: "Bash", content: "PRIVATE_TOOL_OUTPUT_SENTINEL", isError: false },
           },
-          { orgId: f.org.id, runId: turn.runId, seq: 31, kind: "tool_result", data: { toolUseId: "two" } },
+          {
+            orgId: f.org.id,
+            runId: turn.runId,
+            seq: 31,
+            kind: "tool_result",
+            data: { toolUseId: "two", name: "Bash", isError: false },
+          },
         ]);
         yield { type: "usage", source: "plan", input: 1200, output: 80 };
         yield {
