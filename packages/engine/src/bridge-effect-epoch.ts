@@ -104,10 +104,18 @@ export async function closeBridgeEffectEpoch(
       and(eq(runToolTokens.id, epochId), eq(runToolTokens.runId, runId), eq(runToolTokens.effectEpochState, "open")),
     )
     .returning({ calls: runToolTokens.effectCalls, state: runToolTokens.effectEpochState });
-  if (!closed) throw new Error("bridge effect epoch not open");
-  const calls = closed.calls as Record<string, { state?: unknown }>;
+  if (!closed) {
+    // A stop closes the run's epoch itself (`fenceBridgeEpochOnStop`) and leaves its hold on the run: the turn that
+    // ends after it reads that hold, as from its own close.
+    const [fenced] = await db
+      .select({ state: runToolTokens.effectEpochState })
+      .from(runToolTokens)
+      .where(and(eq(runToolTokens.id, epochId), eq(runToolTokens.runId, runId)));
+    if (fenced?.state !== "closed_unknown") throw new Error("bridge effect epoch not open");
+  }
+  const calls = (closed?.calls ?? {}) as Record<string, { state?: unknown }>;
   const bridgeUnknown = Object.values(calls).some((call) => !settled.includes(String(call.state)));
-  if (closed.state === "closed_unknown") {
+  if (closed?.state === "closed_unknown") {
     const marker = {
       runId,
       turn,

@@ -456,6 +456,30 @@ describe("runner MCP bridge (ADR 0032)", () => {
     expect(epoch?.effectEpochState).toBe("closed_unknown");
   });
 
+  test("the turn closing an epoch a stop already fenced gets the stop's hold, not an error", async () => {
+    const { paired } = await connected();
+    const run = await runningRun();
+    const token = await issueRunToolToken(f.db, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      machineId: paired.machineId,
+      runId: run.id,
+    });
+    const check = await verifyRunToolToken(f.db, paired.machineId, token);
+    if (!check.ok || !check.identity.bridgeEpochId) throw new Error("expected epoch");
+    await cancelRun({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, run.id, { tell: false });
+    // The executor closes the turn's epoch after the brain stops: the stop closed it first.
+    const hold = await closeBridgeEffectEpoch(f.db, run.id, check.identity.bridgeEpochId, 1);
+    expect(hold).toMatchObject({ runId: run.id, tools: ["interrupted computer turn"] });
+    const [epoch] = await f.db
+      .select()
+      .from(schema.runToolTokens)
+      .where(eq(schema.runToolTokens.id, check.identity.bridgeEpochId));
+    expect(epoch?.effectEpochState).toBe("closed_unknown");
+    // An epoch that never was this run's is still an error.
+    await expect(closeBridgeEffectEpoch(f.db, run.id, crypto.randomUUID(), 1)).rejects.toThrow("not open");
+  });
+
   test("a racing cancellation cannot leave a fresh open bridge epoch", async () => {
     const { paired } = await connected();
     const run = await runningRun();
