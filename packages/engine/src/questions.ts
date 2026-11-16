@@ -121,7 +121,7 @@ export function createAskUserToolSource(deps: ResourcefulDeps = {}): ToolSource 
         .where(and(eq(schema.channels.id, ctx.channelId), eq(schema.channels.orgId, ctx.orgId)));
       // In an agents' DM only a run answering a question or note for a person it answers may ask (`consultedFor`).
       if (channel && isAgentOnlyDm(channel) && !(await consultedFor(ctx))) {
-        return { content: NO_PERSON_READS, isError: true };
+        return { content: NO_PERSON_READS, isError: true, data: { refusedByCheck: "forbidden" } };
       }
       const named = typeof input.person === "string" ? input.person.trim() : "";
       const matches = named ? await findMember(ctx, named) : [];

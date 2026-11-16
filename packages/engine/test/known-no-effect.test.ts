@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { schema } from "@agenteschat/db";
+import { count, eq, schema } from "@agenteschat/db";
 import {
+  createAgent,
   createArtifactToolSource,
+  createAskUserToolSource,
+  createChatToolSource,
   createContextToolSource,
+  createFollowUpToolSource,
+  createHandOffToolSource,
   createIssueToolSource,
   createScheduleToolSource,
   createToolGateway,
@@ -10,12 +15,15 @@ import {
   grantScopes,
   knownBridgeResult,
   NotFoundError,
+  openAgentDm,
   postPersonMessage,
   type ToolContext,
   type ToolDefinition,
   type ToolOutput,
+  type ToolSource,
 } from "../src";
 import { type Fixture, setup } from "./fixtures";
+import { runContext } from "./mail-fixtures";
 
 let f: Fixture;
 afterEach(async () => {
@@ -161,5 +169,120 @@ describe("errors of our own tools that cannot have had an effect are known outco
       expect([name, marked(name)]).toEqual([name, true]);
     for (const name of ["remember", "update_memory", "create_issue", "comment_issue", "update_issue"])
       expect([name, marked(name)]).toEqual([name, false]);
+  });
+});
+
+describe("our write tools that refuse before any write say so in a typed refusal", () => {
+  /** Rows a tool of these could write: memories, messages, questions and queued jobs. */
+  const writes = async () =>
+    Promise.all(
+      [schema.contextItems, schema.messages, schema.agentQuestions, schema.outbox].map(
+        async (t) => (await f.db.select({ n: count() }).from(t))[0]?.n ?? 0,
+      ),
+    );
+  const call = async (source: ToolSource, ctx: ToolContext, name: string, input: Record<string, unknown>) => {
+    const def = (await source.tools(ctx)).find((t) => t.name === name);
+    if (!def) throw new Error(`no ${name}`);
+    const before = await writes();
+    const out = await def.execute(input, ctx);
+    expect(await writes()).toEqual(before);
+    expect(out.isError).toBe(true);
+    return out;
+  };
+
+  test("remember: a rule nobody here gave", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    const out = await call(
+      createContextToolSource(f.context),
+      { ...ctx, triggerMessageId: crypto.randomUUID() },
+      "remember",
+      {
+        content: "Always deploy on Fridays",
+        kind: "rule",
+      },
+    );
+    expect(out.content).toContain("Not saved: a rule is kept only");
+    expect(out.data).toMatchObject({ refusedByCheck: "forbidden" });
+    expect(knownBridgeResult(out)).toBe(true);
+  });
+
+  test("save_how_to: a credential is never stored", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    const out = await call(createContextToolSource(f.context), ctx, "save_how_to", {
+      title: "Merging",
+      how: "the api key is sk-ant-api03-zzzzzzzzzzzzzzzzzzzzzz",
+    });
+    expect(out.content).toContain("credential");
+    expect(out.data).toMatchObject({ refusedByCheck: "invalid_request" });
+    expect(knownBridgeResult(out)).toBe(true);
+  });
+
+  test("hand_off: a run that is not a routine's", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    // Listed for background work only; this run is not a routine's.
+    const out = await call(createHandOffToolSource({ pubsub: f.pubsub }), { ...ctx, background: true }, "hand_off", {
+      message: "Done.",
+    });
+    expect(out.content).toContain("Only background work");
+    expect(out.data).toMatchObject({ refusedByCheck: "forbidden" });
+    expect(knownBridgeResult(out)).toBe(true);
+  });
+
+  test("follow_up: nobody reads the agents' DM to come back to", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    const other = await createAgent(
+      f.db,
+      f.owner.id,
+      f.org.id,
+      { name: "Infra", handle: "infra", role: "Ops", instructions: "Answer.", credentialId: f.credential.id },
+      { model: "claude-sonnet-5-5" },
+    );
+    const dm = await openAgentDm(f.db, f.org.id, f.agent.id, other.id);
+    await f.db.update(schema.agentRuns).set({ channelId: dm.id }).where(eq(schema.agentRuns.id, ctx.runId));
+    const out = await call(createFollowUpToolSource({ pubsub: f.pubsub }), { ...ctx, channelId: dm.id }, "follow_up", {
+      minutes: 10,
+      note: "check",
+      about: "check",
+    });
+    expect(out.content).toContain("Answer the agent that asked now");
+    expect(out.data).toMatchObject({ refusedByCheck: "forbidden" });
+    expect(knownBridgeResult(out)).toBe(true);
+  });
+
+  test("post_message: to the conversation it is already in", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    const [general] = await f.db.select().from(schema.channels).where(eq(schema.channels.id, f.general.id));
+    const out = await call(createChatToolSource({ pubsub: f.pubsub, artifacts: f.artifactDeps }), ctx, "post_message", {
+      channel: general?.name ?? "",
+      text: "hi",
+    });
+    expect(out.content).toContain("That is this conversation");
+    expect(out.data).toMatchObject({ refusedByCheck: "invalid_request" });
+    expect(knownBridgeResult(out)).toBe(true);
+  });
+
+  test("ask_user: in the agents' DM, where no person reads", async () => {
+    f = await setup();
+    const ctx = await runContext(f);
+    const other = await createAgent(
+      f.db,
+      f.owner.id,
+      f.org.id,
+      { name: "Infra", handle: "infra", role: "Ops", instructions: "Answer.", credentialId: f.credential.id },
+      { model: "claude-sonnet-5-5" },
+    );
+    const dm = await openAgentDm(f.db, f.org.id, f.agent.id, other.id);
+    const out = await call(createAskUserToolSource(), { ...ctx, channelId: dm.id }, "ask_user", {
+      question: "Which invoice?",
+      why: "There are two invoices with that number.",
+    });
+    expect(out.content).toContain("No person reads this conversation");
+    expect(out.data).toMatchObject({ refusedByCheck: "forbidden" });
+    expect(knownBridgeResult(out)).toBe(true);
   });
 });
