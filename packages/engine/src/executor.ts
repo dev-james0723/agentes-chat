@@ -58,6 +58,7 @@ import {
   autoWanted,
   chooseAutoModel,
   fallbackChoice,
+  handoffEffort,
   handoffModel,
   inMission,
   needsAutoChoice,
@@ -3279,8 +3280,10 @@ async function executeRunInner(
             { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
           ).catch(() => null);
           if (!resumed || resumed.kind !== h.targetKind || resumed.missionId) return null;
-          // The effort it moved with (the judge's, for an agent on `auto`) stays for the rest of the run.
-          return h.effort ? { ...resumed, effort: h.effort } : resumed;
+          // The effort it moved with (the judge's, for an agent on `auto`) stays for the rest of the run, unless the
+          // agent's effort was set by hand meanwhile: the resolver above already read that one.
+          const effort = handoffEffort(agent, h.effort);
+          return effort ? { ...resumed, effort } : resumed;
         })()
       : null;
   if (resumedHandoff) brainPlan = resumedHandoff;
@@ -3855,7 +3858,7 @@ async function executeRunInner(
           // The agent's effort on `auto` is the judge's reading of the work, not of one harness: it goes with the run,
           // as the tier picked the model above. A level the agent set itself already did, through the resolver; left
           // out, the route would think with its default whatever the task is.
-          const judgedEffort = isAutoModel(agent.brainEffort) ? t.autoModel?.effort : undefined;
+          const judgedEffort = handoffEffort(agent, t.autoModel?.effort);
           delete t.quotaReservePending;
           t.quotaCliHandoff = {
             schema: "quota-cli-handoff/1",

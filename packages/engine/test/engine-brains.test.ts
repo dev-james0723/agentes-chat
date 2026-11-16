@@ -83,7 +83,7 @@ import {
   taskManager,
   thinkerIsLocal,
 } from "../src";
-import { handoffModel } from "../src/auto-model";
+import { type AutoEffort, handoffEffort, handoffModel } from "../src/auto-model";
 import { computerPrompt } from "../src/brains/prompt";
 import { admitBridgeEffect } from "../src/bridge-effect-epoch";
 import {
@@ -5762,7 +5762,9 @@ async function midTaskQuotaFixture(o: {
   claudeUsed?: number;
   claudeAt?: string;
   /** The agent's effort is `auto` and the judge reads the work as this. */
-  judged?: BrainEffort;
+  judged?: AutoEffort;
+  /** With `judged`: the agent's model is `auto` instead, and its effort the one it set itself (null: none). */
+  ownEffort?: BrainEffort | null;
 }) {
   let writes = 0;
   const source: ToolSource = {
@@ -5796,7 +5798,11 @@ async function midTaskQuotaFixture(o: {
   const machineId = await computerAgent(f, {
     brain: "codex",
     brainExtraUsage: false,
-    ...(o.judged ? { brainEffort: "auto" } : {}),
+    ...(o.judged
+      ? o.ownEffort === undefined
+        ? { brainEffort: "auto" }
+        : { brainModel: "auto", brainEffort: o.ownEffort }
+      : {}),
   });
   const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
   if (!machine) throw new Error("missing machine");
@@ -5930,6 +5936,33 @@ test("quota policy: the effort the judge chose for the work goes with the run to
   const moved = steps.map((s) => (s.data as { quotaCliHandoff?: { effort?: string } }).quotaCliHandoff).find(Boolean);
   expect(moved?.effort).toBe("low");
 }, 30_000);
+
+test.each([
+  { set: "high", ownEffort: "high" as const, thinksWith: "high" },
+  { set: "none", ownEffort: null, thinksWith: undefined },
+])(
+  "quota policy: the effort an agent set itself ($set) is not replaced by the judge's when a run moves",
+  async ({ ownEffort, thinksWith }) => {
+    // Only the agent's model is on `auto`: the judge still reads the work (low), but the effort is the agent's own.
+    const r = await midTaskQuotaFixture({
+      authMethod: "claude.ai",
+      goal: "@dev SYNTH_GOAL do step one then step two",
+      judged: "low",
+      ownEffort,
+    });
+    expect(r.run?.status).toBe("done");
+    expect(r.run?.brain).toBe("claude_code");
+    expect(r.codexEfforts).toEqual([thinksWith, thinksWith]);
+    // The plan that takes over thinks with the agent's own level too (through the resolver), or with none.
+    expect(r.claudeTurns).toHaveLength(1);
+    expect(r.claudeTurns[0]?.effort).toBe(thinksWith);
+    const t = r.run?.transcript as { autoModel?: { effort?: string }; quotaCliHandoff?: Record<string, unknown> };
+    expect(t.autoModel?.effort).toBe("low");
+    expect(t.quotaCliHandoff?.targetKind).toBe("claude_code");
+    expect(t.quotaCliHandoff).not.toHaveProperty("effort");
+  },
+  30_000,
+);
 
 test("quota policy: a Claude API-key login is a paid path and is never used; the task waits", async () => {
   const r = await midTaskQuotaFixture({ authMethod: "api_key", goal: "@dev SYNTH_GOAL do step one then step two" });
@@ -6221,6 +6254,19 @@ test("a quota handoff takes the top model only for work the judge called large",
   expect(handoffModel("grok", "grok-4.7", "small")).toBe("grok-4.7");
 });
 
+test("a quota handoff carries the judge's effort only for an agent that leaves its effort to auto", async () => {
+  f = await setup();
+  expect(handoffEffort({ brainEffort: "auto" }, "low")).toBe("low");
+  expect(handoffEffort({ brainEffort: "auto" }, "high")).toBe("high");
+  // A level the agent set itself, or none: the resolver carries that (or nothing) to the new route.
+  expect(handoffEffort({ brainEffort: "high" }, "low")).toBeUndefined();
+  expect(handoffEffort({ brainEffort: null }, "low")).toBeUndefined();
+  // Read back from a run's record: only a level the judge gives, never whatever the record holds.
+  expect(handoffEffort({ brainEffort: "auto" }, "max")).toBeUndefined();
+  expect(handoffEffort({ brainEffort: "auto" }, { level: "low" })).toBeUndefined();
+  expect(handoffEffort({ brainEffort: "auto" }, undefined)).toBeUndefined();
+});
+
 test("a computer brain's 'balance exhausted' refusal is the plan's limit, not an outage", async () => {
   f = await setup();
   // 2026-11-15 19:36 UTC, as Grok Build said it; the run was parked as provider_outage and no other plan took over.
@@ -6262,7 +6308,7 @@ async function reserveFixture(o: {
   targetFirst?: BrainEvent[];
   sourceLimit?: boolean;
   /** The agent's effort is `auto` and the judge reads the work as this. */
-  judged?: BrainEffort;
+  judged?: AutoEffort;
 }) {
   const judged = o.judged;
   f = await setup(
@@ -6414,6 +6460,28 @@ test("quota policy: a run that resumes on the route it moved to keeps the effort
   expect(r.sourceTurns).toHaveLength(0);
   expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
   expect(r.targetTurns.map((t) => t.effort)).toEqual(r.targetTurns.map(() => "low"));
+}, 60_000);
+
+test("quota policy: an effort the owner sets while a moved run waits is the one it resumes with", async () => {
+  const r = await reserveFixture({
+    codexOnline: true,
+    qualify: true,
+    judged: "low",
+    targetFirst: [{ type: "error", code: "busy", message: "Waiting in line for the computer.", retryable: true }],
+  });
+  await post(f, "@dev pick an option and continue");
+  await drainOutbox(f.db, r.handlers);
+  const [parked] = await f.db.select().from(schema.agentRuns);
+  expect(parked?.brain).toBe("claude_code");
+  expect(parked?.status).not.toBe("done");
+  // The judge's level was for an agent on `auto`. It no longer is: its own setting counts, as on its own plan.
+  await f.db.update(schema.agents).set({ brainEffort: "high" }).where(eq(schema.agents.id, f.agent.id));
+  for (let i = 1; i <= 3; i++) await drainOutbox(f.db, r.handlers, { now: new Date(Date.now() + i * 10 * 60_000) });
+  const [run] = await f.db.select().from(schema.agentRuns);
+  expect(run?.status).toBe("done");
+  expect(r.targetTurns.length).toBeGreaterThanOrEqual(2);
+  expect(r.targetTurns[0]?.effort).toBe("low");
+  expect(r.targetTurns.slice(1).map((t) => t.effort)).toEqual(r.targetTurns.slice(1).map(() => "high"));
 }, 60_000);
 
 test("a turn that asks a person after a failed command waits for the answer with no unknown effect", async () => {
