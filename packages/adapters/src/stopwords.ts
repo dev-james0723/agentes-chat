@@ -1,3 +1,5 @@
+import { splitWord, WORD } from "./cjk";
+
 /**
  * Words too common to say what a text is about, in Portuguese and English (3+ letters: the search ignores shorter
  * ones). The search index uses Postgres's `simple` configuration, which keeps every word, so a retrieval query drops
@@ -30,9 +32,16 @@ without would yes yet you your yours yourself yourselves
 
 export const STOPWORDS: ReadonlySet<string> = new Set(`${PT} ${EN}`.split(/\s+/).filter(Boolean));
 
-/** The distinct words of 3+ letters or digits in `text`, lowercased, without stopwords, at most `max`. */
+/**
+ * The distinct words of 3+ letters or digits in `text`, lowercased, without stopwords, at most `max`. Chinese,
+ * Japanese and Korean come as their character pairs (`splitWord`), as the index has them.
+ */
 export function contentWords(text: string, max = 30): string[] {
-  return [...new Set(text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])]
-    .filter((w) => !STOPWORDS.has(w))
-    .slice(0, max);
+  const words: string[] = [];
+  for (const [word] of text.toLowerCase().matchAll(WORD)) {
+    for (const { cjk, parts } of splitWord(word)) {
+      for (const w of parts) if (cjk || (w.length >= 3 && !STOPWORDS.has(w))) words.push(w);
+    }
+  }
+  return [...new Set(words)].slice(0, max);
 }

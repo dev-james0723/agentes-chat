@@ -407,7 +407,15 @@ export async function searchVisible(
     match?: "all" | "any";
   } & Pick<
     SearchQuery,
-    "after" | "before" | "messages" | "sort" | "visibleIssueScopes" | "visibleFileScopes" | "minTextRank"
+    | "after"
+    | "before"
+    | "messages"
+    | "sort"
+    | "visibleIssueScopes"
+    | "visibleFileScopes"
+    | "minTextRank"
+    | "maxDistance"
+    | "maxDistanceFromBest"
   >,
 ): Promise<SearchHit[]> {
   // A list by date ranks by no vector: no embedding to pay for. A provider that fails or is slow leaves the words.
@@ -434,6 +442,8 @@ export async function searchVisible(
     limit: input.limit,
     match: input.match,
     minTextRank: input.minTextRank,
+    maxDistance: input.maxDistance,
+    maxDistanceFromBest: input.maxDistanceFromBest,
     after: input.after,
     before: input.before,
     messages: input.messages,
