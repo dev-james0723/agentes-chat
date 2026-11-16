@@ -58,6 +58,8 @@ export const EMBEDDING_CATALOG: Record<string, EmbeddingModel> = {
     queryPrefix: QWEN3_QUERY,
     asksDimensions: true,
   },
+  // Ollama's tag for Qwen3-Embedding-0.6B: the same model run locally, so the same query prompt; nothing to pay.
+  "qwen3-embedding:0.6b": { provider: "openai", pricePerToken: 0, dimensions: 1024, queryPrefix: QWEN3_QUERY },
   "BAAI/bge-m3": { provider: "openai", pricePerToken: 10, dimensions: 1024 },
   "ibm-granite/granite-embedding-311m-multilingual-r2": { provider: "openai", pricePerToken: 0, dimensions: 768 },
   "fake-embed": { provider: "fake", pricePerToken: 0, dimensions: 1024 },
