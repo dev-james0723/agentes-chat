@@ -612,8 +612,9 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "host.doc
 
 /**
  * The agent's model brain would answer from an endpoint on this computer (or its container network) at no price:
- * its model is one a live endpoint of its workspace lists with no price set, at an address that is local by name.
- * The endpoint is the one the model names, as the gateway resolves the call, never a key the agent also holds.
+ * its model is one a live endpoint of its workspace lists at no price (none set, or zero), at an address that is
+ * local by name. The endpoint is the one the model names, as the gateway resolves the call, never a key the agent
+ * also holds.
  */
 export async function thinkerIsLocal(db: Database, thinker: Pick<Agent, "orgId" | "model">): Promise<boolean> {
   const pinned = parseCustomModel(thinker.model);

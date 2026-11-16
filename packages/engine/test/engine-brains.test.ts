@@ -6360,6 +6360,10 @@ test("quota policy: a plan cut with no qualified route stands in on the agent's 
   expect(run?.brain).toBe("model");
   expect(run?.transcript).toMatchObject({ fallback: { from: "codex", code: "plan_limit" } });
   expect(r.targetTurns).toHaveLength(0);
+  // And the stood-in turn really answered from that endpoint: its model, at its address.
+  expect(run?.status).toBe("done");
+  expect(f.provider.calls.at(-1)?.request.model).toBe(customModelId(local, "qwen3:8b"));
+  expect(f.provider.calls.at(-1)?.endpoint).toEqual({ style: "openai", baseURL: "http://localhost:11434/v1" });
 }, 30_000);
 
 test("quota policy: a run that pauses after its handoff resumes on the route it moved to", async () => {
