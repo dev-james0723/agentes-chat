@@ -1302,7 +1302,6 @@ export async function updateIssue(
       await recordOutcome(tx, {
         ...taskOutcome(updated, actor),
         kind: "issue_reopened",
-        summary: updated.title,
         details: { issueId: updated.id, from: current.status, to: updated.status, by: author },
       });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
@@ -1391,6 +1390,8 @@ const taskOutcome = (issue: IssueRow, actor: IssueActor) => ({
   agentId: issue.assigneeType === "agent" ? issue.assigneeId : actor.type === "agent" ? actor.agentId : null,
   runId: actor.type === "agent" ? (actor.runId ?? null) : null,
   subject: `issue#${issue.number}`,
+  // A task shared with chosen people keeps its title to them.
+  summary: issue.restricted ? "" : issue.title,
   source: "issue" as const,
   channelId: issue.channelId,
 });
@@ -1430,7 +1431,6 @@ export async function setCriterion(
       await recordOutcome(tx, {
         ...taskOutcome(updated, actor),
         kind: "criteria_met",
-        summary: updated.title,
         details: { issueId: updated.id, checkedBy: criteria.map((c) => c.doneBy ?? null) },
       });
     return updated;

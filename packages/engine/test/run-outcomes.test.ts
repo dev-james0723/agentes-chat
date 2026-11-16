@@ -266,3 +266,27 @@ describe("task outcomes", () => {
     expect((await issueOutcomes(issue.number)).length).toBe(1);
   });
 });
+
+test("a task shared with chosen people keeps its title out of outcomes and out of every thread's reflection", async () => {
+  f = await setup();
+  const issue = await createIssue(deps(), owner(), f.org.id, {
+    title: "Ana's salary review",
+    assignee: { type: "agent", id: f.agent.id },
+  });
+  await f.db
+    .update(schema.issues)
+    .set({ restricted: true, audienceUserIds: [f.owner.id], channelId: null })
+    .where(eq(schema.issues.id, issue.id));
+  await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "done" });
+  await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "in_progress" });
+  const [row] = await f.db.select().from(schema.outcomes).where(eq(schema.outcomes.kind, "issue_reopened"));
+  expect(row).toMatchObject({ channelId: null, summary: "" });
+  const msg = await postPersonMessage(deps(), f.owner.id, f.org.id, f.general.id, { body: "public" });
+  const rows = await outcomesForThread(f.db, f.org.id, {
+    threadRootId: msg.id,
+    channelId: f.general.id,
+    agentIds: [f.agent.id],
+    since: new Date(0),
+  });
+  expect(rows).toEqual([]);
+});
