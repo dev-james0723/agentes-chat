@@ -387,3 +387,26 @@ describe("verified economics", () => {
     expect(report.rejectedOutcomes[0]?.reason).toBe("conflicting_outcome_receipt");
   });
 });
+
+test("independently checked failures preserve cost and receipt evidence without a success denominator", () => {
+  const failed = outcome({ result: "failure", verification: { ...verificationReceipt(), result: "failure" } });
+  const report = aggregateVerifiedEconomics([attempt("failed"), attempt("review")], [failed]);
+  expect(report.verifiedSuccessfulTasks).toBe(0);
+  expect(report.tokens.total).toBe(36);
+  expect(report.tokensPerVerifiedOutcome).toBeNull();
+  expect(report.costs.cash[0]?.total).toBe(4);
+  expect(report.costs.cash[0]?.perVerifiedOutcome).toBeNull();
+  expect(report.outcomeEvidence).toEqual([
+    {
+      id: failed.id,
+      orgId: "org",
+      taskId: "task",
+      taskRevision: 2,
+      result: "failure",
+      verificationReceiptId: "resolved-receipt",
+      verifierId: "independent-reviewer",
+    },
+  ]);
+  const unverified = aggregateVerifiedEconomics([attempt("one")], [outcome({ result: "failure", verification: null })]);
+  expect(unverified.outcomeEvidence).toEqual([]);
+});

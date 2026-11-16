@@ -78,7 +78,14 @@ export interface CandidateDecision {
     savings95: Interval95 | null;
     intervalMethod: "task_mean_paired_t_conservative_95";
     qualityIntervalMethod: "task_cluster_hoeffding_95";
-    tasks: { taskId: string; pairedTrials: number; qualityDifference: number | null; saving: number | null }[];
+    tasks: {
+      taskId: string;
+      pairedTrials: number;
+      qualityDifference: number | null;
+      saving: number | null;
+      control: { rawTotal: number | null; verifiedOutcomes: number; perVerifiedOutcome: number | null };
+      candidate: { rawTotal: number | null; verifiedOutcomes: number; perVerifiedOutcome: number | null };
+    }[];
     comparison: PairedEvaluation["comparison"];
     savingMetric: EvaluationPolicy["savingMetric"];
     evidenceTier: string;
@@ -106,28 +113,78 @@ function interval(values: number[]): Interval95 | null {
   return [average, radius].every(finite) ? { mean: average, lower: average - radius, upper: average + radius } : null;
 }
 
-function measuredCost(arm: EvaluationArm, policy: EvaluationPolicy): { value: number; unit: string } | null {
+interface MeasuredCost {
+  value: number;
+  unit: string;
+  successes: number;
+  outcomeKey: string;
+}
+function measuredCost(arm: EvaluationArm, policy: EvaluationPolicy, taskId: string): MeasuredCost | null {
   const economics = arm.economics;
   if (
     !economics.coverage.attribution.complete ||
     !economics.coverage.exactModel.complete ||
-    !economics.coverage.effort.complete
+    !economics.coverage.effort.complete ||
+    !count(economics.verifiedSuccessfulTasks)
   )
     return null;
+  const outcomes = economics.outcomeEvidence ?? [];
+  const matching = outcomes.filter(
+    (outcome) =>
+      outcome.taskId === taskId &&
+      outcome.verificationReceiptId === arm.quality.receiptRef &&
+      outcome.verifierId === arm.quality.verifierId,
+  );
+  if (matching.length !== 1) return null;
+  const outcome = matching[0];
+  if (
+    !outcome ||
+    outcomes.some(
+      (entry) =>
+        entry.taskId !== taskId ||
+        entry.orgId !== outcome.orgId ||
+        entry.taskRevision !== outcome.taskRevision ||
+        entry.result !== outcome.result,
+    )
+  )
+    return null;
+  const successes = new Set(
+    outcomes.filter((entry) => entry.result === "success").map((entry) => JSON.stringify([entry.orgId, entry.taskId])),
+  ).size;
+  if (
+    successes !== economics.verifiedSuccessfulTasks ||
+    successes > 1 ||
+    arm.quality.accepted !== (successes === 1) ||
+    (successes > 0 && !economics.coverage.outcomesWithUsage.complete)
+  )
+    return null;
+  let value: number | null;
+  let perOutcome: number | null;
+  let unit: string;
   if (policy.savingMetric === "tokens") {
-    const value = economics.tokens.total;
-    return economics.coverage.meteredTokens.complete && count(value) ? { value, unit: "tokens" } : null;
+    if (!economics.coverage.meteredTokens.complete) return null;
+    value = economics.tokens.total;
+    perOutcome = economics.tokensPerVerifiedOutcome;
+    unit = "tokens";
+  } else {
+    // Catalog/plan/local estimates cannot substitute for one exact charged currency and unit.
+    const amount = economics.costs.cash[0];
+    if (
+      !economics.coverage.cash.complete ||
+      !economics.coverage.accounting.complete ||
+      economics.costs.cash.length !== 1 ||
+      !amount
+    )
+      return null;
+    value = amount.total;
+    perOutcome = amount.perVerifiedOutcome;
+    unit = JSON.stringify([amount.currency, amount.unit]);
   }
-  // One exact currency+unit only; no exchange rates, subscriptions or catalog estimates are cash.
-  const cash = economics.costs.cash;
-  const amount = cash[0];
-  return economics.coverage.cash.complete &&
-    economics.coverage.accounting.complete &&
-    cash.length === 1 &&
-    amount &&
-    count(amount.total)
-    ? { value: amount.total, unit: JSON.stringify([amount.currency, amount.unit]) }
-    : null;
+  if (!count(value)) return null;
+  // Failed repetitions have no ratio but their COMPLETE costs stay in the cluster numerator.
+  if (successes === 0 ? perOutcome !== null : !finite(perOutcome) || perOutcome < 0 || perOutcome !== value / successes)
+    return null;
+  return { value, unit, successes, outcomeKey: JSON.stringify([outcome.orgId, outcome.verificationReceiptId]) };
 }
 
 export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPolicy): CandidateDecision {
@@ -179,9 +236,18 @@ export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPol
   }
   const groups = new Map<
     string,
-    { quality: number[]; control: number[]; candidate: number[]; units: string[]; total: number }
+    {
+      quality: number[];
+      control: number[];
+      candidate: number[];
+      units: string[];
+      total: number;
+      controlSuccesses: number;
+      candidateSuccesses: number;
+    }
   >();
   const pairs = new Set<string>();
+  const outcomeReceipts = new Set<string>();
   const orders = new Set<string>();
   let controlTrials = 0;
   let candidateTrials = 0;
@@ -207,7 +273,15 @@ export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPol
       continue;
     }
     pairs.add(identity);
-    const group = groups.get(pair.taskId) ?? { quality: [], control: [], candidate: [], units: [], total: 0 };
+    const group = groups.get(pair.taskId) ?? {
+      quality: [],
+      control: [],
+      candidate: [],
+      units: [],
+      total: 0,
+      controlSuccesses: 0,
+      candidateSuccesses: 0,
+    };
     groups.set(pair.taskId, group);
     if (!pair.control || !pair.candidate) {
       hold.add("missing_control_or_candidate");
@@ -246,12 +320,16 @@ export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPol
     )
       hold.add("unmatched_route_or_task");
     group.quality.push(Number(candidate.quality.accepted) - Number(control.quality.accepted));
-    const a = measuredCost(control, policy);
-    const b = measuredCost(candidate, policy);
+    const a = measuredCost(control, policy, pair.taskId);
+    const b = measuredCost(candidate, policy, pair.taskId);
     if (!a || !b) {
       hold.add("incomplete_usage");
       continue;
     }
+    if (outcomeReceipts.has(a.outcomeKey) || outcomeReceipts.has(b.outcomeKey) || a.outcomeKey === b.outcomeKey)
+      hold.add("reused_economic_outcome_receipt");
+    outcomeReceipts.add(a.outcomeKey);
+    outcomeReceipts.add(b.outcomeKey);
     if (a.unit !== b.unit) {
       hold.add("unmatched_currency_or_unit");
       continue;
@@ -259,6 +337,8 @@ export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPol
     group.control.push(a.value);
     group.candidate.push(b.value);
     group.units.push(a.unit);
+    group.controlSuccesses += a.successes;
+    group.candidateSuccesses += b.successes;
   }
   if (orders.size < 2) hold.add("order_not_counterbalanced");
   if (groups.size < policy.minimumIndependentTasks) hold.add("too_few_independent_tasks");
@@ -266,14 +346,38 @@ export function decideCandidate(metrics: PairedEvaluation, policy: EvaluationPol
   for (const [taskId, group] of groups) {
     if (group.total < policy.minimumTrialsPerArm) hold.add("too_few_trials");
     const qualityDifference = group.quality.length === group.total && group.total > 0 ? mean(group.quality) : null;
-    const a = mean(group.control);
-    const b = mean(group.candidate);
+    const controlTotal = group.control.reduce((sum, value) => sum + value, 0);
+    const candidateTotal = group.candidate.reduce((sum, value) => sum + value, 0);
+    const a = group.controlSuccesses > 0 && count(controlTotal) ? controlTotal / group.controlSuccesses : null;
+    const b = group.candidateSuccesses > 0 && count(candidateTotal) ? candidateTotal / group.candidateSuccesses : null;
     const saving =
-      group.control.length === group.total && group.total > 0 && a > 0 && new Set(group.units).size === 1
+      group.control.length === group.total &&
+      group.candidate.length === group.total &&
+      group.total > 0 &&
+      a !== null &&
+      b !== null &&
+      a > 0 &&
+      new Set(group.units).size === 1
         ? (a - b) / a
         : null;
     if (saving === null || !finite(saving)) hold.add("incomplete_usage_or_zero_baseline");
-    tasks.push({ taskId, pairedTrials: group.total, qualityDifference, saving: finite(saving) ? saving : null });
+    if (group.controlSuccesses === 0 || group.candidateSuccesses === 0) hold.add("zero_verified_outcome_denominator");
+    tasks.push({
+      taskId,
+      pairedTrials: group.total,
+      qualityDifference,
+      saving: finite(saving) ? saving : null,
+      control: {
+        rawTotal: group.control.length === group.total && count(controlTotal) ? controlTotal : null,
+        verifiedOutcomes: group.controlSuccesses,
+        perVerifiedOutcome: a,
+      },
+      candidate: {
+        rawTotal: group.candidate.length === group.total && count(candidateTotal) ? candidateTotal : null,
+        verifiedOutcomes: group.candidateSuccesses,
+        perVerifiedOutcome: b,
+      },
+    });
   }
   const qualityValues = tasks.map((task) => task.qualityDifference).filter((value): value is number => value !== null);
   const savingValues = tasks.map((task) => task.saving).filter((value): value is number => value !== null);

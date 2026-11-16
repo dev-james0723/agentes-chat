@@ -141,6 +141,16 @@ export interface EconomicsReport {
     partial: number;
   };
   verifiedSuccessfulTasks: number;
+  /** Consistency projection of caller-resolved independent receipts; not receipt authentication. */
+  outcomeEvidence: {
+    id: string;
+    orgId: string;
+    taskId: string;
+    taskRevision: number;
+    result: "success" | "failure";
+    verificationReceiptId: string;
+    verifierId: string;
+  }[];
   rejectedOutcomes: { id: string; reason: string }[];
   tokens: AggregateMetric;
   reasoningTokens: AggregateMetric;
@@ -291,7 +301,6 @@ function outcomeRejection(row: VerifiedOutcome): string | null {
   if (!textKnown(row.taskId) || !revisionKnown(row.taskRevision) || !revisionKnown(row.currentTaskRevision))
     return "missing_task_revision";
   if (row.taskRevision !== row.currentTaskRevision) return "stale_task_revision";
-  if (row.result !== "success") return "not_successful";
   const verification = row.verification;
   if (
     !verification ||
@@ -305,8 +314,9 @@ function outcomeRejection(row: VerifiedOutcome): string | null {
     return "missing_independent_receipt";
   if (verification.verifierId === row.producerId) return "self_review";
   if (verification.orgId !== row.orgId || verification.taskId !== row.taskId) return "receipt_scope_mismatch";
-  if (verification.result !== "success") return "receipt_not_successful";
+  if (verification.result !== row.result) return "receipt_not_successful";
   if (verification.taskRevision !== row.taskRevision) return "receipt_revision_mismatch";
+  if (row.result !== "success") return "not_successful";
   return null;
 }
 
@@ -322,6 +332,7 @@ export function aggregateVerifiedEconomics(attempts: UsageAttempt[], outcomes: V
   const issues: EconomicsReport["issues"] = [];
   const rejectedOutcomes: EconomicsReport["rejectedOutcomes"] = [];
   const candidates = new Map<string, VerifiedOutcome[]>();
+  const outcomeEvidence: EconomicsReport["outcomeEvidence"] = [];
   const receiptBindings = new Map<string, Set<string>>();
   for (const { row } of resolvedOutcomes.entries) {
     if (!row?.verification || !textKnown(row.verification.receiptId)) continue;
@@ -339,6 +350,21 @@ export function aggregateVerifiedEconomics(attempts: UsageAttempt[], outcomes: V
     const inconsistentReceipt =
       verification && (receiptBindings.get(identity(entry.row.orgId, verification.receiptId))?.size ?? 0) > 1;
     const reason = inconsistentReceipt ? "conflicting_verification_receipt" : outcomeRejection(entry.row);
+    if (
+      (reason === null || reason === "not_successful") &&
+      verification &&
+      (entry.row.result === "success" || entry.row.result === "failure")
+    ) {
+      outcomeEvidence.push({
+        id: entry.row.id,
+        orgId: entry.row.orgId,
+        taskId: entry.row.taskId,
+        taskRevision: entry.row.taskRevision,
+        result: entry.row.result,
+        verificationReceiptId: verification.receiptId,
+        verifierId: verification.verifierId,
+      });
+    }
     if (reason) {
       rejectedOutcomes.push({ id: entry.row.id, reason });
       continue;
@@ -488,6 +514,7 @@ export function aggregateVerifiedEconomics(attempts: UsageAttempt[], outcomes: V
       partial: rows.filter((row) => row?.partial).length,
     },
     verifiedSuccessfulTasks: denominator,
+    outcomeEvidence,
     rejectedOutcomes,
     tokens,
     reasoningTokens: nonPartial("reasoningTokens"),
