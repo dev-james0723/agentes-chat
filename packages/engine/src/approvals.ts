@@ -1364,7 +1364,13 @@ export async function listApprovals(
   db: Database,
   actorId: string,
   orgId: string,
-  options: { status?: "pending" | "decided"; agentId?: string; messageId?: string; limit?: number } = {},
+  options: {
+    status?: "pending" | "decided";
+    agentId?: string;
+    messageId?: string;
+    runId?: string;
+    limit?: number;
+  } = {},
 ): Promise<ApprovalView[]> {
   const membership = await requirePermission(db, actorId, orgId, "read");
   const admin = can(membership, "approve_actions");
@@ -1380,6 +1386,7 @@ export async function listApprovals(
             ? ne(approvals.status, "pending")
             : undefined,
         options.agentId ? eq(approvals.agentId, options.agentId) : undefined,
+        options.runId ? eq(approvals.runId, options.runId) : undefined,
         options.messageId ? eq(approvals.messageId, options.messageId) : undefined,
         admin ? undefined : seenBy(db, orgId, actorId),
         or(sql`not ${privatePublicationSql()}`, eq(approvals.ownerUserId, actorId)),

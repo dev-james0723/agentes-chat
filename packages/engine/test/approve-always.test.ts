@@ -214,6 +214,14 @@ async function composio(fx: Fixture, mcp: ReturnType<typeof composioMcp>, label 
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // Tool classification is not a grant. Give only this synthetic fixture agent access.
+  await grantScopes(
+    fx.db,
+    fx.org.id,
+    fx.agent.id,
+    [{ connectionId: started.server.id, scope: "connector:*" }],
+    fx.owner.id,
+  );
   return { deps, serverId: started.server.id };
 }
 
@@ -257,6 +265,14 @@ async function connectServer(fx: Fixture, mcp: { connect: McpConnect }, label: s
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // A tool suggestion is not access: opt this in-memory test agent into this server only.
+  await grantScopes(
+    fx.db,
+    fx.org.id,
+    fx.agent.id,
+    [{ connectionId: started.server.id, scope: "connector:*" }],
+    fx.owner.id,
+  );
   return { deps, serverId: started.server.id };
 }
 
@@ -775,6 +791,13 @@ async function sqlWorld(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  await grantScopes(
+    fx.db,
+    fx.org.id,
+    fx.agent.id,
+    [{ connectionId: started.server.id, scope: "connector:*" }],
+    fx.owner.id,
+  );
   const gateway = createToolGateway({ sources: [createConnectorToolSource(deps)] });
   return { mcp, gateway, serverId: started.server.id, name: "banco_execute_sql" };
 }

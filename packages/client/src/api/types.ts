@@ -3603,8 +3603,42 @@ export interface IssueWork {
   reason?: "failed" | "canceled" | "budget";
 }
 
+/** Read-only task outcome projection. Missing check/receipt data remains unknown. */
+export interface IssueFounderUpdate {
+  /** Native member timezone, then workspace timezone. */
+  timeZone?: string;
+  taskId: string;
+  taskRevision: number;
+  lifecycle: string;
+  locale: string;
+  style: "simple" | "technical";
+  outcome: string;
+  deliveryStage: "SOURCE_INSPECTED" | "CODED" | "TESTED" | "DEPLOYED" | "LIVE_VERIFIED" | "MEASURED_IMPROVEMENT" | null;
+  availability: "not_available" | "local" | "preview" | "production" | "unknown";
+  checks: { passed: number; failed: number; notRun: number; scope: string } | null;
+  howToTry: string | null;
+  remaining: string[];
+  blocker: { summary: string; ownerRef: string | null; nextAdmissibleAction: string } | null;
+  nextOwner: Actor | null;
+  decisionNeeded: boolean;
+  evidence: {
+    id: string;
+    kind: string;
+    status: "valid" | "expired" | "revoked" | "unknown";
+    environment: string;
+    sourceRevision: string | null;
+    stage: IssueFounderUpdate["deliveryStage"];
+  }[];
+  generatedAt: string;
+  contractUnavailable: string[];
+}
+
 export interface Issue {
   id: string;
+  /** Native generation counter, absent on older servers. */
+  revision?: number;
+  /** Present only on an authorized detail response while the scoped server policy enables it. */
+  founderUpdate?: IssueFounderUpdate;
   /** Per organization: #131. */
   number: number;
   title: string;

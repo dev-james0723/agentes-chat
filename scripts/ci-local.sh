@@ -30,6 +30,7 @@ need shellcheck "brew install shellcheck, or apt-get install shellcheck"
 need gitleaks "brew install gitleaks, or https://github.com/gitleaks/gitleaks/releases"
 
 echo "local CI on $(git rev-parse --short HEAD), log: $log"
+step "local CI runner's own test" "bun test scripts/ci-local.test.ts"
 step "install" "bun install --frozen-lockfile"
 step "lint and format" "bun run lint"
 step "shell scripts" "shellcheck install.sh deploy/*.sh deploy/backup/*.sh scripts/*.sh"
@@ -38,9 +39,9 @@ step "geometry check's own test" "bun test scripts/geometry/check.test.ts"
 step "dependency licenses" "bun test scripts/check-licenses.test.ts && bun run check:licenses"
 step "typecheck" "bun run typecheck"
 step "build web and server" "bun run build"
-# A drift check that finds a difference leaves the generated files behind; they are removed so the tree stays as it was.
+# Keep drift artifacts for inspection. A generator/status failure is not proof of a clean schema.
 step "migrations up to date with the schema" \
-  "bun run db:generate ci-drift-check < /dev/null; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
+  "bun run db:generate ci-drift-check < /dev/null; generator_rc=\$?; s=\$(git status --porcelain -- packages/db/migrations); status_rc=\$?; printf '%s\\n' \"\$s\"; if [ \"\$generator_rc\" -ne 0 ]; then exit \"\$generator_rc\"; fi; if [ \"\$status_rc\" -ne 0 ]; then exit \"\$status_rc\"; fi; test -z \"\$s\""
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"

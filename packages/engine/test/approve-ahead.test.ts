@@ -23,6 +23,7 @@ import {
   decideApprovals,
   executeRoutineRun,
   expireApprovals,
+  grantScopes,
   type InvokeResult,
   insertMessage,
   invokeWithChip,
@@ -108,6 +109,14 @@ async function world(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // Acceptance classifies tools; the fixture agent still needs an explicit connector grant.
+  await grantScopes(
+    fx.db,
+    fx.org.id,
+    fx.agent.id,
+    [{ connectionId: started.server.id, scope: "connector:*" }],
+    fx.owner.id,
+  );
   const sources = [
     createConnectorToolSource(deps),
     createScheduleToolSource({ pubsub: fx.pubsub, context: fx.context }),

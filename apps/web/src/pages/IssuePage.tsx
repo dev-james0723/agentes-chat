@@ -50,6 +50,7 @@ import { useApi } from "@/api/context";
 import { renderIdRef } from "@/chat/IdRef";
 import { ActorAvatar, AgentAvatar } from "@/components/AgentAvatar";
 import { actorFromKey, actorKey, useActors } from "@/components/actors";
+import { OutcomeUpdateCard } from "@/components/agents/OutcomeUpdateCard";
 import { ArtifactCard } from "@/components/artifacts/ArtifactCard";
 import { IssueWorkBlock } from "@/components/BackgroundWork";
 import { EditInPlace, useFocusAtEnd, useSavedFlash, useSent } from "@/components/EditInPlace";
@@ -314,6 +315,13 @@ export function IssueDetails({
       >
         <TabPanel value="details">
           <WorkBox issue={i} />
+          {i.founderUpdate && (
+            <OutcomeUpdateCard
+              key={`${i.id}:${i.founderUpdate.style}`}
+              update={i.founderUpdate}
+              ownerName={i.founderUpdate.nextOwner ? actors.name(i.founderUpdate.nextOwner) : undefined}
+            />
+          )}
           <IssueWorkBlock issue={i} />
           {i.assignee?.type !== "agent" && isOpen(i) && <AskAgent issue={i} />}
           <DetailsSection title={t("issues.description")}>

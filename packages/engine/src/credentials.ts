@@ -21,7 +21,6 @@ import {
 import { recordAudit } from "./audit";
 import { caches } from "./cache";
 import { openSecret, sealSecret, sha256 } from "./crypto";
-import { canonicalJson } from "./tools/json-schema";
 import {
   cleanEndpointModels,
   ENDPOINT_NO_KEY,
@@ -37,6 +36,7 @@ import type { KeyCheck, ModelGateway } from "./gateway";
 import { requirePermission } from "./organizations";
 import { orgModelProvider } from "./router";
 import { billingHold } from "./standing";
+import { canonicalJson } from "./tools/json-schema";
 
 const { providerCredentials } = schema;
 
