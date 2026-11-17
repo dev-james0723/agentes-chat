@@ -412,20 +412,198 @@ export function reconcileOperation(attempt, observation) {
   return { action: "publisher_preflight_required", execute: false };
 }
 
-export function renderFounderReport(projection) {
-  const p = object(projection) ? projection : {};
+// Presentation only: callers still need the native reader/ACLs and existing release
+// boundary. Legacy availableNow is a verification flag, not a service-health claim.
+// Founder UI should render publicTargets; do not dump this technical record as UI.
+export function renderFounderReport(projection, options = {}) {
+  const p = object(projection) ? projection : {},
+    opts = object(options) ? options : {};
+  const now = opts.now ?? Date.now();
+  const knownResults = ["pass", "fail", "unknown", "stale", "not_run", "not_applicable"];
+  const gateLabels = {
+    committed: "程式碼提交",
+    pushed: "遠端備份",
+    reviewed: "獨立覆核",
+    tested: "必要測試",
+    merged: "合併",
+    built: "正式建置",
+    installed_or_deployed: "安裝或部署",
+    running: "實際運行版本",
+    live_verified: "真實功能操作驗證",
+  };
+  const safeRef = (value) =>
+    typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) &&
+    !/(?:gh[pousr]_|github_pat_|sk-(?:proj-)?|AKIA[0-9A-Z]{12}|bearer|password|secret|token=)/i.test(value);
+  const iso = (value) => {
+    if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value)) return null;
+    const time = Date.parse(value);
+    if (!Number.isFinite(time)) return null;
+    const normalized = new Date(time).toISOString();
+    const expanded = value.includes(".")
+      ? value.replace(/\.(\d{1,3})Z$/, (_, digits) => `.${digits.padEnd(3, "0")}Z`)
+      : value.replace(/Z$/, ".000Z");
+    return normalized === expanded ? normalized : null;
+  };
+  const observedAt = iso(p.observedAt),
+    observedTime = observedAt ? Date.parse(observedAt) : NaN;
+  // Re-rendering a cached projection must not keep an old green runtime alive.
+  // Sixty seconds is the shortest native projection evidence lifetime above.
+  const timeState =
+    !Number.isFinite(now) || !Number.isFinite(observedTime) || observedTime > now
+      ? "unknown"
+      : now - observedTime > 60_000
+        ? "stale"
+        : "fresh";
+  const entries = object(p.targetAvailability) ? Object.entries(p.targetAvailability) : [];
+  const targetsOmitted = Math.max(0, entries.length - 128);
+  const coverage = object(p.coverage) ? p.coverage : {};
+  const unknownGates = !Array.isArray(p.missingGates) || p.missingGates.some((name) => !CLAIMS.includes(name));
+  const sourceComplete =
+    p.schema === "delivery-projection/v1.1" &&
+    !unknownGates &&
+    Array.isArray(coverage.failed) &&
+    coverage.failed.length === 0 &&
+    Array.isArray(coverage.omitted) &&
+    coverage.omitted.length === 0 &&
+    coverage.truncated === false &&
+    targetsOmitted === 0;
+  const missing = [...new Set(array(p.missingGates).filter((name) => CLAIMS.includes(name)))];
+  const availableNow = {},
+    targetRefs = [];
+  const missingContradiction = missing.some((name) => p.currentClaims?.[name]?.result === "pass");
+  const descriptions = {
+    available: "已核實可用。",
+    unavailable: "未通過今次交付驗證；未可確認改動已可用。",
+    unknown: "目前狀態未核實。",
+    stale: "核查資料已過期，要重新確認目前狀態。",
+    not_run: "所需驗證未核實，未可確認改動已可用。",
+  };
+  const publicTargets = entries.slice(0, 128).map(([id, row], index) => {
+    const validRef = safeRef(id),
+      label = `目標 ${index + 1}`;
+    let result = object(row) && knownResults.includes(row.result) ? row.result : "unknown";
+    const local = object(p.targetClaims?.[id]) ? p.targetClaims[id] : {};
+    const scopedClaim = (name) =>
+      ["built", "installed_or_deployed", "running", "live_verified"].includes(name)
+        ? local[name]
+        : p.currentClaims?.[name];
+    // A display summary cannot override failed, missing or contradictory detail.
+    // This checks presentation consistency; it does not authenticate evidence.
+    if (
+      result === "pass" &&
+      (missingContradiction || CLAIMS.some((name) => !object(scopedClaim(name)) || scopedClaim(name).result !== "pass"))
+    ) {
+      result = "unknown";
+    }
+    if (!validRef || !sourceComplete || timeState === "unknown") result = "unknown";
+    else if (timeState === "stale" && ["pass", "fail"].includes(result)) result = "stale";
+    const state = { pass: "available", fail: "unavailable", stale: "stale", not_run: "not_run" }[result] ?? "unknown";
+    if (validRef) {
+      // Keep not_run=false for existing consumers; publicTargets explains that it
+      // means unverified, not that an existing installed service is unavailable.
+      availableNow[id] = state === "available" ? true : ["unavailable", "not_run"].includes(state) ? false : null;
+      targetRefs.push({ label, ref: id });
+    }
+    const scoped = CLAIMS.filter((name) => object(scopedClaim(name)) && scopedClaim(name).result !== "pass");
+    return {
+      label,
+      state,
+      text: descriptions[state],
+      missingGates: state === "available" ? [] : (scoped.length ? scoped : missing).map((name) => gateLabels[name]),
+    };
+  });
+  const states = publicTargets.map((target) => target.state);
+  const currentAvailability = !states.length
+    ? "unknown"
+    : states.every((state) => state === "available")
+      ? "available"
+      : states.some((state) => state === "available") ||
+          (states.some((state) => state === "unavailable") && new Set(states).size > 1)
+        ? "partial"
+        : states.every((state) => state === "unavailable")
+          ? "unavailable"
+          : states.some((state) => state === "unknown")
+            ? "unknown"
+            : states.some((state) => state === "stale")
+              ? "stale"
+              : "not_run";
+  const goalResult = knownResults.includes(p.goalResult) ? p.goalResult : "unknown";
+  const goalStages = Object.hasOwn(goals, p.closeoutGoal) ? goals[p.closeoutGoal] : null;
+  const consistentGoal =
+    goalStages &&
+    goalStages.every((name) => p.currentClaims?.[name]?.result === "pass" && !missing.includes(name)) &&
+    (p.closeoutGoal !== "available_on_selected_targets" || currentAvailability === "available");
+  const freshnessResult =
+    !sourceComplete || timeState === "unknown"
+      ? "unknown"
+      : timeState === "stale"
+        ? "stale"
+        : goalResult === "pass" && !consistentGoal
+          ? "unknown"
+          : goalResult;
+  const headlines = {
+    available: "所選目標已核實可用；結果以列出嘅核查時間為準。",
+    partial: "各目標進度唔一致；仍有目標未通過或未完成驗證。",
+    unavailable: "所選目標未通過交付驗證；未可確認今次改動已可用。",
+    unknown: "目前可用狀態未核實；需補齊最新可信證據。",
+    stale: "核查資料已過期；目前可用狀態要重新確認。",
+    not_run: "交付驗證尚未完成；未可確認今次改動已可用。",
+  };
+  const completedGoal = {
+    development_verified: "所選開發驗證已核實。",
+    backed_up: "所選程式碼備份已核實。",
+    integrated: "所選合併目標已核實。",
+  };
+  const ownerDecisionRequired =
+    sourceComplete && timeState === "fresh" && typeof p.ownerDecisionRequired === "boolean"
+      ? p.ownerDecisionRequired
+      : null;
+  const nextStep =
+    !sourceComplete || timeState === "unknown"
+      ? "重新讀取未能核實嘅原生證據，再逐個目標更新狀態。"
+      : timeState === "stale" || states.includes("stale")
+        ? "更新過期證據，再逐個目標確認實際可用狀態。"
+        : ownerDecisionRequired === true
+          ? "核實現有負責人，處理已記錄嘅待決事項，再沿用原有流程。"
+          : missing.length
+            ? `先補齊「${gateLabels[missing[0]]}」嘅最新證據，再沿用現有發布流程。`
+            : currentAvailability === "available"
+              ? "保留最新驗證紀錄，按原有流程完成收口。"
+              : "取得原生任務同實際目標嘅最新證據。";
   return {
     locale: "zh-HK",
-    userVisibleOutcome:
-      p.goalResult === "pass" ? "所選目標嘅證據已核對；操作授權仍由現有流程檢查。" : "交付未完成；仍有階段未核實。",
-    availableNow: Object.fromEntries(
-      Object.entries(p.targetAvailability ?? {}).map(([id, status]) => [id, status.result === "pass"]),
-    ),
-    notYetAvailable: array(p.missingGates),
-    owner: p.blockerOwnerRef ?? null,
-    nextStep: p.nextAction ?? "重新取得原生證據。",
-    ownerDecisionRequired: false,
-    evidenceRefs: array(p.historicalClaims).map((r) => r.evidenceId),
-    freshness: { observedAt: p.observedAt ?? null, result: p.goalResult ?? "unknown" },
+    userVisibleOutcome: `${freshnessResult === "pass" && Object.hasOwn(completedGoal, p.closeoutGoal) ? `${completedGoal[p.closeoutGoal]} ` : ""}${headlines[currentAvailability]}`,
+    currentAvailability,
+    publicTargets,
+    availableNow,
+    targetsOmitted,
+    howToUse: "逐個目標查看目前狀態同未完成驗證；技術紀錄由原生任務嘅私有詳情查閱。",
+    notYetAvailable: missing,
+    missingGateLabels: [...missing.map((name) => gateLabels[name]), ...(unknownGates ? ["未能辨識嘅驗收關卡"] : [])],
+    // A native reference alone does not establish a verified public display name.
+    owner: null,
+    ownerStatus: "發布負責人待核實。",
+    nextStep,
+    ownerDecisionRequired,
+    evidenceRefs: [],
+    freshness: { observedAt, result: freshnessResult, coverage: sourceComplete ? "complete" : "incomplete" },
+    isAuthorizationGrant: false,
+    ...(opts.includePrivateDetails === true
+      ? {
+          privateDetails: {
+            requiresNativeAccessControl: true,
+            ownerRef: safeRef(p.blockerOwnerRef) ? p.blockerOwnerRef : null,
+            evidenceRefs: [
+              ...new Set(
+                array(p.historicalClaims)
+                  .map((r) => (object(r) ? r.evidenceId : null))
+                  .filter(safeRef),
+              ),
+            ].slice(0, 256),
+            targetRefs,
+          },
+        }
+      : {}),
   };
 }
