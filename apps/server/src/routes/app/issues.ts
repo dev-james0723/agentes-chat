@@ -1,9 +1,11 @@
+import { githubAppConfig } from "@agenteschat/config";
 import {
   askAgentToImplement,
   commentIssue,
   createIssue,
   createIssueColumn,
   createIssueProject,
+  createNativeDeliveryService,
   deleteIssue,
   deleteIssueColumn,
   deleteIssueProject,
@@ -14,6 +16,7 @@ import {
   listIssueColumns,
   listIssueProjects,
   listIssues,
+  nativeDeliveryBindingChangeSchema,
   openTaskConversation,
   PROJECT_NAME_MAX,
   ROLE_COLORS,
@@ -33,6 +36,7 @@ import {
   noContent,
   OrgParams,
   requireSession,
+  routineConnectorDeps,
   security,
 } from "./context";
 import { AudienceChoice, WorkView } from "./schemas";
@@ -80,10 +84,47 @@ const Conversation = ConversationRef.extend({
   working: z.boolean().openapi({ description: "An agent's turn is live in it." }),
 });
 
+const DeliveryBinding = z
+  .object({
+    state: z.enum(["missing", "configured", "revoked", "untrusted", "conflict"]),
+    revision: z.uuid().nullable(),
+    taskId: z.uuid(),
+    projectId: z.uuid().nullable(),
+    authorityGranted: z.literal(false),
+    reasonCodes: z.array(z.string()),
+    repository: z
+      .object({
+        id: z.string(),
+        host: z.literal("github.com"),
+        owner: z.string(),
+        repo: z.string(),
+        defaultBranch: z.string(),
+        connectionId: z.uuid(),
+        observedAt: z.string(),
+      })
+      .optional(),
+    releaseOwnerId: z.uuid().nullable().optional(),
+    targets: z
+      .array(
+        z.object({
+          id: z.string(),
+          kind: z.enum(["agent_chats_local", "macos_app"]),
+          environment: z.string(),
+          verificationState: z.literal("unknown"),
+        }),
+      )
+      .optional(),
+  })
+  .openapi("TaskDeliveryBinding");
+
 const Issue = z
   .object({
     id: z.uuid(),
     number: z.number(),
+    deliveryBinding: DeliveryBinding.optional().openapi({
+      description:
+        "Owner-configured repository relation. This is never release authority or verified runtime availability.",
+    }),
     title: z.string(),
     description: z.string(),
     status: Status,
@@ -194,6 +235,14 @@ export function issueRoutes(deps: AppDeps) {
   app.use("/organizations/*", requireSession(deps.auth));
   const issues: IssueDeps = { db, pubsub: adapters.pubsub };
   const person = (userId: string) => ({ type: "person" as const, userId });
+  const delivery = createNativeDeliveryService({
+    connectors: routineConnectorDeps(deps),
+    pubsub: adapters.pubsub,
+    github: {
+      app: () => (deps.extras?.githubApp ? deps.extras.githubApp.current() : githubAppConfig(deps.config)),
+      http: { apiUrl: "https://api.github.com", fetch: deps.extras?.http ?? fetch },
+    },
+  });
 
   app.openapi(
     createRoute({
@@ -241,7 +290,10 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, number } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { number }), 200);
+      const actor = person(c.get("user").id);
+      const issue = await getIssueDetail(db, actor, orgId, { number });
+      const deliveryBinding = await delivery.readBinding(actor, orgId, issue.id);
+      return c.json({ ...issue, ...(deliveryBinding.state === "missing" ? {} : { deliveryBinding }) }, 200);
     },
   );
 
@@ -257,7 +309,10 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, issueId } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { id: issueId }), 200);
+      const actor = person(c.get("user").id);
+      const issue = await getIssueDetail(db, actor, orgId, { id: issueId });
+      const deliveryBinding = await delivery.readBinding(actor, orgId, issueId);
+      return c.json({ ...issue, ...(deliveryBinding.state === "missing" ? {} : { deliveryBinding }) }, 200);
     },
   );
 
@@ -316,37 +371,48 @@ export function issueRoutes(deps: AppDeps) {
       request: {
         params: IssueParams,
         body: body(
-          z.object({
-            title: z.string().min(1).max(300).optional(),
-            description: z.string().max(50_000).optional(),
-            status: Status.optional(),
-            columnId: z
-              .uuid()
-              .optional()
-              .openapi({ description: "Move to a board column; the issue takes that column's stage." }),
-            boardRank: z.number().optional().openapi({ description: "Its order inside the column (lowest first)." }),
-            priority: Priority.optional(),
-            assignee: Actor.nullable().optional(),
-            dueDate: DueDate.optional(),
-            labels: z.array(z.string().max(40)).max(20).optional(),
-            projectId: ProjectId.optional(),
-            githubUrl: GithubUrl.optional(),
-            criteria: z
-              .array(z.object({ id: z.string().optional(), text: z.string().max(500) }))
-              .max(50)
-              .optional()
-              .openapi({
-                description:
-                  "The whole list of acceptance criteria, in order: an `id` keeps that criterion (and its check), one without is new, one left out is removed.",
-              }),
-          }),
+          z
+            .object({
+              title: z.string().min(1).max(300).optional(),
+              description: z.string().max(50_000).optional(),
+              status: Status.optional(),
+              columnId: z
+                .uuid()
+                .optional()
+                .openapi({ description: "Move to a board column; the issue takes that column's stage." }),
+              boardRank: z.number().optional().openapi({ description: "Its order inside the column (lowest first)." }),
+              priority: Priority.optional(),
+              assignee: Actor.nullable().optional(),
+              dueDate: DueDate.optional(),
+              labels: z.array(z.string().max(40)).max(20).optional(),
+              projectId: ProjectId.optional(),
+              githubUrl: GithubUrl.optional(),
+              deliveryBinding: nativeDeliveryBindingChangeSchema.optional(),
+              criteria: z
+                .array(z.object({ id: z.string().optional(), text: z.string().max(500) }))
+                .max(50)
+                .optional()
+                .openapi({
+                  description:
+                    "The whole list of acceptance criteria, in order: an `id` keeps that criterion (and its check), one without is new, one left out is removed.",
+                }),
+            })
+            .refine((value) => value.deliveryBinding === undefined || Object.keys(value).length === 1, {
+              message: "Send a delivery binding change by itself so its revision comparison is atomic.",
+            }),
         ),
       },
       responses: { 200: json(Issue), ...errors },
     }),
     async (c) => {
       const { orgId, issueId } = c.req.valid("param");
-      return c.json(await updateIssue(issues, person(c.get("user").id), orgId, issueId, c.req.valid("json")), 200);
+      const actor = person(c.get("user").id);
+      const input = c.req.valid("json");
+      if (input.deliveryBinding !== undefined) {
+        const deliveryBinding = await delivery.changeBinding(actor, orgId, issueId, input.deliveryBinding);
+        return c.json({ ...(await getIssueDetail(db, actor, orgId, { id: issueId })), deliveryBinding }, 200);
+      }
+      return c.json(await updateIssue(issues, actor, orgId, issueId, input), 200);
     },
   );
 

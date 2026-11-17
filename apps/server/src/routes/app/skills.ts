@@ -1,8 +1,10 @@
 import { connectorOAuthApps } from "@agenteschat/config";
+import { and, type Database, eq, isNull, schema } from "@agenteschat/db";
 import {
   agentMadeSkills,
   agentSkillList,
   approveSkillUpdate,
+  ConflictError,
   deleteSkill,
   dismissSkillUpdate,
   getSkill,
@@ -12,6 +14,7 @@ import {
   importSkillFromUrl,
   importSkillZip,
   listSkills,
+  NotFoundError,
   parseSkillMarkdown,
   reopenSkillUpdate,
   restoreSkill,
@@ -447,6 +450,10 @@ export function skillRoutes(deps: AppDeps) {
         params: SkillParams,
         body: body(
           z.object({
+            expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional().openapi({
+              description:
+                "Compare the current content version before this whole PATCH. Settings-only edits do not increment the content version.",
+            }),
             description: z.string().max(1024).optional(),
             body: z.string().max(200_000).optional(),
             defaultForNewAgents: z.boolean().optional(),
@@ -467,14 +474,36 @@ export function skillRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, skillId } = c.req.valid("param");
-      const { locked, autoUpdate, agentsImprove, ...rest } = c.req.valid("json");
+      const { expectedVersion, locked, autoUpdate, agentsImprove, ...rest } = c.req.valid("json");
       const actor = c.get("user").id;
-      let detail: Awaited<ReturnType<typeof getSkill>> | undefined;
-      if (locked !== undefined) detail = await setSkillLocked(db, actor, orgId, skillId, locked);
-      if (autoUpdate !== undefined) detail = await setSkillAutoUpdate(db, actor, orgId, skillId, autoUpdate);
-      if (agentsImprove !== undefined) detail = await setSkillAgentsImprove(db, actor, orgId, skillId, agentsImprove);
-      if (detail && Object.values(rest).every((v) => v === undefined)) return c.json(detail, 200);
-      return c.json(await updateSkill(skills(), actor, orgId, skillId, rest), 200);
+      const apply = async (targetDb: Database) => {
+        let detail: Awaited<ReturnType<typeof getSkill>> | undefined;
+        if (locked !== undefined) detail = await setSkillLocked(targetDb, actor, orgId, skillId, locked);
+        if (autoUpdate !== undefined) detail = await setSkillAutoUpdate(targetDb, actor, orgId, skillId, autoUpdate);
+        if (agentsImprove !== undefined)
+          detail = await setSkillAgentsImprove(targetDb, actor, orgId, skillId, agentsImprove);
+        if (detail && Object.values(rest).every((v) => v === undefined)) return detail;
+        return updateSkill({ ...skills(), db: targetDb }, actor, orgId, skillId, { ...rest, expectedVersion });
+      };
+      if (expectedVersion === undefined) return c.json(await apply(db), 200);
+      const detail = await db.transaction(async (tx) => {
+        // Check native read access before exposing even a version conflict. The row lock stays held through
+        // every existing setter and the content edit; a later permission/validation failure rolls them back.
+        await getSkill(tx, actor, orgId, skillId);
+        const [current] = await tx
+          .select({ version: schema.skills.version })
+          .from(schema.skills)
+          .where(and(eq(schema.skills.id, skillId), eq(schema.skills.orgId, orgId), isNull(schema.skills.deletedAt)))
+          .for("update");
+        if (!current) throw new NotFoundError("Skill not found");
+        if (current.version !== expectedVersion)
+          throw new ConflictError(
+            "The skill changed. Read its current version before editing.",
+            "skill.version_conflict",
+          );
+        return apply(tx);
+      });
+      return c.json(detail, 200);
     },
   );
 

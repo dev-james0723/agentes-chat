@@ -10,6 +10,155 @@ afterEach(async () => {
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: Use for ${name}.\n---\n# ${name}`;
 
+test("optional skill content-version CAS rejects stale body and settings before changing anything", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId, agentId } = await seedOrg(b);
+  const at = (path: string) => `/api/app/organizations/${orgId}/skills${path}`;
+  const imported = await b(at("/import"), {
+    json: {
+      zipBase64: Buffer.from(
+        zip([
+          ["SKILL.md", skill("version-cas")],
+          ["guide.md", "Keep this guide."],
+        ]),
+      ).toString("base64"),
+    },
+  });
+  expect(imported.status).toBe(201);
+  const original = (await imported.json()) as SkillDetail;
+  const assignmentsAt = `/api/app/organizations/${orgId}/agents/${agentId}/skills`;
+  const assigned = await b(assignmentsAt, {
+    method: "PUT",
+    json: { skills: [{ skillId: original.id, enabled: true }] },
+  });
+  expect(assigned.status).toBe(200);
+  const patch = (json: unknown) => b(at(`/${original.id}`), { method: "PATCH", json });
+  expect((await patch({ locked: true, agentsImprove: false, defaultForNewAgents: true })).status).toBe(200);
+  const updated = await patch({ body: "# Current owner revision" });
+  expect(updated.status).toBe(200);
+  const before = (await updated.json()) as SkillDetail;
+  expect(before).toMatchObject({ version: 2, locked: true, agentsImprove: false, defaultForNewAgents: true });
+  const assignments = (await (await b(assignmentsAt)).json()) as {
+    skills: { id: string; enabled: boolean }[];
+  };
+  const bindings = (state: typeof assignments) => state.skills.map(({ id, enabled }) => ({ id, enabled }));
+  expect(bindings(assignments)).toEqual([{ id: original.id, enabled: true }]);
+
+  const stale = await patch({
+    expectedVersion: original.version,
+    body: "# Stale replacement",
+    locked: false,
+    agentsImprove: true,
+    defaultForNewAgents: false,
+    autoUpdate: false,
+  });
+  const after = (await (await b(at(`/${original.id}`))).json()) as SkillDetail;
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({ error: { code: "skill.version_conflict" } });
+  expect(after).toEqual(before);
+  expect(await (await b(assignmentsAt)).json()).toEqual(assignments);
+  expect(await (await b(at(`/${original.id}/files/guide.md`))).json()).toMatchObject({
+    version: 2,
+    content: "Keep this guide.",
+  });
+
+  const accepted = await patch({ expectedVersion: before.version, body: "# Guarded current edit" });
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toMatchObject({
+    id: original.id,
+    version: 3,
+    body: "# Guarded current edit",
+    locked: true,
+    agentsImprove: false,
+    defaultForNewAgents: true,
+    files: before.files,
+  });
+  expect(bindings((await (await b(assignmentsAt)).json()) as typeof assignments)).toEqual(bindings(assignments));
+});
+
+test("optional skill content-version CAS also protects a settings-only PATCH", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const at = `/api/app/organizations/${orgId}/skills`;
+  const created = await b(at, { json: { name: "settings-cas", description: "Fixture.", body: "# First" } });
+  expect(created.status).toBe(201);
+  const original = (await created.json()) as SkillDetail;
+  const path = `${at}/${original.id}`;
+  expect((await b(path, { method: "PATCH", json: { body: "# Second", locked: true } })).status).toBe(200);
+  const before = await (await b(path)).json();
+  const stale = await b(path, { method: "PATCH", json: { expectedVersion: 1, locked: false, agentsImprove: true } });
+  expect(stale.status).toBe(409);
+  expect(await (await b(path)).json()).toEqual(before);
+  const current = await b(path, { method: "PATCH", json: { expectedVersion: 2, agentsImprove: false } });
+  expect(current.status).toBe(200);
+  // This is a content version, not a new settings revision counter.
+  expect(await current.json()).toMatchObject({ version: 2, locked: true, agentsImprove: false });
+});
+
+test("concurrent skill PATCH requests for the same content version have only one winner", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const at = `/api/app/organizations/${orgId}/skills`;
+  const created = await b(at, { json: { name: "concurrent-cas", description: "Fixture.", body: "# First" } });
+  expect(created.status).toBe(201);
+  const original = (await created.json()) as SkillDetail;
+  const path = `${at}/${original.id}`;
+  const answers = await Promise.all([
+    b(path, { method: "PATCH", json: { expectedVersion: 1, body: "# Writer A" } }),
+    b(path, { method: "PATCH", json: { expectedVersion: 1, body: "# Writer B" } }),
+  ]);
+  expect(answers.map((r) => r.status).sort()).toEqual([200, 409]);
+  const current = (await (await b(path)).json()) as SkillDetail;
+  expect(current.version).toBe(2);
+  expect(["# Writer A", "# Writer B"]).toContain(current.body);
+});
+
+test("a conditional skill PATCH rolls settings back if a later setting refuses", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const at = `/api/app/organizations/${orgId}/skills`;
+  const created = await b(at, { json: { name: "atomic-cas", description: "Fixture.", body: "# First" } });
+  expect(created.status).toBe(201);
+  const original = (await created.json()) as SkillDetail;
+  const path = `${at}/${original.id}`;
+  expect((await b(path, { method: "PATCH", json: { locked: true } })).status).toBe(200);
+  const before = await (await b(path)).json();
+  const refused = await b(path, {
+    method: "PATCH",
+    json: { expectedVersion: 1, locked: false, autoUpdate: true, body: "# Must not publish" },
+  });
+  expect(refused.status).toBe(400);
+  expect(await refused.json()).toMatchObject({ error: { code: "skill.no_link" } });
+  expect(await (await b(path)).json()).toEqual(before);
+});
+
+test("invalid skill expectedVersion values are refused before settings change", async () => {
+  t = await createTestServer();
+  const b = browser(t);
+  await signUp(b, "owner@example.com");
+  const { orgId } = await seedOrg(b);
+  const at = `/api/app/organizations/${orgId}/skills`;
+  const created = await b(at, { json: { name: "invalid-cas", description: "Fixture.", body: "# First" } });
+  expect(created.status).toBe(201);
+  const original = (await created.json()) as SkillDetail;
+  const path = `${at}/${original.id}`;
+  expect((await b(path, { method: "PATCH", json: { locked: true } })).status).toBe(200);
+  const before = await (await b(path)).json();
+  for (const expectedVersion of [0, -1, 1.5, "1", null, Number.MAX_SAFE_INTEGER + 1]) {
+    const response = await b(path, { method: "PATCH", json: { expectedVersion, locked: false } });
+    expect(response.status).toBe(400);
+    expect(await (await b(path)).json()).toEqual(before);
+  }
+});
+
 test("ZIP createOnly is parsed and cannot overwrite an existing skill", async () => {
   t = await createTestServer();
   const b = browser(t);

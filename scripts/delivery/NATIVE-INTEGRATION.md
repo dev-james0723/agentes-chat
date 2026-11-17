@@ -1,9 +1,51 @@
 # Delivery Guardian — 原生接駁最小方案
 
-## 狀態與核查範圍
+## 2026-11-17 原生 task binding 候選增補
 
-本文件是按現有程式碼整理的接駁方案，供現有 task／發布負責人覆核。
-**尚未改動或啟用原生產品程式碼；本文件、CLI、純 policy 測試及 skill 註冊均不是工具限制已生效的證據。**
+**這是 source-only 實作候選；尚未部署、未建立任何 production binding，亦未授予或執行發布。** 下方 2026-11-16 的唯讀核查保留為歷史基線；其中「尚未改動」及缺口描述只適用於當時。當前執行／部署證據以原生任務的最新收據為準，不能從本文或測試成功推斷。
+
+本次沿用現有 API、資料表及 server registration，新增：
+
+- `packages/engine/src/delivery-native.ts`：由已登入且當前有效的 organization owner，經既有 task PATCH 設定 repository／release owner／target 選項，或明確撤回。只將嚴格型別的 `delivery_binding_changed` event 寫入既有 `issue_activity`；不建立第二套 ledger、資料庫、任務或排程。
+- `apps/server/src/routes/app/issues.ts`：原路由的 session、Origin／CSRF 及 task ACL 保留。`deliveryBinding` 必須獨立於普通 task 編輯提交；普通 title、criteria、description、comment 路徑不會產生 reserved binding event。Task detail（UUID 或 number）可讀取可見的 binding view。
+- `packages/engine/src/git/delivery-observation.ts`：以固定 `https://api.github.com` origin、GET、禁止 redirect、每次最多 128 KiB／3 秒讀取 repository identity 及精確 PR。只輸出規定的 repo／head／base 欄位；credential 及 provider 原文不進入 binding 或拒絕訊息。Credential 取得沿用既有原生 GitHub App／connection resolver，沒有另設 token 或授權儲存。
+- `apps/server/src/engine.ts`：把 native service 的 verifier 注入既有 connector source。Guard 仍在原有 checkCall、approval recheck 及真正 execute 邊界運作。
+
+### Trust 與 concurrency 邊界
+
+PATCH 只接受 repository 名稱／原生 connection ID、可選的原生 agent ID、有限 target 選項及 `expectedRevision`。Caller 不能填入 repository ID、issuer、policy version、通過旗標或 grant。Repository ID 由 native credential 的 provider GET 取得；issuer 取自已驗證 session 及 current owner membership。Target 名稱只是選項，`verificationState` 固定為 `unknown`；所有 view／record 的 `authorityGranted` 固定為 `false`。`releaseOwnerId` 表示 owner 選擇的負責 agent，不是對該 agent 的新增發布權限。
+
+寫入 transaction 鎖定現有 membership、project、issue rows，再重查 current owner、project、connection、release owner 和同一 task 的最新 event revision。兩個相同 `expectedRevision` 的競爭寫入只有一個可提交。撤回是一筆新 event，保留之前的歷史。
+
+Reader 必須檢查最新 reserved event；最新事件 malformed、issuer 已非有效 owner、subject／project 改變或已撤回時，不回退至舊的有效紀錄。Record 的 payload hash 只用於完整性核對，**不是簽章或 attestation**。可信來源是受現有 session／ACL 約束的內部寫入路徑及 DB row 的原生作者，不是任意 JSON；直接掌握 server／DB 寫入權的程式仍在宿主信任邊界內。
+
+此增補是一個 task 所屬 project 的 typed relation，並非全域唯一 project registry。它不把其他 task、相同 project label 或 role label 自動視為同一發布關係。
+
+### 現時可驗證的拒絕條件
+
+Verifier 從當前 native run 的 `issueId` 取得 task，核對 org／agent／channel／thread／trigger，重查 task／agent 狀態、binding、release owner、connection、fresh grants 和 repository allowlist。它不接受 tool input 提供的 task ID 或 `authorized` 作權威。再讀真實 repo ID、PR head／base／狀態，並在讀取後重查 binding revision、owner、scope 等原生狀態。
+
+缺少或改變的資訊會返回具體 reason code。即使上述設定及觀察都有效，這個候選仍會拒絕發布，因為尚未接上：
+
+1. 真正 runtime target 與 artifact 的驗證。
+2. Required checks／review 的可信 issuer 與 policy。
+3. 該 action／target 的現有有效發布授權。
+4. 原生 operation identity、持久去重及 outcome reconciliation。
+5. 現有 publisher 實際持有的 repo／target lease 與 fencing。
+
+它不把 task ID、approval ID、owner 選項或 repo 讀取成功偽裝成上述證明，也不推斷 File Room publisher。Workflow dispatch 仍由現有 guard 以 `workflow_target_adapter_unavailable` 拒絕；不能靠加入 task binding 解除。
+
+### 發布相容性與驗證
+
+**前一個 R2 catalog guard 的預設行為是：缺少完整 native verifier 時，所有該 catalog 的 GitHub merge／workflow release calls 都拒絕。** 這是涉及其他 agent 的實質發布相容性改變；本增補沒有為未註冊 repo 或未知 org 開放繞過路徑。尚未完成實際 project bindings、發布負責人及必要 gate 的核對前，不能將候選直接啟用為 production 發布能力。一般 read tools、task 編輯及既有 approval 規則維持原流程。
+
+新增 fixture 測試分別覆蓋 authenticated owner PATCH、跨 Origin／member 拒絕、嚴格 input、CAS／撤回、普通 task／comment 保留、current issuer／scope／repo／head 重驗、fake event／跨 task replay、provider redirect／大小／timeout／stream cancellation。真實 Mac 基線已證明原 PATCH 忽略 binding body，未產生 binding；修正後結果、typecheck、獨立 review 與 exact file hashes 必須另外記錄。Mock provider／PGlite 成功只證明程式控制流程，不是上線或真實發布證據。
+
+本次沒有改 shell、host MCP、自訂 connector、Git proxy、人工發布工具或既有 host deployment lock。現有發布者仍負責真正安裝及 provider／runtime outcome 核查。必須沿用當前有效的授權與既有發布流程，逐項保存 committed、pushed、merged、built、installed/deployed、running、live_verified 證據。
+
+## 2026-11-16 歷史唯讀基線
+
+本節是當時按現有程式碼整理的接駁方案，供原有 task／發布負責人覆核。當時尚未改動或啟用原生產品程式碼；文件、CLI、純 policy 測試及 skill 註冊均不是工具限制已生效的證據。
 
 2026-11-16T20:56:19.846446Z 重新唯讀確認：
 
