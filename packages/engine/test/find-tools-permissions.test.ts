@@ -207,7 +207,11 @@ async function githubAgent() {
       { name: "connectors", tools: (ctx) => createConnectorToolSource({ ...deps(), connect: mcp.connect }).tools(ctx) },
     ],
   });
-  await createApiKeyConnection(deps(), f.owner.id, f.org.id, { connector: "github", apiKey: "ghp_secret_123456" });
+  const connection = await createApiKeyConnection(deps(), f.owner.id, f.org.id, {
+    connector: "github",
+    apiKey: "ghp_secret_123456",
+  });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: connection.id, scope: "connector:*" }]);
 }
 
 test("a task is our board: create_issue ranks above GitHub's tool and every other, in English and Portuguese", async () => {
@@ -449,7 +453,7 @@ test("a server connected by address and named after a mailbox's service is that 
     catalog: { oauthApps: {}, mail: imapOnly() },
     toolSources: [{ name: "gmail", tools: async () => (gmailId ? [searchMail()] : []) }],
   });
-  // A new server is every agent's.
+  // A connected server is unavailable until this agent receives its explicit read scope.
   const gmail = await storeCustomConnection(connectorDeps(), {
     orgId: f.org.id,
     actorId: f.owner.id,
@@ -459,6 +463,9 @@ test("a server connected by address and named after a mailbox's service is that 
     secret: null,
   });
   gmailId = gmail.connection.id;
+  const withheld = await findTools(await nothingLoaded(), "gmail");
+  expect(withheld).toContain(NOT_YET);
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: gmailId, scope: `custom:${gmailId}:read` }]);
   const text = await findTools(await nothingLoaded(), "gmail");
   expect(text).toContain("- gmail_search_mail: [Gmail] Search mail");
   expect(text).not.toContain(TO_GET);
