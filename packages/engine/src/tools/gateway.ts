@@ -948,6 +948,7 @@ export function createToolGateway(deps: {
     });
     const tool = (await allTools(ctx)).get(approval.tool);
     // Why the approved action can't run any more; null = it may.
+    let refusalData: Record<string, unknown> | undefined;
     const refusal = async (): Promise<string | null> => {
       if (expected !== approval.actionHash) return "Approval does not match the action";
       if (!tool || tool.scope !== approval.scope || (tool.connectionId ?? null) !== approval.connectionId)
@@ -957,12 +958,14 @@ export function createToolGateway(deps: {
         return `Not allowed: this agent lost the scope ${access.of.scope} since the approval. An admin can give it back on the agent's page in Tools and access (in Portuguese, Ferramentas e acesso); then asking again runs it`;
       // Rules about the arguments again: a repository or recipient may have been removed while waiting.
       const check = await checkToolCall(tool, approval.params, ctx);
+      if (!check.ok) refusalData = check.data;
       return check.ok ? null : check.message;
     };
     let output: ToolOutput;
     let outside = false;
     const refused = await refusal();
-    if (refused || !tool) output = { content: refused ?? "Not allowed", isError: true };
+    if (refused || !tool)
+      output = { content: refused ?? "Not allowed", isError: true, ...(refusalData ? { data: refusalData } : {}) };
     else {
       // Claim the execution first: a retried job never runs the action twice. One approved ahead may have been
       // withdrawn or lapsed since it was read: only a row still approved runs.

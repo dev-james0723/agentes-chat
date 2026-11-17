@@ -37,7 +37,13 @@ import {
   syncCustomTools,
   type ToolAccess,
 } from "./custom";
-import { applyToolPins } from "./pins";
+import {
+  checkConnectorDelivery,
+  guardedDeliveryScope,
+  type NativeDeliveryGuard,
+  runConnectorDelivery,
+} from "./delivery-guard";
+import { applyToolPins, toolFingerprint } from "./pins";
 import { presetForServer } from "./presets";
 import type { McpServerInfo } from "./server-icon";
 
@@ -270,6 +276,8 @@ export function createConnectorToolSource(
     judge?: Judge;
     /** The server's GitHub App (ADR 0156): GitHub's tools act as it wherever the workspace installed it. */
     githubApp?: GitHubAppAccess;
+    /** Trusted native verifier only; absent: GitHub merge/workflow mutations are blocked. */
+    deliveryGuard?: NativeDeliveryGuard;
   },
 ): ToolSource {
   const connect = deps.connect ?? connectOverHttp;
@@ -479,6 +487,15 @@ export function createConnectorToolSource(
         for (const tool of listed) {
           const mapped = def.tools[tool.name];
           if (!mapped || mapped.ours) continue; // not in our catalog, or one we serve: never exposed
+          const guarded = def.id === "github" && guardedDeliveryScope(mapped.scope);
+          const deliveryCall = (input: Record<string, unknown>, ctx: ToolContext) => ({
+            tool: tool.name,
+            scope: mapped.scope,
+            connectionId: connection.id,
+            input,
+            inputSchema: tool.inputSchema,
+            ctx,
+          });
           out.push({
             name: exposedToolName(prefix, tool.name),
             description: cutText(`[${connection.label}] ${tool.description ?? tool.name}`, 1024),
@@ -498,7 +515,18 @@ export function createConnectorToolSource(
                 .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
                 .join(" · ")}`,
             }),
+            ...(guarded
+              ? {
+                  checkCall: (input: Record<string, unknown>, ctx: ToolContext) =>
+                    checkConnectorDelivery(deps.deliveryGuard, deliveryCall(input, ctx)),
+                }
+              : {}),
             execute: async (input, ctx) => {
+              // Direct ToolDefinition execution must not bypass the Gateway preflight.
+              if (guarded) {
+                const check = await checkConnectorDelivery(deps.deliveryGuard, deliveryCall(input, ctx));
+                if (!check.ok) return { content: check.message, isError: true, data: check.data };
+              }
               let auth: Record<string, string> | undefined;
               let args = input;
               if (def.id === "github") {
@@ -514,7 +542,42 @@ export function createConnectorToolSource(
                 auth = how.headers;
                 args = await signed(input, mapped.sign, { ...ctx, token: how.token });
               }
-              const result = await withSession(connection, (s) => s.callTool(tool.name, args), auth);
+              let deliveryData: Record<string, unknown> | undefined;
+              const result = await withSession(
+                connection,
+                async (s) => {
+                  if (!guarded) return s.callTool(tool.name, args);
+                  // Catalog pins are audit fingerprints, not reviewed immutable schemas. Read the live schema again.
+                  let current: McpTool | undefined;
+                  try {
+                    current = (await s.listTools()).find((candidate) => candidate.name === tool.name);
+                  } catch {
+                    /* Missing live precondition is a refusal, never a mutation retry. */
+                  }
+                  if (!current || toolFingerprint(current) !== toolFingerprint(tool)) {
+                    deliveryData = {
+                      deliveryGuardian: {
+                        status: "blocked",
+                        reasonCodes: ["delivery_tool_changed"],
+                        isAuthorizationGrant: false,
+                      },
+                    };
+                    return {
+                      content:
+                        "Delivery Guardian could not verify the current provider tool precondition. No release action was sent.",
+                      isError: true,
+                    };
+                  }
+                  const guardedResult = await runConnectorDelivery(
+                    deps.deliveryGuard,
+                    { ...deliveryCall(input, ctx), inputSchema: current.inputSchema, wireInput: args },
+                    () => s.callTool(tool.name, args),
+                  );
+                  deliveryData = guardedResult.data;
+                  return guardedResult.ok ? guardedResult.value : { content: guardedResult.message, isError: true };
+                },
+                auth,
+              );
               // Where the agent's words went on GitHub: what people answer there comes back to it here.
               const item =
                 def.id === "github" && mapped.sign?.field === "body" && !result.isError
@@ -524,8 +587,9 @@ export function createConnectorToolSource(
               return {
                 content: result.content,
                 isError: result.isError,
-                data: { connector: def.id, tool: tool.name, isError: result.isError },
-                ...(mapped.onSuccess && !result.isError
+                // Only host-created guard data enters evidence; provider result.data is untrusted.
+                data: { connector: def.id, tool: tool.name, isError: result.isError, ...deliveryData },
+                ...(!guarded && mapped.onSuccess && !result.isError
                   ? {
                       outcome: {
                         kind: mapped.onSuccess.kind,

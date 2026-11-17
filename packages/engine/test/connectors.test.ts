@@ -12,7 +12,6 @@ import {
   createApiKeyConnection,
   createConnectorToolSource,
   createToolGateway,
-  decideApproval,
   drainOutbox,
   ForbiddenError,
   fillTitle,
@@ -402,7 +401,7 @@ describe("MCP tools through the Tool Gateway", () => {
     expect(mcp.calls.map((x) => x.tool)).toEqual(["create_repository", "label_write"]);
   });
 
-  test("end to end: mention → MCP read → merge approval → approve → merged over MCP with exactly the approved params", async () => {
+  test("end to end: a merge without the native delivery verifier is refused before approval", async () => {
     const mcp = fakeGithubMcp();
     let deps: ConnectorDeps | undefined;
     f = await setup({
@@ -414,7 +413,8 @@ describe("MCP tools through the Tool Gateway", () => {
       ],
       reply: (req) => {
         const last = JSON.stringify(req.messages.at(-1)?.content);
-        if (last.includes("Merged PR #42")) return { chunks: ["Merge feito."] };
+        if (last.includes("Delivery Guardian blocked"))
+          return { chunks: ["Release blocked: native delivery verifier unavailable."] };
         if (last.includes("checks passing"))
           return {
             chunks: ["Checks passing."],
@@ -457,25 +457,10 @@ describe("MCP tools through the Tool Gateway", () => {
       body: "@dev merge PR 42",
     });
     await drainOutbox(f.db, f.handlers);
-    const [approval] = await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" });
-    expect(approval).toMatchObject({
-      title: "Merge PR #42 in acme/app",
-      scope: "github:pr.merge",
-      tool: "github_merge_pull_request",
-    });
-    expect(approval?.detail).toBe("github.merge_pull_request · owner=acme · repo=app · pullNumber=42");
+    expect(await listApprovals(f.db, f.owner.id, f.org.id, { status: "pending" })).toEqual([]);
     expect(mcp.calls.map((x) => x.tool)).toEqual(["pull_request_read"]);
-
-    await decideApproval({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, approval?.id ?? "", {
-      decision: "approve",
-    });
-    await drainOutbox(f.db, f.handlers);
-    expect(mcp.calls).toEqual([
-      { tool: "pull_request_read", args: { owner: "acme", repo: "app", pullNumber: 42 } },
-      { tool: "merge_pull_request", args: { owner: "acme", repo: "app", pullNumber: 42 } },
-    ]);
     const timeline = await listMessages(f.db, f.owner.id, f.org.id, f.general.id);
-    expect(timeline.at(-1)?.body).toBe("Merge feito.");
+    expect(timeline.at(-1)?.body).toContain("native delivery verifier unavailable");
   });
 });
 
