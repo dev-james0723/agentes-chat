@@ -6175,9 +6175,7 @@ async function executeRunInner(
       // a cut turn (the catch path) keeps native starts as unknown.
       // A call that returned an error the brain read (a browser action that timed out) is settled by the brain's own
       // end of turn: noted on the run, never a failure of a reply it finished.
-      const epochHold = bridgeEpochId
-        ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true)
-        : null;
+      const epochHold = bridgeEpochId ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true) : null;
       if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);
