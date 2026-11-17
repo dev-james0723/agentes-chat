@@ -313,7 +313,7 @@ test("an unknown side effect is reconciled without retry", () => {
   );
   assert.equal(
     implementation.reconcileOperation({ idempotencyKey: "same", state: "succeeded" }, { state: "unknown" }).action,
-    "reuse_result",
+    "observe_outcome",
   );
   assert.equal(
     implementation.reconcileOperation(

@@ -392,7 +392,6 @@ export function reconcileOperation(attempt, observation) {
     o = object(observation) ? observation : {};
   if (typeof a.idempotencyKey !== "string" || !a.idempotencyKey)
     return { action: "blocked", reason: "stable_operation_identity_required", execute: false };
-  if (a.state === "succeeded") return { action: "reuse_result", execute: false };
   const scope = [
     "projectId",
     "taskId",
@@ -403,11 +402,19 @@ export function reconcileOperation(attempt, observation) {
     "candidateSha",
     "idempotencyKey",
   ];
-  if (
-    scope.every((key) => typeof a[key] === "string" && a[key].length > 0 && a[key] === o[key]) &&
-    o.state === "succeeded"
-  )
-    return { action: "record_observed_success", execute: false };
+  // A historical "succeeded" flag cannot certify a new session's operation.
+  // Verify the full immutable subject against the observed outcome before any
+  // reuse. An absent, stale or conflicting readback means observe again, never
+  // retry the provider effect or upgrade untrusted receipt text into authority.
+  const sameSubject = scope.every(
+    (key) => typeof a[key] === "string" && a[key].length > 0 && a[key] === o[key],
+  );
+  if (a.state === "succeeded")
+    return {
+      action: sameSubject && o.state === "succeeded" ? "reuse_result" : "observe_outcome",
+      execute: false,
+    };
+  if (sameSubject && o.state === "succeeded") return { action: "record_observed_success", execute: false };
   if (["executing", "outcome_unknown"].includes(a.state)) return { action: "observe_outcome", execute: false };
   return { action: "publisher_preflight_required", execute: false };
 }
