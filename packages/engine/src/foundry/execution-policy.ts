@@ -46,9 +46,7 @@ export interface FoundryReviewedNativeRead {
   reviewRef: string;
 }
 
-export type FoundryPolicyDecision =
-  | { ok: true }
-  | { ok: false; message: string; code: "FOUNDRY_RUN_RESTRICTED" };
+export type FoundryPolicyDecision = { ok: true } | { ok: false; message: string; code: "FOUNDRY_RUN_RESTRICTED" };
 
 export interface FoundryBuilderProtection {
   schema: "foundry-builder-protection/1";
@@ -74,7 +72,11 @@ export interface FoundryExecutionPolicy extends ToolExecutionPolicy {
    * this claim never permits tool execution or a brain turn while waiting.
    * Null means no currently verified protection claim, never a fallback.
    */
-  protection(ctx: FoundryPolicyContext, purpose?: "active" | "read_evidence", transaction?: Executor): Promise<FoundryBuilderProtection | null>;
+  protection(
+    ctx: FoundryPolicyContext,
+    purpose?: "active" | "read_evidence",
+    transaction?: Executor,
+  ): Promise<FoundryBuilderProtection | null>;
 }
 
 export interface FoundryExecutionPolicyOptions {
@@ -109,11 +111,13 @@ export const FOUNDRY_POLICY_MANAGEMENT = Object.freeze({
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const SHA256 = /^[a-f0-9]{64}$/;
 const NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Security boundary deliberately rejects control characters in opaque references.
 const REF = /^[^\u0000-\u001f\u007f]{1,512}$/;
 const deny = (): FoundryPolicyDecision => ({
   ok: false,
   code: "FOUNDRY_RUN_RESTRICTED",
-  message: "This run is restricted to its native Foundry workflow. The requested tool or execution route is unavailable.",
+  message:
+    "This run is restricted to its native Foundry workflow. The requested tool or execution route is unavailable.",
 });
 const allow = (): FoundryPolicyDecision => ({ ok: true });
 type Pin = Readonly<FoundryBuilderRunPin> & { readonly policyDigest: string };
@@ -127,27 +131,54 @@ function invalid(): never {
 export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOptions): FoundryExecutionPolicy {
   const now = options.now ?? Date.now;
   const timeoutMs = options.controlTimeoutMs ?? 1000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000 || !Array.isArray(options.pins)
-    || (options.nativeReads !== undefined && !Array.isArray(options.nativeReads)))
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 10_000 ||
+    !Array.isArray(options.pins) ||
+    (options.nativeReads !== undefined && !Array.isArray(options.nativeReads))
+  )
     invalid();
-  const reads = (options.nativeReads ?? []).map((r) => {
-    if (!r || typeof r.sourceName !== "string" || !REF.test(r.sourceName) || r.sourceName === "foundry"
-      || typeof r.name !== "string" || !NAME.test(r.name)
-      || !/^(?:get|read|list|search)_/.test(r.name) || typeof r.reviewRef !== "string" || !REF.test(r.reviewRef)
-      || !["issues:read", "skills:read"].includes(r.scope)) invalid();
-    return Object.freeze({ sourceName: r.sourceName, name: r.name, scope: r.scope, reviewRef: r.reviewRef });
-  }).sort((a, b) => `${a.sourceName}:${a.name}:${a.scope}`.localeCompare(`${b.sourceName}:${b.name}:${b.scope}`));
+  const reads = (options.nativeReads ?? [])
+    .map((r) => {
+      if (
+        !r ||
+        typeof r.sourceName !== "string" ||
+        !REF.test(r.sourceName) ||
+        r.sourceName === "foundry" ||
+        typeof r.name !== "string" ||
+        !NAME.test(r.name) ||
+        !/^(?:get|read|list|search)_/.test(r.name) ||
+        typeof r.reviewRef !== "string" ||
+        !REF.test(r.reviewRef) ||
+        !["issues:read", "skills:read"].includes(r.scope)
+      )
+        invalid();
+      return Object.freeze({ sourceName: r.sourceName, name: r.name, scope: r.scope, reviewRef: r.reviewRef });
+    })
+    .sort((a, b) => `${a.sourceName}:${a.name}:${a.scope}`.localeCompare(`${b.sourceName}:${b.name}:${b.scope}`));
   const byRun = new Map<string, Pin>();
   const observedDynamicPins = new Set<string>();
   function normalizePin(p: FoundryBuilderRunPin): Pin {
-    if (!p || typeof p.phaseRef !== "string" || !REF.test(p.phaseRef)
-      || typeof p.orgId !== "string" || !UUID.test(p.orgId)
-      || typeof p.taskId !== "string" || !UUID.test(p.taskId)
-      || typeof p.agentId !== "string" || !UUID.test(p.agentId)
-      || !Array.isArray(p.runIds) || !p.runIds.length || p.runIds.length > 100
-      || p.runIds.some((id: unknown) => typeof id !== "string" || !UUID.test(id))
-      || new Set(p.runIds).size !== p.runIds.length
-      || typeof p.expiresAt !== "string" || !Number.isFinite(Date.parse(p.expiresAt))) invalid();
+    if (
+      !p ||
+      typeof p.phaseRef !== "string" ||
+      !REF.test(p.phaseRef) ||
+      typeof p.orgId !== "string" ||
+      !UUID.test(p.orgId) ||
+      typeof p.taskId !== "string" ||
+      !UUID.test(p.taskId) ||
+      typeof p.agentId !== "string" ||
+      !UUID.test(p.agentId) ||
+      !Array.isArray(p.runIds) ||
+      !p.runIds.length ||
+      p.runIds.length > 100 ||
+      p.runIds.some((id: unknown) => typeof id !== "string" || !UUID.test(id)) ||
+      new Set(p.runIds).size !== p.runIds.length ||
+      typeof p.expiresAt !== "string" ||
+      !Number.isFinite(Date.parse(p.expiresAt))
+    )
+      invalid();
     const normalized = Object.freeze({
       phaseRef: p.phaseRef,
       orgId: p.orgId,
@@ -156,23 +187,27 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
       runIds: Object.freeze([...p.runIds].sort()),
       expiresAt: new Date(p.expiresAt).toISOString(),
     });
-    const policyDigest = createHash("sha256").update(JSON.stringify({
-      schema: "foundry-builder-policy/1",
-      claim: "native_builder_run_only",
-      // Membership is checked byRun and each proof binds runId separately.
-      // Adding an operator-pinned fresh run to the SAME phase must not change
-      // the permission-profile digest of the already evaluated builder run.
-      pin: {
-        phaseRef: normalized.phaseRef,
-        orgId: normalized.orgId,
-        taskId: normalized.taskId,
-        agentId: normalized.agentId,
-        expiresAt: normalized.expiresAt,
-      },
-      brain: "model",
-      management: FOUNDRY_POLICY_MANAGEMENT,
-      nativeReads: reads,
-    })).digest("hex");
+    const policyDigest = createHash("sha256")
+      .update(
+        JSON.stringify({
+          schema: "foundry-builder-policy/1",
+          claim: "native_builder_run_only",
+          // Membership is checked byRun and each proof binds runId separately.
+          // Adding an operator-pinned fresh run to the SAME phase must not change
+          // the permission-profile digest of the already evaluated builder run.
+          pin: {
+            phaseRef: normalized.phaseRef,
+            orgId: normalized.orgId,
+            taskId: normalized.taskId,
+            agentId: normalized.agentId,
+            expiresAt: normalized.expiresAt,
+          },
+          brain: "model",
+          management: FOUNDRY_POLICY_MANAGEMENT,
+          nativeReads: reads,
+        }),
+      )
+      .digest("hex");
     return Object.freeze({ ...normalized, policyDigest });
   }
   for (const p of options.pins) {
@@ -197,7 +232,13 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
     }
   }
 
-  async function resolve(ctx: FoundryPolicyContext, requireRecordedModel = true, allowWaiting = false, historical = false, transaction?: Executor): Promise<Resolution> {
+  async function resolve(
+    ctx: FoundryPolicyContext,
+    requireRecordedModel = true,
+    allowWaiting = false,
+    historical = false,
+    transaction?: Executor,
+  ): Promise<Resolution> {
     // Key by run id BEFORE comparing the organization: changing org cannot remove a pin.
     let pin = byRun.get(ctx.runId);
     if (options.readPin) {
@@ -218,19 +259,33 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
       }
     }
     if (!pin) return { state: "unrestricted" };
-    if (ctx.orgId !== pin.orgId || ctx.agentId !== pin.agentId || ctx.bridge || ctx.signal?.aborted
-      || Date.parse(pin.expiresAt) <= now())
+    if (
+      ctx.orgId !== pin.orgId ||
+      ctx.agentId !== pin.agentId ||
+      ctx.bridge ||
+      ctx.signal?.aborted ||
+      Date.parse(pin.expiresAt) <= now()
+    )
       return { state: "denied" };
     try {
       const identity = { orgId: pin.orgId, agentId: pin.agentId, runId: ctx.runId };
       const row = await control(() => options.readRun(identity, transaction));
       const statuses = allowWaiting ? ["running", "waiting_input", "waiting_approval"] : ["running"];
       if (historical) statuses.push("done");
-      if (!row || row.id !== ctx.runId || row.orgId !== pin.orgId || row.agentId !== pin.agentId
-        || row.issueId !== pin.taskId || !statuses.includes(row.status) || row.background !== false
-        || row.workId !== null || row.brainSessionId !== null
-        || (requireRecordedModel ? row.brain !== "model" : row.brain !== null && row.brain !== "model")
-        || Date.parse(pin.expiresAt) <= now()) return { state: "denied" };
+      if (
+        !row ||
+        row.id !== ctx.runId ||
+        row.orgId !== pin.orgId ||
+        row.agentId !== pin.agentId ||
+        row.issueId !== pin.taskId ||
+        !statuses.includes(row.status) ||
+        row.background !== false ||
+        row.workId !== null ||
+        row.brainSessionId !== null ||
+        (requireRecordedModel ? row.brain !== "model" : row.brain !== null && row.brain !== "model") ||
+        Date.parse(pin.expiresAt) <= now()
+      )
+        return { state: "denied" };
       return { state: "restricted", pin };
     } catch {
       return { state: "denied" };
@@ -293,11 +348,20 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
       if (!options.capabilities || !sameTool(tool, { name: tool.name, scope: "sandbox:run" })) return deny();
       try {
         const capabilities = await control(() => options.capabilities!(ctx));
-        const exact = Array.isArray(capabilities) && capabilities.some((c) => c && UUID.test(c.candidateId)
-          && SHA256.test(c.digest)
-          && tool.name === `foundry_receipt_normalizer_${c.candidateId.replaceAll("-", "").slice(0, 16)}_${c.digest.slice(0, 20)}`);
+        const exact =
+          Array.isArray(capabilities) &&
+          capabilities.some(
+            (c) =>
+              c &&
+              UUID.test(c.candidateId) &&
+              SHA256.test(c.digest) &&
+              tool.name ===
+                `foundry_receipt_normalizer_${c.candidateId.replaceAll("-", "").slice(0, 16)}_${c.digest.slice(0, 20)}`,
+          );
         // Discovery may await I/O. A canceled, moved or expired run must not use its late answer.
-        return exact && (await resolve(ctx, false)).state === "restricted" && !toolContextDenied(ctx) ? allow() : deny();
+        return exact && (await resolve(ctx, false)).state === "restricted" && !toolContextDenied(ctx)
+          ? allow()
+          : deny();
       } catch {
         return deny();
       }

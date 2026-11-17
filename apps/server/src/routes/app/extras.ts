@@ -1,7 +1,6 @@
 import type { PushSender } from "@agenteschat/adapters";
 import type {
   ArtifactDeps,
-  NativeFoundryIntegration,
   BrowserLive,
   ContextDeps,
   GifKey,
@@ -11,6 +10,7 @@ import type {
   JevKey,
   McpConnect,
   ModelGateway,
+  NativeFoundryIntegration,
   ResolveHost,
   RouterDeps,
   SandboxDeps,

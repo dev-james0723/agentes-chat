@@ -131,6 +131,8 @@ export * from "./file-pulls";
 export * from "./file-reader";
 export * from "./follow-through";
 export * from "./follows";
+export { startFoundryTaskRun } from "./foundry/enrollment";
+export { createNativeFoundryIntegration, type NativeFoundryIntegration } from "./foundry/integration";
 export { createFoundryToolSource } from "./foundry/tools";
 export * from "./gateway";
 export * from "./gif-key";
@@ -341,7 +343,3 @@ export * from "./workspace-deletion";
 export * from "./workspace-mode";
 export * from "./workspace-tools";
 export * from "./zip";
-
-export { createNativeFoundryIntegration, type NativeFoundryIntegration } from "./foundry/integration";
-
-export { startFoundryTaskRun } from "./foundry/enrollment";

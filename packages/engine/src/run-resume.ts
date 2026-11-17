@@ -121,23 +121,24 @@ export async function resumeWaitingRunWithResult(
   if (!row || (input.orgId && row.orgId !== input.orgId)) return null;
   if (row.status !== "waiting_input" && row.status !== "waiting_approval") return null;
   const t = row.transcript as StoredTranscript | null;
-  const call = t?.pending?.calls.find((c) => c.waitId === input.waitId && !c.result &&
-    (!input.toolUseId || c.toolUseId === input.toolUseId));
+  const call = t?.pending?.calls.find(
+    (c) => c.waitId === input.waitId && !c.result && (!input.toolUseId || c.toolUseId === input.toolUseId),
+  );
   if (!t || !call) return null;
   call.result = { content: input.result.content, isError: input.result.isError === true };
-    if (input.consulted) t.consulted = [...(t.consulted ?? []), input.consulted];
-    await tx
-      .update(agentRuns)
-      .set({ transcript: keepRunMarkers(pgSafeJson(t) as Record<string, unknown>), updatedAt: new Date() })
-      .where(eq(agentRuns.id, row.id));
-    await enqueue(tx, {
-      orgId: row.orgId,
-      kind: "agent_run.execute",
-      payload: { runId: row.id },
-      // Per call: the run may wait on the same id again later (a browser tool while the person still holds it).
-      dedupeKey: `agent_run.execute:${row.id}:wait:${input.waitId}:${call.toolUseId}`,
-      maxAttempts: 4,
-    });
+  if (input.consulted) t.consulted = [...(t.consulted ?? []), input.consulted];
+  await tx
+    .update(agentRuns)
+    .set({ transcript: keepRunMarkers(pgSafeJson(t) as Record<string, unknown>), updatedAt: new Date() })
+    .where(eq(agentRuns.id, row.id));
+  await enqueue(tx, {
+    orgId: row.orgId,
+    kind: "agent_run.execute",
+    payload: { runId: row.id },
+    // Per call: the run may wait on the same id again later (a browser tool while the person still holds it).
+    dedupeKey: `agent_run.execute:${row.id}:wait:${input.waitId}:${call.toolUseId}`,
+    maxAttempts: 4,
+  });
   return { runId: row.id };
 }
 

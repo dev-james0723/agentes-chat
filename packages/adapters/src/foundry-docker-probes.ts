@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { FOUNDRY_DOCKER_BOOTSTRAP } from "./foundry-docker-bootstrap";
-import { foundryDockerCreateArgs, type DockerFoundryOptions, type FoundryDockerControl } from "./foundry-docker-runner";
+import { type DockerFoundryOptions, type FoundryDockerControl, foundryDockerCreateArgs } from "./foundry-docker-runner";
 
 /** Operator-authored infrastructure probes only. These are not candidate
  * development tests, protected holdouts, or a qualification authority. */
@@ -89,37 +89,77 @@ export async function probeFoundryDockerRuntime(
   const created = await docker.run(args, { timeoutMs: 3000, stdoutBytes: 1024, stderrBytes: 4096 });
   const id = created.stdout.trim();
   if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(id)) {
-    return { probe, observedAt: new Date(started).toISOString(), elapsedMs: Date.now() - started, created: false,
-      containerId: null, exitCode: created.exitCode, stdout: created.stdout, stderr: created.stderr,
-      captureExceeded: created.exceeded, clientTimedOut: created.timedOut, removed: false, status: "CONTROL_UNAVAILABLE" };
+    return {
+      probe,
+      observedAt: new Date(started).toISOString(),
+      elapsedMs: Date.now() - started,
+      created: false,
+      containerId: null,
+      exitCode: created.exitCode,
+      stdout: created.stdout,
+      stderr: created.stderr,
+      captureExceeded: created.exceeded,
+      clientTimedOut: created.timedOut,
+      removed: false,
+      status: "CONTROL_UNAVAILABLE",
+    };
   }
   const result = await docker.run(["start", "--attach", "--interactive", id], {
-    stdin: probe === "abi" ? JSON.stringify({
-      abi: "receipt-normalizer-json/v1",
-      moduleBase64: Buffer.from('export const normalizeReceiptJson = input => JSON.stringify({echo: JSON.parse(input).probe});').toString("base64"),
-      moduleDigest: createHash("sha256").update('export const normalizeReceiptJson = input => JSON.stringify({echo: JSON.parse(input).probe});').digest("hex"),
-      inputJson: '{"probe":"fixed-infrastructure-abi"}',
-      inputDigest: createHash("sha256").update('{"probe":"fixed-infrastructure-abi"}').digest("hex"),
-      resultBytes: 1024,
-    }) : undefined,
+    stdin:
+      probe === "abi"
+        ? JSON.stringify({
+            abi: "receipt-normalizer-json/v1",
+            moduleBase64: Buffer.from(
+              "export const normalizeReceiptJson = input => JSON.stringify({echo: JSON.parse(input).probe});",
+            ).toString("base64"),
+            moduleDigest: createHash("sha256")
+              .update("export const normalizeReceiptJson = input => JSON.stringify({echo: JSON.parse(input).probe});")
+              .digest("hex"),
+            inputJson: '{"probe":"fixed-infrastructure-abi"}',
+            inputDigest: createHash("sha256").update('{"probe":"fixed-infrastructure-abi"}').digest("hex"),
+            resultBytes: 1024,
+          })
+        : undefined,
     timeoutMs: probe === "watchdogAfterClientLoss" ? 300 : Math.min(15000, options.limits.wallTimeMs + 2000),
-    stdoutBytes: options.limits.stdoutBytes, stderrBytes: options.limits.stderrBytes,
+    stdoutBytes: options.limits.stdoutBytes,
+    stderrBytes: options.limits.stderrBytes,
   });
   let stateAfterClientLoss: string | undefined;
   let stateAfterDeadline: string | undefined;
   if (probe === "watchdogAfterClientLoss") {
-    const format = '{"running":{{json .State.Running}},"exitCode":{{json .State.ExitCode}},"pid":{{json .State.Pid}},"oomKilled":{{json .State.OOMKilled}}}';
-    const first = await docker.run(["inspect", "--format", format, id], { timeoutMs: 1000, stdoutBytes: 2048, stderrBytes: 1024 });
+    const format =
+      '{"running":{{json .State.Running}},"exitCode":{{json .State.ExitCode}},"pid":{{json .State.Pid}},"oomKilled":{{json .State.OOMKilled}}}';
+    const first = await docker.run(["inspect", "--format", format, id], {
+      timeoutMs: 1000,
+      stdoutBytes: 2048,
+      stderrBytes: 1024,
+    });
     stateAfterClientLoss = first.exitCode === 0 ? first.stdout : "CONTROL_UNAVAILABLE";
     // No runner/CLI remains attached during this interval. The trusted utility
     // in the container must enforce its own earlier wall deadline.
-    await new Promise(resolve => setTimeout(resolve, options.limits.wallTimeMs - 1500));
-    const last = await docker.run(["inspect", "--format", format, id], { timeoutMs: 1000, stdoutBytes: 2048, stderrBytes: 1024 });
+    await new Promise((resolve) => setTimeout(resolve, options.limits.wallTimeMs - 1500));
+    const last = await docker.run(["inspect", "--format", format, id], {
+      timeoutMs: 1000,
+      stdoutBytes: 2048,
+      stderrBytes: 1024,
+    });
     stateAfterDeadline = last.exitCode === 0 ? last.stdout : "CONTROL_UNAVAILABLE";
   }
   const removed = await docker.run(["rm", "--force", id], { timeoutMs: 3000, stdoutBytes: 1024, stderrBytes: 4096 });
-  return { probe, observedAt: new Date(started).toISOString(), elapsedMs: Date.now() - started, created: true,
-    containerId: id, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr,
-    captureExceeded: result.exceeded, clientTimedOut: result.timedOut,
-    removed: removed.exitCode === 0 && removed.stdout.trim() === id, status: "OBSERVED", stateAfterClientLoss, stateAfterDeadline };
+  return {
+    probe,
+    observedAt: new Date(started).toISOString(),
+    elapsedMs: Date.now() - started,
+    created: true,
+    containerId: id,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    captureExceeded: result.exceeded,
+    clientTimedOut: result.timedOut,
+    removed: removed.exitCode === 0 && removed.stdout.trim() === id,
+    status: "OBSERVED",
+    stateAfterClientLoss,
+    stateAfterDeadline,
+  };
 }

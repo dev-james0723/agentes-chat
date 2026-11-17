@@ -1,20 +1,20 @@
 import {
   createUnavailableFoundryExecutor,
-  type FoundryExecutionResult,
   type FoundryAdmission,
-  type FoundryRunnerExecutionRequest,
+  type FoundryExecutionResult,
   type FoundryExecutor,
   type FoundryQualification,
+  type FoundryRunnerExecutionRequest,
   hashFoundryInput,
 } from "@agenteschat/adapters";
 import { and, type Executor, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { getMembership } from "../organizations";
 import { enqueue, type OutboxJob } from "../outbox";
-import { createDurableFoundryEvaluation } from "./evaluation";
-import type { FoundryExecutionPolicy } from "./execution-policy";
 import { actionHash } from "../tools/gateway";
 import { freshGrantedKeys, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
+import { createDurableFoundryEvaluation } from "./evaluation";
+import type { FoundryExecutionPolicy } from "./execution-policy";
 import { canonicalJson, type FrozenPackage } from "./packages";
 import { receiptAppliesTo, validateReceiptInput, validateReceiptOutput } from "./receipt-contract";
 import {
@@ -797,13 +797,31 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
   }
 
   const api = {
-    authorizeRunnerEvaluation: createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
-      requireLimits: requireManifestLimits, verifyEvidence: evidence }).authorizeDispatch,
-    evaluate: createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
-      requireLimits: requireManifestLimits, verifyEvidence: evidence }).begin,
+    authorizeRunnerEvaluation: createDurableFoundryEvaluation({
+      ...deps,
+      executor,
+      now,
+      qualified,
+      requireLimits: requireManifestLimits,
+      verifyEvidence: evidence,
+    }).authorizeDispatch,
+    evaluate: createDurableFoundryEvaluation({
+      ...deps,
+      executor,
+      now,
+      qualified,
+      requireLimits: requireManifestLimits,
+      verifyEvidence: evidence,
+    }).begin,
     reconcileEvaluation(job: OutboxJob, finalAttempt = false) {
-      return createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
-        requireLimits: requireManifestLimits, verifyEvidence: evidence }).run(job, finalAttempt);
+      return createDurableFoundryEvaluation({
+        ...deps,
+        executor,
+        now,
+        qualified,
+        requireLimits: requireManifestLimits,
+        verifyEvidence: evidence,
+      }).run(job, finalAttempt);
     },
     activationParameters: parameters,
     async activate(ctx: ToolContext, raw: FoundryActivationInput) {
@@ -953,28 +971,60 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
       return { outcome: "PENDING" as const, restoredBindingId: null };
     },
     /** Server-to-runner control only. Never present this method as a tool. */
-    async authorizeRunnerExecution(request: FoundryRunnerExecutionRequest, admission: FoundryAdmission): Promise<boolean> {
+    async authorizeRunnerExecution(
+      request: FoundryRunnerExecutionRequest,
+      admission: FoundryAdmission,
+    ): Promise<boolean> {
       try {
-        if (request.abort?.aborted || request.budgetReservationRef !== request.invocationId ||
-            Buffer.byteLength(request.inputJson) > admission.limits.inputBytes ||
-            hashFoundryInput(JSON.parse(request.inputJson)) !== request.inputDigest) return false;
-        const [row] = await db.select().from(invocations).where(and(eq(invocations.id, request.invocationId), eq(invocations.orgId, request.orgId)));
-        if (!row || row.state !== "DISPATCHED" || row.recoveryRevision !== 0 || row.fencingToken !== request.fencingToken ||
-            row.digest !== request.digest || row.inputDigest !== request.inputDigest || row.leaseUntil <= now()) return false;
+        if (
+          request.abort?.aborted ||
+          request.budgetReservationRef !== request.invocationId ||
+          Buffer.byteLength(request.inputJson) > admission.limits.inputBytes ||
+          hashFoundryInput(JSON.parse(request.inputJson)) !== request.inputDigest
+        )
+          return false;
+        const [row] = await db
+          .select()
+          .from(invocations)
+          .where(and(eq(invocations.id, request.invocationId), eq(invocations.orgId, request.orgId)));
+        if (
+          !row ||
+          row.state !== "DISPATCHED" ||
+          row.recoveryRevision !== 0 ||
+          row.fencingToken !== request.fencingToken ||
+          row.digest !== request.digest ||
+          row.inputDigest !== request.inputDigest ||
+          row.leaseUntil <= now()
+        )
+          return false;
         const ctx = await nativeContextFor(row);
         const canary = row.receipt?.purpose === "canary";
         if (!canary && (row.receipt?.purpose !== "call" || !(await applicable(ctx)))) return false;
         const proof = await guard(ctx, row.bindingId, canary ? ["CANARY"] : ["ACTIVE"], request.digest);
         const q = proof.qualification;
-        if (proof.binding.generation !== row.bindingGeneration || proof.approval.id !== request.nativeDecisionRef ||
-            (canary && proof.approval.runId !== row.runId) || q.runnerId !== admission.runnerId ||
-            q.runtimeDigest !== admission.runtimeDigest || q.profileDigest !== admission.profileDigest ||
-            q.attestationRef !== admission.attestationRef || hashFoundryInput(q.limits) !== hashFoundryInput(admission.limits)) return false;
+        if (
+          proof.binding.generation !== row.bindingGeneration ||
+          proof.approval.id !== request.nativeDecisionRef ||
+          (canary && proof.approval.runId !== row.runId) ||
+          q.runnerId !== admission.runnerId ||
+          q.runtimeDigest !== admission.runtimeDigest ||
+          q.profileDigest !== admission.profileDigest ||
+          q.attestationRef !== admission.attestationRef ||
+          hashFoundryInput(q.limits) !== hashFoundryInput(admission.limits)
+        )
+          return false;
         // Re-read after all external control/evidence calls, before the runner starts.
         const [fresh] = await db.select().from(invocations).where(eq(invocations.id, row.id));
-        return !!fresh && fresh.state === "DISPATCHED" && fresh.recoveryRevision === 0 &&
-          fresh.fencingToken === request.fencingToken && fresh.leaseUntil > now();
-      } catch { return false; }
+        return (
+          !!fresh &&
+          fresh.state === "DISPATCHED" &&
+          fresh.recoveryRevision === 0 &&
+          fresh.fencingToken === request.fencingToken &&
+          fresh.leaseUntil > now()
+        );
+      } catch {
+        return false;
+      }
     },
     async execute(ctx: ToolContext, input: { bindingId: string; digest: string; input: unknown }) {
       return dispatch(ctx, input.bindingId, input.digest, input.input, false);

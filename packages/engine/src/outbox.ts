@@ -282,8 +282,11 @@ const held = (job: OutboxJob) =>
 
 /** Extends a running job's lease, unless it was taken over. Returns whether it still holds the job. */
 export async function lockJobClaim(tx: Executor, job: OutboxJob, now = new Date()): Promise<boolean> {
-  const [row] = await tx.select({ id: outbox.id }).from(outbox)
-    .where(and(held(job), sql`${outbox.lockedUntil} > ${now}`)).for("update");
+  const [row] = await tx
+    .select({ id: outbox.id })
+    .from(outbox)
+    .where(and(held(job), sql`${outbox.lockedUntil} > ${now}`))
+    .for("update");
   return Boolean(row);
 }
 

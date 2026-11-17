@@ -562,7 +562,11 @@ export function createToolGateway(deps: {
     sourceOf.set(result, sourceOf.get(tool) ?? null);
     return result;
   }
-  async function policyTools(ctx: ToolContext, tools: Iterable<ToolDefinition>, requireComplete = false): Promise<ToolDefinition[]> {
+  async function policyTools(
+    ctx: ToolContext,
+    tools: Iterable<ToolDefinition>,
+    requireComplete = false,
+  ): Promise<ToolDefinition[]> {
     const visible: ToolDefinition[] = [];
     for (const tool of tools) if ((await executionCheck(ctx, tool, requireComplete)).ok) visible.push(tool);
     return visible;
@@ -1243,7 +1247,11 @@ export function createToolGateway(deps: {
       // What the live chip shows (the short label of a built-in tool, never a connector's input; the app and its
       // service): the chat's line of this call says the same after the run. A permission check also keeps its
       // command, masked, to open.
-      const detail = privateCall ? PRIVATE_PUBLICATION_TITLE : initialExecution.ok ? toolDetail(call.name, call.input) : null;
+      const detail = privateCall
+        ? PRIVATE_PUBLICATION_TITLE
+        : initialExecution.ok
+          ? toolDetail(call.name, call.input)
+          : null;
       const command = privateCall || !initialExecution.ok ? null : toolCommand(call.name, call.input);
       const toolCallStepId = await record(ctx.db, step, "tool_call", {
         toolUseId: call.toolUseId,

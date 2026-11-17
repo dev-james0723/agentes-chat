@@ -1,4 +1,3 @@
-import type { FoundryExecutionPolicy } from "./foundry/execution-policy";
 import {
   type BrainTurnTimings,
   CODEX_FOLDER_PROTOCOL,
@@ -214,6 +213,7 @@ import { type Feedback, queueFeedback } from "./feedback";
 import type { PendingFeedbackOffer } from "./feedback-offers";
 import { comesBackHere, FOLLOW_UP_TOOL, wakesLater } from "./follow-through";
 import { cutText, hasQuestionMark } from "./format";
+import type { FoundryExecutionPolicy } from "./foundry/execution-policy";
 import type { ModelGateway } from "./gateway";
 import { type CodeSetup, codeStart } from "./git/machine";
 import { agentRepositoryList, repositoriesPrompt } from "./git/repos";
@@ -3224,7 +3224,10 @@ async function executeRunInner(
     quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
   });
   if (deps.foundryPolicy) {
-    const admission = await deps.foundryPolicy.beforeBrain({ orgId: run.orgId, agentId: run.agentId, runId: run.id }, brainPlan.kind);
+    const admission = await deps.foundryPolicy.beforeBrain(
+      { orgId: run.orgId, agentId: run.agentId, runId: run.id },
+      brainPlan.kind,
+    );
     if (!admission.ok) return fail(admission.message);
   }
   // The agent's model left its plan's live list, so this turn runs another: its owner hears it, never silently.
@@ -5898,15 +5901,21 @@ async function executeRunInner(
       } catch (error) {
         await deltas.flush();
         await deferred;
-        const epochHold = bridgeEpochId
-          ? await closeBridgeEffectEpoch(
+        let epochHold: Awaited<ReturnType<typeof closeBridgeEffectEpoch>> = null;
+        try {
+          if (bridgeEpochId)
+            epochHold = await closeBridgeEffectEpoch(
               db,
               run.id,
               bridgeEpochId,
               turn,
               [...startedNow.values()].map((c) => c.name),
-            )
-          : null;
+            );
+        } catch (epochError) {
+          // Stop may already have closed the epoch while the turn was unwinding.
+          // Preserve its partial reply without reopening admission or ignoring other failures.
+          if (!(await isCanceled())) throw epochError;
+        }
         // Canceled mid-stream: the gateway recorded the usage so far; keep the text so far.
         if (await isCanceled()) return stopCanceled(deltas.text(), deltas.answer());
         if (epochHold) {
@@ -6182,9 +6191,7 @@ async function executeRunInner(
       // a cut turn (the catch path) keeps native starts as unknown.
       // A call that returned an error the brain read (a browser action that timed out) is settled by the brain's own
       // end of turn: noted on the run, never a failure of a reply it finished.
-      const epochHold = bridgeEpochId
-        ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true)
-        : null;
+      const epochHold = bridgeEpochId ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true) : null;
       if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);
@@ -6859,14 +6866,19 @@ function createBrain(
 ): Brain {
   const unbound = createUnboundBrain(deps, agent, run, kind, token, transcript);
   const policy = deps.foundryPolicy;
-  const brain: Brain = policy ? { kind: unbound.kind, async *run(turn, io) {
-    const decision = await policy.beforeBrain({ orgId: run.orgId, agentId: run.agentId, runId: run.id }, kind);
-    if (!decision.ok) {
-      yield { type: "error", code: "foundry_run_restricted", message: decision.message, retryable: false };
-      return;
-    }
-    yield* unbound.run(turn, io);
-  } } : unbound;
+  const brain: Brain = policy
+    ? {
+        kind: unbound.kind,
+        async *run(turn, io) {
+          const decision = await policy.beforeBrain({ orgId: run.orgId, agentId: run.agentId, runId: run.id }, kind);
+          if (!decision.ok) {
+            yield { type: "error", code: "foundry_run_restricted", message: decision.message, retryable: false };
+            return;
+          }
+          yield* unbound.run(turn, io);
+        },
+      }
+    : unbound;
   if (policy) brainResultSources.set(brain, unbound);
   // A firing is background and carries server-written routine markers. Only a known foreground origin skips
   // the routine join; raw or malformed markers still take the guard, even when compatibility is turned off.

@@ -564,8 +564,10 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
   const handlers: JobHandlers = {
     [FOUNDRY_EVALUATE_JOB]: async (job, ctx) => {
       if (!deps.artifacts) throw new PermanentJobError("Capability artifacts are unavailable");
-      await createFoundryLifecycle({ db: deps.db, blobs: deps.artifacts.blobs, ...deps.foundry })
-        .reconcileEvaluation(job, ctx.finalAttempt);
+      await createFoundryLifecycle({ db: deps.db, blobs: deps.artifacts.blobs, ...deps.foundry }).reconcileEvaluation(
+        job,
+        ctx.finalAttempt,
+      );
     },
     [FOUNDRY_RECONCILE_JOB]: async (job, ctx) => {
       const orgId = orgOf(job);

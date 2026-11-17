@@ -3,11 +3,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { and, eq, schema } from "@agenteschat/db";
 import { FoundryError } from "../src/foundry/service";
-import { createLifecycleWorld } from "./foundry-lifecycle.fixture";
 import { type Fixture, setup } from "./fixtures";
+import { createLifecycleWorld } from "./foundry-lifecycle.fixture";
 
 let f: Fixture;
-afterEach(async () => { await f?.close(); });
+afterEach(async () => {
+  await f?.close();
+});
 
 async function ready() {
   f = await setup();
@@ -29,16 +31,26 @@ async function pendingResult(runId: string) {
   return t?.pending?.calls?.[0]?.result;
 }
 async function wakes(runId: string) {
-  return (await f.db.select().from(schema.outbox).where(and(
-    eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.orgId, f.org.id),
-  ))).filter((r) => r.payload.runId === runId);
+  return (
+    await f.db
+      .select()
+      .from(schema.outbox)
+      .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.orgId, f.org.id)))
+  ).filter((r) => r.payload.runId === runId);
 }
 /** A preserved terminal guard may return or explicitly refuse; unrelated crashes fail the test. */
 async function completeOrRefuse(operation: Promise<void>) {
-  try { await operation; } catch (error) {
+  try {
+    await operation;
+  } catch (error) {
     expect(error).toBeInstanceOf(FoundryError);
-    expect(["STALE_VERSION", "STALE_FENCE", "AUTHORITY_DENIED", "AUTHORITY_CHANGED", "EVALUATION_UNVERIFIED"])
-      .toContain((error as FoundryError).code);
+    expect([
+      "STALE_VERSION",
+      "STALE_FENCE",
+      "AUTHORITY_DENIED",
+      "AUTHORITY_CHANGED",
+      "EVALUATION_UNVERIFIED",
+    ]).toContain((error as FoundryError).code);
   }
 }
 async function noPublishedSuccess(runId: string, versionId: string) {
@@ -57,7 +69,10 @@ describe("Foundry evaluation authority and late-result fences", () => {
       const evaluate = w.executor.evaluate;
       w.executor.evaluate = async (...args) => {
         const receipt = await evaluate(...args);
-        await f.db.update(schema.foundryVersions).set({ state }).where(eq(schema.foundryVersions.id, staged.version.id));
+        await f.db
+          .update(schema.foundryVersions)
+          .set({ state })
+          .where(eq(schema.foundryVersions.id, staged.version.id));
         return receipt;
       };
       await completeOrRefuse(w.rawLifecycle.reconcileEvaluation(claim));
@@ -74,7 +89,10 @@ describe("Foundry evaluation authority and late-result fences", () => {
     const evaluate = w.executor.evaluate;
     w.executor.evaluate = async (...args) => {
       const receipt = await evaluate(...args);
-      await f.db.update(schema.foundryVersions).set({ retiredAt }).where(eq(schema.foundryVersions.id, staged.version.id));
+      await f.db
+        .update(schema.foundryVersions)
+        .set({ retiredAt })
+        .where(eq(schema.foundryVersions.id, staged.version.id));
       return receipt;
     };
     await completeOrRefuse(w.rawLifecycle.reconcileEvaluation(claim));
@@ -108,7 +126,11 @@ describe("Foundry evaluation authority and late-result fences", () => {
       const q = await qualify();
       return q.qualified && drifted ? { ...q, profileDigest: "f".repeat(64) } : q;
     };
-    w.executor.evaluate = async (...args) => { const receipt = await evaluate(...args); drifted = true; return receipt; };
+    w.executor.evaluate = async (...args) => {
+      const receipt = await evaluate(...args);
+      drifted = true;
+      return receipt;
+    };
     await w.rawLifecycle.reconcileEvaluation(claim);
     await noPublishedSuccess(w.ctx.runId, staged.version.id);
     expect((await pendingResult(w.ctx.runId))?.isError).toBe(true);
@@ -129,7 +151,9 @@ describe("Foundry evaluation authority and late-result fences", () => {
 
   test("an already expired outbox lease submits nothing", async () => {
     const { w, staged, claim } = await ready();
-    await f.db.update(schema.outbox).set({ lockedUntil: new Date(w.state.now.getTime() - 1) })
+    await f.db
+      .update(schema.outbox)
+      .set({ lockedUntil: new Date(w.state.now.getTime() - 1) })
       .where(eq(schema.outbox.id, claim.id));
     await expect(w.rawLifecycle.reconcileEvaluation(claim)).rejects.toThrow("STALE_FENCE");
     expect(w.state.evaluations).toBe(0);
@@ -155,9 +179,14 @@ describe("Foundry evaluation authority and late-result fences", () => {
     const { w, staged, claim } = await ready();
     let cancellations = 0;
     const cancel = w.executor.cancelEvaluation;
-    w.executor.cancelEvaluation = async (...args) => { cancellations++; return cancel(...args); };
+    w.executor.cancelEvaluation = async (...args) => {
+      cancellations++;
+      return cancel(...args);
+    };
     await f.db.update(schema.agentRuns).set({ status: "canceled" }).where(eq(schema.agentRuns.id, w.ctx.runId));
-    await f.db.update(schema.outbox).set({ lockedUntil: new Date(w.state.now.getTime() - 1) })
+    await f.db
+      .update(schema.outbox)
+      .set({ lockedUntil: new Date(w.state.now.getTime() - 1) })
       .where(eq(schema.outbox.id, claim.id));
     await expect(w.rawLifecycle.reconcileEvaluation(claim)).rejects.toThrow("STALE_FENCE");
     expect(cancellations).toBe(0);
@@ -170,7 +199,10 @@ describe("Foundry evaluation authority and late-result fences", () => {
     const { w, staged, claim } = await ready();
     let cancellations = 0;
     const cancel = w.executor.cancelEvaluation;
-    w.executor.cancelEvaluation = async (...args) => { cancellations++; return cancel(...args); };
+    w.executor.cancelEvaluation = async (...args) => {
+      cancellations++;
+      return cancel(...args);
+    };
     w.executor.qualify = async () => {
       w.state.now = new Date(w.state.now.getTime() + 121_000);
       return { qualified: false, code: "BLOCKED_SANDBOX", reason: "simulated qualification revoked" };
@@ -201,13 +233,18 @@ describe("Foundry evaluation authority and late-result fences", () => {
     const resolve = w.evaluations.resolve;
     w.evaluations.resolve = async (...args) => {
       const evidence = await resolve(...args);
-      await f.db.update(schema.issues).set({ assigneeType: "person", assigneeId: f.owner.id })
+      await f.db
+        .update(schema.issues)
+        .set({ assigneeType: "person", assigneeId: f.owner.id })
         .where(eq(schema.issues.id, w.task!.id));
       return evidence;
     };
     await w.rawLifecycle.reconcileEvaluation(claim);
     await noPublishedSuccess(w.ctx.runId, staged.version.id);
-    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({ delivered: false, reasonCode: "AUTHORITY_CHANGED" });
+    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({
+      delivered: false,
+      reasonCode: "AUTHORITY_CHANGED",
+    });
     expect(await pendingResult(w.ctx.runId)).toBeUndefined();
     expect(await wakes(w.ctx.runId)).toHaveLength(0);
   });
@@ -235,7 +272,9 @@ describe("Foundry evaluation authority and late-result fences", () => {
         const receipt = await evaluate(...args);
         const row = await versionRow(staged.version.id);
         const value = field.endsWith("Digest") ? "e".repeat(64) : "different-native-binding";
-        await f.db.update(schema.foundryVersions).set({ evaluationJob: { ...row.evaluationJob, [field]: value } })
+        await f.db
+          .update(schema.foundryVersions)
+          .set({ evaluationJob: { ...row.evaluationJob, [field]: value } })
           .where(eq(schema.foundryVersions.id, staged.version.id));
         return receipt;
       };

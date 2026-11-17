@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { foundryDockerChildFilter, FOUNDRY_DOCKER_SECCOMP } from "../src/foundry-docker-bootstrap";
+import { FOUNDRY_DOCKER_SECCOMP, foundryDockerChildFilter } from "../src/foundry-docker-bootstrap";
 
 for (const architecture of ["arm64", "x64"] as const) {
   test(`runtime image refuses missing, empty or changed ${architecture} filter bytes during its build`, () => {

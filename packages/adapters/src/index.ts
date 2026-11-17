@@ -100,7 +100,6 @@ export interface Adapters {
   vaultSources?: VaultSources | null;
 }
 
-export * from "./host-mcp-protocol";
-
 export { createRemoteFoundryExecutor } from "./foundry-remote-executor";
 export { createFoundryRpcClient, createFoundryRpcHandler, type FoundryRpcMethod } from "./foundry-rpc";
+export * from "./host-mcp-protocol";

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { and, eq, schema } from "@agenteschat/db";
-import { createLifecycleWorld } from "./foundry-lifecycle.fixture";
 import { type Fixture, setup } from "./fixtures";
+import { createLifecycleWorld } from "./foundry-lifecycle.fixture";
 
 let f: Fixture;
-afterEach(async () => { await f?.close(); });
+afterEach(async () => {
+  await f?.close();
+});
 async function ready() {
   f = await setup();
   const w = await createLifecycleWorld(f);
@@ -13,11 +15,19 @@ async function ready() {
   if (!("pause" in begun) || !begun.pause) throw new Error("expected native evaluation wait");
   return { w, staged, waitId: begun.pause.id, claim: await w.claimEvaluation(begun.pause.id) };
 }
-async function runRow(id: string) { return (await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, id)))[0]!; }
-async function versionRow(id: string) { return (await f.db.select().from(schema.foundryVersions).where(eq(schema.foundryVersions.id, id)))[0]!; }
+async function runRow(id: string) {
+  return (await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, id)))[0]!;
+}
+async function versionRow(id: string) {
+  return (await f.db.select().from(schema.foundryVersions).where(eq(schema.foundryVersions.id, id)))[0]!;
+}
 async function wakes(runId: string) {
-  return (await f.db.select().from(schema.outbox).where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.orgId, f.org.id))))
-    .filter((r) => r.payload.runId === runId);
+  return (
+    await f.db
+      .select()
+      .from(schema.outbox)
+      .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.orgId, f.org.id)))
+  ).filter((r) => r.payload.runId === runId);
 }
 
 describe("durable Foundry evaluation through native checkpoints (simulated isolated service)", () => {
@@ -38,9 +48,17 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     await w.rawLifecycle.reconcileEvaluation(claim);
     expect(w.state.evaluations).toBe(1);
     expect((await versionRow(staged.version.id)).state).toBe("REVIEW_READY");
-    expect((await runRow(w.ctx.runId)).transcript).toMatchObject({ pending: { calls: [{
-      waitId, toolUseId: w.ctx.toolUseId, result: { isError: false },
-    }] } });
+    expect((await runRow(w.ctx.runId)).transcript).toMatchObject({
+      pending: {
+        calls: [
+          {
+            waitId,
+            toolUseId: w.ctx.toolUseId,
+            result: { isError: false },
+          },
+        ],
+      },
+    });
     expect(await wakes(w.ctx.runId)).toHaveLength(1);
   });
   test("lost submission acknowledgement reconciles the same job without executing again", async () => {
@@ -48,7 +66,10 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     await w.checkpointEvaluation(w.ctx, waitId);
     const evaluate = w.executor.evaluate;
     let saved: Awaited<ReturnType<typeof evaluate>> | undefined;
-    w.executor.evaluate = async (...args) => { saved = await evaluate(...args); throw new Error("transport lost"); };
+    w.executor.evaluate = async (...args) => {
+      saved = await evaluate(...args);
+      throw new Error("transport lost");
+    };
     w.executor.reconcileEvaluation = async (id) => {
       expect(id).toBe(waitId);
       if (!saved) throw new Error("no durable service receipt");
@@ -67,7 +88,9 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     const evaluate = w.executor.evaluate;
     w.executor.evaluate = async (...args) => {
       const receipt = await evaluate(...args);
-      await f.db.update(schema.outbox).set({ attempts: claim.attempts + 1, lockedBy: "new-worker" })
+      await f.db
+        .update(schema.outbox)
+        .set({ attempts: claim.attempts + 1, lockedBy: "new-worker" })
         .where(eq(schema.outbox.id, claim.id));
       return receipt;
     };
@@ -90,25 +113,35 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     await w.checkpointEvaluation({ ...w.ctx, toolUseId: "different-call" }, waitId);
     await w.rawLifecycle.reconcileEvaluation(claim);
     expect(w.state.evaluations).toBe(0);
-    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({ delivered: false, reasonCode: "AUTHORITY_CHANGED" });
+    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({
+      delivered: false,
+      reasonCode: "AUTHORITY_CHANGED",
+    });
     expect(await wakes(w.ctx.runId)).toHaveLength(0);
   });
   test("an independently failed evaluation resumes the original call as an error", async () => {
     const { w, staged, claim, waitId } = await ready();
     await w.checkpointEvaluation(w.ctx, waitId);
     const evaluate = w.executor.evaluate;
-    w.executor.evaluate = async (...args) => ({ ...await evaluate(...args), outcome: "FAIL" });
+    w.executor.evaluate = async (...args) => ({ ...(await evaluate(...args)), outcome: "FAIL" });
     await w.rawLifecycle.reconcileEvaluation(claim);
     expect((await versionRow(staged.version.id)).state).toBe("BLOCKED");
-    expect((await runRow(w.ctx.runId)).transcript).toMatchObject({ pending: { calls: [{ result: { isError: true } }] } });
+    expect((await runRow(w.ctx.runId)).transcript).toMatchObject({
+      pending: { calls: [{ result: { isError: true } }] },
+    });
     expect(await wakes(w.ctx.runId)).toHaveLength(1);
   });
   test("unknown final outcome does not activate and wakes the parent with an explicit blocker", async () => {
     const { w, staged, claim, waitId } = await ready();
     await w.checkpointEvaluation(w.ctx, waitId);
-    w.executor.evaluate = async () => { throw new Error("unknown transport outcome"); };
+    w.executor.evaluate = async () => {
+      throw new Error("unknown transport outcome");
+    };
     await w.rawLifecycle.reconcileEvaluation(claim, true);
-    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({ reasonCode: "UNKNOWN_OUTCOME", delivered: true });
+    expect((await versionRow(staged.version.id)).evaluationJob).toMatchObject({
+      reasonCode: "UNKNOWN_OUTCOME",
+      delivered: true,
+    });
     expect(await f.db.select().from(schema.foundryBindings)).toHaveLength(0);
     expect(await wakes(w.ctx.runId)).toHaveLength(1);
   });

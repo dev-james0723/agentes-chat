@@ -65,7 +65,9 @@ export async function foundryContext(db: Executor, ctx: ToolContext, checkpoint?
       ),
     );
   const pending = (
-    run?.transcript as { pending?: { calls?: { waitId?: string; toolUseId?: string; name?: string; result?: unknown }[] } } | null
+    run?.transcript as {
+      pending?: { calls?: { waitId?: string; toolUseId?: string; name?: string; result?: unknown }[] };
+    } | null
   )?.pending?.calls;
   const checkpointMatches =
     checkpoint &&
@@ -73,7 +75,8 @@ export async function foundryContext(db: Executor, ctx: ToolContext, checkpoint?
     checkpoint.toolUseId.length > 0 &&
     ["waiting_input", "waiting_approval"].includes(run?.status ?? "") &&
     Array.isArray(pending) &&
-    pending.filter((call) => call.waitId === checkpoint.waitId || call.toolUseId === checkpoint.toolUseId).length === 1 &&
+    pending.filter((call) => call.waitId === checkpoint.waitId || call.toolUseId === checkpoint.toolUseId).length ===
+      1 &&
     pending.some(
       (call) =>
         call.waitId === checkpoint.waitId &&

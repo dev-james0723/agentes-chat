@@ -1148,10 +1148,18 @@ const isHttpsUrl = (value: string) => {
 /** Changes fields; each change is an event in the activity ("changed the status to In review"). */
 /** Required generated-capability evaluation is still native work, even while its model run waits. */
 async function hasPendingCapabilityWork(tx: Executor, orgId: string, taskId: string) {
-  const [pending] = await tx.select({ id: schema.foundryVersions.id }).from(schema.foundryVersions)
+  const [pending] = await tx
+    .select({ id: schema.foundryVersions.id })
+    .from(schema.foundryVersions)
     .innerJoin(schema.foundryCandidates, eq(schema.foundryCandidates.id, schema.foundryVersions.candidateId))
-    .where(and(eq(schema.foundryCandidates.orgId, orgId), eq(schema.foundryCandidates.taskId, taskId),
-      eq(schema.foundryVersions.state, "EVALUATING"))).limit(1);
+    .where(
+      and(
+        eq(schema.foundryCandidates.orgId, orgId),
+        eq(schema.foundryCandidates.taskId, taskId),
+        eq(schema.foundryVersions.state, "EVALUATING"),
+      ),
+    )
+    .limit(1);
   return !!pending;
 }
 
@@ -2011,8 +2019,12 @@ export async function setWorkIssueState(
     let blocked: IssueRow["blocked"] = null;
     const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
     if (ended === "done") {
-      if (current.status !== "in_review" && current.criteria.every((criterion) => criterion.done) &&
-        !(await hasPendingCapabilityWork(tx, work.orgId, current.id))) status = "done";
+      if (
+        current.status !== "in_review" &&
+        current.criteria.every((criterion) => criterion.done) &&
+        !(await hasPendingCapabilityWork(tx, work.orgId, current.id))
+      )
+        status = "done";
     } else if (ended === "canceled") status = "todo";
     else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
     else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";

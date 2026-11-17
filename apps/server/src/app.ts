@@ -1,5 +1,4 @@
-import { createFoundryRpcHandler } from "@agenteschat/adapters";
-import { createFcmPushSender } from "@agenteschat/adapters";
+import { createFcmPushSender, createFoundryRpcHandler } from "@agenteschat/adapters";
 import { MisconfiguredError, requestLocale } from "@agenteschat/engine";
 import { helpDocsUrl } from "@agenteschat/i18n/help";
 import { appLocale } from "@agenteschat/i18n/locale";
@@ -177,8 +176,11 @@ export function createApp(options: AppOptions) {
     // Separate server-to-runtime capability, not a session route. No CORS,
     // redirects, model-selected URL or general command execution exists here.
     if (config.FOUNDRY_CONTROL_TOKEN && deps.extras?.foundry) {
-      const foundryControl = createFoundryRpcHandler({ token: config.FOUNDRY_CONTROL_TOKEN, methods: deps.extras.foundry.controls });
-      api.all("/internal/foundry/*", c => foundryControl(c.req.raw));
+      const foundryControl = createFoundryRpcHandler({
+        token: config.FOUNDRY_CONTROL_TOKEN,
+        methods: deps.extras.foundry.controls,
+      });
+      api.all("/internal/foundry/*", (c) => foundryControl(c.req.raw));
     }
 
     registerInstance(api, deps, version);

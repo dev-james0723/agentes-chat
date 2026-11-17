@@ -1,8 +1,7 @@
-import { createRemoteFoundryExecutor } from "@agenteschat/adapters";
-import { createNativeFoundryIntegration } from "@agenteschat/engine";
 import {
   type Adapters,
   type BrainTurnRequest,
+  createRemoteFoundryExecutor,
   type ErrorReporter,
   type S3Fetch,
   type SpeechFetch,
@@ -66,6 +65,7 @@ import {
   createMissionRunToolSource,
   createMissionToolSource,
   createModelGateway,
+  createNativeFoundryIntegration,
   createPassToolSource,
   createPermissionToolSource,
   createQuotaCliQualifier,
@@ -402,10 +402,15 @@ export function buildEngine(o: EngineOptions) {
   });
   // The workspace's cap of live background works (ADR 0121 §7).
   setWorkOrgCap(config.AGENT_WORK_MAX_PER_ORG);
-  const foundryRemote = config.FOUNDRY_RUNTIME_URL && config.FOUNDRY_RUNTIME_TOKEN && config.FOUNDRY_CONTROL_TOKEN
-    ? createRemoteFoundryExecutor({ url: config.FOUNDRY_RUNTIME_URL, token: config.FOUNDRY_RUNTIME_TOKEN }) : undefined;
-  const foundry = createNativeFoundryIntegration({ db, blobs: artifacts.blobs,
-    enabled: config.FOUNDRY_ENABLED, ...foundryRemote,
+  const foundryRemote =
+    config.FOUNDRY_RUNTIME_URL && config.FOUNDRY_RUNTIME_TOKEN && config.FOUNDRY_CONTROL_TOKEN
+      ? createRemoteFoundryExecutor({ url: config.FOUNDRY_RUNTIME_URL, token: config.FOUNDRY_RUNTIME_TOKEN })
+      : undefined;
+  const foundry = createNativeFoundryIntegration({
+    db,
+    blobs: artifacts.blobs,
+    enabled: config.FOUNDRY_ENABLED,
+    ...foundryRemote,
     nativeReuse: (ctx, contract) => tools.findCapability(ctx, contract),
   });
   const tools = createToolGateway({

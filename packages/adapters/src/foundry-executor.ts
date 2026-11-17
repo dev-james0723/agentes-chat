@@ -557,8 +557,12 @@ function validEvaluationReceipt(
  * A concrete independently qualified runner is intentionally not shipped here.
  */
 export function createQualifiedFoundryExecutor(options: QualifiedFoundryExecutorOptions): FoundryExecutor {
-  if (options.evaluationTimeoutMs !== undefined && (!Number.isSafeInteger(options.evaluationTimeoutMs) ||
-    options.evaluationTimeoutMs < 1 || options.evaluationTimeoutMs > 120_000))
+  if (
+    options.evaluationTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.evaluationTimeoutMs) ||
+      options.evaluationTimeoutMs < 1 ||
+      options.evaluationTimeoutMs > 120_000)
+  )
     throw new FoundryExecutorError("SCHEMA_INVALID", "Evaluation batch deadline must be bounded.");
   const { runner, qualifications } = options;
   const now = options.now ?? Date.now;
@@ -827,11 +831,20 @@ export function createQualifiedFoundryExecutor(options: QualifiedFoundryExecutor
     )
       invalidInput();
     const authority = version.dispatchAuthority;
-    if (authority && (!validRef(authority.outboxId) || !validRef(authority.lockedBy) ||
-      !validRef(authority.runId) || !validRef(authority.toolUseId) ||
-      !validFence(authority.attempt) || !validFence(authority.evaluationRevision))) invalidInput();
-    const snapshot = Object.freeze({ ...version,
-      ...(authority ? { dispatchAuthority: Object.freeze({ ...authority }) } : {}) });
+    if (
+      authority &&
+      (!validRef(authority.outboxId) ||
+        !validRef(authority.lockedBy) ||
+        !validRef(authority.runId) ||
+        !validRef(authority.toolUseId) ||
+        !validFence(authority.attempt) ||
+        !validFence(authority.evaluationRevision))
+    )
+      invalidInput();
+    const snapshot = Object.freeze({
+      ...version,
+      ...(authority ? { dispatchAuthority: Object.freeze({ ...authority }) } : {}),
+    });
     const admission = await admit();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
