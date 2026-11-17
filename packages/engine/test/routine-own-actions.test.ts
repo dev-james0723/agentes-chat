@@ -17,6 +17,7 @@ import {
   createToolGateway,
   decideApproval,
   deleteRoutine,
+  grantScopes,
   type InvokeResult,
   insertMessage,
   type McpConnect,
@@ -94,10 +95,12 @@ async function world(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // A routine fixture needs explicit access to this connection; its own actions do not grant tools.
+  await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: "connector:*" }]);
   const gateway = createToolGateway({
     sources: [createConnectorToolSource(deps), createScheduleToolSource({ pubsub: fx.pubsub, context: fx.context })],
   });
-  return { mcp, gateway };
+  return { mcp, gateway, serverId: started.server.id };
 }
 
 /** A run `userId` asked for in #general. */
@@ -503,4 +506,15 @@ describe('"Sempre nesta rotina": a routine\'s card keeps its kind for that routi
     await expect(decide(card.id, bob.id)).rejects.toThrow();
     expect((await routineRow(id))?.ownActions).toEqual([]);
   });
+});
+
+test("a routine's own actions never override a revoked connection grant", async () => {
+  f = await setup();
+  const { mcp, gateway, serverId } = await world(f);
+  const { id } = await created(gateway, ["SLACK_SEND_MESSAGE"]);
+  await f.db.delete(schema.agentScopes).where(eq(schema.agentScopes.connectionId, serverId));
+  const output = answered(await invoke(gateway, await routineRun(f, id), EXEC, exec("SLACK_SEND_MESSAGE")));
+  expect(output.isError).toBe(true);
+  expect(mcp.calls).toEqual([]);
+  expect(await f.db.select().from(schema.approvals)).toEqual([]);
 });
