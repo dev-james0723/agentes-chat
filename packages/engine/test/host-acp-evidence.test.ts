@@ -621,7 +621,17 @@ for (const scenario of [
       }
     }
     await env.requeue();
-    expect(env.phases()).toBe(2);
+    if (scenario === "execution-claimed") {
+      // A claimed side effect with no successful result is held by native preflight.
+      // Do not restart a model turn or falsely classify this action as unexecuted.
+      expect(env.phases()).toBe(1);
+      expect((await env.current()).status).toBe("queued");
+      const [held] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, env.approval.id));
+      expect(held?.executedAt).toBeInstanceOf(Date);
+      expect(held?.result).toBeNull();
+    } else {
+      expect(env.phases()).toBe(2);
+    }
     expect(env.effects()).toBe(0);
   });
 }

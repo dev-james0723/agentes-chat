@@ -207,7 +207,11 @@ async function githubAgent() {
       { name: "connectors", tools: (ctx) => createConnectorToolSource({ ...deps(), connect: mcp.connect }).tools(ctx) },
     ],
   });
-  await createApiKeyConnection(deps(), f.owner.id, f.org.id, { connector: "github", apiKey: "ghp_secret_123456" });
+  const github = await createApiKeyConnection(deps(), f.owner.id, f.org.id, {
+    connector: "github",
+    apiKey: "ghp_secret_123456",
+  });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: github.id, scope: CONNECTOR_ALL }]);
 }
 
 test("a task is our board: create_issue ranks above GitHub's tool and every other, in English and Portuguese", async () => {
@@ -459,6 +463,7 @@ test("a server connected by address and named after a mailbox's service is that 
     secret: null,
   });
   gmailId = gmail.connection.id;
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: gmailId, scope: CONNECTOR_ALL }]);
   const text = await findTools(await nothingLoaded(), "gmail");
   expect(text).toContain("- gmail_search_mail: [Gmail] Search mail");
   expect(text).not.toContain(TO_GET);
