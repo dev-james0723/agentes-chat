@@ -2,8 +2,9 @@
 // Local CI is a verifier, not a merger, publisher or authentication service.
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readdirSync, statfsSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, realpathSync, statfsSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { observe } from "./guardian.mjs";
 
 const SHA = /^[a-f0-9]{40}$/;
@@ -274,7 +275,7 @@ export async function main(args = process.argv.slice(2)) {
   console.log(JSON.stringify({ outcome: receipt.outcome, head, attemptId: receipt.attemptId, releaseReady: false }));
   return receipt.outcome === "tested_partial" ? 0 : 1;
 }
-if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main()
     .then((code) => {
       process.exitCode = code;
