@@ -35,6 +35,7 @@ import { isQuietNotice } from "./notices";
 import { can, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
 import { isRoutineRoomKey } from "./routine-brief";
+import { builders, extraSources, registerDocumentBuilder } from "./search-registry";
 import { openOrg } from "./standing";
 import { adminChannelSql, fileSeenSql, fileSharedSql, taskSeenSql } from "./task-access";
 import { visibleWikiPageIds } from "./wiki-links";
@@ -47,15 +48,8 @@ export interface SearchDeps {
   gateway: Pick<ModelGateway, "embed">;
 }
 
-/** Builds the search document of one source, or null when it should not be in the index. */
-export type DocumentBuilder = (db: Database, orgId: string, sourceId: string) => Promise<SearchDocument | null>;
-
-const builders = new Map<SearchKind, DocumentBuilder>();
-
-/** Registers how a kind of source becomes a search document (messages, context items, issues, files). */
-export function registerDocumentBuilder(kind: SearchKind, builder: DocumentBuilder) {
-  builders.set(kind, builder);
-}
+// Modules may register builders during an ESM import cycle; the leaf registry is initialized independently.
+export { type DocumentBuilder, registerDocumentBuilder, registerReindexSource } from "./search-registry";
 
 registerDocumentBuilder("message", async (db, orgId, id) => {
   const [m] = await db
@@ -206,12 +200,6 @@ export async function reindexOrg(
     }
   }
   return indexed;
-}
-
-/** Lists the source ids of other kinds for reindexing (registered by their modules). */
-const extraSources = new Map<SearchKind, (db: Database, orgId: string) => Promise<string[]>>();
-export function registerReindexSource(kind: SearchKind, list: (db: Database, orgId: string) => Promise<string[]>) {
-  extraSources.set(kind, list);
 }
 
 /**

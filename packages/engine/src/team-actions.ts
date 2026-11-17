@@ -14,7 +14,8 @@ import {
   schema,
 } from "@agenteschat/db";
 import { caches } from "./cache";
-import { agentSearchChannels, enqueueIndex, registerDocumentBuilder, registerReindexSource } from "./search";
+import { agentSearchChannels, enqueueIndex } from "./search";
+import { registerDocumentBuilder, registerReindexSource } from "./search-registry";
 import { maskCredentials } from "./tool-detail";
 import { opensPullRequest, toolKind } from "./tools/run-policy";
 import type { ToolDefinition } from "./tools/types";

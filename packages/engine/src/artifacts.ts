@@ -43,7 +43,8 @@ import { runItselfReadOutside } from "./outside";
 import { markdownToPdf } from "./pdf";
 import { maySql } from "./permissions";
 import { routineCreatorOf } from "./requester";
-import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
+import { agentSearchChannels, enqueueIndex } from "./search";
+import { registerDocumentBuilder } from "./search-registry";
 import { accountInUse } from "./standing";
 import {
   AUDIENCE_MAX,
