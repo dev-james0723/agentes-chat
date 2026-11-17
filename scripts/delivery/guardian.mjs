@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCrossProject } from "./cross-project-cli.mjs";
+import { createGitReader } from "./git-read.mjs";
 import { canonicalGitHubRemote } from "./identity.mjs";
 
 function readJsonInput(path) {
@@ -34,26 +35,6 @@ function readJsonInput(path) {
 
 import { checkCheckpoint, checkRelease, safePath } from "./policy.mjs";
 
-function runGit(root, args) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
-  const r = spawnSync("git", ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", root, ...args], {
-    encoding: "utf8",
-    timeout: 15_000,
-    maxBuffer: 8 * 1024 * 1024,
-    shell: false,
-    env: {
-      ...env,
-      GIT_OPTIONAL_LOCKS: "0",
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_PAGER: "cat",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_ATTR_NOSYSTEM: "1",
-    },
-  });
-  if (r.error || r.status !== 0) throw new Error("Git observation failed");
-  return r.stdout;
-}
 const records = (text) => {
   if (text === "") return [];
   if (!text.endsWith("\0")) throw new Error("Truncated Git record");
@@ -128,17 +109,18 @@ export function observe(
   if (typeof remote !== "string" || !/^[A-Za-z0-9_.-]+$/.test(remote) || remote.startsWith("-"))
     throw new Error("Invalid remote name");
   const root = realpathSync(inputRoot);
-  if (realpathSync(runGit(root, ["rev-parse", "--show-toplevel"]).trim()) !== root)
+  const reader = createGitReader(root);
+  if (realpathSync(reader.read(["rev-parse", "--show-toplevel"]).trim()) !== root)
     throw new Error("Select the exact repository root");
-  const startHead = runGit(root, ["rev-parse", "HEAD"]).trim();
-  const branch = runGit(root, ["branch", "--show-current"]).trim();
-  const before = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  const errors = [];
+  const startHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const branch = reader.read(["branch", "--show-current"]).trim();
+  const before = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const errors = reader.filtersSuppressed ? ["content_filters_unverified"] : [];
   let repository = null;
   let beforeRemote = null;
   try {
-    const fetchUrls = runGit(root, ["remote", "get-url", "--all", remote]).trim().split("\n");
-    const pushUrls = runGit(root, ["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
+    const fetchUrls = reader.read(["remote", "get-url", "--all", remote]).trim().split("\n");
+    const pushUrls = reader.read(["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
     beforeRemote = JSON.stringify([fetchUrls, pushUrls]);
     if (fetchUrls.length !== 1 || pushUrls.length !== 1) errors.push("ambiguous_remote");
     repository = repoFromUrl(fetchUrls[0]);
@@ -149,9 +131,9 @@ export function observe(
   }
   const changes = parseStatus(before).map((row) => ({ ...row, ...pathInfo(root, row.path) }));
   const staged = records(
-    runGit(root, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z"]),
+    reader.read(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z"]),
   );
-  const trackedCount = records(runGit(root, ["ls-files", "-z"])).length;
+  const trackedCount = records(reader.read(["ls-files", "-z"])).length;
   const deletedPaths = [...new Set(changes.filter((c) => c.index === "D" || c.worktree === "D").map((c) => c.path))];
   const remoteState = { name: remote, status: "not_requested", head: null };
   if (network) {
@@ -179,18 +161,21 @@ export function observe(
       }
     }
   }
-  const endHead = runGit(root, ["rev-parse", "HEAD"]).trim();
-  const after = runGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  const endBranch = runGit(root, ["branch", "--show-current"]).trim();
+  const endHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const after = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const endBranch = reader.read(["branch", "--show-current"]).trim();
   let afterRemote = null;
   try {
     afterRemote = JSON.stringify([
-      runGit(root, ["remote", "get-url", "--all", remote]).trim().split("\n"),
-      runGit(root, ["remote", "get-url", "--push", "--all", remote]).trim().split("\n"),
+      reader.read(["remote", "get-url", "--all", remote]).trim().split("\n"),
+      reader.read(["remote", "get-url", "--push", "--all", remote]).trim().split("\n"),
     ]);
   } catch {
     errors.push("remote_unavailable");
   }
+  if (reader.filtersSuppressed && !errors.includes("content_filters_unverified"))
+    errors.push("content_filters_unverified");
+  if (reader.submodulesSuppressed) errors.push("submodule_content_unverified");
   return {
     schema: "delivery-observation/v1",
     repository,
@@ -258,7 +243,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === "check-release") {
     if (!a["--evidence"] || a["--root"] || a["--scope"] || a["--network"] || a["--text"])
       throw new Error("check-release requires --evidence only");
-    value = checkRelease(readJsonInput(a["--evidence"]));
+    value = {
+      ...checkRelease({ ...readJsonInput(a["--evidence"]), trustedChecks: false }),
+      assessmentOnly: true,
+      proofSource: "untrusted_file",
+    };
   } else {
     if (!a["--root"] || a["--evidence"]) throw new Error("Select --root");
     const o = observe(a["--root"], { remote: a["--remote"] ?? "origin", network: a["--network"] ?? false });

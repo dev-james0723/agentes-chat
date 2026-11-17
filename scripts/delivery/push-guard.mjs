@@ -1,25 +1,15 @@
 #!/usr/bin/env node
 // Repository-local pre-push guard. A supplementary safety net, not an OS sandbox or secret scanner replacement.
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createGitReader } from "./git-read.mjs";
 import { protectedPath, safePath } from "./policy.mjs";
 
 const SHA = /^[a-f0-9]{40,64}$/;
 const ZERO = /^0+$/;
 const SECRET =
   /(?:^|\n)-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|sk-(?:proj-)?[A-Za-z0-9_-]{30,}/;
-function git(args) {
-  const r = spawnSync("git", ["--literal-pathspecs", "-c", "core.fsmonitor=false", ...args], {
-    encoding: "utf8",
-    timeout: 15000,
-    maxBuffer: 8 * 1024 * 1024,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat" },
-  });
-  if (r.error || r.status !== 0) throw new Error("git_observation_failed");
-  return r.stdout;
-}
 const nul = (text) => {
   if (!text) return [];
   if (!text.endsWith("\0")) throw new Error("truncated_git_record");
@@ -34,6 +24,8 @@ function reject(code) {
 }
 
 export function checkPush({ repository, remote, url, input }) {
+  const reader = createGitReader(process.cwd());
+  const git = (args) => reader.read(args);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "")) reject("invalid_repository");
   if (identity(url) !== repository.toLowerCase()) reject("repository_mismatch");
   if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(remote ?? "")) reject("invalid_remote");
@@ -52,7 +44,16 @@ export function checkPush({ repository, remote, url, input }) {
   if (localRef !== git(["symbolic-ref", "HEAD"]).trim() || localRef !== remoteRef) reject("branch_mismatch");
   const urls = git(["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
   if (urls.length !== 1 || identity(urls[0]) !== repository.toLowerCase()) reject("configured_remote_mismatch");
-  const commits = git(["rev-list", "--max-count=129", head, "--not", `--remotes=${remote}`])
+  if (!ZERO.test(old)) {
+    try {
+      if (git(["cat-file", "-t", old]).trim() !== "commit") reject("remote_object_unavailable");
+    } catch {
+      reject("remote_object_unavailable");
+    }
+    if (reader.result(["merge-base", "--is-ancestor", old, head], [0, 1]).status !== 0) reject("non_fast_forward");
+  }
+  const range = ZERO.test(old) ? [head, "--not", `--remotes=${remote}`] : [`${old}..${head}`];
+  const commits = git(["rev-list", "--max-count=129", ...range])
     .trim()
     .split("\n")
     .filter(Boolean);
