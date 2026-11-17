@@ -109,7 +109,7 @@ describe("deterministic founder projection", () => {
   test("failed_checks_remain_visible", () => {
     const view = projectFounderUpdate(task, [], preferences);
     expect(view.checks).toEqual(task.checks);
-    expect(view.contract?.checks).toEqual(task.checks);
+    expect(view.contract?.checks ?? null).toEqual(task.checks);
     expect(view.availability).toBe("unknown");
     expect(view.deliveryStage).toBeNull();
   });
@@ -253,5 +253,51 @@ describe("deterministic founder projection", () => {
     expect(
       shouldEmitFounderUpdate({ ...event, eventKind: "decision" }, { ...event, eventKind: "decision", at: 1000 }),
     ).toBe(true);
+  });
+});
+
+describe("native required-check evidence gate", () => {
+  const tested: NativeFounderReceipt = {
+    ...receipt,
+    stage: "TESTED",
+    issuer: { id: "test-1", kind: "test_runner" },
+    reference: { ...ref, kind: "test_result" },
+  };
+  const cases: { label: string; checks: TaskSnapshot["checks"] }[] = [
+    { label: "a failed required check", checks: { passed: 9, failed: 1, notRun: 0, scope: "required" } },
+    { label: "an unrun required check", checks: { passed: 4, failed: 0, notRun: 2, scope: "required" } },
+    { label: "missing telemetry", checks: null },
+    { label: "zero executed checks", checks: { passed: 0, failed: 0, notRun: 0, scope: "required" } },
+    { label: "invalid negative counts", checks: { passed: 2, failed: -1, notRun: 0, scope: "required" } },
+    { label: "invalid fractional counts", checks: { passed: 1.5, failed: 0, notRun: 0, scope: "required" } },
+  ];
+  for (const { label, checks } of cases) {
+    test(`TESTED does not hide ${label}`, async () => {
+      const snapshot = { ...task, checks };
+      const evidence = await resolved(tested, snapshot);
+      expect(deriveDeliveryStage(snapshot, evidence)).toBeNull();
+      const view = projectFounderUpdate(snapshot, evidence, preferences);
+      expect(view.deliveryStage).toBeNull();
+      expect(view.checks).toEqual(checks);
+      // A real contract retains its required arrays; missing/invalid telemetry may make view.contract null.
+      const completeShape = projectFounderUpdate(task, [], preferences).contract;
+      const update = { ...completeShape, deliveryStage: "TESTED", checks: checks ?? task.checks } as FounderUpdate;
+      expect(validateClaimSupport(update, snapshot, evidence).ok).toBe(false);
+    });
+  }
+  test("all required checks passed still supports TESTED", async () => {
+    const snapshot = { ...task, checks: { passed: 12, failed: 0, notRun: 0, scope: "required" } };
+    const evidence = await resolved(tested, snapshot);
+    expect(deriveDeliveryStage(snapshot, evidence)).toBe("TESTED");
+    const view = projectFounderUpdate(snapshot, evidence, preferences);
+    expect(view.deliveryStage).toBe("TESTED");
+    expect(view.checks).toEqual(snapshot.checks);
+    expect(view.contract).not.toBeNull();
+    expect(validateClaimSupport(view.contract as FounderUpdate, snapshot, evidence).ok).toBe(true);
+  });
+  test("failed check evidence does not erase separate valid source proof", async () => {
+    const evidence = [...(await resolved()), ...(await resolved(tested))];
+    expect(projectFounderUpdate(task, evidence, preferences).deliveryStage).toBe("SOURCE_INSPECTED");
+    expect(projectFounderUpdate(task, evidence, preferences).checks).toEqual(task.checks);
   });
 });

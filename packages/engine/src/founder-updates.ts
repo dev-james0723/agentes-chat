@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  ChecksSchema,
   type DeliveryStage,
   DeliveryStageSchema,
   type EvidenceRef,
@@ -105,7 +106,7 @@ const producers: Record<DeliveryStage, readonly [EvidenceRef["kind"], NativeFoun
   LIVE_VERIFIED: ["live_check", "live_probe"],
   MEASURED_IMPROVEMENT: ["benchmark_result", "benchmark_runner"],
 };
-function supports(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean {
+function matchesSubject(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean {
   if (receipt[nativeEvidence] !== true) return false;
   const ref = receipt.reference;
   const producer = producers[receipt.stage];
@@ -129,6 +130,28 @@ function supports(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean
     (receipt.stage === "SOURCE_INSPECTED" || task.artifactKind === "code") &&
     Date.parse(ref.observedAt) <= Date.parse(task.generatedAt)
   );
+}
+
+export type FounderEvidenceClassification = {
+  stage: DeliveryStage | null;
+  status: "supported" | "failed" | "not_run" | "unknown";
+};
+/** Match native identity first; a test receipt is not proof that required checks passed. */
+export function classifyFounderEvidence(
+  task: TaskSnapshot,
+  receipt: ResolvedFounderEvidence,
+): FounderEvidenceClassification {
+  if (!matchesSubject(task, receipt)) return { stage: null, status: "unknown" };
+  const stage = receipt.stage;
+  if (stage !== "TESTED") return { stage, status: "supported" };
+  const checks = ChecksSchema.safeParse(task.checks);
+  if (!checks.success) return { stage, status: "unknown" };
+  if (checks.data.failed > 0) return { stage, status: "failed" };
+  if (checks.data.notRun > 0) return { stage, status: "not_run" };
+  return { stage, status: checks.data.passed > 0 ? "supported" : "unknown" };
+}
+function supports(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean {
+  return classifyFounderEvidence(task, receipt).status === "supported";
 }
 
 export function deriveDeliveryStage(
@@ -244,7 +267,7 @@ export function projectFounderUpdate(
   const column = preferences.locale.startsWith("zh") ? 2 : preferences.locale.startsWith("pt") ? 1 : 0;
   const outcome =
     outcomes[task.lifecycle]?.[column] ??
-    ["Task status is unknown.", "O estado da tarefa é desconhecido.", "任務狀態未明。"][column];
+    (["Task status is unknown.", "O estado da tarefa é desconhecido.", "任務狀態未明。"] as const)[column];
   const stage = deriveDeliveryStage(task, evidence);
   const availability = availabilityOf(task, evidence);
   const supported = evidence.filter((receipt) => supports(task, receipt));

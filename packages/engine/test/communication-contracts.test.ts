@@ -158,7 +158,7 @@ describe("communication contract structure", () => {
       expect(result.value.status).toBe("candidate");
       expect("authorized" in result.value).toBe(false);
     }
-    expect(payload.provenanceLineage[0].trust).toBe("external_data");
+    expect(payload.provenanceLineage[0]?.trust).toBe("external_data");
   });
 
   test("trust and grant references remain claims after structural validation", () => {

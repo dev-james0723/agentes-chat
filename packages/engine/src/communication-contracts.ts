@@ -34,7 +34,8 @@ function validAbsoluteUri(value: string): boolean {
   if (value.length > 2000 || /[^\x21-\x7e]/.test(value)) return false;
   const parts = /^[A-Za-z][A-Za-z0-9+.-]*:(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/.exec(value);
   if (!parts) return false;
-  const [, authority, path, query, fragment] = parts;
+  const [, authority, rawPath, query, fragment] = parts;
+  const path = rawPath ?? "";
   if (!uriPath.test(path) || !uriQueryOrFragment.test(query ?? "") || !uriQueryOrFragment.test(fragment ?? "")) {
     return false;
   }
