@@ -1905,6 +1905,20 @@
       "when": 1794847375031,
       "tag": "0273_foundry_recovery_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1794863920139,
+      "tag": "0274_foundry_evaluation_checkpoint",
+      "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1794872700337,
+      "tag": "0275_foundry_run_policy",
+      "breakpoints": true
     }
   ]
 }

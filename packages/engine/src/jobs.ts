@@ -70,6 +70,7 @@ import {
 } from "./feedback";
 import { FOLLOW_UP_JOB, wakeFollowUp } from "./follow-through";
 import { cutText } from "./format";
+import { FOUNDRY_EVALUATE_JOB } from "./foundry/evaluation";
 import { createFoundryLifecycle, FOUNDRY_RECONCILE_JOB, type FoundryLifecycleDependencies } from "./foundry/lifecycle";
 import type { GitHubAppAccess } from "./git/github-call";
 import { GITHUB_EVENT_JOB, type GitHubAppEvent, handleGitHubAppEvent } from "./git/github-events";
@@ -161,7 +162,7 @@ async function maybeEnqueueReflection(deps: JobDeps, orgId: string, threadId: st
 
 export interface JobDeps extends RunExecutorDeps {
   /** Qualified server dependencies only; absent means unavailable, never the connected-computer sandbox. */
-  foundry?: Pick<FoundryLifecycleDependencies, "executor" | "evaluations" | "now">;
+  foundry?: Pick<FoundryLifecycleDependencies, "executor" | "evaluations" | "now" | "builderPolicy">;
   /** Migrated Paperclip receipts cannot start when the installation opt-in is absent. */
   paperclipCompatibilityEnabled?: boolean;
   maxHops: number;
@@ -561,6 +562,11 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
   };
 
   const handlers: JobHandlers = {
+    [FOUNDRY_EVALUATE_JOB]: async (job, ctx) => {
+      if (!deps.artifacts) throw new PermanentJobError("Capability artifacts are unavailable");
+      await createFoundryLifecycle({ db: deps.db, blobs: deps.artifacts.blobs, ...deps.foundry })
+        .reconcileEvaluation(job, ctx.finalAttempt);
+    },
     [FOUNDRY_RECONCILE_JOB]: async (job, ctx) => {
       const orgId = orgOf(job);
       const id = job.payload.invocationId;

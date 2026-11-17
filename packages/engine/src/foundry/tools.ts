@@ -1,3 +1,4 @@
+import { foundryDraftGuidance } from "./guidance";
 import { and, eq, isNull, schema } from "@agenteschat/db";
 import { type JsonSchema, validateJson } from "../tools/json-schema";
 import type { CallCheck, ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -10,7 +11,7 @@ import {
 } from "./lifecycle";
 import { FoundryPackageError, freezePackage, PACKAGE_LIMITS, type PackageFile } from "./packages";
 import { RECEIPT_CONTRACT_ID, RECEIPT_INPUT_SCHEMA, receiptAppliesTo, validateReceiptInput } from "./receipt-contract";
-import { createFoundryService, FoundryError, foundryContext } from "./service";
+import { createFoundryService, FoundryError, foundryContext, FOUNDRY_NATIVE_CONTRACT } from "./service";
 
 const idSchema: JsonSchema = {
   type: "string",
@@ -161,7 +162,8 @@ function output(value: unknown): ToolOutput {
   const failed =
     status?.state === "BLOCKED" ||
     ["FAIL", "FAILED", "CANCELLED", "UNKNOWN_OUTCOME", "ALREADY_ATTEMPTED"].includes(String(status?.outcome));
-  return { content: JSON.stringify(value) ?? "null", ...(failed ? { isError: true } : {}) };
+  return { content: JSON.stringify(value) ?? "null", ...(failed ? { isError: true } : {}),
+    ...(status?.state === "EVALUATING" && status.pause ? { data: { pause: status.pause } } : {}) };
 }
 
 /** Native ToolSource only. An unavailable/disabled executor never falls back to host execution. */
@@ -191,9 +193,13 @@ export function createFoundryToolSource(deps: FoundryLifecycleDependencies & { e
     return !!message && receiptAppliesTo(message.body);
   }
 
-  async function eligible(ctx: ToolContext, requiresApplicability = true): Promise<void> {
+  async function eligible(ctx: ToolContext, requiresApplicability = true, listing = false): Promise<void> {
     if (!deps.enabled) throw new FoundryError("AUTHORITY_DENIED");
     await foundryContext(deps.db, ctx);
+    if (listing) {
+      if (!deps.builderPolicy || !(await deps.builderPolicy.sourceAllowed?.(ctx, "foundry")) ||
+        !deps.builderPolicy.requiresModelBrain(ctx)) throw new FoundryError("BLOCKED_BUILDER_ISOLATION");
+    } else if (!(await deps.builderPolicy?.protection(ctx))) throw new FoundryError("BLOCKED_BUILDER_ISOLATION");
     if (requiresApplicability && !(await applies(ctx))) throw new FoundryError("NOT_APPLICABLE");
   }
 
@@ -240,7 +246,10 @@ export function createFoundryToolSource(deps: FoundryLifecycleDependencies & { e
       "skills:read",
       proposalSchema,
       (input) => scalarArgs(input, proposalSchema),
-      (ctx, input) => service.propose(ctx, input),
+      async (ctx, input) => {
+        const proposed = await service.propose(ctx, input);
+        return proposed.kind === "draft" ? { ...proposed, guidance: foundryDraftGuidance() } : proposed;
+      },
       { requiresApplicability: true },
     ),
     management(
@@ -330,6 +339,7 @@ export function createFoundryToolSource(deps: FoundryLifecycleDependencies & { e
       description:
         "Normalize synthetic task or run receipts into exact status counts and a token total. Notes remain inert data. Uses only this task's current approved version.",
       inputSchema: RECEIPT_INPUT_SCHEMA,
+      reviewedCapability: { ...FOUNDRY_NATIVE_CONTRACT, versionDigest: digest },
       scope: "sandbox:run",
       external: true,
       async checkCall(input, ctx) {
@@ -355,7 +365,7 @@ export function createFoundryToolSource(deps: FoundryLifecycleDependencies & { e
     name: "foundry",
     async tools(ctx) {
       try {
-        await eligible(ctx, false);
+        await eligible(ctx, false, true);
         const applicable = await applies(ctx);
         const management = applicable
           ? managementTools

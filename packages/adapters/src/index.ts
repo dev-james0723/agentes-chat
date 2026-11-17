@@ -101,3 +101,6 @@ export interface Adapters {
 }
 
 export * from "./host-mcp-protocol";
+
+export { createRemoteFoundryExecutor } from "./foundry-remote-executor";
+export { createFoundryRpcClient, createFoundryRpcHandler, type FoundryRpcMethod } from "./foundry-rpc";

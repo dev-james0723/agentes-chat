@@ -57,6 +57,8 @@ export const foundryVersions = pgTable(
     blobBytes: integer().notNull(),
     state: text().notNull().default("DRAFT"),
     evaluationRef: text(),
+    /** A bounded native outbox evaluation and its parent checkpoint; never a second task queue. */
+    evaluationJob: jsonb().$type<Record<string, unknown>>(),
     runtimeDigest: text(),
     profileDigest: text(),
     retiredAt: timestamp({ withTimezone: true }),

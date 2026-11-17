@@ -341,3 +341,7 @@ export * from "./workspace-deletion";
 export * from "./workspace-mode";
 export * from "./workspace-tools";
 export * from "./zip";
+
+export { createNativeFoundryIntegration, type NativeFoundryIntegration } from "./foundry/integration";
+
+export { startFoundryTaskRun } from "./foundry/enrollment";

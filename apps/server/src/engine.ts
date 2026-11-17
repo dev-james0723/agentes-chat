@@ -1,3 +1,5 @@
+import { createRemoteFoundryExecutor } from "@agenteschat/adapters";
+import { createNativeFoundryIntegration } from "@agenteschat/engine";
 import {
   type Adapters,
   type BrainTurnRequest,
@@ -48,7 +50,6 @@ import {
   createFeedbackToolSource,
   createFindAgentToolSource,
   createFollowUpToolSource,
-  createFoundryToolSource,
   createGitHubAppSettings,
   createGitToolSource,
   createHandOffToolSource,
@@ -401,7 +402,14 @@ export function buildEngine(o: EngineOptions) {
   });
   // The workspace's cap of live background works (ADR 0121 §7).
   setWorkOrgCap(config.AGENT_WORK_MAX_PER_ORG);
+  const foundryRemote = config.FOUNDRY_RUNTIME_URL && config.FOUNDRY_RUNTIME_TOKEN && config.FOUNDRY_CONTROL_TOKEN
+    ? createRemoteFoundryExecutor({ url: config.FOUNDRY_RUNTIME_URL, token: config.FOUNDRY_RUNTIME_TOKEN }) : undefined;
+  const foundry = createNativeFoundryIntegration({ db, blobs: artifacts.blobs,
+    enabled: config.FOUNDRY_ENABLED, ...foundryRemote,
+    nativeReuse: (ctx, contract) => tools.findCapability(ctx, contract),
+  });
   const tools = createToolGateway({
+    executionPolicy: foundry.builderPolicy,
     // Default off; a canary's exact agent and skill pairs only (ADR 0189).
     ...(config.SKILL_READ_CANARY.length ? { nativeSkillReads: { canary: config.SKILL_READ_CANARY } } : {}),
     sources: [
@@ -479,7 +487,7 @@ export function buildEngine(o: EngineOptions) {
         computer: sandbox,
       }),
       // Drafts default off. A connected computer is never a qualified Foundry executor.
-      createFoundryToolSource({ db, blobs: artifacts.blobs, enabled: config.FOUNDRY_ENABLED }),
+      foundry.source,
       createCalendarToolSource({ db, pubsub: adapters.pubsub, publicUrl: config.PUBLIC_URL }),
       createScheduleToolSource({
         pubsub: adapters.pubsub,
@@ -773,6 +781,8 @@ export function buildEngine(o: EngineOptions) {
       : null,
   };
   const jobDeps: JobDeps = {
+    foundry: foundry.deps,
+    foundryPolicy: foundry.builderPolicy,
     paperclipCompatibilityEnabled: config.PAPERCLIP_ROUTINE_COMPATIBILITY === "on",
     feedbackBlobs: adapters.platformBlobs,
     feedbackFetch: o.http,
@@ -885,6 +895,7 @@ export function buildEngine(o: EngineOptions) {
     tools,
     context,
     handlers,
+    foundry,
     /** The same router as `message.posted`'s, for "Responder agora" (null: routing is off). */
     router: messageRouter(jobDeps),
     connectorDeps,

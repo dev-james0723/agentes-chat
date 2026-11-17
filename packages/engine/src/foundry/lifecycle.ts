@@ -1,13 +1,17 @@
 import {
   createUnavailableFoundryExecutor,
   type FoundryExecutionResult,
+  type FoundryAdmission,
+  type FoundryRunnerExecutionRequest,
   type FoundryExecutor,
   type FoundryQualification,
   hashFoundryInput,
 } from "@agenteschat/adapters";
 import { and, type Executor, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { getMembership } from "../organizations";
-import { enqueue } from "../outbox";
+import { enqueue, type OutboxJob } from "../outbox";
+import { createDurableFoundryEvaluation } from "./evaluation";
+import type { FoundryExecutionPolicy } from "./execution-policy";
 import { actionHash } from "../tools/gateway";
 import { freshGrantedKeys, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
@@ -77,6 +81,7 @@ export interface FoundryActivationInput {
 }
 export interface FoundryLifecycleDependencies extends FoundryDependencies {
   executor?: FoundryExecutor;
+  builderPolicy?: FoundryExecutionPolicy;
   evaluations?: TrustedFoundryEvaluationStore;
   now?: () => Date;
 }
@@ -144,10 +149,13 @@ function requireManifestLimits(bundle: FrozenPackage, q: Qualification) {
 
 export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
   const { db } = deps;
+  // Revoking policy must never remove the trusted stop/reconciliation path.
+  // Qualification and every executable entry still require builder protection.
   const executor: FoundryExecutor = deps.executor ?? createUnavailableFoundryExecutor();
   const now = deps.now ?? (() => new Date());
 
   async function qualified(): Promise<Qualification> {
+    if (!deps.builderPolicy) throw new FoundryError("BLOCKED_SANDBOX");
     const result = await executor.qualify();
     if (!result.qualified) throw new FoundryError("BLOCKED_SANDBOX");
     return result;
@@ -246,6 +254,8 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
     return approval;
   }
   async function guard(ctx: ToolContext, bindingId: string, allowed: readonly string[], expectedDigest?: string) {
+    if (ctx.signal?.aborted) throw new FoundryError("CANCELLED");
+    if (!(await deps.builderPolicy?.protection(ctx))) throw new FoundryError("BLOCKED_BUILDER_ISOLATION");
     const current = await foundryContext(db, ctx);
     const [binding] = await db
       .select()
@@ -787,95 +797,13 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
   }
 
   const api = {
-    async evaluate(ctx: ToolContext, input: { candidateId: string; digest: string }) {
-      const current = await versionOf(ctx, input.candidateId, input.digest);
-      let q: Qualification;
-      try {
-        q = await qualified();
-        requireManifestLimits(current.bundle, q);
-      } catch (error) {
-        await db
-          .update(candidates)
-          .set({ state: "BLOCKED", reasonCode: "BLOCKED_SANDBOX", updatedAt: now() })
-          .where(and(eq(candidates.id, input.candidateId), eq(candidates.orgId, ctx.orgId)));
-        return { state: "BLOCKED", code: codeOf(error) };
-      }
-      if (current.version.state === "REVIEW_READY") {
-        await evidence(current.candidate, current.version, q);
-        return { state: "REVIEW_READY" };
-      }
-      const [claimed] = await db
-        .update(versions)
-        .set({ state: "EVALUATING" })
-        .where(and(eq(versions.id, current.version.id), eq(versions.orgId, ctx.orgId), eq(versions.state, "DRAFT")))
-        .returning();
-      if (!claimed) return { state: "BLOCKED", code: "EVALUATION_IN_PROGRESS_OR_UNKNOWN" };
-      try {
-        const jobRef = `foundry-evaluation:${ctx.orgId}:${current.version.id}`;
-        const receipt = await executor.evaluate(
-          { orgId: ctx.orgId, candidateId: input.candidateId, digest: input.digest, manifestRef: current.version.id },
-          jobRef,
-        );
-        if (
-          receipt.orgId !== ctx.orgId ||
-          receipt.digest !== input.digest ||
-          receipt.evaluatorJobRef !== jobRef ||
-          receipt.runtimeDigest !== q.runtimeDigest ||
-          receipt.profileDigest !== q.profileDigest ||
-          receipt.qualificationRef !== q.attestationRef ||
-          receipt.outcome !== "PASS" ||
-          receipt.processTreeTerminated !== true
-        )
-          throw new FoundryError("EVALUATION_UNVERIFIED");
-        const e = await evidence(current.candidate, current.version, q, receipt.receiptRef);
-        if (e.evaluatorId !== receipt.evaluatorRef) throw new FoundryError("EVALUATION_UNVERIFIED");
-        await ownedCandidate(db, ctx, input.candidateId);
-        await db.transaction(async (tx) => {
-          const [updated] = await tx
-            .update(versions)
-            .set({
-              state: "REVIEW_READY",
-              evaluationRef: receipt.receiptRef,
-              runtimeDigest: q.runtimeDigest,
-              profileDigest: q.profileDigest,
-            })
-            .where(and(eq(versions.id, current.version.id), eq(versions.state, "EVALUATING")))
-            .returning();
-          if (!updated) throw new FoundryError("STALE_VERSION");
-          await tx
-            .update(candidates)
-            .set({
-              state: "REVIEW_READY",
-              reasonCode: null,
-              revision: sql`${candidates.revision} + 1`,
-              updatedAt: now(),
-            })
-            .where(eq(candidates.id, input.candidateId));
-          await activity(
-            tx,
-            ctx,
-            current.task.id,
-            "Capability evaluated; scoped activation still requires a native decision.",
-            {
-              candidateId: input.candidateId,
-              digest: input.digest,
-              evaluationRef: receipt.receiptRef,
-              state: "REVIEW_READY",
-            },
-          );
-        });
-        return { state: "REVIEW_READY" };
-      } catch (error) {
-        await db
-          .update(versions)
-          .set({ state: "BLOCKED" })
-          .where(and(eq(versions.id, current.version.id), eq(versions.state, "EVALUATING")));
-        await db
-          .update(candidates)
-          .set({ state: "BLOCKED", reasonCode: codeOf(error), updatedAt: now() })
-          .where(eq(candidates.id, input.candidateId));
-        return { state: "BLOCKED", code: codeOf(error) };
-      }
+    authorizeRunnerEvaluation: createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
+      requireLimits: requireManifestLimits, verifyEvidence: evidence }).authorizeDispatch,
+    evaluate: createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
+      requireLimits: requireManifestLimits, verifyEvidence: evidence }).begin,
+    reconcileEvaluation(job: OutboxJob, finalAttempt = false) {
+      return createDurableFoundryEvaluation({ ...deps, executor, now, qualified,
+        requireLimits: requireManifestLimits, verifyEvidence: evidence }).run(job, finalAttempt);
     },
     activationParameters: parameters,
     async activate(ctx: ToolContext, raw: FoundryActivationInput) {
@@ -1023,6 +951,30 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
         return { outcome: "FAIL" as const, restoredBindingId: await rollback(ctx, proof.binding, terminated) };
       }
       return { outcome: "PENDING" as const, restoredBindingId: null };
+    },
+    /** Server-to-runner control only. Never present this method as a tool. */
+    async authorizeRunnerExecution(request: FoundryRunnerExecutionRequest, admission: FoundryAdmission): Promise<boolean> {
+      try {
+        if (request.abort?.aborted || request.budgetReservationRef !== request.invocationId ||
+            Buffer.byteLength(request.inputJson) > admission.limits.inputBytes ||
+            hashFoundryInput(JSON.parse(request.inputJson)) !== request.inputDigest) return false;
+        const [row] = await db.select().from(invocations).where(and(eq(invocations.id, request.invocationId), eq(invocations.orgId, request.orgId)));
+        if (!row || row.state !== "DISPATCHED" || row.recoveryRevision !== 0 || row.fencingToken !== request.fencingToken ||
+            row.digest !== request.digest || row.inputDigest !== request.inputDigest || row.leaseUntil <= now()) return false;
+        const ctx = await nativeContextFor(row);
+        const canary = row.receipt?.purpose === "canary";
+        if (!canary && (row.receipt?.purpose !== "call" || !(await applicable(ctx)))) return false;
+        const proof = await guard(ctx, row.bindingId, canary ? ["CANARY"] : ["ACTIVE"], request.digest);
+        const q = proof.qualification;
+        if (proof.binding.generation !== row.bindingGeneration || proof.approval.id !== request.nativeDecisionRef ||
+            (canary && proof.approval.runId !== row.runId) || q.runnerId !== admission.runnerId ||
+            q.runtimeDigest !== admission.runtimeDigest || q.profileDigest !== admission.profileDigest ||
+            q.attestationRef !== admission.attestationRef || hashFoundryInput(q.limits) !== hashFoundryInput(admission.limits)) return false;
+        // Re-read after all external control/evidence calls, before the runner starts.
+        const [fresh] = await db.select().from(invocations).where(eq(invocations.id, row.id));
+        return !!fresh && fresh.state === "DISPATCHED" && fresh.recoveryRevision === 0 &&
+          fresh.fencingToken === request.fencingToken && fresh.leaseUntil > now();
+      } catch { return false; }
     },
     async execute(ctx: ToolContext, input: { bindingId: string; digest: string; input: unknown }) {
       return dispatch(ctx, input.bindingId, input.digest, input.input, false);

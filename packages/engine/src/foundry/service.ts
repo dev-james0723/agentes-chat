@@ -5,7 +5,7 @@ import { runPerson } from "../authority";
 import { getMembership } from "../organizations";
 import { workRefusal } from "../standing";
 import { taskSeenSql } from "../task-access";
-import type { ToolContext } from "../tools/types";
+import type { NativeToolContract, NativeToolReuse, ToolContext } from "../tools/types";
 import { assertPackage, canonicalJson, type FrozenPackage } from "./packages";
 import { RECEIPT_INPUT_SCHEMA, RECEIPT_OUTPUT_SCHEMA } from "./receipt-contract";
 
@@ -13,6 +13,26 @@ const { foundryCandidates: candidates, foundryVersions: versions } = schema;
 export type FoundryCandidate = typeof candidates.$inferSelect;
 export type FoundryVersion = typeof versions.$inferSelect;
 export const FOUNDRY_CONTRACT = "receipt-normalizer/v1";
+
+/** Reviewed semantics, shared by the native inventory query and an eligible Foundry ToolDefinition. */
+export const FOUNDRY_NATIVE_CONTRACT: Readonly<NativeToolContract> = Object.freeze({
+  contractId: FOUNDRY_CONTRACT,
+  inputDigest: foundryHash(RECEIPT_INPUT_SCHEMA),
+  outputDigest: foundryHash(RECEIPT_OUTPUT_SCHEMA),
+  effectsDigest: foundryHash({
+    network: "none",
+    secrets: "none",
+    filesystem: "none",
+    externalActions: [],
+    nestedCapabilities: [],
+  }),
+});
+
+/** Native durable evaluation recovery only; never populated from tool arguments or a context flag. */
+export interface FoundryCheckpoint {
+  waitId: string;
+  toolUseId: string;
+}
 
 export class FoundryError extends Error {
   constructor(public readonly code: string) {
@@ -32,7 +52,7 @@ export function exactKeys(value: unknown, keys: readonly string[]): value is Rec
     Object.keys(value).every((k) => keys.includes(k))
   );
 }
-export async function foundryContext(db: Executor, ctx: ToolContext) {
+export async function foundryContext(db: Executor, ctx: ToolContext, checkpoint?: FoundryCheckpoint) {
   if (ctx.signal?.aborted) throw new FoundryError("CANCELLED");
   const [run] = await db
     .select()
@@ -44,9 +64,26 @@ export async function foundryContext(db: Executor, ctx: ToolContext) {
         eq(schema.agentRuns.agentId, ctx.agentId),
       ),
     );
+  const pending = (
+    run?.transcript as { pending?: { calls?: { waitId?: string; toolUseId?: string; name?: string; result?: unknown }[] } } | null
+  )?.pending?.calls;
+  const checkpointMatches =
+    checkpoint &&
+    checkpoint.waitId.length > 0 &&
+    checkpoint.toolUseId.length > 0 &&
+    ["waiting_input", "waiting_approval"].includes(run?.status ?? "") &&
+    Array.isArray(pending) &&
+    pending.filter((call) => call.waitId === checkpoint.waitId || call.toolUseId === checkpoint.toolUseId).length === 1 &&
+    pending.some(
+      (call) =>
+        call.waitId === checkpoint.waitId &&
+        call.toolUseId === checkpoint.toolUseId &&
+        call.name === "evaluate_foundry_capability" &&
+        !call.result,
+    );
   if (
     !run ||
-    run.status !== "running" ||
+    (checkpoint ? !checkpointMatches : run.status !== "running") ||
     !run.issueId ||
     run.background ||
     run.channelId !== ctx.channelId ||
@@ -96,8 +133,8 @@ export async function foundryContext(db: Executor, ctx: ToolContext) {
   });
   return { task, run, personId, membership, contextRevision };
 }
-export async function ownedCandidate(db: Executor, ctx: ToolContext, id: string) {
-  const current = await foundryContext(db, ctx);
+export async function ownedCandidate(db: Executor, ctx: ToolContext, id: string, checkpoint?: FoundryCheckpoint) {
+  const current = await foundryContext(db, ctx, checkpoint);
   const [candidate] = await db
     .select()
     .from(candidates)
@@ -119,7 +156,7 @@ export type FoundryDependencies = {
   db: Database;
   blobs: BlobStoreResolver;
   /** Server-resolved authorized native tool inventory. No candidate-supplied search receipt. */
-  nativeReuse?: (ctx: ToolContext, contract: string) => Promise<{ kind: "tool"; id: string; version: string } | null>;
+  nativeReuse?: (ctx: ToolContext, contract: NativeToolContract) => Promise<NativeToolReuse | null>;
 };
 export type FoundryProposal =
   | { kind: "draft"; candidate: FoundryCandidate }
@@ -154,8 +191,6 @@ export function createFoundryService(deps: FoundryDependencies) {
       if (!exactKeys(input, ["needKey"]) || input.needKey !== FOUNDRY_CONTRACT)
         throw new FoundryError("SCHEMA_INVALID");
       const current = await foundryContext(db, ctx);
-      const reuse = await deps.nativeReuse?.(ctx, input.needKey);
-      if (reuse) return { kind: "reuse", candidate: null, existing: reuse };
       const [skill] = await db
         .select({ id: schema.skills.id, version: schema.skills.version })
         .from(schema.skills)
@@ -178,6 +213,33 @@ export function createFoundryService(deps: FoundryDependencies) {
         .orderBy(schema.skills.id)
         .limit(1);
       if (skill) return { kind: "reuse", candidate: null, existing: { kind: "skill", ...skill } };
+      // A missing or failed server inventory is not an empty completed search. Native Skill reuse above
+      // remains available; only new generation needs this additional prerequisite.
+      let inventoryAvailable = false;
+      let reuse: NativeToolReuse | null = null;
+      if (deps.nativeReuse) {
+        try {
+          const searched = await deps.nativeReuse(ctx, FOUNDRY_NATIVE_CONTRACT);
+          if (searched === null) inventoryAvailable = true;
+          else if (
+            exactKeys(searched, ["kind", "id", "version"]) &&
+            searched.kind === "tool" &&
+            typeof searched.id === "string" &&
+            /^[a-zA-Z0-9_-]{1,64}$/.test(searched.id) &&
+            typeof searched.version === "string" &&
+            /^[a-f0-9]{64}$/.test(searched.version)
+          ) {
+            inventoryAvailable = true;
+            reuse = searched;
+          }
+        } catch {
+          // Existing native Skill or candidate reuse may still succeed; no new draft is admitted.
+        }
+      }
+      const refreshed = await foundryContext(db, ctx);
+      if (refreshed.contextRevision !== current.contextRevision || refreshed.personId !== current.personId)
+        throw new FoundryError("STALE_CONTEXT");
+      if (reuse) return { kind: "reuse", candidate: null, existing: reuse };
       return db.transaction(async (tx) => {
         await tx.execute(
           sql`select id from issues where org_id=${ctx.orgId}::uuid and id=${current.task.id}::uuid for update`,
@@ -197,6 +259,7 @@ export function createFoundryService(deps: FoundryDependencies) {
         );
         const [existing] = await tx.select().from(candidates).where(match);
         if (existing) return { kind: "draft", candidate: existing } as const;
+        if (!inventoryAvailable) throw new FoundryError("NATIVE_INVENTORY_UNAVAILABLE");
         const previous = await tx
           .select({ id: candidates.id })
           .from(candidates)

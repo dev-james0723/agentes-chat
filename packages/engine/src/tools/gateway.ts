@@ -102,7 +102,18 @@ import {
   NOT_IN_ALL,
   toolAccess,
 } from "./scopes";
-import type { AheadOutcome, AheadRequest, ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./types";
+import type {
+  AheadOutcome,
+  AheadRequest,
+  CallCheck,
+  NativeToolContract,
+  NativeToolReuse,
+  ToolContext,
+  ToolDefinition,
+  ToolExecutionPolicy,
+  ToolOutput,
+  ToolSource,
+} from "./types";
 
 const { approvals, agents, agentRunSteps, routines } = schema;
 type AuditOutcome = schema.AuditOutcome;
@@ -510,6 +521,8 @@ const readsOutsideText = (tool: ToolDefinition, output: ToolOutput) =>
 
 export function createToolGateway(deps: {
   sources: ToolSource[];
+  /** Server-only restrictions for enrolled runs, in addition to every native grant and approval check. */
+  executionPolicy?: ToolExecutionPolicy;
   /** Source-only scoped pilot: absent means legacy behavior. Never a model tool argument. */
   nativeSkillReads?: NativeSkillReadConfig;
   now?: () => Date;
@@ -524,12 +537,50 @@ export function createToolGateway(deps: {
   pubsub?: PubSub;
 }) {
   const now = deps.now ?? (() => new Date());
+  const sourceOf = new WeakMap<ToolDefinition, string | null>();
+  const policyUnavailable = (): CallCheck => ({
+    ok: false,
+    message: "This run's restricted tool policy could not authorize the action.",
+    data: { code: "tool.execution_policy", refusal: "execution_policy" },
+  });
+  const policyOutput = (check: Exclude<CallCheck, { ok: true }>): ToolOutput => ({
+    content: check.message,
+    isError: true,
+    data: { ...check.data, code: "tool.execution_policy", refusal: "execution_policy" },
+  });
+  async function executionCheck(ctx: ToolContext, tool: ToolDefinition, requireComplete = false): Promise<CallCheck> {
+    if (!deps.executionPolicy) return { ok: true };
+    try {
+      return await deps.executionPolicy.check(ctx, tool, sourceOf.get(tool) ?? undefined);
+    } catch (error) {
+      if (requireComplete) throw error;
+      return policyUnavailable();
+    }
+  }
+  function derived(tool: ToolDefinition, overrides: Partial<ToolDefinition>): ToolDefinition {
+    const result = { ...tool, ...overrides };
+    sourceOf.set(result, sourceOf.get(tool) ?? null);
+    return result;
+  }
+  async function policyTools(ctx: ToolContext, tools: Iterable<ToolDefinition>, requireComplete = false): Promise<ToolDefinition[]> {
+    const visible: ToolDefinition[] = [];
+    for (const tool of tools) if ((await executionCheck(ctx, tool, requireComplete)).ok) visible.push(tool);
+    return visible;
+  }
 
-  async function allTools(ctx: ToolContext) {
+  async function allTools(ctx: ToolContext, requireComplete = false) {
     const byName = new Map<string, ToolDefinition>();
     for (const source of deps.sources) {
+      if (deps.executionPolicy) {
+        const allowed = deps.executionPolicy.sourceAllowed(ctx, source.name);
+        if (!(await (requireComplete ? allowed : allowed.catch(() => false)))) continue;
+      }
       for (const tool of await source.tools(ctx)) {
         if (!TOOL_NAME.test(tool.name)) continue;
+        // Preserve native definition identity (some sources attest it). A shared object presented by two
+        // sources is ambiguous, so a restricted run receives no trusted source attribution for that object.
+        if (!sourceOf.has(tool)) sourceOf.set(tool, source.name);
+        else if (sourceOf.get(tool) !== source.name) sourceOf.set(tool, null);
         const current = byName.get(tool.name);
         // A connected MCP server must not shadow one of our own tools just
         // because its source appears earlier in the list.
@@ -549,6 +600,48 @@ export function createToolGateway(deps: {
     return grantedFor(ctx, await authorityOf(ctx), undefined, heldBack);
   }
 
+  /**
+   * Exact reuse through the existing inventory. Raw schemas are checked before listing adds `why`;
+   * grants are read without the listing cache. This neither calls a tool nor grants its use: invocation
+   * still goes through the Gateway's current schema, policy, approval and argument checks.
+   * Only native server definitions can carry trusted metadata; a connected server cannot assert it.
+   */
+  async function findCapability(ctx: ToolContext, contract: NativeToolContract): Promise<NativeToolReuse | null> {
+    const digest = /^[a-f0-9]{64}$/;
+    if (
+      !contract.contractId ||
+      contract.contractId.length > 128 ||
+      !digest.test(contract.inputDigest) ||
+      !digest.test(contract.outputDigest) ||
+      !digest.test(contract.effectsDigest)
+    )
+      throw new Error("Invalid native capability contract");
+    const [all, authority, keys, level] = await Promise.all([
+      allTools(ctx, true),
+      authorityOf(ctx),
+      freshGrantedKeys(ctx.db, ctx.orgId, ctx.agentId),
+      approvalsLevelOf(ctx.db, ctx.orgId, ctx.agentId),
+    ]);
+    if (!authority || ctx.signal?.aborted) return null;
+    const match = (await policyTools(ctx, all.values(), true))
+      .filter((tool) => {
+        if (tool.connectionId || tool.connector || !isAllowed(accessWithNeeds(keys, tool).state)) return false;
+        if (policyFor(authority, tool, level).action === "refuse") return false;
+        const reviewed = tool.reviewedCapability;
+        return (
+          reviewed?.contractId === contract.contractId &&
+          digest.test(reviewed.versionDigest) &&
+          reviewed.inputDigest === contract.inputDigest &&
+          reviewed.outputDigest === contract.outputDigest &&
+          reviewed.effectsDigest === contract.effectsDigest &&
+          sha256(canonicalJson(tool.inputSchema)) === contract.inputDigest
+        );
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))[0];
+    if (!match?.reviewedCapability) return null;
+    return { kind: "tool", id: match.name, version: match.reviewedCapability.versionDigest };
+  }
+
   /** `known`: this call's `allTools`, when already read. */
   async function grantedFor(
     ctx: ToolContext,
@@ -561,7 +654,7 @@ export function createToolGateway(deps: {
       known ?? allTools(ctx),
       approvalsLevelOf(ctx.db, ctx.orgId, ctx.agentId),
     ]);
-    return [...all.values()]
+    return (await policyTools(ctx, all.values()))
       .filter((t) => isAllowed(accessWithNeeds(keys, t).state))
       .flatMap((t) => {
         const decision = policyFor(authority, t, level);
@@ -590,7 +683,7 @@ export function createToolGateway(deps: {
       missingPermissions(ctx),
     ]);
     const offered = new Map(missing.map((m) => [m.id, m]));
-    return [...all.values()].flatMap((tool): BlockedTool[] => {
+    return (await policyTools(ctx, all.values())).flatMap((tool): BlockedTool[] => {
       const own = toolAccess(keys, tool);
       const needs = tool.needs && { scope: tool.needs.scope, state: toolAccess(keys, tool.needs) };
       const lacks = [
@@ -642,7 +735,12 @@ export function createToolGateway(deps: {
   async function outputOf(tool: ToolDefinition, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput> {
     const done = startInFlight(`tool ${tool.name}`, ctx.runId);
     try {
+      const admitted = await executionCheck(ctx, tool);
+      if (!admitted.ok) return policyOutput(admitted);
       const output = await tool.execute(input, ctx);
+      // A late result cannot return protected content after this run's authorization changes.
+      const released = await executionCheck(ctx, tool);
+      if (!released.ok) return policyOutput(released);
       if (
         nativeSkillReadPending(ctx) &&
         (output.outcome ||
@@ -709,6 +807,8 @@ export function createToolGateway(deps: {
     const tool = (await allTools(ctx)).get(request.tool.trim());
     if (!tool)
       return no(`No tool named "${request.tool}": use its exact name (a big connector's find_tools gives it).`);
+    const execution = await executionCheck(ctx, tool);
+    if (!execution.ok) return no(execution.message);
     const input = takeWhy(tool.inputSchema, request.input).input;
     const refusal = aheadRefusal(tool, input);
     if (refusal) return no(refusal);
@@ -932,6 +1032,11 @@ export function createToolGateway(deps: {
    */
   async function runApproved(ctx: ToolContext, approval: Approval, toolUseId: string): Promise<ToolOutput> {
     if (approval.status !== "approved") return { content: "This action was not approved", isError: true };
+    if (deps.executionPolicy) {
+      const approvedTool = (await allTools(ctx)).get(approval.tool);
+      const execution = approvedTool ? await executionCheck(ctx, approvedTool) : policyUnavailable();
+      if (!execution.ok) return policyOutput(execution);
+    }
     if (approval.executedAt) {
       if (deps.nativeSkillReads) {
         const tool = (await allTools(ctx)).get(approval.tool);
@@ -952,6 +1057,8 @@ export function createToolGateway(deps: {
       if (expected !== approval.actionHash) return "Approval does not match the action";
       if (!tool || tool.scope !== approval.scope || (tool.connectionId ?? null) !== approval.connectionId)
         return `The tool ${approval.tool} is no longer available (its connector was removed or changed since the approval): say so, and that once it's connected again, asking again runs it`;
+      const execution = await executionCheck(ctx, tool);
+      if (!execution.ok) return execution.message;
       const access = accessWithNeeds(await freshGrantedKeys(ctx.db, ctx.orgId, ctx.agentId), tool);
       if (!isAllowed(access.state))
         return `Not allowed: this agent lost the scope ${access.of.scope} since the approval. An admin can give it back on the agent's page in Tools and access (in Portuguese, Ferramentas e acesso); then asking again runs it`;
@@ -1072,6 +1179,7 @@ export function createToolGateway(deps: {
   return {
     list,
     granted,
+    findCapability,
 
     async invoke(ctx: ToolContext, raw: ToolCall): Promise<InvokeResult> {
       // The model's arguments land in jsonb and text columns (steps, approvals, the audit): a NUL would fail them.
@@ -1121,21 +1229,22 @@ export function createToolGateway(deps: {
       const record = (...args: Parameters<typeof addRunStep>) =>
         ctx.runId ? addRunStep(...args) : Promise.resolve(undefined);
       let tool = unknownInDirectory ? undefined : (all.get(call.name) ?? directoryTool);
-      const alias = tool && !tool.connectionId ? INPUT_ALIASES.get(tool.name) : undefined;
+      const initialExecution: CallCheck = tool ? await executionCheck(ctx, tool) : { ok: true };
+      const alias = initialExecution.ok && tool && !tool.connectionId ? INPUT_ALIASES.get(tool.name) : undefined;
       if (alias) call = { ...call, input: alias(call.input) };
       const publication =
-        tool?.name === "update_skill" && tool.scope === "skills:read" && !tool.connectionId
+        initialExecution.ok && tool?.name === "update_skill" && tool.scope === "skills:read" && !tool.connectionId
           ? isNativeSkillUpdater(tool)
             ? await classifySkillPublication({ ...ctx, toolUseId: call.toolUseId }, call.input)
             : { kind: "defer" as const }
           : null;
       const privateCall = publication !== null && publication.kind !== "ordinary";
-      const recordedInput = privateCall ? {} : call.input;
+      const recordedInput = privateCall || !initialExecution.ok ? {} : call.input;
       // What the live chip shows (the short label of a built-in tool, never a connector's input; the app and its
       // service): the chat's line of this call says the same after the run. A permission check also keeps its
       // command, masked, to open.
-      const detail = privateCall ? PRIVATE_PUBLICATION_TITLE : toolDetail(call.name, call.input);
-      const command = privateCall ? null : toolCommand(call.name, call.input);
+      const detail = privateCall ? PRIVATE_PUBLICATION_TITLE : initialExecution.ok ? toolDetail(call.name, call.input) : null;
+      const command = privateCall || !initialExecution.ok ? null : toolCommand(call.name, call.input);
       const toolCallStepId = await record(ctx.db, step, "tool_call", {
         toolUseId: call.toolUseId,
         name: call.name,
@@ -1227,13 +1336,16 @@ export function createToolGateway(deps: {
       if (unknownInDirectory)
         return finish({ content: unknownInDirectory, isError: true, data: { code: "tool.unknown" } });
       if (!tool) return finish({ content: `Unknown tool ${call.name}`, isError: true, data: { code: "tool.unknown" } });
+      if (!initialExecution.ok) return finish(policyOutput(initialExecution), "refused");
+      const execution = await executionCheck(ctx, tool);
+      if (!execution.ok) return finish(policyOutput(execution), "refused");
       // A tool that runs other actions (Composio's executor): a call whose actions all only read is the
       // connection's read, when the agent may read the connection. Everything below then sees a read.
       if (tool.actions && tool.readScope) {
         const bare = takeWhy(tool.inputSchema, call.input).input;
         const actions = tool.actions(bare);
         if (actions?.length && actions.every((a) => actionLevel(a) === "read")) {
-          const read: ToolDefinition = { ...tool, scope: tool.readScope, sensitive: false };
+          const read: ToolDefinition = derived(tool, { scope: tool.readScope, sensitive: false });
           const keys = await freshGrantedKeys(ctx.db, ctx.orgId, ctx.agentId);
           if (isAllowed(accessWithNeeds(keys, read).state)) {
             tool = read;
@@ -1244,9 +1356,9 @@ export function createToolGateway(deps: {
       // The same tool running only actions that open a pull request is judged as a connected app's own tool for it.
       if (tool.actions && !opensPullRequest(tool)) {
         const actions = tool.actions(takeWhy(tool.inputSchema, call.input).input);
-        if (actions?.length && actions.every(opensPullRequestName)) tool = { ...tool, opensPullRequest: true };
+        if (actions?.length && actions.every(opensPullRequestName)) tool = derived(tool, { opensPullRequest: true });
       }
-      if (tool.sensitive && tool.asksNobody?.(call.input)) tool = { ...tool, sensitive: false };
+      if (tool.sensitive && tool.asksNobody?.(call.input)) tool = derived(tool, { sensitive: false });
       const builtIn = isBuiltIn(tool);
       // A call that only looks is judged as at the default level: an agent that always asks asks for changes.
       const decision = policyFor(authority, tool, tool.looksOnly?.(call.input) ? DEFAULT_APPROVALS_LEVEL : level);
@@ -1282,6 +1394,8 @@ export function createToolGateway(deps: {
             "refused",
           );
         try {
+          const execution = await executionCheck(ctx, tool);
+          if (!execution.ok) return finish(policyOutput(execution), "refused");
           const approval = await issuePrivatePublication({ ...ctx, toolUseId: call.toolUseId }, call.input, now());
           await record(ctx.db, step, "approval", {
             approvalId: approval.id,
@@ -1499,6 +1613,8 @@ export function createToolGateway(deps: {
         return { type: "result", output, ...(ran ? { ran } : {}) };
       }
       const askPerson = async (why: string, remember: RememberedKind | null): Promise<InvokeResult> => {
+        const execution = await executionCheck(ctx, tool);
+        if (!execution.ok) return finish(policyOutput(execution), "refused");
         const owner = await ownerOf(ctx);
         // A routine's request goes to the conversation it reports to, never its room; one asked by another
         // agent (ADR 0034) where the person is, not in the agents' DM.
@@ -1659,6 +1775,11 @@ export function createToolGateway(deps: {
      * ahead waits for its time instead: the routine's run then does it (`aheadFor`), and this run hears when.
      */
     async executeApproved(ctx: ToolContext, approval: Approval): Promise<ToolOutput> {
+      if (deps.executionPolicy) {
+        const tool = (await allTools(ctx)).get(approval.tool);
+        const execution = tool ? await executionCheck(ctx, tool) : policyUnavailable();
+        if (!execution.ok) return policyOutput(execution);
+      }
       if (isPrivatePublication(approval)) {
         const [row] = await ctx.db
           .select()

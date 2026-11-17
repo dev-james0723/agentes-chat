@@ -1,6 +1,7 @@
 import type { PushSender } from "@agenteschat/adapters";
 import type {
   ArtifactDeps,
+  NativeFoundryIntegration,
   BrowserLive,
   ContextDeps,
   GifKey,
@@ -26,6 +27,8 @@ import type {
  * app's own routes don't have to provide them.
  */
 export interface AppExtras {
+  /** Private runtime controls; never a native agent tool source. */
+  foundry?: NativeFoundryIntegration;
   internalDatabaseTargets?: readonly InternalDatabaseTarget[];
   /** Outbound HTTP: OAuth token exchanges, provider key checks (tests inject a fake). */
   http?: typeof fetch;

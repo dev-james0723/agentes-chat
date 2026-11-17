@@ -1,3 +1,4 @@
+import type { FoundryExecutionPolicy } from "./foundry/execution-policy";
 import {
   type BrainTurnTimings,
   CODEX_FOLDER_PROTOCOL,
@@ -727,6 +728,8 @@ export interface EngineDeps {
    * engine with fakes.
    */
   brains?: Partial<Record<BrainKind, BrainFactory>>;
+  /** Server-owned native run restrictions, rechecked before every turn and route fallback. */
+  foundryPolicy?: Pick<FoundryExecutionPolicy, "beforeBrain">;
   /**
    * The checkouts' sync before a computer brain's chat turn (`prepareAgentCode`, the brains' own `prepare`): started
    * here while a run waits out the quiet window, so the turn doesn't wait for it after.
@@ -3220,6 +3223,10 @@ async function executeRunInner(
     quotaReservePercent: deps.quotaReservePercent,
     quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
   });
+  if (deps.foundryPolicy) {
+    const admission = await deps.foundryPolicy.beforeBrain({ orgId: run.orgId, agentId: run.agentId, runId: run.id }, brainPlan.kind);
+    if (!admission.ok) return fail(admission.message);
+  }
   // The agent's model left its plan's live list, so this turn runs another: its owner hears it, never silently.
   const dropped =
     brainPlan.kind === "claude_code" && !brainPlan.missionId && agent.brain === "claude_code"
@@ -6850,7 +6857,17 @@ function createBrain(
   transcript: () => Transcript,
   trigger: Message | null | undefined,
 ): Brain {
-  const brain = createUnboundBrain(deps, agent, run, kind, token, transcript);
+  const unbound = createUnboundBrain(deps, agent, run, kind, token, transcript);
+  const policy = deps.foundryPolicy;
+  const brain: Brain = policy ? { kind: unbound.kind, async *run(turn, io) {
+    const decision = await policy.beforeBrain({ orgId: run.orgId, agentId: run.agentId, runId: run.id }, kind);
+    if (!decision.ok) {
+      yield { type: "error", code: "foundry_run_restricted", message: decision.message, retryable: false };
+      return;
+    }
+    yield* unbound.run(turn, io);
+  } } : unbound;
+  if (policy) brainResultSources.set(brain, unbound);
   // A firing is background and carries server-written routine markers. Only a known foreground origin skips
   // the routine join; raw or malformed markers still take the guard, even when compatibility is turned off.
   const meta = trigger?.meta;
@@ -6867,7 +6884,7 @@ function createBrain(
   )
     return brain;
   const guarded = paperclipProjectBrain({ db: deps.db, enabled: deps.paperclipCompatibilityEnabled }, brain);
-  brainResultSources.set(guarded, brain);
+  brainResultSources.set(guarded, brainResultSources.get(brain) ?? brain);
   return guarded;
 }
 

@@ -105,12 +105,23 @@ export type FoundryQualification =
       evidenceRefs: readonly string[];
     });
 
+export interface FoundryEvaluationDispatchAuthority {
+  outboxId: string;
+  attempt: number;
+  lockedBy: string;
+  evaluationRevision: number;
+  runId: string;
+  toolUseId: string;
+}
+
 export interface FoundryFrozenVersion {
   orgId: string;
   candidateId: string;
   /** The immutable package/version digest, including code and contracts. */
   digest: string;
   manifestRef: string;
+  /** Original native outbox claim, never replaced with a newer claim by the transport. */
+  dispatchAuthority?: FoundryEvaluationDispatchAuthority;
 }
 
 export interface FoundryExecutionRequest {
@@ -291,6 +302,8 @@ export interface QualifiedFoundryExecutorOptions {
   now?: () => number;
   /** Server configuration only. Each control call is bounded (default 1 s, ceiling 10 s). */
   controlTimeoutMs?: number;
+  /** Whole protected evaluation batch; each candidate invocation keeps its own resource limits. */
+  evaluationTimeoutMs?: number;
 }
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -544,6 +557,9 @@ function validEvaluationReceipt(
  * A concrete independently qualified runner is intentionally not shipped here.
  */
 export function createQualifiedFoundryExecutor(options: QualifiedFoundryExecutorOptions): FoundryExecutor {
+  if (options.evaluationTimeoutMs !== undefined && (!Number.isSafeInteger(options.evaluationTimeoutMs) ||
+    options.evaluationTimeoutMs < 1 || options.evaluationTimeoutMs > 120_000))
+    throw new FoundryExecutorError("SCHEMA_INVALID", "Evaluation batch deadline must be bounded.");
   const { runner, qualifications } = options;
   const now = options.now ?? Date.now;
   const authorityId = qualifications.authorityId;
@@ -810,7 +826,12 @@ export function createQualifiedFoundryExecutor(options: QualifiedFoundryExecutor
       !validRef(evaluatorJobRef)
     )
       invalidInput();
-    const snapshot = Object.freeze({ ...version });
+    const authority = version.dispatchAuthority;
+    if (authority && (!validRef(authority.outboxId) || !validRef(authority.lockedBy) ||
+      !validRef(authority.runId) || !validRef(authority.toolUseId) ||
+      !validFence(authority.attempt) || !validFence(authority.evaluationRevision))) invalidInput();
+    const snapshot = Object.freeze({ ...version,
+      ...(authority ? { dispatchAuthority: Object.freeze({ ...authority }) } : {}) });
     const admission = await admit();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -819,7 +840,7 @@ export function createQualifiedFoundryExecutor(options: QualifiedFoundryExecutor
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new FoundryExecutorError("UNKNOWN_OUTCOME", "Evaluation outcome requires reconciliation.")),
-            admission.limits.wallTimeMs,
+            options.evaluationTimeoutMs ?? admission.limits.wallTimeMs,
           );
         }),
       ]);

@@ -84,6 +84,29 @@ export interface ToolOutput {
 
 export type ConnectorVia = schema.ConnectorVia;
 
+/** Exact, reviewed semantics for native reuse. Digests are canonical JSON SHA-256 values. */
+export interface NativeToolContract {
+  contractId: string;
+  inputDigest: string;
+  outputDigest: string;
+  effectsDigest: string;
+}
+
+/**
+ * A server-owned declaration on an existing native tool, never copied from MCP descriptions, a Skill's
+ * frontmatter or candidate input. The implementation version must be an immutable SHA-256 digest.
+ * Sources publish this only while their own current-context eligibility checks admit the exact version.
+ */
+export interface ReviewedNativeCapability extends NativeToolContract {
+  versionDigest: string;
+}
+
+export interface NativeToolReuse {
+  kind: "tool";
+  id: string;
+  version: string;
+}
+
 /**
  * A tool an agent can call, from any source (built-in, MCP connector,
  * sandbox). Every call goes through the Tool Gateway, which checks `scope`
@@ -95,6 +118,8 @@ export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: JsonSchema;
+  /** Server-reviewed native contract identity; discovery never infers this from a name or description. */
+  reviewedCapability?: ReviewedNativeCapability;
   /**
    * Scope the agent must hold, e.g. `context:read` or `github:pr.merge`.
    * Empty only for built-in tools every agent has (`ask_user`).
@@ -231,6 +256,15 @@ export interface ToolDefinition {
 export type CallCheck =
   | { ok: true; data?: Record<string, unknown> }
   | { ok: false; message: string; data?: Record<string, unknown> };
+
+/**
+ * Server-owned restriction for an explicitly enrolled run. It may narrow native grants, never widen
+ * them. The Gateway supplies source provenance after resolving the actual tool; no model flags apply.
+ */
+export interface ToolExecutionPolicy {
+  sourceAllowed(ctx: ToolContext, sourceName: string): Promise<boolean>;
+  check(ctx: ToolContext, tool: ToolDefinition, sourceName?: string): Promise<CallCheck>;
+}
 
 /** Supplies tools for a run. The gateway filters them by the agent's scopes. */
 export interface ToolSource {

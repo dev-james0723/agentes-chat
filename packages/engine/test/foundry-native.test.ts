@@ -5,6 +5,8 @@ import type { ToolContext } from "../src/tools/types";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
+// This intake fixture has no other native tools. Production must query the actual Gateway inventory.
+const nativeReuse = async () => null;
 afterEach(async () => {
   await f?.close();
 });
@@ -59,7 +61,7 @@ async function ready() {
     triggerMessageId: message!.id,
     toolUseId: "foundry-test-intake",
   };
-  const service = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs });
+  const service = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs, nativeReuse });
   return { task: task!, message: message!, run: run!, ctx, service };
 }
 
@@ -85,7 +87,7 @@ test("concurrent equal needs deduplicate in the database and survive a fresh ser
   );
   expect(results.every((r) => r.kind === "draft")).toBe(true);
   expect(new Set(results.map((r) => (r.kind === "draft" ? r.candidate.id : "unexpected-reuse"))).size).toBe(1);
-  const fresh = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs });
+  const fresh = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs, nativeReuse });
   const first = results[0];
   if (!first || first.kind !== "draft") throw new Error("Expected a native draft");
   expect((await fresh.list(ctx)).map((r) => r.id)).toEqual([first.candidate.id]);

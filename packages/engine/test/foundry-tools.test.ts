@@ -27,6 +27,8 @@ const sourceOf = (world: LifecycleWorld) =>
     blobs: f.artifactDeps.blobs,
     executor: world.executor,
     evaluations: world.evaluations,
+    builderPolicy: world.builderPolicy,
+    nativeReuse: async () => null,
     now: () => new Date(world.state.now),
     enabled: true,
   });

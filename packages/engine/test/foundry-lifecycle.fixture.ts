@@ -16,6 +16,7 @@ import {
 } from "../src/foundry/lifecycle";
 import { freezePackage } from "../src/foundry/packages";
 import { RECEIPT_INPUT_SCHEMA, RECEIPT_OUTPUT_SCHEMA } from "../src/foundry/receipt-contract";
+import { createFoundryExecutionPolicy } from "../src/foundry/execution-policy";
 import { createFoundryService } from "../src/foundry/service";
 import { actionHash } from "../src/tools/gateway";
 import type { ToolContext } from "../src/tools/types";
@@ -136,6 +137,7 @@ export async function createLifecycleWorld(f: Fixture) {
         trigger: "mention",
         hop: 1,
         status: "running",
+        brain: "model",
         issueId: taskId,
       })
       .returning();
@@ -280,16 +282,49 @@ export async function createLifecycleWorld(f: Fixture) {
       return structuredClone(state.evidence.get(`${orgId}:${receiptRef}`) ?? null);
     },
   };
+  const builderPolicy = createFoundryExecutionPolicy({ pins: [], now: () => state.now.getTime(),
+    readPin: async (context) => ({ phaseRef: "SIMULATED-fixture-only", orgId: f.org.id, taskId: task.id,
+      agentId: f.agent.id, runIds: [context.runId], expiresAt: EXPIRY }),
+    readRun: async (context, transaction = f.db) => (await transaction.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, context.runId)))[0] ?? null,
+    capabilities: async (context) => rawLifecycle.discover(context),
+  });
   const makeLifecycle = (options: { unavailable?: boolean } = {}) =>
     createFoundryLifecycle({
       db: f.db,
       blobs: f.artifactDeps.blobs,
       executor: options.unavailable ? undefined : executor,
       evaluations,
+      builderPolicy,
       now: () => new Date(state.now.getTime()),
     });
-  const lifecycle = makeLifecycle();
-  const service = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs });
+  const rawLifecycle = makeLifecycle();
+  // Explicit simulated native inventory. This fixture makes no live reuse claim.
+  const service = createFoundryService({ db: f.db, blobs: f.artifactDeps.blobs, nativeReuse: async () => null });
+  async function checkpointEvaluation(evalCtx: ToolContext, waitId: string) {
+    await f.db.update(schema.agentRuns).set({ status: "waiting_input", transcript: {
+      pending: { calls: [{ toolUseId: evalCtx.toolUseId!, name: "evaluate_foundry_capability", waitId }] },
+    } }).where(eq(schema.agentRuns.id, evalCtx.runId));
+  }
+  async function claimEvaluation(waitId: string) {
+    const [claim] = await f.db.update(schema.outbox).set({ status: "processing", attempts: 1,
+      lockedBy: "simulation-evaluation-worker", lockedUntil: new Date(state.now.getTime() + 120_000),
+    }).where(eq(schema.outbox.dedupeKey, waitId)).returning();
+    if (!claim) throw new Error("missing native evaluation job");
+    return claim;
+  }
+  const lifecycle = { ...rawLifecycle, async evaluate(evalCtx: ToolContext, input: { candidateId: string; digest: string }) {
+    const begun = await rawLifecycle.evaluate(evalCtx, input);
+    if (!("pause" in begun) || !begun.pause) return begun;
+    await checkpointEvaluation(evalCtx, begun.pause.id);
+    const claim = await claimEvaluation(begun.pause.id);
+    await rawLifecycle.reconcileEvaluation(claim);
+    const [run] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, evalCtx.runId));
+    const transcript = run?.transcript as { pending?: { calls?: { result?: { content: string } }[] } } | null;
+    const content = transcript?.pending?.calls?.[0]?.result?.content;
+    await f.db.update(schema.agentRuns).set({ status: "running" }).where(eq(schema.agentRuns.id, evalCtx.runId));
+    if (!content) return { state: "BLOCKED", code: "SIMULATION_PARENT_NOT_RESUMED" };
+    return JSON.parse(content) as { state: string; code?: string };
+  } };
 
   async function stage(versionName = "1.0.0") {
     const proposal = await service.propose(ctx, { needKey: "receipt-normalizer/v1" });
@@ -388,9 +423,13 @@ export async function createLifecycleWorld(f: Fixture) {
     state,
     executor,
     evaluations,
+    builderPolicy,
     service,
     lifecycle,
     makeLifecycle,
+    rawLifecycle,
+    checkpointEvaluation,
+    claimEvaluation,
     session,
     stage,
     prepare,
