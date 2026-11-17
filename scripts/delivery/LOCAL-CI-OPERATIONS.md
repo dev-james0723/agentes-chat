@@ -27,3 +27,7 @@
 
 ## Remaining manual setup
 Owner must configure the free GitHub App credential and independent signer custody before an external success check can be accepted. Github billing lock may still restrict features; use official GitHub Support if its API refuses read/write, but do not purchase extra CI capacity solely to unblock testing.
+
+## Complete-suite policy — fail closed
+
+The `local-ci/full` bridge requires **all 22 separately named outcomes** corresponding to every stage in `scripts/ci-local.sh`, plus actual isolated Docker image boot. The earlier seven-step Guardian-oriented subset does NOT qualify. The mandatory set is `REQUIRED_RELEASE_STEPS` in `local-ci-status.mjs`. A successful signed mock in tests is **not a production verifier or status**. Current Local CI CLI runs *smoke only*; the complete-suite runner, independently isolated signer, GitHub App, required-check migration and production deployment are not installed or verified. The owner must not activate success publishing without those separate gates.
