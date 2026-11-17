@@ -7,3 +7,5 @@ Most come from [Simple Icons](https://simpleicons.org) 16.32.0 (CC0 1.0, public 
 A mark in its maker's colors, which a mask would flatten (PayPal's, Canva's, Outlook's), is in `../brands/`. The mailboxes' marks (Gmail, Outlook, iCloud) and colors live in `MAIL_BRANDS` in `packages/client/src/lib/mail.ts`.
 
 Each icon is a trademark of its owner, used only to name the service.
+
+`plug.svg` is the neutral agentes.chat connector icon. It reuses the unchanged path from `packages/ui/src/icons/extra.ts` under the repository license, not a vendor trademark. Presets explicitly declaring `plug` use it until they declare an appropriate vendor mark.

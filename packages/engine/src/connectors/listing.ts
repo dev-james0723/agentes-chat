@@ -17,6 +17,8 @@ import { composioToolkitUrl, MCP_PRESETS, type McpPreset, presetForServer } from
  * flatten (PayPal's three blues, Canva's gradient).
  */
 export const CONNECTOR_BRANDS: Record<string, { file: string; color: string | null; own?: true }> = {
+  // Neutral product icon for presets that deliberately do not declare a vendor mark.
+  plug: { file: "plug", color: null },
   github: { file: "github", color: null },
   linear: { file: "linear", color: "#5E6AD2" },
   sentry: { file: "sentry", color: null },
