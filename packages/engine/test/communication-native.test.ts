@@ -64,7 +64,7 @@ describe("native task evidence revision", () => {
     expect(visible.title).toBe("Legacy");
     expect(visible).not.toHaveProperty("communication");
     expect(visible).not.toHaveProperty("deliveryStage");
-    const row = rowsOf(
+    const row = rowsOf<{ count: number }>(
       await f.db.execute(sql`select count(*)::int as count from context_items where lesson_verification is not null`),
     )[0];
     expect(row?.count).toBe(0);
