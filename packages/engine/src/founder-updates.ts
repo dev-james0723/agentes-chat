@@ -61,7 +61,14 @@ const receiptSchema = z.strictObject({
   issuer: z.strictObject({ id: z.string().min(1), kind: z.enum(issuerKinds) }),
 });
 const nativeEvidence = Symbol("native-founder-evidence");
-export type ResolvedFounderEvidence = NativeFounderReceipt & { readonly [nativeEvidence]: true };
+type FounderEvidenceScope = Readonly<{
+  orgId: string;
+  projectId: string | null;
+  taskId: string;
+  taskRevision: number;
+  viewerId: string;
+}>;
+export type ResolvedFounderEvidence = NativeFounderReceipt & { readonly [nativeEvidence]: FounderEvidenceScope };
 export type NativeFounderEvidenceResolver = {
   /** Native lookup must authorize this viewer for every reference and resolve its eligible issuer. No URL fetching. */
   resolve(
@@ -76,22 +83,26 @@ export async function resolveFounderEvidence(
   refs: readonly string[],
   resolver: NativeFounderEvidenceResolver,
 ): Promise<ResolvedFounderEvidence[]> {
+  // Bind the authorized lookup before awaiting; neither a later task mutation nor
+  // reuse by another viewer may retarget an already resolved receipt.
+  const scope: FounderEvidenceScope = Object.freeze({
+    orgId: task.orgId,
+    projectId: task.projectId,
+    taskId: task.taskId,
+    taskRevision: task.revision,
+    viewerId: task.audience,
+  });
   const result: ResolvedFounderEvidence[] = [];
   for (const ref of [...new Set(refs)].slice(0, 100)) {
-    const receipt = await resolver.resolve(ref, {
-      orgId: task.orgId,
-      projectId: task.projectId,
-      taskId: task.taskId,
-      viewerId: task.audience,
-    });
+    const receipt = await resolver.resolve(ref, scope);
     const parsed = receiptSchema.safeParse(receipt);
     if (
       parsed.success &&
       parsed.data.reference.id === ref &&
-      parsed.data.reference.scope.orgId === task.orgId &&
-      parsed.data.reference.scope.projectId === task.projectId
+      parsed.data.reference.scope.orgId === scope.orgId &&
+      parsed.data.reference.scope.projectId === scope.projectId
     ) {
-      result.push({ ...parsed.data, [nativeEvidence]: true });
+      result.push({ ...parsed.data, [nativeEvidence]: scope });
     }
   }
   return result;
@@ -106,8 +117,22 @@ const producers: Record<DeliveryStage, readonly [EvidenceRef["kind"], NativeFoun
   LIVE_VERIFIED: ["live_check", "live_probe"],
   MEASURED_IMPROVEMENT: ["benchmark_result", "benchmark_runner"],
 };
+function visibleToSubject(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean {
+  const scope = receipt[nativeEvidence];
+  return (
+    !!scope &&
+    scope.orgId === task.orgId &&
+    scope.projectId === task.projectId &&
+    scope.taskId === task.taskId &&
+    scope.taskRevision === task.revision &&
+    scope.viewerId === task.audience &&
+    receipt.reference.scope.orgId === task.orgId &&
+    receipt.reference.scope.projectId === task.projectId &&
+    receipt.taskId === task.taskId
+  );
+}
 function matchesSubject(task: TaskSnapshot, receipt: ResolvedFounderEvidence): boolean {
-  if (receipt[nativeEvidence] !== true) return false;
+  if (!visibleToSubject(task, receipt)) return false;
   const ref = receipt.reference;
   const producer = producers[receipt.stage];
   return (
@@ -179,13 +204,38 @@ function availabilityOf(
 
 export type ClaimSupport = { ok: boolean; issues: ValidationIssue[] };
 export function validateClaimSupport(
-  update: FounderUpdate,
+  input: unknown,
   task: TaskSnapshot,
   evidence: readonly ResolvedFounderEvidence[],
 ): ClaimSupport {
   const issues: ValidationIssue[] = [];
   const reject = (path: string) =>
     issues.push({ code: "unsupported_claim", path, message: "Claim lacks current native support" });
+  const parsed = FounderUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    reject("contract");
+    return { ok: false, issues };
+  }
+  const update = parsed.data;
+  const canonical = projectFounderUpdate(task, evidence, { locale: update.locale, style: "simple" }).contract;
+  if (!canonical) {
+    reject("nativeContract");
+    return { ok: false, issues };
+  }
+  // Status-bearing copy is template-controlled. This compares schema-normalized
+  // fields, not the meaning of arbitrary prose or the order of submitted keys.
+  for (const key of [
+    "outcome",
+    "claims",
+    "howToTry",
+    "remaining",
+    "blocker",
+    "nextOwner",
+    "decisionNeeded",
+    "generatedAt",
+  ] as const) {
+    if (JSON.stringify(update[key]) !== JSON.stringify(canonical[key])) reject(key);
+  }
   if (
     update.taskId !== task.taskId ||
     update.taskRevision !== task.revision ||
@@ -321,7 +371,7 @@ export function projectFounderUpdate(
     decisionNeeded: task.decisionNeeded,
     generatedAt: task.generatedAt,
     evidence: evidence
-      .filter((receipt) => receipt[nativeEvidence] === true)
+      .filter((receipt) => visibleToSubject(task, receipt))
       .map((receipt) => ({
         id: receipt.reference.id,
         kind: receipt.reference.kind,

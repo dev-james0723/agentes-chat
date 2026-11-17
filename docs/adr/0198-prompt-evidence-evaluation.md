@@ -108,3 +108,21 @@ production behavior unchanged. It depends on the committed communication source 
 for the isolated worktree; promotion must reconcile that dependency with the eventual
 authoritative integration checkout. No package installation, database migration, background
 job, grant, model request or runtime rollout is introduced.
+
+## Native report truth and viewer scope
+
+The native validator parses the full strict founder contract and compares status-bearing
+copy against the canonical native projection. It does not judge arbitrary prose: benign
+paraphrases of those protected fields must use the canonical template instead. Invalid
+input receives a static diagnostic without reflecting submitted values.
+
+Resolved evidence snapshots and freezes its organization, project, task, task revision and
+viewer before the first await. Both completion support and projected metadata enforce that
+binding; another viewer must resolve again through the authorized adapter. Authorized stale
+or revoked diagnostics remain visible but cannot support completion. This is an in-process
+provenance guard, not a cryptographic attestation or an execution sandbox.
+
+Native regression tests reproduce copied-report false claims and cross-viewer metadata reuse
+before the repair, then check unchanged multilingual templates, reordered object keys,
+malformed inputs and mutation during resolution. Deployment and product acceptance remain
+subject to the original integration and release gates.

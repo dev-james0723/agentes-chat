@@ -301,3 +301,201 @@ describe("native required-check evidence gate", () => {
     expect(projectFounderUpdate(task, evidence, preferences).checks).toEqual(task.checks);
   });
 });
+
+describe("founder report truth preservation", () => {
+  const blockedTask: TaskSnapshot = {
+    ...task,
+    blocker: { summary: "Required check failed", ownerRef: "agent-1", nextAdmissibleAction: "Fix the failed check" },
+    decisionNeeded: true,
+    howToTry: "Wait for the required checks before trying the feature",
+  };
+  const mutations: { field: string; change: (update: FounderUpdate) => void }[] = [
+    {
+      field: "outcome",
+      change: (update) => {
+        update.outcome = "正式版已上線，全部驗收通過";
+      },
+    },
+    {
+      field: "claims.text",
+      change: (update) => {
+        update.claims = update.claims.map((claim) => ({ ...claim, text: "正式 App 已可使用" }));
+      },
+    },
+    {
+      field: "claims.confidence",
+      change: (update) => {
+        update.claims = update.claims.map((claim) => ({ ...claim, confidence: "guessing" }));
+      },
+    },
+    {
+      field: "claims.rationale",
+      change: (update) => {
+        update.claims = update.claims.map((claim) => ({ ...claim, rationale: "All release checks passed" }));
+      },
+    },
+    {
+      field: "howToTry",
+      change: (update) => {
+        update.howToTry = "Use the released production feature now";
+      },
+    },
+    {
+      field: "remaining",
+      change: (update) => {
+        update.remaining = [];
+      },
+    },
+    {
+      field: "blocker",
+      change: (update) => {
+        update.blocker = null;
+      },
+    },
+    {
+      field: "nextOwner",
+      change: (update) => {
+        update.nextOwner = "unrelated-owner";
+      },
+    },
+    {
+      field: "decisionNeeded",
+      change: (update) => {
+        update.decisionNeeded = false;
+      },
+    },
+    {
+      field: "generatedAt",
+      change: (update) => {
+        update.generatedAt = "2026-11-17T12:00:00Z";
+      },
+    },
+  ];
+  for (const { field, change } of mutations) {
+    test(`rejects changed ${field} while stage and evidence references remain unchanged`, async () => {
+      const evidence = await resolved(receipt, blockedTask);
+      const canonical = projectFounderUpdate(blockedTask, evidence, preferences).contract;
+      expect(canonical).not.toBeNull();
+      const changed = structuredClone(canonical) as FounderUpdate;
+      change(changed);
+      expect(changed.deliveryStage).toBe(canonical?.deliveryStage ?? null);
+      expect(changed.evidenceRefs).toEqual(canonical?.evidenceRefs ?? []);
+      const validation = validateClaimSupport(changed, blockedTask, evidence);
+      expect(validation.ok).toBe(false);
+      expect(validation.issues.every((issue) => issue.message === "Claim lacks current native support")).toBe(true);
+      // The deterministic fallback remains truthful and retains the failed/unrun counts.
+      expect(projectFounderUpdate(blockedTask, evidence, preferences).contract).toEqual(canonical);
+    });
+  }
+  for (const locale of ["zh-HK", "en", "pt-BR"]) {
+    test(`accepts unchanged canonical ${locale} with object properties reordered`, async () => {
+      const evidence = await resolved(receipt, blockedTask);
+      const canonical = projectFounderUpdate(blockedTask, evidence, { locale, style: "simple" }).contract;
+      expect(canonical).not.toBeNull();
+      const reordered = Object.fromEntries(Object.entries(canonical as FounderUpdate).reverse()) as FounderUpdate;
+      reordered.claims = reordered.claims.map((claim) =>
+        Object.fromEntries(Object.entries(claim).reverse()),
+      ) as FounderUpdate["claims"];
+      reordered.blocker = Object.fromEntries(
+        Object.entries(reordered.blocker ?? {}).reverse(),
+      ) as FounderUpdate["blocker"];
+      expect(validateClaimSupport(reordered, blockedTask, evidence).ok).toBe(true);
+    });
+  }
+  for (const [label, malformed] of [
+    ["null", null],
+    ["missing fields", {}],
+    ["missing claims", { ...projectFounderUpdate(task, [], preferences).contract, claims: null }],
+    ["invalid checks", { ...projectFounderUpdate(task, [], preferences).contract, checks: { passed: -1 } }],
+    [
+      "untrusted extra field",
+      { ...projectFounderUpdate(task, [], preferences).contract, "synthetic-secret-marker": true },
+    ],
+  ] as const) {
+    test(`rejects ${label} without throwing or disclosing submitted values`, () => {
+      let result: ReturnType<typeof validateClaimSupport> | undefined;
+      expect(() => {
+        result = validateClaimSupport(malformed as FounderUpdate, task, []);
+      }).not.toThrow();
+      expect(result?.ok).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("synthetic-secret-marker");
+    });
+  }
+  test("fails closed when the native projection has no complete contract", () => {
+    const canonical = projectFounderUpdate(task, [], preferences).contract as FounderUpdate;
+    expect(validateClaimSupport(canonical, { ...task, projectId: null }, []).ok).toBe(false);
+  });
+});
+
+describe("viewer-bound native evidence projection", () => {
+  const otherScopes: { field: string; change: Partial<TaskSnapshot> }[] = [
+    { field: "organization", change: { orgId: "other-org" } },
+    { field: "project", change: { projectId: "other-project" } },
+    { field: "task", change: { taskId: "other-task" } },
+    { field: "revision", change: { revision: 4 } },
+    { field: "viewer", change: { audience: "other-viewer" } },
+  ];
+  for (const { field, change } of otherScopes) {
+    test(`does not reuse evidence metadata or support across ${field}`, async () => {
+      const evidence = await resolved();
+      const view = projectFounderUpdate({ ...task, ...change }, evidence, preferences);
+      expect(view.evidence).toEqual([]);
+      expect(view.deliveryStage).toBeNull();
+      expect(view.contract?.evidenceRefs).toEqual([]);
+    });
+  }
+  for (const status of ["expired", "revoked"] as const) {
+    test(`retains authorized ${status} diagnostics without completion support`, async () => {
+      const evidence = await resolved({ ...receipt, reference: { ...ref, status } });
+      const view = projectFounderUpdate(task, evidence, preferences);
+      expect(view.evidence).toHaveLength(1);
+      expect(view.evidence[0]?.status).toBe(status);
+      expect(view.evidence[0]?.stage).toBeNull();
+      expect(view.deliveryStage).toBeNull();
+      expect(view.contract?.evidenceRefs).toEqual([]);
+    });
+  }
+  test("requires native re-resolution for a different viewer and accepts an authorized result", async () => {
+    const otherViewer = { ...task, audience: "other-viewer" };
+    const scopes: unknown[] = [];
+    const evidence = await resolveFounderEvidence(otherViewer, [ref.id], {
+      resolve: async (_id, scope) => {
+        scopes.push(scope);
+        return receipt;
+      },
+    });
+    expect(scopes).toHaveLength(1);
+    expect(scopes[0]).toMatchObject({
+      orgId: task.orgId,
+      projectId: task.projectId,
+      taskId: task.taskId,
+      viewerId: "other-viewer",
+    });
+    expect(projectFounderUpdate(otherViewer, evidence, preferences).deliveryStage).toBe("SOURCE_INSPECTED");
+    expect(projectFounderUpdate(task, evidence, preferences).evidence).toEqual([]);
+  });
+  test("snapshots scope before the first await and does not retarget later references", async () => {
+    const mutable = structuredClone(task);
+    const second = { ...receipt, reference: { ...ref, id: "receipt-2" } };
+    const scopes: unknown[] = [];
+    const evidence = await resolveFounderEvidence(mutable, [ref.id, second.reference.id], {
+      resolve: async (id, scope) => {
+        scopes.push({ ...scope });
+        await Promise.resolve();
+        mutable.audience = "other-viewer";
+        mutable.orgId = "other-org";
+        mutable.revision = 4;
+        return id === ref.id ? receipt : second;
+      },
+    });
+    expect(scopes).toHaveLength(2);
+    for (const scope of scopes) expect(scope).toMatchObject({ orgId: task.orgId, viewerId: task.audience });
+    expect(projectFounderUpdate(task, evidence, preferences).evidence).toHaveLength(2);
+    expect(projectFounderUpdate(mutable, evidence, preferences).evidence).toEqual([]);
+  });
+  test("cannot import a JSON copy of resolved evidence as native proof", async () => {
+    const evidence = JSON.parse(JSON.stringify(await resolved())) as ResolvedFounderEvidence[];
+    expect(projectFounderUpdate(task, evidence, preferences).evidence).toEqual([]);
+    expect(deriveDeliveryStage(task, evidence)).toBeNull();
+  });
+});
