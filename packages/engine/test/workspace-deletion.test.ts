@@ -1137,6 +1137,45 @@ describe("the hourly sweep", () => {
   });
 });
 
+test("purging a workspace removes only its skill-read receipts, including rows whose source run no longer exists", async () => {
+  f = await setup();
+  const other = (await createOrganization(f.db, f.owner.id, { name: "Other workspace" })).organization;
+  const issuedAt = new Date();
+  const receipt = (orgId: string, completed: boolean) => ({
+    id: crypto.randomUUID(),
+    orgId,
+    agentId: crypto.randomUUID(),
+    runId: crypto.randomUUID(),
+    serverStepId: crypto.randomUUID(),
+    toolUseId: crypto.randomUUID(),
+    bindingHash: "b".repeat(64),
+    skillId: crypto.randomUUID(),
+    skillVersion: 1,
+    contentHash: "c".repeat(64),
+    purposeHash: "d".repeat(64),
+    sourceProofHash: "e".repeat(64),
+    surfaceHash: "f".repeat(64),
+    envelope: {},
+    issuedAt,
+    expiresAt: new Date(issuedAt.getTime() + 60_000),
+    usedCount: completed ? 1 : 0,
+    state: completed ? "completed" : "issued",
+    completedAt: completed ? issuedAt : null,
+    resultHash: completed ? "c".repeat(64) : null,
+  });
+  const kept = receipt(other.id, true);
+  await f.db.insert(schema.skillReadActivations).values([receipt(f.org.id, false), receipt(f.org.id, true), kept]);
+  await scheduleDeletion(deletionDeps(), f.owner.id, f.org.id, "owner");
+  expect(await purgeWorkspace({ db: f.db }, f.org.id)).toBe(false);
+  expect(await countOf("skill_read_activations")).toBe(3);
+  await pastItsDate();
+  expect(await purgeWorkspace({ db: f.db }, f.org.id)).toBe(true);
+  const left = await f.db.select().from(schema.skillReadActivations);
+  expect(left).toHaveLength(1);
+  expect(left[0]).toMatchObject({ id: kept.id, orgId: other.id, state: "completed" });
+  expect(await purgeWorkspace({ db: f.db }, f.org.id)).toBe(false);
+});
+
 describe("no orphans", () => {
   test("every table with org_id goes with its workspace: a cascade on it, a chain of them on columns never null, or by hand", async () => {
     const { db, close } = await createTestDatabase();

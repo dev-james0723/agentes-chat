@@ -48,11 +48,11 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
   const listed = await (await owner(`/api/app/organizations/${orgId}/connectors`)).text();
   expect(listed).toContain(sentry.id);
   expect(listed).not.toContain("sntrys_secret_value");
-  // Connected without the web's dialog (the API, the phone): every agent has it whole, as the dialog starts.
+  // Connecting an account does not grant it to agents. The owner chooses scopes explicitly below.
   const access = (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as {
     connectors: { connectionId: string; state: string }[];
   };
-  expect(access.connectors.find((c) => c.connectionId === sentry.id)?.state).toBe("granted");
+  expect(access.connectors.find((c) => c.connectionId === sentry.id)?.state).toBe("off");
 
   const put = await owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`, {
     method: "PUT",
@@ -343,6 +343,8 @@ test("catalog: one list of our connectors and the one-click MCP servers, one ent
   expect(byId("square")).toMatchObject({ iconUrl: "/connectors/square.svg", brandColor: null });
   expect(byId("paypal")).toMatchObject({ iconUrl: "/brands/paypal.svg", brandColor: null });
   expect(byId("canva")).toMatchObject({ iconUrl: "/brands/canva.svg", brandColor: null });
+  // A preset that declares the product's neutral plug icon does not invent a vendor mark.
+  expect(byId("stitch")).toMatchObject({ iconUrl: "/connectors/plug.svg", brandColor: null });
   // Every connector in the catalog has its mark, a file in the web app: none is left a monogram.
   const publicDir = new URL("../../web/public", import.meta.url).pathname;
   for (const c of connectors) {
@@ -463,7 +465,7 @@ test("connector tools API: classified on listing (judge for ambiguous names), se
   await signUp(owner, "owner@example.com");
   const { orgId } = await seedOrg(owner);
   const res = await owner(`/api/app/organizations/${orgId}/connectors/custom`, {
-    json: { serverUrl: "https://ads.example.com/mcp", apiKey: "ads_secret_12345", label: "Ads" },
+    json: { serverUrl: "https://ads.example.com/mcp", apiKey: "synthetic", label: "Ads" },
   });
   expect(res.status).toBe(200);
   const started = (await res.json()) as {
@@ -633,12 +635,21 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
   expect(first).toBe(
     `http://localhost:3000/settings/connectors?connected=${encodeURIComponent(`custom:${acme.id}`)}&outcome=connected`,
   );
-  // Another account: a row of its own, every agent's as the first.
+  // Each account starts without agent access, including another account of the same service.
   expect(await signIn(await start(), "loja")).toContain("&outcome=connected");
   expect((await servers()).map((s) => s.label)).toEqual(["Stripe (Acme)", "Stripe (Loja B)"]);
   expect(await levels()).toEqual([
+    ["Stripe (Acme)", "off"],
+    ["Stripe (Loja B)", "off"],
+  ]);
+  const granted = await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`, {
+    method: "PUT",
+    json: { all: false, connectors: { [acme.id]: true }, scopes: [], tools: { allow: [], deny: [] } },
+  });
+  expect(granted.status).toBe(200);
+  expect(await levels()).toEqual([
     ["Stripe (Acme)", "granted"],
-    ["Stripe (Loja B)", "granted"],
+    ["Stripe (Loja B)", "off"],
   ]);
   // The same account again: nothing new.
   expect(await signIn(await start(), "acme")).toContain("&outcome=same_account");
