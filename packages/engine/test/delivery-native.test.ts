@@ -6,11 +6,18 @@ import {
   createIssue,
   createIssueProject,
   createNativeDeliveryService,
+  decideApproval,
   postPersonMessage,
   setAgentScopes,
   updateIssue,
 } from "../src";
-import { checkConnectorDelivery, type DeliveryCall } from "../src/connectors/delivery-guard";
+import {
+  checkConnectorDelivery,
+  createDeliveryApprovalHandoff,
+  type DeliveryCall,
+  runConnectorDelivery,
+} from "../src/connectors/delivery-guard";
+import { actionHash } from "../src/tools/gateway";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
@@ -129,6 +136,230 @@ async function world() {
   return { service, input, change, read, gate, call, issue, project, connection, reads, state };
 }
 
+async function approved(
+  w: Awaited<ReturnType<typeof world>>,
+  decider = f.owner.id,
+  tool = "github_merge_pull_request",
+) {
+  w.call.ctx.toolUseId = "native-binding-merge";
+  const action = { tool, scope: "github:pr.merge", connectionId: w.connection.id, params: w.call.input };
+  const [pending] = await f.db
+    .insert(schema.approvals)
+    .values({
+      ...action,
+      actionHash: actionHash(action),
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      runId: w.call.ctx.runId,
+      toolUseId: w.call.ctx.toolUseId,
+      channelId: w.call.ctx.channelId,
+      threadRootId: w.call.ctx.threadRootId,
+      title: "Native fixture merge",
+      why: "Verify the exact native approval row without authorizing any release target.",
+      ownerUserId: f.owner.id,
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    .returning();
+  if (!pending) throw new Error("Missing fixture approval");
+  await decideApproval({ db: f.db, pubsub: f.pubsub }, decider, f.org.id, pending.id, { decision: "approve" });
+  const [row] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, pending.id));
+  if (!row) throw new Error("Missing decided approval");
+  const handoff = createDeliveryApprovalHandoff(
+    w.call.ctx,
+    {
+      name: action.tool,
+      scope: action.scope,
+      connectionId: w.connection.id,
+      connector: { key: "github", via: "mcp", tool: w.call.tool },
+    },
+    row,
+  );
+  if (!handoff) throw new Error("Missing fixture handoff");
+  w.call.ctx.deliveryApproval = handoff.checking;
+  return { row, handoff };
+}
+
+test("an existing native approval resolves only action authority and never supplies target, checks, operation or lease", async () => {
+  const w = await world();
+  await w.change();
+  const { row, handoff } = await approved(w);
+  try {
+    expect(await w.gate()).toMatchObject({
+      ok: false,
+      data: {
+        deliveryGuardian: {
+          reasonCodes: [
+            "native_target_unverified",
+            "trusted_check_policy_unavailable",
+            "native_release_operation_unavailable",
+            "native_release_lease_unavailable",
+          ],
+          isAuthorizationGrant: false,
+        },
+      },
+    });
+    const [current] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, row.id));
+    expect(current?.executedAt).toBeNull();
+  } finally {
+    handoff.close();
+  }
+});
+
+for (const status of ["refused", "canceled", "expired"] as const) {
+  test(`native approval ${status} after selection refuses before provider observation`, async () => {
+    const w = await world();
+    await w.change();
+    const { row, handoff } = await approved(w);
+    try {
+      await f.db.update(schema.approvals).set({ status }).where(eq(schema.approvals.id, row.id));
+      const reads = w.reads.length;
+      expect(await w.gate()).toMatchObject({
+        ok: false,
+        data: { deliveryGuardian: { reasonCodes: ["native_approval_not_approved"] } },
+      });
+      expect(w.reads).toHaveLength(reads);
+    } finally {
+      handoff.close();
+    }
+  });
+}
+
+for (const [name, patch] of [
+  ["run", { runId: null }],
+  ["tool use", { toolUseId: "different-call" }],
+  ["connection", { connectionId: null }],
+  ["action hash", { actionHash: "f".repeat(64) }],
+  ["parameters", { params: { owner: "acme", repo: "app", pullNumber: 22, sha: head } }],
+] satisfies [string, Partial<typeof schema.approvals.$inferInsert>][]) {
+  test(`native approval changed ${name} is not reused for the selected call`, async () => {
+    const w = await world();
+    await w.change();
+    const { row, handoff } = await approved(w);
+    try {
+      await f.db.update(schema.approvals).set(patch).where(eq(schema.approvals.id, row.id));
+      expect(await w.gate()).toMatchObject({
+        ok: false,
+        data: { deliveryGuardian: { reasonCodes: ["native_approval_subject_mismatch"] } },
+      });
+    } finally {
+      handoff.close();
+    }
+  });
+}
+
+test("expiry and current deciding membership are re-read from native state", async () => {
+  const w = await world();
+  await w.change();
+  const decider = await addMember(f.db, f.org.id, "admin", "delivery-decider");
+  const { row, handoff } = await approved(w, decider.id);
+  try {
+    await f.db
+      .update(schema.approvals)
+      .set({ expiresAt: new Date(Date.now() - 1) })
+      .where(eq(schema.approvals.id, row.id));
+    expect(await w.gate()).toMatchObject({
+      ok: false,
+      data: { deliveryGuardian: { reasonCodes: ["native_approval_expired"] } },
+    });
+    await f.db
+      .update(schema.approvals)
+      .set({ expiresAt: new Date(Date.now() + 60_000) })
+      .where(eq(schema.approvals.id, row.id));
+    await f.db
+      .delete(schema.organizationMembers)
+      .where(and(eq(schema.organizationMembers.orgId, f.org.id), eq(schema.organizationMembers.userId, decider.id)));
+    expect(await w.gate()).toMatchObject({
+      ok: false,
+      data: { deliveryGuardian: { reasonCodes: ["native_approval_issuer_revoked"] } },
+    });
+  } finally {
+    handoff.close();
+  }
+});
+
+test("a different execution timestamp cannot stand in for the native claim", async () => {
+  const w = await world();
+  await w.change();
+  const { row, handoff } = await approved(w);
+  const at = new Date();
+  try {
+    await f.db
+      .update(schema.approvals)
+      .set({ executedAt: new Date(at.getTime() - 1) })
+      .where(eq(schema.approvals.id, row.id));
+    w.call.ctx.deliveryApproval = handoff.claim(at);
+    expect(await w.gate()).toMatchObject({
+      ok: false,
+      data: { deliveryGuardian: { reasonCodes: ["native_approval_claim_mismatch"] } },
+    });
+  } finally {
+    handoff.close();
+  }
+});
+
+test("withdrawal after a claim and during provider observation prevents dispatch without clearing the claim", async () => {
+  const w = await world();
+  await w.change();
+  const { row, handoff } = await approved(w);
+  const at = new Date();
+  try {
+    await f.db.update(schema.approvals).set({ executedAt: at }).where(eq(schema.approvals.id, row.id));
+    w.call.ctx.deliveryApproval = handoff.claim(at);
+    w.call.ctx.approved = true;
+    w.state.duringRead = async () => {
+      await f.db.update(schema.approvals).set({ status: "canceled" }).where(eq(schema.approvals.id, row.id));
+    };
+    let calls = 0;
+    expect(await runConnectorDelivery(w.service.guard, w.call, async () => ++calls)).toMatchObject({
+      ok: false,
+      data: { deliveryGuardian: { reasonCodes: ["native_approval_not_approved"] } },
+    });
+    expect(calls).toBe(0);
+    const [current] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, row.id));
+    expect(current?.executedAt?.toISOString()).toBe(at.toISOString());
+    expect(current?.status).toBe("canceled");
+  } finally {
+    handoff.close();
+  }
+});
+
+test("caller approved flags cannot replace the Gateway's native approval handoff", async () => {
+  const w = await world();
+  await w.change();
+  w.call.ctx.approved = true;
+  Object.assign(w.call.input, { approvalId: "caller-authored", authorized: true });
+  let calls = 0;
+  expect(await runConnectorDelivery(w.service.guard, w.call, async () => ++calls)).toMatchObject({
+    ok: false,
+    data: { deliveryGuardian: { reasonCodes: ["native_release_authority_unavailable"] } },
+  });
+  expect(calls).toBe(0);
+});
+
+test("native approval recheck honors an exact deny on a renamed catalog tool", async () => {
+  const w = await world();
+  await w.change();
+  const tool = "github_2_merge_pull_request";
+  const { handoff } = await approved(w, f.owner.id, tool);
+  try {
+    await f.db.insert(schema.agentScopes).values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      connectionId: w.connection.id,
+      scope: `deny:${tool}`,
+      grantedByUserId: f.owner.id,
+    });
+    const reads = w.reads.length;
+    expect(await w.gate()).toMatchObject({
+      ok: false,
+      data: { deliveryGuardian: { reasonCodes: ["native_delivery_scope_revoked"] } },
+    });
+    expect(w.reads).toHaveLength(reads);
+  } finally {
+    handoff.close();
+  }
+});
+
 test("native binding writer requires an authenticated current owner and never accepts an agent issuer", async () => {
   const w = await world();
   const member = await addMember(f.db, f.org.id, "member", "binding-member");
@@ -192,20 +423,18 @@ test("fake newer agent activity never revives a valid older binding", async () =
   if (!real) throw new Error("Native event missing");
   // Same timestamp and payload as the real row: the new ID wins ordering, so refusal tests the native issuer.
   const fakeId = "ffffffff-ffff-7fff-8fff-ffffffffffff";
-  await f.db
-    .insert(schema.issueActivity)
-    .values({
-      id: fakeId,
-      orgId: f.org.id,
-      issueId: w.issue.id,
-      kind: "event",
-      event: "delivery_binding_changed",
-      authorType: "agent",
-      authorId: f.agent.id,
-      text: "Claimed native proof",
-      data: real.data,
-      createdAt: real.createdAt,
-    });
+  await f.db.insert(schema.issueActivity).values({
+    id: fakeId,
+    orgId: f.org.id,
+    issueId: w.issue.id,
+    kind: "event",
+    event: "delivery_binding_changed",
+    authorType: "agent",
+    authorId: f.agent.id,
+    text: "Claimed native proof",
+    data: real.data,
+    createdAt: real.createdAt,
+  });
   expect(await w.read()).toMatchObject({ state: "untrusted", revision: fakeId, authorityGranted: false });
   expect(await w.gate()).toMatchObject({
     ok: false,
@@ -225,19 +454,17 @@ test("a copied owner event is not a binding for another native task", async () =
     .from(schema.issueActivity)
     .where(eq(schema.issueActivity.event, "delivery_binding_changed"));
   if (!real) throw new Error("Native event missing");
-  await f.db
-    .insert(schema.issueActivity)
-    .values({
-      orgId: f.org.id,
-      issueId: other.id,
-      kind: "event",
-      event: "delivery_binding_changed",
-      authorType: "person",
-      authorId: f.owner.id,
-      text: "Copied record",
-      data: real.data,
-      createdAt: real.createdAt,
-    });
+  await f.db.insert(schema.issueActivity).values({
+    orgId: f.org.id,
+    issueId: other.id,
+    kind: "event",
+    event: "delivery_binding_changed",
+    authorType: "person",
+    authorId: f.owner.id,
+    text: "Copied record",
+    data: real.data,
+    createdAt: real.createdAt,
+  });
   expect(await w.service.readBinding(person(f.owner.id), f.org.id, other.id)).toMatchObject({
     state: "untrusted",
     authorityGranted: false,

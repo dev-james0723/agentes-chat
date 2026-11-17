@@ -4,6 +4,7 @@ import {
   actionsFor,
   addRunStep,
   approveSkillUpdate,
+  buildRunContext,
   createSkillToolSource,
   createToolGateway,
   dismissSkillUpdate,
@@ -27,6 +28,7 @@ import {
   updateSkillFromSource,
   zip,
 } from "../src";
+import { PRIVATE_PUBLICATION_DEFER } from "../src/private-skill-publication";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
@@ -264,10 +266,10 @@ describe("an agent's change and its link's next update", () => {
     const { gh, deps, skill } = await install(f, { "deploy/SKILL.md": skillMd("# v1"), "deploy/notes.md": "a" });
     await setSkillAutoUpdate(f.db, f.owner.id, f.org.id, skill.id, true);
     await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-    const ctx = await runFor(f, f.owner.id);
-    const run = { id: ctx.runId as string, orgId: f.org.id };
-    await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    const ctx = await runFor(f, f.owner.id, true);
+    const loaded = await call(deps, ctx, "load_skill", { name: "deploy" });
+    expect(loaded.isError).not.toBe(true);
+    expect(loaded.data?.skill).toMatchObject({ id: skill.id, version: skill.version });
     expect((await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." })).content).toBe(
       "Updated deploy (v2).",
     );
@@ -300,10 +302,10 @@ describe("an agent's change and its link's next update", () => {
     f = await setup();
     const { gh, deps, skill } = await install(f, { "deploy/SKILL.md": skillMd("# v1"), "deploy/run.sh": "echo 1" });
     await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-    const ctx = await runFor(f, f.owner.id);
-    const run = { id: ctx.runId as string, orgId: f.org.id };
-    await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    const ctx = await runFor(f, f.owner.id, true);
+    const loaded = await call(deps, ctx, "load_skill", { name: "deploy" });
+    expect(loaded.isError).not.toBe(true);
+    expect(loaded.data?.skill).toMatchObject({ id: skill.id, version: skill.version });
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." });
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache first." });
 
@@ -362,10 +364,10 @@ describe("an agent's change and its link's next update", () => {
     f = await setup();
     const { gh, deps, skill } = await install(f, { "deploy/SKILL.md": skillMd("# v1") });
     await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
-    const ctx = await runFor(f, f.owner.id);
-    const run = { id: ctx.runId as string, orgId: f.org.id };
-    await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    const ctx = await runFor(f, f.owner.id, true);
+    const loaded = await call(deps, ctx, "load_skill", { name: "deploy" });
+    expect(loaded.isError).not.toBe(true);
+    expect(loaded.data?.skill).toMatchObject({ id: skill.id, version: skill.version });
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." });
 
     const back = await undoSkillUpdate(deps, f.owner.id, f.org.id, skill.id);
@@ -379,7 +381,7 @@ describe("an agent's change and its link's next update", () => {
 });
 
 /** A run of the agent on `userId`'s message in #general. */
-async function runFor(fx: Fixture, userId: string): Promise<ToolContext> {
+async function runFor(fx: Fixture, userId: string, capturePublication = false): Promise<ToolContext> {
   const trigger = await insertMessage(fx.db, {
     orgId: fx.org.id,
     channelId: fx.general.id,
@@ -400,6 +402,15 @@ async function runFor(fx: Fixture, userId: string): Promise<ToolContext> {
     })
     .returning();
   if (!run) throw new Error("no run");
+  if (capturePublication) {
+    // These public fixtures bypass the executor, so derive coverage using its actual native context builder.
+    const context = await buildRunContext(fx.db, run, fx.agent, { maxMessages: 100, toolsAvailable: true });
+    expect(context.publicationCapture).toMatchObject({ version: 2, complete: true });
+    await fx.db
+      .update(schema.agentRuns)
+      .set({ transcript: { publicationCapture: context.publicationCapture } })
+      .where(eq(schema.agentRuns.id, run.id));
+  }
   return {
     db: fx.db,
     orgId: fx.org.id,
@@ -427,6 +438,60 @@ const cardsOf = async (fx: Fixture) =>
   (await fx.db.select().from(schema.messages).where(eq(schema.messages.orgId, fx.org.id))).filter(
     (m) => m.meta.actionCard,
   );
+
+for (const mode of [
+  "missing capture",
+  "stale source capture",
+  "missing load identity",
+  "forged load identity",
+] as const) {
+  test(`an agent's linked-skill change still defers with ${mode}`, async () => {
+    f = await setup();
+    const { deps, skill } = await install(f, { "deploy/SKILL.md": skillMd("# v1") });
+    await f.db.insert(schema.agentSkills).values({ orgId: f.org.id, agentId: f.agent.id, skillId: skill.id });
+    const ctx = await runFor(f, f.owner.id, mode !== "missing capture");
+    if (mode === "missing load identity" || mode === "forged load identity") {
+      const run = { id: ctx.runId, orgId: f.org.id };
+      await addRunStep(f.db, run, "tool_call", {
+        toolUseId: "synthetic-load",
+        name: "load_skill",
+        input: { name: "deploy" },
+      });
+      await addRunStep(f.db, run, "tool_result", {
+        toolUseId: "synthetic-load",
+        name: "load_skill",
+        content: "ok",
+        ...(mode === "forged load identity"
+          ? { data: { skill: { id: crypto.randomUUID(), version: skill.version } } }
+          : {}),
+      });
+    } else {
+      const loaded = await call(deps, ctx, "load_skill", { name: "deploy" });
+      expect(loaded.isError).not.toBe(true);
+      expect(loaded.data?.skill).toMatchObject({ id: skill.id, version: skill.version });
+    }
+    if (mode === "stale source capture")
+      await f.db
+        .update(schema.messages)
+        .set({ body: "A changed source after native context capture." })
+        .where(eq(schema.messages.id, ctx.triggerMessageId));
+    const beforeActions = await f.db.select().from(schema.agentActions);
+    const beforeProposals = await f.db.select().from(schema.contextProposals);
+    const beforeApprovals = await f.db.select().from(schema.approvals);
+    const beforeGrants = await f.db.select().from(schema.agentScopes);
+    const result = await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nUnverified shared change." });
+    expect(result).toMatchObject({ isError: true, content: PRIVATE_PUBLICATION_DEFER });
+    expect(await getSkill(f.db, f.owner.id, f.org.id, skill.id)).toMatchObject({
+      body: "# v1",
+      version: skill.version,
+      lastUpdate: null,
+    });
+    expect(await f.db.select().from(schema.agentActions)).toEqual(beforeActions);
+    expect(await f.db.select().from(schema.contextProposals)).toEqual(beforeProposals);
+    expect(await f.db.select().from(schema.approvals)).toEqual(beforeApprovals);
+    expect(await f.db.select().from(schema.agentScopes)).toEqual(beforeGrants);
+  });
+}
 
 describe("agents installing and updating skills", () => {
   test("offer_install_skill posts the install card for who may confirm; only GitHub links, never one installed", async () => {

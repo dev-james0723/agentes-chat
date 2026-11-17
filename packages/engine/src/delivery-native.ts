@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { PubSub } from "@agenteschat/adapters";
 import { and, type Database, desc, type Executor, eq, schema } from "@agenteschat/db";
 import { z } from "zod";
+import { activeCoversTo } from "./approval-covers";
+import { coveredFor, decides } from "./approvals";
 import type { ConnectorDeps } from "./connectors/connections";
 import { createNativeDeliveryGuard, type DeliveryRequest, type NativeDeliveryProof } from "./connectors/delivery-guard";
 import { ConflictError, ForbiddenError, ValidationError } from "./errors";
@@ -16,7 +18,8 @@ import type { AppPermissions } from "./git/github-app";
 import type { GitHubAppAccess } from "./git/github-call";
 import { agentRepositoryList, repoInList } from "./git/repos";
 import { findVisible, getIssue, type IssueActor, publishToTaskReaders } from "./issues";
-import { assertActiveMembership, getMembership, requireChangePermission } from "./organizations";
+import { assertActiveMembership, getMembership, requireChangePermission, requirePermission } from "./organizations";
+import { canonicalJson } from "./tools/json-schema";
 import { freshGrantedKeys, isAllowed, toolAccess } from "./tools/scopes";
 
 const { issues, issueProjects, issueActivity, organizationMembers, agents, agentRuns, connectorConnections } = schema;
@@ -265,6 +268,74 @@ async function observe(
 export function createNativeDeliveryService(deps: NativeDeliveryDeps) {
   const db = deps.connectors.db;
 
+  async function approvalReason(request: DeliveryRequest): Promise<string | null> {
+    const reference = request.approval;
+    if (!reference) return request.phase === "execute" ? "native_release_authority_unavailable" : null;
+    const [row] = await db
+      .select()
+      .from(schema.approvals)
+      .where(and(eq(schema.approvals.orgId, request.ctx.orgId), eq(schema.approvals.id, reference.id)));
+    if (!row || row.status !== "approved") return "native_approval_not_approved";
+    const at = new Date();
+    if (row.expiresAt <= at) return "native_approval_expired";
+    const hash = createHash("sha256")
+      .update(
+        canonicalJson({
+          tool: row.tool,
+          scope: row.scope,
+          connectionId: row.connectionId,
+          params: row.params,
+        }),
+      )
+      .digest("hex");
+    if (
+      row.agentId !== request.ctx.agentId ||
+      row.runId !== request.ctx.runId ||
+      row.toolUseId !== request.ctx.toolUseId ||
+      row.tool !== reference.tool ||
+      row.scope !== reference.scope ||
+      row.scope !== `github:${request.scope}` ||
+      row.connectionId !== request.connectionId ||
+      row.actionHash !== reference.actionHash ||
+      hash !== reference.actionHash ||
+      canonicalJson(row.params) !== canonicalJson(request.input) ||
+      row.missionId ||
+      row.missionTaskId ||
+      row.runAt ||
+      row.routineId
+    )
+      return "native_approval_subject_mismatch";
+    if (
+      reference.stage === "checking"
+        ? row.executedAt !== null || reference.executedAt !== null
+        : !row.executedAt || row.executedAt.toISOString() !== reference.executedAt
+    )
+      return "native_approval_claim_mismatch";
+    if (request.phase === "execute" && reference.stage !== "claimed") return "native_approval_claim_missing";
+    if (!row.decidedByUserId || !row.decidedAt || row.decidedAt > at) return "native_approval_issuer_revoked";
+    try {
+      const membership = await requirePermission(db, row.decidedByUserId, request.ctx.orgId, "read");
+      const [agent] = await db
+        .select({ ownerUserId: agents.ownerUserId })
+        .from(agents)
+        .where(and(eq(agents.orgId, request.ctx.orgId), eq(agents.id, request.ctx.agentId)));
+      if (!agent) return "native_approval_issuer_revoked";
+      // Ordinary cards name the agent's current owner. Preserve native role, named-person and cover semantics.
+      const current = { ...row, ownerUserId: agent.ownerUserId };
+      if (!decides(current, row.decidedByUserId, membership)) {
+        const covered = coveredFor(
+          current,
+          row.decidedByUserId,
+          await activeCoversTo(db, request.ctx.orgId, row.decidedByUserId, at),
+        );
+        if (!row.decidedForUserId || covered !== row.decidedForUserId) return "native_approval_issuer_revoked";
+      }
+    } catch {
+      return "native_approval_issuer_revoked";
+    }
+    return null;
+  }
+
   async function readBinding(actor: IssueActor, orgId: string, taskId: string): Promise<NativeDeliveryBindingView> {
     const issue = await findVisible(db, actor, orgId, { id: taskId });
     return (await interpreted(db, issue, await latest(db, orgId, taskId))).view;
@@ -367,22 +438,20 @@ export function createNativeDeliveryService(deps: NativeDeliveryDeps) {
         };
       } else payload = { ...common, action: "revoke", reason: selected.reason };
       const data = RecordSchema.parse({ ...payload, payloadDigest: digest(payload) });
-      await tx
-        .insert(issueActivity)
-        .values({
-          orgId,
-          issueId: taskId,
-          kind: "event",
-          event: EVENT,
-          authorType: "person",
-          authorId: issuer,
-          text:
-            selected.action === "set"
-              ? "Configured this task's repository and selected delivery targets; release gates still apply."
-              : "Revoked this task's delivery configuration.",
-          data,
-          createdAt: writtenAt,
-        });
+      await tx.insert(issueActivity).values({
+        orgId,
+        issueId: taskId,
+        kind: "event",
+        event: EVENT,
+        authorType: "person",
+        authorId: issuer,
+        text:
+          selected.action === "set"
+            ? "Configured this task's repository and selected delivery targets; release gates still apply."
+            : "Revoked this task's delivery configuration.",
+        data,
+        createdAt: writtenAt,
+      });
       await tx.update(issues).set({ updatedAt: writtenAt }).where(eq(issues.id, taskId));
     });
     const issue = await getIssue(db, actor, orgId, { id: taskId });
@@ -442,7 +511,7 @@ export function createNativeDeliveryService(deps: NativeDeliveryDeps) {
     if (
       !isAllowed(
         toolAccess(await freshGrantedKeys(db, ctx.orgId, ctx.agentId), {
-          name: `github_${request.tool}`,
+          name: request.approval?.tool ?? `github_${request.tool}`,
           scope: `github:${request.scope}`,
           connectionId: request.connectionId,
         }),
@@ -466,6 +535,8 @@ export function createNativeDeliveryService(deps: NativeDeliveryDeps) {
     const before = await nativeSnapshot(request);
     if ("reason" in before) return block(before.reason);
     try {
+      const authorityBefore = await approvalReason(request);
+      if (authorityBefore) return block(authorityBefore);
       const remote = await observe(deps, request.ctx.orgId, before.binding.repository, request.ctx.signal, true);
       if (remote.repository.id !== before.binding.repository.id) return block("native_repository_identity_changed");
       if (remote.repository.defaultBranch !== before.binding.repository.defaultBranch)
@@ -478,12 +549,14 @@ export function createNativeDeliveryService(deps: NativeDeliveryDeps) {
         return block("native_binding_changed_during_observation");
       const after = await nativeSnapshot(request);
       if ("reason" in after) return block(after.reason);
+      const authorityAfter = await approvalReason(request);
+      if (authorityAfter) return block(authorityAfter);
       // Provider identity is a real observation, not a checks/review attestation, target lease or release grant.
       // Keep the existing publisher responsible; never synthesize operation IDs/fencing from a task or approval ID.
       return block(
         "native_target_unverified",
         "trusted_check_policy_unavailable",
-        "native_release_authority_unavailable",
+        ...(!request.approval ? ["native_release_authority_unavailable"] : []),
         "native_release_operation_unavailable",
         "native_release_lease_unavailable",
       );

@@ -9,7 +9,7 @@ import { isCustom } from "./custom";
 import { composioToolkitUrl, MCP_PRESETS, type McpPreset, presetForServer } from "./presets";
 
 /**
- * Brand icons the web app serves, keyed by icon name. One color, from
+ * Brand and generic connector icons the web app serves, keyed by icon name. One color, from
  * `apps/web/public/connectors` (Simple Icons, CC0, or the brand's own mark:
  * see the README there): drawn in the brand color, no color = the ink
  * (near-black, very light or many-colored brands). `own`: from
@@ -17,6 +17,8 @@ import { composioToolkitUrl, MCP_PRESETS, type McpPreset, presetForServer } from
  * flatten (PayPal's three blues, Canva's gradient).
  */
 export const CONNECTOR_BRANDS: Record<string, { file: string; color: string | null; own?: true }> = {
+  // A preset may explicitly choose our generic connector glyph (Stitch); it is not a vendor mark.
+  plug: { file: "plug", color: null },
   github: { file: "github", color: null },
   linear: { file: "linear", color: "#5E6AD2" },
   sentry: { file: "sentry", color: null },

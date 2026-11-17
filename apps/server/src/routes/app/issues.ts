@@ -16,6 +16,7 @@ import {
   listIssueColumns,
   listIssueProjects,
   listIssues,
+  type NativeDeliveryBindingView,
   nativeDeliveryBindingChangeSchema,
   openTaskConversation,
   PROJECT_NAME_MAX,
@@ -27,6 +28,7 @@ import {
   updateIssueProject,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
+import { reconcileDelivery, renderFounderReport } from "../../../../../scripts/delivery/reconcile.mjs";
 import {
   type AppDeps,
   body,
@@ -117,6 +119,73 @@ const DeliveryBinding = z
   })
   .openapi("TaskDeliveryBinding");
 
+const DeliveryTargetState = z.enum(["available", "unavailable", "unknown", "stale", "not_run"]);
+const DeliveryReport = z
+  .object({
+    locale: z.literal("zh-HK"),
+    userVisibleOutcome: z.string().max(1000),
+    howToUse: z.string().max(1000),
+    currentAvailability: z.enum(["available", "partial", "unavailable", "unknown", "stale", "not_run"]),
+    publicTargets: z
+      .array(
+        z.object({
+          label: z.string().max(80),
+          state: DeliveryTargetState,
+          text: z.string().max(500),
+          missingGates: z.array(z.string().max(80)).max(10),
+        }),
+      )
+      .max(128),
+    targetsOmitted: z.number().int().min(0),
+    missingGateLabels: z.array(z.string().max(80)).max(10),
+    ownerStatus: z.string().max(200),
+    nextStep: z.string().max(1000),
+    ownerDecisionRequired: z.boolean().nullable(),
+    freshness: z.object({
+      generatedAt: z.string().datetime().nullable(),
+      result: z.enum(["pass", "fail", "unknown", "stale", "not_run", "not_applicable"]),
+      coverage: z.enum(["complete", "incomplete"]),
+    }),
+    isAuthorizationGrant: z.literal(false),
+  })
+  .openapi("IssueDeliveryReport");
+
+/** A display projection after task ACLs; a repository relation supplies no verified delivery evidence. */
+function publicDeliveryReport(binding: NativeDeliveryBindingView): z.infer<typeof DeliveryReport> {
+  const now = Date.now();
+  const projection = reconcileDelivery(
+    {
+      taskId: binding.taskId,
+      projectId: binding.projectId,
+      repositoryId: binding.repository?.id,
+      branch: binding.repository?.defaultBranch,
+      targetIds: binding.state === "configured" ? (binding.targets?.map((target) => target.id) ?? []) : [],
+    },
+    null,
+    { now },
+  );
+  const report = renderFounderReport(projection, { now });
+  // Explicit public fields only: raw IDs, owner references and technical evidence remain in native records.
+  return DeliveryReport.parse({
+    locale: report.locale,
+    userVisibleOutcome: report.userVisibleOutcome,
+    howToUse: report.howToUse,
+    currentAvailability: report.currentAvailability,
+    publicTargets: report.publicTargets,
+    targetsOmitted: report.targetsOmitted,
+    missingGateLabels: report.missingGateLabels,
+    ownerStatus: report.ownerStatus,
+    nextStep: report.nextStep,
+    ownerDecisionRequired: report.ownerDecisionRequired,
+    freshness: {
+      generatedAt: report.freshness.observedAt,
+      result: report.freshness.result,
+      coverage: report.freshness.coverage,
+    },
+    isAuthorizationGrant: false,
+  });
+}
+
 const Issue = z
   .object({
     id: z.uuid(),
@@ -124,6 +193,9 @@ const Issue = z
     deliveryBinding: DeliveryBinding.optional().openapi({
       description:
         "Owner-configured repository relation. This is never release authority or verified runtime availability.",
+    }),
+    deliveryReport: DeliveryReport.optional().openapi({
+      description: "Public delivery display; generatedAt is calculation time, never verified runtime evidence.",
     }),
     title: z.string(),
     description: z.string(),
@@ -293,7 +365,15 @@ export function issueRoutes(deps: AppDeps) {
       const actor = person(c.get("user").id);
       const issue = await getIssueDetail(db, actor, orgId, { number });
       const deliveryBinding = await delivery.readBinding(actor, orgId, issue.id);
-      return c.json({ ...issue, ...(deliveryBinding.state === "missing" ? {} : { deliveryBinding }) }, 200);
+      return c.json(
+        {
+          ...issue,
+          ...(deliveryBinding.state === "missing"
+            ? {}
+            : { deliveryBinding, deliveryReport: publicDeliveryReport(deliveryBinding) }),
+        },
+        200,
+      );
     },
   );
 
@@ -312,7 +392,15 @@ export function issueRoutes(deps: AppDeps) {
       const actor = person(c.get("user").id);
       const issue = await getIssueDetail(db, actor, orgId, { id: issueId });
       const deliveryBinding = await delivery.readBinding(actor, orgId, issueId);
-      return c.json({ ...issue, ...(deliveryBinding.state === "missing" ? {} : { deliveryBinding }) }, 200);
+      return c.json(
+        {
+          ...issue,
+          ...(deliveryBinding.state === "missing"
+            ? {}
+            : { deliveryBinding, deliveryReport: publicDeliveryReport(deliveryBinding) }),
+        },
+        200,
+      );
     },
   );
 

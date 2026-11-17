@@ -1,13 +1,53 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
   checkConnectorDelivery,
+  createDeliveryApprovalHandoff,
   createNativeDeliveryGuard,
   type DeliveryRequest,
   type NativeDeliveryProof,
   runConnectorDelivery,
 } from "../src/connectors/delivery-guard";
 import type { ToolContext } from "../src/tools/types";
+
+const approvalHash = (input: ReturnType<typeof call>["input"]) =>
+  createHash("sha256")
+    .update(
+      JSON.stringify({
+        connectionId: "connection-1",
+        params: { owner: input.owner, pullNumber: input.pullNumber, repo: input.repo, sha: input.sha },
+        scope: "github:pr.merge",
+        tool: "github_merge_pull_request",
+      }),
+    )
+    .digest("hex");
+
+function handoff(c = call()) {
+  const held = createDeliveryApprovalHandoff(
+    c.ctx,
+    {
+      name: "github_merge_pull_request",
+      scope: "github:pr.merge",
+      connectionId: c.connectionId,
+      connector: { key: "github", via: "mcp", tool: c.tool },
+    },
+    {
+      id: "approval-1",
+      orgId: c.ctx.orgId,
+      agentId: c.ctx.agentId,
+      runId: c.ctx.runId,
+      toolUseId: c.ctx.toolUseId ?? "",
+      tool: "github_merge_pull_request",
+      scope: "github:pr.merge",
+      connectionId: c.connectionId,
+      params: c.input,
+      actionHash: approvalHash(c.input),
+    },
+  );
+  assert.ok(held);
+  return held;
+}
 
 const head = "a".repeat(40);
 const now = 1_800_000_000_000;
@@ -30,7 +70,7 @@ function call() {
     } as ToolContext,
   };
 }
-function proof(request: DeliveryRequest): NativeDeliveryProof {
+function proof(request: DeliveryRequest): Extract<NativeDeliveryProof, { decision: "eligible" }> {
   return {
     decision: "eligible",
     requestKey: request.requestKey,
@@ -55,6 +95,192 @@ function proof(request: DeliveryRequest): NativeDeliveryProof {
 }
 const guard = (verify: (request: DeliveryRequest) => Promise<NativeDeliveryProof> = async (r) => proof(r)) =>
   createNativeDeliveryGuard({ verify, now: () => now });
+
+function readiness(request: DeliveryRequest) {
+  const p = proof(request);
+  return {
+    decision: "ready" as const,
+    requestKey: p.requestKey,
+    orgId: p.orgId,
+    agentId: p.agentId,
+    runId: p.runId,
+    connectionId: p.connectionId,
+    taskId: p.taskId,
+    repositoryId: p.repositoryId,
+    repository: p.repository,
+    sourceHead: p.sourceHead,
+    targetId: p.targetId,
+    policyVersion: p.policyVersion,
+    evidenceIds: p.evidenceIds,
+    observedAt: p.observedAt,
+    expiresAt: p.expiresAt,
+  };
+}
+
+test("readiness permits preflight without claiming an operation, authority or lease", async () => {
+  const result = await checkConnectorDelivery(
+    guard(async (r) => readiness(r)),
+    call(),
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data?.deliveryGuardian, {
+    status: "ready_for_approval",
+    phase: "preflight",
+    taskId: "task-1",
+    targetId: "target-1",
+    repositoryId: "12345",
+    sourceHead: head,
+    policyVersion: "delivery-policy-1",
+    evidenceIds: ["native-check-1", "native-review-1"],
+    isAuthorizationGrant: false,
+  });
+});
+
+test("readiness alone never executes even with caller approved flags", async () => {
+  const c = call();
+  c.ctx.approved = true;
+  let calls = 0;
+  const result = await runConnectorDelivery(
+    guard(async (r) => readiness(r)),
+    c,
+    async () => ++calls,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(calls, 0);
+  assert.ok(JSON.stringify(result.data).includes("native_execution_proof_required"));
+});
+
+for (const [name, change] of Object.entries({
+  "wrong subject": { agentId: "foreign" },
+  "wrong head": { sourceHead: "b".repeat(40) },
+  "missing target": { targetId: "" },
+  "missing policy": { policyVersion: "" },
+  "missing evidence": { evidenceIds: [] },
+  "expired observation": { expiresAt: now },
+})) {
+  test(`readiness with ${name} cannot open an approval`, async () => {
+    const result = await checkConnectorDelivery(
+      guard(async (r) => ({ ...readiness(r), ...change })),
+      call(),
+    );
+    assert.equal(result.ok, false);
+  });
+}
+
+test("opaque approval handoff exposes a host reference, retires checking and permits one dispatch", async () => {
+  const c = call();
+  const h = handoff(c);
+  c.ctx.deliveryApproval = h.checking;
+  const seen: DeliveryRequest[] = [];
+  const g = guard(async (r) => {
+    seen.push(r);
+    return proof(r);
+  });
+  assert.equal((await checkConnectorDelivery(g, c)).ok, true);
+  assert.deepEqual(seen[0]?.approval, {
+    id: "approval-1",
+    tool: "github_merge_pull_request",
+    scope: "github:pr.merge",
+    actionHash: approvalHash(c.input),
+    stage: "checking",
+    executedAt: null,
+  });
+  const checking = h.checking;
+  const claimed = h.claim(new Date(now));
+  assert.equal((await checkConnectorDelivery(g, c)).ok, false);
+  c.ctx.deliveryApproval = claimed;
+  let calls = 0;
+  assert.equal((await runConnectorDelivery(g, c, async () => ++calls)).ok, true);
+  assert.equal((await runConnectorDelivery(g, c, async () => ++calls)).ok, false);
+  assert.equal(calls, 1);
+  assert.notEqual(checking, claimed);
+  assert.deepEqual(Object.keys(claimed), []);
+  assert.equal(Object.isFrozen(claimed), true);
+  h.close();
+  assert.equal((await checkConnectorDelivery(g, c)).ok, false);
+});
+
+test("a checking reference and a retired reference cannot execute even with an eligible host proof", async () => {
+  const c = call();
+  const h = handoff(c);
+  c.ctx.deliveryApproval = h.checking;
+  let calls = 0;
+  assert.equal((await runConnectorDelivery(guard(), c, async () => ++calls)).ok, false);
+  const claimed = h.claim(new Date(now));
+  h.close();
+  c.ctx.deliveryApproval = claimed;
+  assert.equal((await runConnectorDelivery(guard(), c, async () => ++calls)).ok, false);
+  assert.equal(calls, 0);
+});
+
+test("serialized or look-alike approval locators are refused before the host verifier", async () => {
+  const c = call();
+  const h = handoff(c);
+  let verifies = 0;
+  const g = guard(async (r) => {
+    verifies++;
+    return proof(r);
+  });
+  for (const fake of [{ id: "approval-1", stage: "claimed" }, JSON.parse(JSON.stringify(h.checking))]) {
+    c.ctx.deliveryApproval = fake as never;
+    assert.equal((await checkConnectorDelivery(g, c)).ok, false);
+  }
+  assert.equal(verifies, 0);
+  h.close();
+});
+
+test("caller-authored approval properties never become a native request reference", async () => {
+  const c = Object.assign(call(), {
+    approval: { id: "forged", stage: "claimed", executedAt: new Date(now).toISOString() },
+  });
+  const result = await checkConnectorDelivery(
+    guard(async (request) => {
+      assert.equal(request.approval, undefined);
+      return readiness(request);
+    }),
+    c,
+  );
+  assert.equal(result.ok, true);
+});
+
+for (const key of [
+  "orgId",
+  "agentId",
+  "runId",
+  "toolUseId",
+  "channelId",
+  "threadRootId",
+  "triggerMessageId",
+] as const) {
+  test(`approval locator cannot move to another ${key}`, async () => {
+    const c = call();
+    const h = handoff(c);
+    c.ctx.deliveryApproval = h.claim(new Date(now));
+    c.ctx[key] = "foreign";
+    let calls = 0;
+    assert.equal((await runConnectorDelivery(guard(), c, async () => ++calls)).ok, false);
+    assert.equal(calls, 0);
+    h.close();
+  });
+}
+
+for (const field of ["input", "connection", "tool", "scope", "db", "bridge"] as const) {
+  test(`approval locator refuses changed ${field} before provider dispatch`, async () => {
+    const c = call();
+    const h = handoff(c);
+    c.ctx.deliveryApproval = h.claim(new Date(now));
+    if (field === "input") c.input.sha = "b".repeat(40);
+    if (field === "connection") c.connectionId = "foreign";
+    if (field === "tool") c.tool = "foreign";
+    if (field === "scope") c.scope = "foreign";
+    if (field === "db") c.ctx.db = {} as ToolContext["db"];
+    if (field === "bridge") c.ctx.bridge = { machineId: "foreign" };
+    let calls = 0;
+    assert.equal((await runConnectorDelivery(guard(), c, async () => ++calls)).ok, false);
+    assert.equal(calls, 0);
+    h.close();
+  });
+}
 
 test("missing native adapter blocks preflight and direct execute without touching provider", async () => {
   const c = call();

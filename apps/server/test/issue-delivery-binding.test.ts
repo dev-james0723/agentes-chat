@@ -253,3 +253,167 @@ test("the task route honors an explicit null from its host GitHub App resolver",
   expect(envReads).toBe(0);
   expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
 });
+
+test("task delivery detail GETs expose an unknown public report without provider calls or invented evidence", async () => {
+  const f = await fixture();
+  const saved = await f.api(`/issues/${f.issue.id}`, { method: "PATCH", json: { deliveryBinding: f.binding } });
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toMatchObject({ deliveryBinding: { state: "configured", authorityGranted: false } });
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+  for (const path of [`/issues/${f.issue.id}`, `/issues/by-number/${f.issue.number}`]) {
+    const response = await f.api(path);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { deliveryReport?: Record<string, unknown> };
+    expect(body.deliveryReport).toBeDefined();
+    const report = body.deliveryReport;
+    expect(report).toMatchObject({
+      locale: "zh-HK",
+      currentAvailability: "unknown",
+      publicTargets: [{ label: "目標 1", state: "unknown", text: "目前狀態未核實。" }],
+      ownerStatus: "發布負責人待核實。",
+      ownerDecisionRequired: null,
+      freshness: { result: "unknown", coverage: "incomplete" },
+      isAuthorizationGrant: false,
+    });
+    expect(Object.keys(report ?? {}).sort()).toEqual(
+      [
+        "locale",
+        "userVisibleOutcome",
+        "howToUse",
+        "currentAvailability",
+        "publicTargets",
+        "targetsOmitted",
+        "missingGateLabels",
+        "ownerStatus",
+        "nextStep",
+        "ownerDecisionRequired",
+        "freshness",
+        "isAuthorizationGrant",
+      ].sort(),
+    );
+    expect(report?.missingGateLabels).toContain("實際運行版本");
+    expect(report?.missingGateLabels).toContain("真實功能操作驗證");
+    const freshness = report?.freshness as Record<string, unknown>;
+    expect(Object.keys(freshness).sort()).toEqual(["coverage", "generatedAt", "result"]);
+    expect(typeof freshness.generatedAt).toBe("string");
+    if (typeof freshness.generatedAt !== "string") throw new Error("Missing public report calculation time");
+    expect(new Date(freshness.generatedAt).toISOString()).toBe(freshness.generatedAt);
+    const publicText = JSON.stringify(report);
+    for (const hidden of [
+      f.issue.id,
+      f.project.id,
+      f.ownerId,
+      "selected-mac-installation",
+      "fixture-github-credential",
+      "connectionId",
+      "candidateSha",
+      "privateDetails",
+      "evidenceRefs",
+    ])
+      expect(publicText).not.toContain(hidden);
+    expect(publicText).not.toContain("已核實可用");
+  }
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+});
+
+test("task delivery public report explains how to use the existing view", async () => {
+  const f = await fixture();
+  const saved = await f.api(`/issues/${f.issue.id}`, { method: "PATCH", json: { deliveryBinding: f.binding } });
+  expect(saved.status).toBe(200);
+  expect(await saved.json()).toMatchObject({ deliveryBinding: { state: "configured" } });
+  const response = await f.api(`/issues/${f.issue.id}`);
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as { deliveryReport?: Record<string, unknown> };
+  expect(body.deliveryReport).toMatchObject({ currentAvailability: "unknown", isAuthorizationGrant: false });
+  expect(body.deliveryReport?.howToUse).toBe("逐個目標查看目前狀態同未完成驗證；技術紀錄由原生任務嘅私有詳情查閱。");
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+});
+
+test("task delivery report stays absent for ordinary tasks and comments cannot create it", async () => {
+  const f = await fixture();
+  const posted = await f.api(`/issues/${f.issue.id}/comments`, {
+    json: { text: JSON.stringify({ deliveryReport: { currentAvailability: "available" }, ...f.binding }) },
+  });
+  expect(posted.status).toBe(201);
+  for (const path of [`/issues/${f.issue.id}`, `/issues/by-number/${f.issue.number}`]) {
+    const response = await f.api(path);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { deliveryBinding?: unknown; deliveryReport?: unknown };
+    expect(body.deliveryBinding).toBeUndefined();
+    expect(body.deliveryReport).toBeUndefined();
+  }
+  expect(f.reads).toEqual([]);
+});
+
+test("task delivery report cannot stay green after its native binding is revoked", async () => {
+  const f = await fixture();
+  const saved = await f.api(`/issues/${f.issue.id}`, { method: "PATCH", json: { deliveryBinding: f.binding } });
+  expect(saved.status).toBe(200);
+  const first = (await saved.json()) as { deliveryBinding: { revision: string } };
+  const revoked = await f.api(`/issues/${f.issue.id}`, {
+    method: "PATCH",
+    json: {
+      deliveryBinding: {
+        action: "revoke",
+        expectedRevision: first.deliveryBinding.revision,
+        reason: "Fixture revocation",
+      },
+    },
+  });
+  expect(revoked.status).toBe(200);
+  const response = await f.api(`/issues/${f.issue.id}`);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    deliveryBinding: { state: "revoked", authorityGranted: false },
+    deliveryReport: {
+      currentAvailability: "unknown",
+      publicTargets: [],
+      ownerDecisionRequired: null,
+      freshness: { result: "unknown", coverage: "incomplete" },
+      isAuthorizationGrant: false,
+    },
+  });
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+});
+
+test("task delivery report refuses a malformed reserved record instead of echoing its fields", async () => {
+  const f = await fixture();
+  const saved = await f.api(`/issues/${f.issue.id}`, { method: "PATCH", json: { deliveryBinding: f.binding } });
+  expect(saved.status).toBe(200);
+  const first = (await saved.json()) as { deliveryBinding: { revision: string } };
+  await t.db
+    .update(schema.issueActivity)
+    .set({ data: { state: "available", secret: "fixture-private-record" } })
+    .where(eq(schema.issueActivity.id, first.deliveryBinding.revision));
+  const response = await f.api(`/issues/${f.issue.id}`);
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body).toMatchObject({
+    deliveryBinding: { state: "untrusted", authorityGranted: false },
+    deliveryReport: { currentAvailability: "unknown", publicTargets: [], isAuthorizationGrant: false },
+  });
+  expect(JSON.stringify(body)).not.toContain("fixture-private-record");
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+});
+
+test("task delivery report remains behind the native task ACL", async () => {
+  const f = await fixture();
+  const member = await joinByInvitation(t, f.owner, f.orgId, "report-outsider@example.com");
+  const saved = await f.api(`/issues/${f.issue.id}`, { method: "PATCH", json: { deliveryBinding: f.binding } });
+  expect(saved.status).toBe(200);
+  await t.db
+    .update(schema.issues)
+    .set({ restricted: true, audienceUserIds: [f.ownerId] })
+    .where(eq(schema.issues.id, f.issue.id));
+  const ownerRead = await f.api(`/issues/${f.issue.id}`);
+  expect(ownerRead.status).toBe(200);
+  expect(await ownerRead.json()).toMatchObject({ deliveryBinding: { state: "configured" } });
+  for (const path of [`/issues/${f.issue.id}`, `/issues/by-number/${f.issue.number}`]) {
+    const denied = await member(`/api/app/organizations/${f.orgId}${path}`);
+    expect(denied.status).toBe(404);
+    const body = await denied.json();
+    expect(body).not.toHaveProperty("deliveryReport");
+    expect(JSON.stringify(body)).not.toContain("selected-mac-installation");
+  }
+  expect(f.reads).toEqual(["https://api.github.com/repos/acme/app"]);
+});

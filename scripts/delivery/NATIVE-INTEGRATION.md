@@ -1,5 +1,27 @@
 # Delivery Guardian — 原生接駁最小方案
 
+## 2026-11-17 原生 readiness／approval 交接候選增補
+
+**這一增補仍是 source-only；沒有建立 production approval／binding／grant，沒有發布或取得 host deployment lock。** 它補上現有 Gateway 的一項流程缺口：初次 `checkCall` 發生在批准建立之前，因此不能要求尚未存在的批准；真正 execute 則必須另外取得目前有效的執行證明。
+
+Host verifier 可回傳 `decision: ready`，當中須有同一 org／agent／run／connection、native task、immutable repo／head、target、check policy／evidence 及短有效期。Guard 只在 preflight 接受它，狀態標示 `ready_for_approval`，並明示 `isAuthorizationGrant: false`。它不提供 operation、action authority、lease 或 fencing，也不能通過 `runConnectorDelivery`。能否建立批准仍由原有 Gateway policy 決定；不能用 readiness 直接執行。
+
+對既有 catalog GitHub release call 的明確批准路徑，`runApproved` 建立只存於本次呼叫的 opaque locator：
+
+1. `checking` locator 對應現有 approval ID，綁定 DB instance、org／agent／run／tool-use／conversation context、catalog 原始工具、scope、connection 及完整 action hash。它不是 caller input，序列化或仿造物件不能還原。
+2. 原有 `executedAt` CAS 成功後，Gateway 只使用 DB 回傳的時間建立 `claimed` locator，並退役 checking locator。CAS 原有條件及一般工具批准語意不變。
+3. Guard 將 locator 轉成只供 host verifier 閱讀的不可變 reference；caller 自行塞進 call／input 的 approval JSON 不會被採用。Signature 加入後的 `wireInput` 仍另外檢查 repo／PR／expected head，原先批准的參數 hash 不會因署名而放寬。
+4. Native service 在 provider 觀察前後，重讀該 approval 的 native row、同一 subject／完整 params／hash、approved status、有效期、目前決策人的 membership／role／owner／cover，以及 checking 或 claimed 的精確執行時間。Caller 的 `approved: true` 無法代替它。
+5. 立即 dispatch 前，同一 locator 只可消耗一次；Gateway `finally` 一律將本次所有 locator 退役。Pre-CAS 拒絕保留 `executedAt = null` 及結構化原因；post-CAS 撤銷則停止 provider call，保留既有執行標記。Provider timeout／error reply 仍是 `outcome_unknown`，不能自動重試或宣稱 merged。
+
+這個 locator 是短暫交接，不是新的授權庫、target lease、跨 approval 去重或 outcome reconciliation。Native explicit approval 只解決精確工具操作的既有批准來源；**不等於 runtime target 發布授權或 File Room publisher grant**。
+
+`approvalsLevel: never`、既有 `mergeRepos` 及其他自動政策沒有新增批准、偽造 ID 或改變其分支。此最小增補只接明確 native approval；自動政策的完整 native execution reference 尚未實作，缺少 target／checks／operation／lease 時仍拒絕。一般 reads／tasks 維持原流程。Production service 仍保留 `native_target_unverified`、`trusted_check_policy_unavailable`、`native_release_operation_unavailable`、`native_release_lease_unavailable` 等實際缺口，不會因本增補變成可發布。
+
+明確批准的 scope 重驗使用 locator 綁定的實際 catalog tool 名稱，因此第二個／改名前綴的 GitHub connection，其 `deny:{實際工具名}` 亦優先拒絕。沒有 approval reference 的 native snapshot 仍保留原有名稱推導；原 Gateway 會先按真實工具名稱檢查，但這不代表自動路徑的 native alias／authorization reference 已全面接好。該路徑仍保持上述發布阻擋。
+
+測試先保留兩個真實 Mac Gateway RED：readiness 不能建立批准，以及已經完成 `decideApproval` 的恢復呼叫沒有 native reference。再測同一批准一次執行、署名及 expected head、前後 CAS 撤銷、expiry／decider 撤權、完整 action 變動、假 locator、跨 context、退役／重播、unknown outcome 與自動政策不產生新卡。Helper fixtures、PGlite、Mac typecheck、獨立 exact-byte review 及真正啟用後的負向測試分開記錄；任何一種均不能代替另一種。
+
 ## 2026-11-17 原生 task binding 候選增補
 
 **這是 source-only 實作候選；尚未部署、未建立任何 production binding，亦未授予或執行發布。** 下方 2026-11-16 的唯讀核查保留為歷史基線；其中「尚未改動」及缺口描述只適用於當時。當前執行／部署證據以原生任務的最新收據為準，不能從本文或測試成功推斷。

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import type { CallCheck, ToolContext } from "../tools/types";
+import type { schema } from "@agenteschat/db";
+import { canonicalJson } from "../tools/json-schema";
+import type { CallCheck, ToolContext, ToolDefinition } from "../tools/types";
 
 const MAX_AGE_MS = 10_000;
 const MAX_REQUEST_BYTES = 128 * 1024;
@@ -23,6 +25,25 @@ export interface DeliveryRequest extends DeliveryCall {
   phase: "preflight" | "execute";
   /** Exact request binding, not the stable release-operation id. */
   requestKey: string;
+  /** Host-generated locator of the existing native approval; the verifier must reload and validate that row. */
+  approval?: NativeDeliveryApprovalReference;
+}
+
+interface DeliveryReadiness {
+  requestKey: string;
+  orgId: string;
+  agentId: string;
+  runId: string;
+  connectionId: string;
+  taskId: string;
+  repositoryId: string;
+  repository: string;
+  sourceHead: string;
+  targetId: string;
+  policyVersion: string;
+  evidenceIds: string[];
+  observedAt: number;
+  expiresAt: number;
 }
 
 /**
@@ -32,27 +53,169 @@ export interface DeliveryRequest extends DeliveryCall {
  */
 export type NativeDeliveryProof =
   | { decision: "blocked"; reasonCodes: string[] }
-  | {
+  /** Readiness may reach the Gateway's own approval policy; it never authorizes a provider mutation. */
+  | (DeliveryReadiness & { decision: "ready" })
+  | (DeliveryReadiness & {
       decision: "eligible";
-      requestKey: string;
-      orgId: string;
-      agentId: string;
-      runId: string;
-      connectionId: string;
-      taskId: string;
       operationId: string;
-      repositoryId: string;
-      repository: string;
-      sourceHead: string;
-      targetId: string;
       authorityRef: string;
       leaseRef: string;
       fencingToken: string;
-      policyVersion: string;
-      evidenceIds: string[];
-      observedAt: number;
-      expiresAt: number;
-    };
+    });
+
+declare const nativeApprovalBrand: unique symbol;
+export interface NativeDeliveryApproval {
+  readonly [nativeApprovalBrand]: true;
+}
+export interface NativeDeliveryApprovalReference {
+  readonly id: string;
+  readonly tool: string;
+  readonly scope: string;
+  readonly actionHash: string;
+  readonly stage: "checking" | "claimed";
+  readonly executedAt: string | null;
+}
+type ApprovalSelection = Pick<
+  typeof schema.approvals.$inferSelect,
+  "id" | "orgId" | "agentId" | "runId" | "toolUseId" | "tool" | "scope" | "connectionId" | "params" | "actionHash"
+>;
+type ApprovalTool = Pick<ToolDefinition, "name" | "scope" | "connectionId" | "connector">;
+type ApprovalHandoffState = { closed: boolean; dispatched: boolean };
+type ApprovalLocator = {
+  db: ToolContext["db"];
+  subject: string;
+  rawTool: string;
+  connectionId: string | null;
+  validTool: boolean;
+  reference: NativeDeliveryApprovalReference;
+  state: ApprovalHandoffState;
+};
+const approvalLocators = new WeakMap<NativeDeliveryApproval, ApprovalLocator>();
+class ApprovalHandoffError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.code = code;
+  }
+}
+const approvalSubject = (
+  ctx: ToolContext,
+  subject: { orgId: string; agentId: string; runId: string | null; toolUseId?: string } = ctx,
+) =>
+  canonicalJson({
+    orgId: subject.orgId,
+    agentId: subject.agentId,
+    runId: subject.runId,
+    toolUseId: subject.toolUseId,
+    channelId: ctx.channelId,
+    threadRootId: ctx.threadRootId,
+    triggerMessageId: ctx.triggerMessageId,
+    bridge: ctx.bridge ?? null,
+  });
+
+/**
+ * Gateway-only, invocation-local locator. It grants nothing, stores no authority and never replaces the native
+ * approval row. A checking token is retired when the existing CAS claims execution; close always retires both.
+ */
+export function createDeliveryApprovalHandoff(ctx: ToolContext, tool: ApprovalTool, approval: ApprovalSelection) {
+  if (
+    tool.connector?.key !== "github" ||
+    tool.connector.via !== "mcp" ||
+    !guardedDeliveryScope(tool.scope.replace(/^github:/, "")) ||
+    !tool.scope.startsWith("github:")
+  )
+    return undefined;
+  const state: ApprovalHandoffState = { closed: false, dispatched: false };
+  const keys: NativeDeliveryApproval[] = [];
+  const reference = {
+    id: approval.id,
+    tool: approval.tool,
+    scope: approval.scope,
+    actionHash: approval.actionHash,
+  };
+  let expected = "";
+  let subject = "";
+  try {
+    expected = createHash("sha256")
+      .update(
+        canonicalJson({
+          tool: approval.tool,
+          scope: approval.scope,
+          connectionId: approval.connectionId,
+          params: copyRecord(approval.params),
+        }),
+      )
+      .digest("hex");
+    subject = approvalSubject(ctx, approval);
+  } catch {
+    /* Invalid stored input gets a non-matching locator, never an execution fallback. */
+  }
+  const base = {
+    db: ctx.db,
+    subject,
+    rawTool: tool.connector.tool,
+    connectionId: approval.connectionId,
+    validTool:
+      tool.name === approval.tool &&
+      tool.scope === approval.scope &&
+      (tool.connectionId ?? null) === approval.connectionId &&
+      expected === approval.actionHash,
+    state,
+  };
+  const mint = (stage: NativeDeliveryApprovalReference["stage"], executedAt: string | null) => {
+    const key = Object.freeze({}) as NativeDeliveryApproval;
+    keys.push(key);
+    approvalLocators.set(key, { ...base, reference: Object.freeze({ ...reference, stage, executedAt }) });
+    return key;
+  };
+  const checking = mint("checking", null);
+  let claimed = false;
+  return {
+    checking,
+    claim(executedAt: Date): NativeDeliveryApproval {
+      if (state.closed || claimed || !Number.isFinite(executedAt.getTime()))
+        throw new ApprovalHandoffError("native_approval_handoff_invalid");
+      claimed = true;
+      approvalLocators.delete(checking);
+      return mint("claimed", executedAt.toISOString());
+    },
+    close() {
+      state.closed = true;
+      for (const key of keys) approvalLocators.delete(key);
+    },
+  };
+}
+
+function approvalOf(call: DeliveryCall, phase: DeliveryRequest["phase"]): NativeDeliveryApprovalReference | undefined {
+  const token = call.ctx.deliveryApproval;
+  if (token === undefined) return undefined;
+  const held = token && typeof token === "object" ? approvalLocators.get(token) : undefined;
+  if (!held || held.state.closed) throw new ApprovalHandoffError("native_approval_handoff_invalid");
+  if (held.state.dispatched) throw new ApprovalHandoffError("native_approval_already_dispatched");
+  const hash = createHash("sha256")
+    .update(
+      canonicalJson({
+        tool: held.reference.tool,
+        scope: held.reference.scope,
+        connectionId: call.connectionId,
+        params: call.input,
+      }),
+    )
+    .digest("hex");
+  if (
+    !held.validTool ||
+    held.db !== call.ctx.db ||
+    held.subject !== approvalSubject(call.ctx) ||
+    held.rawTool !== call.tool ||
+    held.reference.scope !== `github:${call.scope}` ||
+    held.connectionId !== call.connectionId ||
+    held.reference.actionHash !== hash
+  )
+    throw new ApprovalHandoffError("native_approval_handoff_mismatch");
+  if (phase === "execute" && held.reference.stage !== "claimed")
+    throw new ApprovalHandoffError("native_approval_not_claimed");
+  return held.reference;
+}
 
 declare const nativeGuardBrand: unique symbol;
 export interface NativeDeliveryGuard {
@@ -143,6 +306,7 @@ function requestOf(call: DeliveryCall, phase: DeliveryRequest["phase"]): Deliver
   const wireInput = copyRecord(call.wireInput ?? call.input);
   const inputSchema = copyRecord(call.inputSchema);
   const { orgId, agentId, runId, toolUseId, bridge } = call.ctx;
+  const approval = approvalOf(call, phase);
   const requestKey = createHash("sha256")
     .update(
       JSON.stringify({
@@ -157,6 +321,7 @@ function requestOf(call: DeliveryCall, phase: DeliveryRequest["phase"]): Deliver
         input,
         wireInput,
         inputSchema,
+        approval,
       }),
     )
     .digest("hex");
@@ -168,6 +333,7 @@ function requestOf(call: DeliveryCall, phase: DeliveryRequest["phase"]): Deliver
     ctx: Object.freeze({ ...call.ctx }),
     requestKey,
     phase,
+    approval,
   });
 }
 
@@ -202,8 +368,10 @@ function targetReason(r: DeliveryRequest): string | null {
 }
 
 type EligibleProof = Extract<NativeDeliveryProof, { decision: "eligible" }>;
+type ReadyProof = Extract<NativeDeliveryProof, { decision: "ready" }>;
 function proofReason(proof: NativeDeliveryProof, r: DeliveryRequest, now: number): string | null {
-  if (!proof || proof.decision !== "eligible") return "native_verification_failed";
+  if (!proof || (proof.decision !== "eligible" && proof.decision !== "ready")) return "native_verification_failed";
+  if (proof.decision === "ready" && r.phase !== "preflight") return "native_execution_proof_required";
   if (
     proof.requestKey !== r.requestKey ||
     proof.orgId !== r.ctx.orgId ||
@@ -219,16 +387,11 @@ function proofReason(proof: NativeDeliveryProof, r: DeliveryRequest, now: number
     !/^[1-9][0-9]{0,29}$/.test(proof.repositoryId)
   )
     return "native_candidate_mismatch";
-  for (const key of [
-    "taskId",
-    "operationId",
-    "targetId",
-    "authorityRef",
-    "leaseRef",
-    "fencingToken",
-    "policyVersion",
-  ] as const)
+  for (const key of ["taskId", "targetId", "policyVersion"] as const)
     if (typeof proof[key] !== "string" || !REF.test(proof[key])) return "native_binding_incomplete";
+  if (proof.decision === "eligible")
+    for (const key of ["operationId", "authorityRef", "leaseRef", "fencingToken"] as const)
+      if (typeof proof[key] !== "string" || !REF.test(proof[key])) return "native_binding_incomplete";
   if (
     !Array.isArray(proof.evidenceIds) ||
     proof.evidenceIds.length === 0 ||
@@ -249,13 +412,13 @@ function proofReason(proof: NativeDeliveryProof, r: DeliveryRequest, now: number
   return null;
 }
 
-function proofData(proof: EligibleProof, phase: DeliveryRequest["phase"]) {
+function proofData(proof: EligibleProof | ReadyProof, phase: DeliveryRequest["phase"]) {
   return {
     deliveryGuardian: {
-      status: "eligible",
+      status: proof.decision === "ready" ? "ready_for_approval" : "eligible",
       phase,
       taskId: proof.taskId,
-      operationId: proof.operationId,
+      ...(proof.decision === "eligible" ? { operationId: proof.operationId } : {}),
       targetId: proof.targetId,
       repositoryId: proof.repositoryId,
       sourceHead: proof.sourceHead,
@@ -305,7 +468,13 @@ async function boundedVerification(verifier: Verifier, request: DeliveryRequest)
 
 type VerifiedCall =
   | { ok: false; refusal: CallCheck & { ok: false } }
-  | { ok: true; guard: NativeDeliveryGuard; request: DeliveryRequest; proof: EligibleProof; verifier: Verifier };
+  | {
+      ok: true;
+      guard: NativeDeliveryGuard;
+      request: DeliveryRequest;
+      proof: EligibleProof | ReadyProof;
+      verifier: Verifier;
+    };
 async function verifyCall(
   guard: NativeDeliveryGuard | undefined,
   call: DeliveryCall,
@@ -326,12 +495,17 @@ async function verifyCall(
     if (call.ctx.signal?.aborted) return { ok: false, refusal: blocked(phase, ["delivery_call_aborted"]) };
     if (requestOf(call, phase).requestKey !== request.requestKey)
       return { ok: false, refusal: blocked(phase, ["delivery_call_changed"]) };
-    if (proof.decision !== "eligible") return { ok: false, refusal: blocked(phase, ["native_verification_failed"]) };
+    if (proof.decision !== "eligible" && proof.decision !== "ready")
+      return { ok: false, refusal: blocked(phase, ["native_verification_failed"]) };
     return { ok: true, guard, request, proof: { ...proof, evidenceIds: [...proof.evidenceIds] }, verifier };
   } catch (error) {
     return {
       ok: false,
-      refusal: blocked(phase, [error instanceof VerificationStopped ? error.code : "native_verification_failed"]),
+      refusal: blocked(phase, [
+        error instanceof VerificationStopped || error instanceof ApprovalHandoffError
+          ? error.code
+          : "native_verification_failed",
+      ]),
     };
   }
 }
@@ -375,6 +549,7 @@ export async function runConnectorDelivery<T>(
 ): Promise<{ ok: true; value: T; data: Record<string, unknown> } | (CallCheck & { ok: false })> {
   const checked = await verifyCall(guard, call, "execute");
   if (!checked.ok) return checked.refusal;
+  if (checked.proof.decision !== "eligible") return blocked("execute", ["native_execution_proof_required"]);
   const permit = Object.freeze({});
   permits.set(permit, {
     guard: checked.guard,
@@ -392,8 +567,14 @@ export async function runConnectorDelivery<T>(
       call.ctx.signal?.aborted
     )
       return blocked("execute", ["delivery_permit_lost"]);
-  } catch {
-    return blocked("execute", ["delivery_permit_lost"]);
+    if (call.ctx.deliveryApproval) {
+      const locator = approvalLocators.get(call.ctx.deliveryApproval);
+      if (!locator || locator.state.closed || locator.state.dispatched)
+        return blocked("execute", ["native_approval_already_dispatched"]);
+      locator.state.dispatched = true;
+    }
+  } catch (error) {
+    return blocked("execute", [error instanceof ApprovalHandoffError ? error.code : "delivery_permit_lost"]);
   }
   try {
     const value = await execute();

@@ -1,5 +1,6 @@
 import type { Database, schema } from "@agenteschat/db";
 import type { ToolImage } from "@agenteschat/providers";
+import type { NativeDeliveryApproval } from "../connectors/delivery-guard";
 import type { OutcomeKind } from "../context/outcomes";
 import type { JsonSchema } from "./json-schema";
 
@@ -53,6 +54,8 @@ export interface ToolContext {
    * when its command policy would hold it. Never set from a call's input.
    */
   approved?: boolean;
+  /** Invocation-local native approval locator set only by the Gateway; neither JSON nor a release grant. */
+  deliveryApproval?: NativeDeliveryApproval;
   /** Native exact-disclosure resume only; downstream reloads and claims the DB row. Never model input. */
   privatePublicationApprovalId?: string;
   /**

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { channelTopic } from "@agenteschat/adapters";
-import { eq, schema } from "@agenteschat/db";
+import { and, eq, schema } from "@agenteschat/db";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -23,6 +23,7 @@ import {
   decideApprovals,
   executeRoutineRun,
   expireApprovals,
+  grantScopes,
   type InvokeResult,
   insertMessage,
   invokeWithChip,
@@ -92,7 +93,7 @@ function composioMcp() {
 }
 
 /** Composio connected by address (its suggestions accepted), with the schedule tools beside it. */
-async function world(fx: Fixture) {
+async function world(fx: Fixture, options: { grantWrite?: boolean } = {}) {
   const mcp = composioMcp();
   const deps: CustomDeps = {
     db: fx.db,
@@ -108,13 +109,17 @@ async function world(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  const writeScope = `custom:${started.server.id}:write`;
+  // Connecting and classifying tools grants nothing. Give only this fixture's intended write scope, additively.
+  if (options.grantWrite !== false)
+    await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: writeScope }]);
   const sources = [
     createConnectorToolSource(deps),
     createScheduleToolSource({ pubsub: fx.pubsub, context: fx.context }),
   ];
   /** The gateway as the server runs it; `at`: its clock (a run that comes late). */
   const gatewayAt = (at?: Date) => createToolGateway({ sources, ...(at ? { now: () => at } : {}) });
-  return { mcp, gateway: gatewayAt(), gatewayAt };
+  return { mcp, gateway: gatewayAt(), gatewayAt, connectionId: started.server.id, writeScope };
 }
 
 /** A run a person asked for in #general (or `channelId`). */
@@ -265,6 +270,53 @@ async function prepared(gateway: ReturnType<typeof createToolGateway>, text = "L
 }
 
 describe("an action approved ahead", () => {
+  test("connecting and accepting tool classification cannot schedule an action without an explicit agent grant", async () => {
+    f = await setup();
+    const { mcp, gateway, connectionId, writeScope } = await world(f, { grantWrite: false });
+    const result = answered(
+      await invoke(gateway, await personRun(f), "schedule_action", {
+        tool: EXEC,
+        arguments: post("Not authorized"),
+        when: inTwoHours(),
+        title: "Unassigned connection",
+        why: WHY,
+      }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain(writeScope);
+    expect(
+      await f.db.select().from(schema.agentScopes).where(eq(schema.agentScopes.connectionId, connectionId)),
+    ).toEqual([]);
+    expect(await f.db.select().from(schema.approvals)).toEqual([]);
+    expect(await f.db.select().from(schema.routines)).toEqual([]);
+    expect(mcp.calls).toEqual([]);
+  });
+
+  test("an approved scheduled action loses execution access when its exact connection grant is revoked", async () => {
+    f = await setup();
+    const { mcp, gateway, connectionId, writeScope } = await world(f);
+    const { approval, runAt, routineId } = await prepared(gateway);
+    await decide(approval.id, "approve");
+    await f.db
+      .delete(schema.agentScopes)
+      .where(
+        and(
+          eq(schema.agentScopes.orgId, f.org.id),
+          eq(schema.agentScopes.agentId, f.agent.id),
+          eq(schema.agentScopes.connectionId, connectionId),
+          eq(schema.agentScopes.scope, writeScope),
+        ),
+      );
+    const result = answered(
+      await invoke(gateway, await routineRun(f, routineId, runAt), RUN_APPROVED_ACTION, { id: approval.id }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain(writeScope);
+    expect(await approvalRow(approval.id)).toMatchObject({ status: "approved", executedAt: null });
+    expect(await f.db.select().from(schema.approvals)).toHaveLength(1);
+    expect(mcp.calls).toEqual([]);
+  });
+
   test("is asked when it is prepared, and its run at its time does it without asking", async () => {
     f = await setup();
     const { mcp, gateway } = await world(f);

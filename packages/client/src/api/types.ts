@@ -3603,10 +3603,38 @@ export interface IssueWork {
   reason?: "failed" | "canceled" | "budget";
 }
 
+/** A public display of delivery evidence, never an authorization to act. */
+export interface IssueDeliveryReport {
+  locale: "zh-HK";
+  userVisibleOutcome: string;
+  howToUse: string;
+  currentAvailability: "available" | "partial" | "unavailable" | "unknown" | "stale" | "not_run";
+  publicTargets: {
+    label: string;
+    state: "available" | "unavailable" | "unknown" | "stale" | "not_run";
+    text: string;
+    missingGates: string[];
+  }[];
+  targetsOmitted: number;
+  missingGateLabels: string[];
+  ownerStatus: string;
+  nextStep: string;
+  ownerDecisionRequired: boolean | null;
+  freshness: {
+    /** When the display was calculated. This does not establish when a runtime was verified. */
+    generatedAt: string | null;
+    result: "pass" | "fail" | "unknown" | "stale" | "not_run" | "not_applicable";
+    coverage: "complete" | "incomplete";
+  };
+  isAuthorizationGrant: false;
+}
+
 export interface Issue {
   id: string;
   /** Per organization: #131. */
   number: number;
+  /** Present on bound task details; omitted by older servers and for ordinary tasks. */
+  deliveryReport?: IssueDeliveryReport;
   title: string;
   description: string;
   status: IssueStatus;
