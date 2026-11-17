@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import { STEPS } from "./local-ci.mjs";
-import { assertPublisherConfiguration, signReceipt, statusPayload, verifyAttestation } from "./local-ci-status.mjs";
+import {
+  assertPublisherConfiguration,
+  REQUIRED_RELEASE_STEPS,
+  signReceipt,
+  statusPayload,
+  verifyAttestation,
+} from "./local-ci-status.mjs";
 
 const sha = "a".repeat(40),
   wrong = "b".repeat(40);
@@ -17,7 +23,7 @@ const full = () => ({
   finishedAt: now,
   sourceVerified: true,
   review: { sha, independent: true, result: "approved" },
-  steps: Object.keys(STEPS).map((id) => ({
+  steps: REQUIRED_RELEASE_STEPS.map((id) => ({
     id,
     exitCode: 0,
     state: "passed",
@@ -130,4 +136,18 @@ test("success publisher requires dedicated GitHub App identity, never a user tok
     privateKeyPath: "/private/app-key.pem",
   });
   assert.equal(r.appId, 12345);
+});
+
+test("old seven-step smoke-oriented suite cannot certify the complete application CI", () => {
+  const sevenStepReceipt = full();
+  sevenStepReceipt.steps = Object.keys(STEPS).map((id) => ({
+    id,
+    exitCode: 0,
+    state: "passed",
+    logSha256: "d".repeat(64),
+    timedOut: false,
+  }));
+  const decision = verify(sign(sevenStepReceipt));
+  assert.equal(decision.ok, false, "legacy abbreviated suite was incorrectly accepted");
+  assert.ok(decision.blockers.includes("incomplete_suite"));
 });

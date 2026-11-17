@@ -4,8 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { STEPS } from "./local-ci.mjs";
-import { publishAttestedStatus, signReceipt } from "./local-ci-status.mjs";
+import { publishAttestedStatus, REQUIRED_RELEASE_STEPS, signReceipt } from "./local-ci-status.mjs";
 
 const sha = "a".repeat(40),
   time = "2026-11-16T23:00:00Z",
@@ -26,7 +25,7 @@ function setup(t) {
     startedAt: time,
     finishedAt: time,
     review: { sha, independent: true, result: "approved" },
-    steps: Object.keys(STEPS).map((id) => ({
+    steps: REQUIRED_RELEASE_STEPS.map((id) => ({
       id,
       exitCode: 0,
       state: "passed",

@@ -3,7 +3,32 @@
 import { createSign, sign, verify } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { STEPS } from "./local-ci.mjs";
+// Every step below is required by the existing scripts/ci-local.sh plus a real image boot.
+// A passing Guardian smoke suite alone MUST NEVER become a release-ready external status.
+export const REQUIRED_RELEASE_STEPS = Object.freeze([
+  "frozen-deps",
+  "lint",
+  "shellcheck",
+  "guardian",
+  "boundaries-unit",
+  "geometry-unit",
+  "licenses",
+  "typecheck",
+  "build",
+  "migration-drift",
+  "migration-compat",
+  "deployment-scripts",
+  "engine-a-m",
+  "engine-n-z-and-packages",
+  "server",
+  "web-ui",
+  "geometry",
+  "event-dialog",
+  "mobile-desktop",
+  "secret-scan",
+  "boundaries",
+  "container-boot",
+]);
 
 const SHA = /^[a-f0-9]{40}$/,
   HEX64 = /^[a-f0-9]{64}$/,
@@ -47,16 +72,17 @@ export function verifyAttestation(envelope, publicKey, { now = Date.now(), repos
   else if (now - t > 600000) blockers.push("stale_receipt");
   if (r.schema !== "local-ci-release/v1" || r.mode !== "full" || r.sourceVerified !== true)
     blockers.push("incomplete_suite");
-  const required = Object.keys(STEPS),
+  const required = REQUIRED_RELEASE_STEPS,
     steps = r.steps;
   if (
     !Array.isArray(steps) ||
     required.some((id) => !steps.some((x) => x.id === id)) ||
+    steps.length !== required.length ||
     new Set(steps?.map((x) => x.id)).size !== steps?.length
   )
     blockers.push("incomplete_suite");
   if (Array.isArray(steps)) {
-    if (steps.some((x) => !Object.hasOwn(STEPS, x.id) || !HEX64.test(x.logSha256 ?? "")))
+    if (steps.some((x) => !required.includes(x.id) || !HEX64.test(x.logSha256 ?? "")))
       blockers.push("invalid_step_evidence");
     if (steps.some((x) => x.exitCode !== 0 || x.state !== "passed" || x.timedOut !== false))
       blockers.push("failed_suite");
