@@ -41,7 +41,8 @@ import { enqueue } from "./outbox";
 import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
-import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
+import { agentSearchChannels, enqueueIndex } from "./search";
+import { registerDocumentBuilder } from "./search-registry";
 import { AUDIENCE_MAX, type Audience, admitTaskAgents, taskSeenSql } from "./task-access";
 import {
   ensureTaskConversation,
