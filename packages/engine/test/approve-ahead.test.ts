@@ -23,6 +23,7 @@ import {
   decideApprovals,
   executeRoutineRun,
   expireApprovals,
+  grantScopes,
   type InvokeResult,
   insertMessage,
   invokeWithChip,
@@ -37,7 +38,6 @@ import {
   setMemberRoles,
   type ToolContext,
   updateRoutine,
-  grantScopes,
 } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
 
