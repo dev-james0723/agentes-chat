@@ -1367,8 +1367,11 @@ const lastMode = (t: MachineTaskRow | null) => {
   return mode === "write" || mode === "read" ? mode : null;
 };
 
-/** Whether a session's latest task still holds it (queued, running, or interrupted and may come back). */
-const isLive = isLiveTaskRow;
+/**
+ * Whether a session's latest task still holds it (queued, running, or interrupted and may come back). Read when called:
+ * through an import cycle `machine-tasks` may not be initialized yet while this module loads.
+ */
+const isLive = (t: Parameters<typeof isLiveTaskRow>[0]) => isLiveTaskRow(t);
 
 export async function queueForSession(db: Executor, mission: MissionRow, entry: schema.MissionInboxEntry) {
   await db
