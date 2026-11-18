@@ -1,7 +1,7 @@
 import { and, type Database, eq, gt, lte, schema } from "@agenteschat/db";
 import type { ModelProvider, ModelRequest, ModelResult, StreamOptions } from "@agenteschat/providers";
-import { sha256 } from "./crypto";
 import { credentialVersion } from "./credentials";
+import { sha256 } from "./crypto";
 import { canonicalJson } from "./tools/json-schema";
 
 /** Only trusted server code may provide a transport that actually enforces its per-call maximum upstream.

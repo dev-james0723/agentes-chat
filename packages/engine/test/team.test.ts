@@ -413,7 +413,7 @@ test("a task alone goes to Jev over every eligible agent, purpose defaulting to 
   const out = await r.invoke({ task: "Fix Save/keyboard focus" });
   expect(out.data?.delegation).toMatchObject({ status: "recommended", by: "jev", purpose: "implementer" });
   expect(r.requests).toHaveLength(1);
-  const ids = (r.requests[0]?.state as { candidates: { id: string }[] }).candidates.map((c) => c.id);
+  const ids = (r.requests[0]?.state as { candidates: { id: string }[] } | undefined)?.candidates.map((c) => c.id);
   expect(ids).toEqual(expect.arrayContaining([r.manager.id, r.alpha.id, r.beta.id]));
 });
 
@@ -478,7 +478,7 @@ test("a coordinator request without a department lets Jev compare the whole elig
     (await r.invoke({ task: "Coordinate the design work", purpose: "department_coordinator" })).data?.delegation,
   ).toMatchObject({ status: "recommended", by: "jev", purpose: "department_coordinator" });
   expect(r.requests).toHaveLength(1);
-  expect((r.requests[0]?.state as { purpose: string }).purpose).toBe("department_coordinator");
+  expect((r.requests[0]?.state as { purpose: string } | undefined)?.purpose).toBe("department_coordinator");
 });
 
 test("needed tools are a hint for Jev, never a refusal", async () => {
@@ -496,7 +496,7 @@ test("needed tools are a hint for Jev, never a refusal", async () => {
   expect(r.requests).toHaveLength(0);
   await r.invoke({ task: "Use browser", purpose: "implementer", requiredTools: ["browser"] });
   expect(r.requests).toHaveLength(1);
-  expect((r.requests[0]?.state as { tools_needed: string[] }).tools_needed).toEqual(["browser"]);
+  expect((r.requests[0]?.state as { tools_needed: string[] } | undefined)?.tools_needed).toEqual(["browser"]);
 });
 
 test("native autonomy denial still excludes an explicit target", async () => {

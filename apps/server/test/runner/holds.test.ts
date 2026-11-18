@@ -299,7 +299,8 @@ test("the program's wait ends with the program: gone, a zombie, or its pid now a
     end();
     await waitFor(done, 5000);
   }
-});
+  // Three ends of up to 6.5 s each: past Bun's 5 s default when this file isn't a process's first.
+}, 25_000);
 
 test("the browser's wait ends a few looks after its slice is empty", async () => {
   const dir = tempDir("cg-");
@@ -317,4 +318,5 @@ test("the browser's wait ends a few looks after its slice is empty", async () =>
   expect(done).toBe(false);
   spawnSync("/bin/sh", ["-c", `printf 'populated 0\\nfrozen 0\\n' > ${events}`]);
   await waitFor(() => done, 12_000);
-});
+  // It waits 2.5 s, then up to 12 s: past Bun's 5 s default when this file isn't a process's first.
+}, 20_000);

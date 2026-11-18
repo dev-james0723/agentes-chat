@@ -6,6 +6,7 @@ import {
   CHROME_FAILURES,
   type MachineRequest,
   type RunnerAccess,
+  usesChromium,
 } from "@agenteschat/adapters/machine-protocol";
 import {
   BrowserManager,
@@ -607,7 +608,9 @@ test.if(posix)(
         () => null,
         (e: unknown) => e as RunnerError,
       );
-    expect([err?.code, err?.message]).toEqual(["browser_unavailable", CHROME_FAILURES.missing]);
+    // On Linux on ARM, where Google makes no Chrome, it names Chromium instead (ADR 0153), as browser.test.ts does.
+    const missing = usesChromium() ? CHROME_FAILURES.missingChromium : CHROME_FAILURES.missing;
+    expect([err?.code, err?.message]).toEqual(["browser_unavailable", missing]);
     expect(installing).toBe(0);
     expect(t.chromes).toHaveLength(0);
   },

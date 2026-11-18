@@ -91,6 +91,7 @@ const {
   wikiLinks,
   contextUsage,
   feedbackFiles,
+  skillReadActivations,
   mailAccounts,
   mailWatches,
   connectorConnections,
@@ -128,6 +129,7 @@ export const PURGED_BY_HAND = [
   "wiki_links",
   "context_usage",
   "feedback_files",
+  "skill_read_activations",
 ] as const;
 /** How long the purge waits for a workspace's online computers to sign its AI accounts out. */
 const ACCOUNTS_WAIT_MS = 60_000;
@@ -675,6 +677,8 @@ export async function purgeWorkspace(deps: PurgeDeps, orgId: string, options: { 
     // By its org_id, not through the runs: a run deleted earlier (a restarted one) leaves its rows behind.
     // ponytail: no index on context_usage.org_id, one scan per purge; index it if purges get slow.
     await tx.delete(contextUsage).where(eq(contextUsage.orgId, orgId));
+    // Native skill-read receipts deliberately outlive individual runs, but not their workspace.
+    await tx.delete(skillReadActivations).where(eq(skillReadActivations.orgId, orgId));
     // Its row only: the feedback sweep removes bytes with no row left (`sweepFeedbackFiles`).
     await tx.delete(feedbackFiles).where(eq(feedbackFiles.orgId, orgId));
     const via = await requestedVia(tx, orgId);

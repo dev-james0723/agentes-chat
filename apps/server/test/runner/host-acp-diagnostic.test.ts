@@ -6,6 +6,8 @@ import { cliErrorWords } from "../../../../packages/engine/src/tool-detail";
 import { runHostAcpTurn } from "../../runner/host-acp-runtime";
 
 const root = mkdtempSync(path.join(import.meta.dir, ".acp-diagnostic-fixtures-"));
+/** The host ACP turn runs only on a Mac (`runHostAcpTurn` refuses any other platform): its turns are tested there. */
+const onMac = test.skipIf(process.platform !== "darwin");
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 const load = JSON.stringify({
     type: "tool_call",
@@ -168,7 +170,7 @@ const expectedDiagnostics = {
   authorization_ended_after_confirmed_load: ["authorization", "ended", "current_attempt_unknown"],
 };
 for (const [name, mode] of collapsedCases)
-  test(name + " returns a closed cause without erasing previous receipt", async () => {
+  onMac(name + " returns a closed cause without erasing previous receipt", async () => {
     const r = await fixture(mode);
     expect(r.calls.map((x) => x.name)).toEqual(["load_skill"]);
     const [stage, cause, effect] = expectedDiagnostics[name as keyof typeof expectedDiagnostics];
@@ -190,7 +192,7 @@ for (const [name, mode] of collapsedCases)
     );
   });
 
-test("delivery unknown remains fenced with one attempt and no automatic retry", async () => {
+onMac("delivery unknown remains fenced with one attempt and no automatic retry", async () => {
   const r = await fixture({ actions: [load, write], deliveryUnknown: true });
   expect(r.calls.map((x) => x.name)).toEqual(["load_skill", "write_file"]);
   expect(r.events.at(-1)).toMatchObject({
@@ -201,7 +203,7 @@ test("delivery unknown remains fenced with one attempt and no automatic retry", 
   expect(JSON.stringify(r.events)).not.toContain("SYNTHETIC_RAW_VENDOR_PRIVATE_MARKER");
 });
 
-test("known completed duplicate effect is refused instead of dispatched twice", async () => {
+onMac("known completed duplicate effect is refused instead of dispatched twice", async () => {
   const r = await fixture({ actions: [write, write] });
   expect(r.calls.map((x) => x.name)).toEqual(["write_file"]);
   expect(r.events.at(-1)).toMatchObject({
@@ -212,7 +214,7 @@ test("known completed duplicate effect is refused instead of dispatched twice", 
   });
 });
 
-test("controlled unassigned refusal stays completed native error, no bypass or invented grant", async () => {
+onMac("controlled unassigned refusal stays completed native error, no bypass or invented grant", async () => {
   const r = await fixture({ actions: [load, final], completedRefusal: true });
   expect(r.calls.map((x) => x.name)).toEqual(["load_skill"]);
   expect(r.events.at(-1)).toMatchObject({
@@ -247,7 +249,7 @@ for (const message of [
   "Exact Argon High SYNTHETIC_RAW_VENDOR_PRIVATE_MARKER",
   "Unexpected SYNTHETIC_RAW_VENDOR_PRIVATE_MARKER",
 ])
-  test("untrusted lookalike error never becomes diagnostic text: " + message.split(" ")[0], async () => {
+  onMac("untrusted lookalike error never becomes diagnostic text: " + message.split(" ")[0], async () => {
     const r = await fixture({ actions: [], connectFailure: message });
     expect(r.calls).toEqual([]);
     expect(r.events.at(-1)).toMatchObject({

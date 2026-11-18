@@ -456,7 +456,7 @@ export async function issuePrivatePublication(ctx: ToolContext, input: Record<st
       ),
     );
   if (!prior || !isPrivatePublication(prior) || prior.actionHash !== fingerprint(envelope))
-    throw new ConflictError("The sharing request changed; start a fresh request.");
+    throw new ConflictError("The sharing request changed. Start a fresh request.");
   return prior;
 }
 

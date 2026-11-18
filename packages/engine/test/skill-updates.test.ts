@@ -4,6 +4,7 @@ import {
   actionsFor,
   addRunStep,
   approveSkillUpdate,
+  buildRunContext,
   createSkillToolSource,
   createToolGateway,
   dismissSkillUpdate,
@@ -267,7 +268,7 @@ describe("an agent's change and its link's next update", () => {
     const ctx = await runFor(f, f.owner.id);
     const run = { id: ctx.runId as string, orgId: f.org.id };
     await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    await loadedNatively(run, "deploy");
     expect((await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." })).content).toBe(
       "Updated deploy (v2).",
     );
@@ -303,7 +304,7 @@ describe("an agent's change and its link's next update", () => {
     const ctx = await runFor(f, f.owner.id);
     const run = { id: ctx.runId as string, orgId: f.org.id };
     await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    await loadedNatively(run, "deploy");
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." });
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache first." });
 
@@ -365,7 +366,7 @@ describe("an agent's change and its link's next update", () => {
     const ctx = await runFor(f, f.owner.id);
     const run = { id: ctx.runId as string, orgId: f.org.id };
     await addRunStep(f.db, run, "tool_call", { toolUseId: "tu_load", name: "load_skill", input: { name: "deploy" } });
-    await addRunStep(f.db, run, "tool_result", { toolUseId: "tu_load", name: "load_skill", content: "ok" });
+    await loadedNatively(run, "deploy");
     await call(deps, ctx, "update_skill", { name: "deploy", body: "# v1\nWarm the cache." });
 
     const back = await undoSkillUpdate(deps, f.owner.id, f.org.id, skill.id);
@@ -400,6 +401,14 @@ async function runFor(fx: Fixture, userId: string): Promise<ToolContext> {
     })
     .returning();
   if (!run) throw new Error("no run");
+  // This run bypasses the executor: record the publication coverage the native context builder gives a run
+  // (ADR 0191), as the executor does, so `update_skill` judges the run on what it actually read.
+  const [agent] = await fx.db.select().from(schema.agents).where(eq(schema.agents.id, fx.agent.id));
+  const context = await buildRunContext(fx.db, run, agent ?? fx.agent, { maxMessages: 100, toolsAvailable: true });
+  await fx.db
+    .update(schema.agentRuns)
+    .set({ transcript: { publicationCapture: context.publicationCapture } })
+    .where(eq(schema.agentRuns.id, run.id));
   return {
     db: fx.db,
     orgId: fx.org.id,
@@ -505,3 +514,17 @@ describe("agents installing and updating skills", () => {
     expect(row?.pending?.scripts).toEqual(["run.sh"]);
   });
 });
+
+/** A native load_skill result names the skill and version it loaded (ADR 0191 reads it as the run's proof). */
+async function loadedNatively(run: { id: string; orgId: string }, slug: string) {
+  const [skill] = await f.db
+    .select()
+    .from(schema.skills)
+    .where(and(eq(schema.skills.orgId, run.orgId), eq(schema.skills.slug, slug)));
+  await addRunStep(f.db, run, "tool_result", {
+    toolUseId: "tu_load",
+    name: "load_skill",
+    content: "ok",
+    ...(skill ? { data: { skill: { id: skill.id, version: skill.version } } } : {}),
+  });
+}

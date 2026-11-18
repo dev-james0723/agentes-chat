@@ -41,7 +41,7 @@ const keyConnection = async (serverUrl: string) =>
     })
   ).connection;
 describe("Stitch official API-key MCP", () => {
-  test("catalog offers API key only with the existing monogram fallback", () => {
+  test("catalog offers API key only, with the generic connector glyph as its icon", () => {
     expect(mcpPreset("stitch")).toMatchObject({ serverUrl: STITCH });
     expect(connectorListing({ oauthApps: {} }).find((x) => x.id === "stitch")).toMatchObject({
       serverUrl: STITCH,
@@ -50,7 +50,8 @@ describe("Stitch official API-key MCP", () => {
       soon: false,
       auth: ["api_key"],
       oauthConfigured: false,
-      iconUrl: null,
+      // Every catalog entry has an icon (apps/web/public/connectors/README.md): Stitch has no mark of its own here.
+      iconUrl: "/connectors/plug.svg",
     });
   });
   test("a first Stitch key uses its vendor header, stays sealed and grants no agent access", async () => {

@@ -26,6 +26,9 @@ import { openRoutineRoom } from "../src/routine-room";
 import { addUser, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
+/** A number marker can turn up inside a random id by chance: drop ids before checking that one stays out. */
+const withoutIds = (text: string) =>
+  text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>");
 afterEach(async () => {
   const current = f;
   f = undefined as unknown as Fixture;
@@ -255,7 +258,7 @@ describe("reopening and sharing preserve each source boundary", () => {
     expect(result.data?.hits).toBe(1);
     const pack = await memory();
     expect(pack.itemIds).toContain(control.id);
-    expect(pack.text).not.toContain("852");
+    expect(withoutIds(pack.text)).not.toContain("852");
     expect(pack.text).not.toContain("confidential marker");
     const privatePack = await retrieveForRun(f.context, {
       orgId: f.org.id,
@@ -282,7 +285,7 @@ describe("reopening and sharing preserve each source boundary", () => {
     const result = await call(await run(), "search_context", { query: "Orion", kinds: ["context_item"], limit: 20 });
     expect(result.content).toContain(control.id);
     expect(result.content).not.toContain(item.id);
-    expect((await memory()).text).not.toContain("563");
+    expect(withoutIds((await memory()).text)).not.toContain("563");
   });
 
   test("an unresolved source does not become current evidence through a local item", async () => {
@@ -292,7 +295,7 @@ describe("reopening and sharing preserve each source boundary", () => {
     const result = await call(await run(), "search_context", { query: "Orion", kinds: ["context_item"] });
     expect(result.content).toContain(control.id);
     expect(result.content).not.toContain(item.id);
-    expect((await memory()).text).not.toContain("214");
+    expect(withoutIds((await memory()).text)).not.toContain("214");
   });
 
   test("a private conversation cannot save or propose an organization-wide team memory", async () => {
@@ -499,11 +502,12 @@ describe("reopening and sharing preserve each source boundary", () => {
     const control = await add({ content: "Orion allowed company A 985." });
     const result = await call(await run(), "search_context", { query: "Orion", kinds: ["context_item"] });
     expect(result.content).toContain(control.id);
-    for (const denied of [itemB.id, wrapper.id, "983", "984", "Foreign confidential marker"])
+    for (const denied of [itemB.id, wrapper.id, "Foreign confidential marker"])
       expect(result.content).not.toContain(denied);
+    for (const denied of ["983", "984"]) expect(withoutIds(result.content)).not.toContain(denied);
     expect(result.data?.hits).toBe(1);
     expect((await call(await run(), "expand", { item_id: itemB.id })).isError).toBe(true);
-    expect((await memory()).text).not.toContain("983");
+    expect(withoutIds((await memory()).text)).not.toContain("983");
   });
 
   test("membership revocation is applied without waiting for the scope cache", async () => {

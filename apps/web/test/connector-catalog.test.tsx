@@ -243,7 +243,7 @@ describe("Adicionar conector: one catalog", () => {
     expect(notion.textContent).toContain("Um clique: você autoriza na página do serviço");
     // What connecting changes, as one line under what it can do (no heading of its own).
     expect(notion.textContent).toContain(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     );
     expect(within(notion).queryByRole("heading", { level: 4, name: "Depois de conectar" })).toBeNull();
     // × goes back to the catalog; another tile opens its own.
@@ -350,7 +350,7 @@ describe("Adicionar conector: one catalog", () => {
       return text;
     };
     const everyone =
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.";
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.";
     expect(await detail("Notion", "Notion")).toContain(everyone);
     expect(await detail("GitHub, conectado", "GitHub")).toContain("Substitui o login atual. Quem usa continua igual.");
     expect(await detail("Zapier, conectado", "Zapier")).toContain("Cada conta tem quem usa e níveis próprios.");
@@ -372,7 +372,7 @@ describe("Adicionar conector: one catalog", () => {
     await click(within(dialog).getByRole("button", { name: /Não achou/ }));
     await click(within(service("Outro serviço")).getByRole("button", { name: "Conectar pelo endereço" }));
     expect(flow().textContent).toContain(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     );
     await type(within(flow()).getByLabelText("Endereço do servidor MCP"), "https://oauth.zapier.example/mcp");
     // No account here was named by its provider, so step 1 can't tell accounts apart and asks for one not yet here.
@@ -457,7 +457,7 @@ describe("the connect flow: conectar → conectado; Ajustar → o que faz → qu
     const steps = within(flow()).getByRole("list", { name: "Passos" });
     expect(within(steps).getAllByRole("listitem")[0]?.getAttribute("aria-current")).toBe("step");
     expect(flow().textContent).toContain(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     );
 
     await click(within(flow()).getByRole("button", { name: "Continuar no Linear" }));
@@ -1155,7 +1155,7 @@ describe("the confirmation that ends connecting", () => {
     await settle(4);
     expect(screen().getByRole("dialog", { name: "GitHub conectado" })).toBe(flow());
     expect(sentence()).toBe(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
     );
     expect(buttons()).toEqual(["Ajustar", "Pronto"]);
     await click(within(flow()).getByRole("button", { name: "Pronto" }));
@@ -1176,7 +1176,7 @@ describe("the confirmation that ends connecting", () => {
     await settle(8);
     expect(screen().getByRole("dialog", { name: "Sentry conectado" })).toBe(flow());
     expect(sentence()).toBe(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     );
   });
 
@@ -1227,7 +1227,7 @@ describe("the confirmation that ends connecting", () => {
     await renderApp(`/org/${ORG_ID}/settings/connectors?connected=custom:${res.server.id}`, { api });
     await settle(8);
     expect(sentence()).toBe(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 3 ações pedem aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 3 ações pedem aprovação no chat.",
     );
     expect(buttons()).toEqual(["Ajustar", "Pronto"]);
   });
@@ -1261,14 +1261,14 @@ describe("the confirmation that ends connecting", () => {
         },
       });
     expect([0, 1, 2].map((n) => of("pt-BR", n))).toEqual([
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo. 2 ações pedem aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 2 ações pedem aprovação no chat.",
     ]);
     expect([0, 1, 2].map((n) => of("en", n))).toEqual([
-      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
-      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply. 1 action asks for approval in the chat.",
-      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply. 2 actions ask for approval in the chat.",
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply. 1 action asks for approval in the chat.",
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply. 2 actions ask for approval in the chat.",
     ]);
   });
 });
@@ -1325,7 +1325,7 @@ describe("a server whose tools can't be read", () => {
     // The confirmation says it too, under who can use it.
     const done = screen().getByRole("dialog", { name: "Suporte conectado" });
     expect(done.querySelector(".cflow__text")?.textContent).toBe(
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     );
     expect(within(done).getByRole("alert").textContent).toBe(`Não deu para ler as ferramentas do conector: ${reason}`);
     await adjust();

@@ -997,7 +997,8 @@ test("a computer brain that keeps going after asking through the bridge is cut a
   expect(run?.status).toBe("waiting_input");
   const [question] = await f.db.select().from(schema.agentQuestions);
   expect(question?.status).toBe("open");
-  const pending = (run?.transcript as { pending?: { calls: { questionId?: string; inTurn?: boolean }[] } }).pending;
+  const pending = (run?.transcript as { pending?: { calls: { questionId?: string; inTurn?: boolean }[] } } | undefined)
+    ?.pending;
   // The turn that asked is over: the answer resumes the run by itself.
   expect(pending?.calls.map((c) => [c.questionId, c.inTurn])).toEqual([[question?.id, undefined]]);
 });

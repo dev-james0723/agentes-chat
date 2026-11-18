@@ -621,7 +621,9 @@ for (const scenario of [
       }
     }
     await env.requeue();
-    expect(env.phases()).toBe(2);
+    // An approval whose execution was claimed but never got a result holds the whole run: it never starts another
+    // model turn, so nothing is reconstructed for it and nothing runs again.
+    expect(env.phases()).toBe(scenario === "execution-claimed" ? 1 : 2);
     expect(env.effects()).toBe(0);
   });
 }

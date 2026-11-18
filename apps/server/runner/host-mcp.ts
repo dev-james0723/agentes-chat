@@ -400,7 +400,10 @@ export class HostMcpManager {
           fail("journal persistence failed; owner attention required");
         }
         if (error instanceof RunnerError) throw error;
-        throw new RunnerError("not_allowed", "Host MCP request failed; inspect owner configuration or provider state");
+        throw new RunnerError(
+          "not_allowed",
+          "Host MCP request failed. Inspect the owner's configuration or the provider's state",
+        );
       }
     })();
     this.pending.add(task);
