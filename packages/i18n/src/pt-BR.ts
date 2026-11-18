@@ -12733,7 +12733,7 @@ export const ptBR = {
   },
   connectFlow: {
     accessRequired:
-      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
     steps: "Passos",
     step: { "0": "Conectar", "1": "O que faz", "2": "Quem pode usar" },
     connectTitle: "Conectar {{name}}",
@@ -12810,7 +12810,7 @@ export const ptBR = {
     done: {
       title: "{{name}} conectado",
       accessRequired:
-        "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar; permissões existentes de Todas as ferramentas continuam valendo.",
+        "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
       accessPending:
         "Revise as ferramentas e escolha o acesso dos agentes em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
       everyone: "Todos os agentes podem usar.",

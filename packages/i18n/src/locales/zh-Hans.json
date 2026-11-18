@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "审核私密草稿的共享",
     "destination": "目标：组织技能库",
@@ -10,9 +13,6 @@
     "body": "技能完整正文",
     "review": "审核私密草稿",
     "withdraw": "撤回共享批准"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "关闭",
@@ -7829,11 +7829,11 @@
       "issue": {
         "created": "在 agentes 中创建了任务"
       },
-      "deploy": {
-        "succeeded": "部署完成"
-      },
       "paperclip": {
         "received": "收到 Paperclip 请求"
+      },
+      "deploy": {
+        "succeeded": "部署完成"
       }
     },
     "when": {
@@ -12210,6 +12210,7 @@
     "agentSub": "按连接器和主题分类。默认情况下，敏感操作需要审批。"
   },
   "connectFlow": {
+    "accessRequired": "新连接不会给智能体额外的访问权限。请在“调整”中查看访问权限。已有的“所有工具”权限仍然有效。",
     "steps": "步骤",
     "step": {
       "0": "连接",
@@ -12280,6 +12281,8 @@
     "saved_other": "{{name}}：{{count}} 个智能体可以使用。",
     "done": {
       "title": "{{name}} 已连接",
+      "accessRequired": "新连接不会给智能体额外的访问权限。请在“调整”中查看访问权限。已有的“所有工具”权限仍然有效。",
+      "accessPending": "先查看工具，再在“调整”中选择智能体的访问权限。已有的“所有工具”权限仍然有效。",
       "everyone": "所有智能体都可以使用。",
       "waiting": "继续后，智能体才会按我们建议的权限级别获得这些工具。",
       "asks_other": "{{count}} 项操作会在聊天中请求审批。",
