@@ -153,7 +153,7 @@ export function registerFilesTool(db: Database): ToolDefinition {
     },
     async execute(input, ctx) {
       // A mission task's bridge call has no run of its own to file these under.
-      if (!ctx.runId) return refused(new ValidationError("Files are registered from a run; this call has none."));
+      if (!ctx.runId) return refused(new ValidationError("Files are registered from a run. This call has none."));
       try {
         const rows = await registerRunFiles(
           db,
