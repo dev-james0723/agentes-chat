@@ -7,14 +7,20 @@
 set -euo pipefail
 : "${CI_CANDIDATE_SHA:?CI_CANDIDATE_SHA is required}"
 : "${DOCKER_HOST:?DOCKER_HOST must name a dedicated CI Docker host}"
-case "$DOCKER_HOST" in
-  *agentes-chat-local*) echo "refusing: $DOCKER_HOST is the production Docker host" >&2; exit 2 ;;
-esac
+# Refuse the production daemon by its identity, not its address: a symlink or another URL can reach the same one.
+production_socket=${CI_PRODUCTION_DOCKER_HOST:-unix://$HOME/.colima/agentes-chat-local/docker.sock}
+target_id=$(docker info --format '{{.ID}}')
+production_id=$(DOCKER_HOST=$production_socket docker info --format '{{.ID}}' 2> /dev/null || true)
+if [ -z "$target_id" ] || [ "$target_id" = "$production_id" ]; then
+  echo "refusing: $DOCKER_HOST is the production Docker daemon (or its identity is unknown)" >&2
+  exit 2
+fi
 
 root=$(pwd)
 tag=${CI_CANDIDATE_SHA:0:12}
 project="agentes-ci-$tag"
 port=${CI_BOOT_PORT:-39300}
+if [ "$port" -lt 1024 ] || [ "$port" = 3000 ]; then echo "refusing port $port" >&2; exit 2; fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/agentes-boot.XXXXXX")
 export AGENTES_IMAGE="agentes-ci:$tag" AGENTES_BACKUP_IMAGE="agentes-backup-ci:$tag"
 export HOST_PORT=$port BIND_ADDRESS=127.0.0.1
@@ -31,6 +37,7 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+trap 'exit 143' TERM INT
 
 echo "== build $AGENTES_IMAGE from $(git rev-parse HEAD)"
 test "$(git rev-parse HEAD)" = "$CI_CANDIDATE_SHA"
