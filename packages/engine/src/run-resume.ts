@@ -95,26 +95,51 @@ export async function resumeRunWithResult(
       });
       return { runId: row.id, delivered };
     }
-    call.result = { content: input.result.content, isError: input.result.isError === true };
-    if (input.consulted) t.consulted = [...(t.consulted ?? []), input.consulted];
-    await tx
-      .update(agentRuns)
-      .set({ transcript: keepRunMarkers(pgSafeJson(t) as Record<string, unknown>), updatedAt: new Date() })
-      .where(eq(agentRuns.id, row.id));
-    await enqueue(tx, {
-      orgId: row.orgId,
-      kind: "agent_run.execute",
-      payload: { runId: row.id },
-      // Per call: the run may wait on the same id again later (a browser tool while the person still holds it).
-      dedupeKey: `agent_run.execute:${row.id}:wait:${input.waitId}:${call.toolUseId}`,
-      maxAttempts: 4,
-    });
+    const resumed = await resumeWaitingRunWithResult(tx, input);
+    if (!resumed) return null;
     return { runId: row.id, delivered: null };
   });
   if (!resumed) return null;
   if (!resumed.delivered) return { runId: resumed.runId };
   await publishDelivery(input.pubsub, resumed.delivered).catch(() => {});
   return { runId: resumed.runId, notice: resumed.delivered.message };
+}
+
+/** Complete one existing native checkpoint inside the caller's transaction. No notices or new runs. */
+export async function resumeWaitingRunWithResult(
+  tx: Executor,
+  input: {
+    runId: string;
+    waitId: string;
+    toolUseId?: string;
+    orgId?: string;
+    result: ToolResult;
+    consulted?: { agentId: string; consultationId: string; status: string; question?: string; answer?: string | null };
+  },
+): Promise<{ runId: string } | null> {
+  const [row] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId)).for("update");
+  if (!row || (input.orgId && row.orgId !== input.orgId)) return null;
+  if (row.status !== "waiting_input" && row.status !== "waiting_approval") return null;
+  const t = row.transcript as StoredTranscript | null;
+  const call = t?.pending?.calls.find(
+    (c) => c.waitId === input.waitId && !c.result && (!input.toolUseId || c.toolUseId === input.toolUseId),
+  );
+  if (!t || !call) return null;
+  call.result = { content: input.result.content, isError: input.result.isError === true };
+  if (input.consulted) t.consulted = [...(t.consulted ?? []), input.consulted];
+  await tx
+    .update(agentRuns)
+    .set({ transcript: keepRunMarkers(pgSafeJson(t) as Record<string, unknown>), updatedAt: new Date() })
+    .where(eq(agentRuns.id, row.id));
+  await enqueue(tx, {
+    orgId: row.orgId,
+    kind: "agent_run.execute",
+    payload: { runId: row.id },
+    // Per call: the run may wait on the same id again later (a browser tool while the person still holds it).
+    dedupeKey: `agent_run.execute:${row.id}:wait:${input.waitId}:${call.toolUseId}`,
+    maxAttempts: 4,
+  });
+  return { runId: row.id };
 }
 
 /**
