@@ -36,7 +36,7 @@ export async function startFoundryTaskRun(
     throw new ForbiddenError("Only the active owner can enroll a limited Foundry task");
   const visible = await getIssue(deps.db, { type: "person", userId }, orgId, { id: taskId });
   if (visible.assignee?.type !== "agent")
-    throw new ValidationError("Keep an existing assigned task; do not create a second task");
+    throw new ValidationError("Keep an existing assigned task. Do not create a second task");
   const qualified = await deps.qualify();
   if (!qualified.qualified) throw new ValidationError("The isolated runtime is not currently qualified");
   const conversation = await ensureTaskConversation(deps.db, taskId);
@@ -63,7 +63,7 @@ export async function startFoundryTaskRun(
       )
       .for("update");
     if (!agent || agent.brain !== "model" || agent.operatorHoldAt)
-      throw new ValidationError("Use the existing authorized model agent; no CLI or paid fallback is enrolled");
+      throw new ValidationError("Use the existing authorized model agent. No CLI or paid fallback is enrolled");
     const phase = {
       phaseRef: `foundry-task:${crypto.randomUUID()}`,
       expiresAt: new Date(Math.min(Date.now() + 3600000, Date.parse(qualified.expiresAt))).toISOString(),
@@ -85,7 +85,7 @@ export async function startFoundryTaskRun(
         !p.runIds.includes(old.id) ||
         Date.parse(p.expiresAt) <= Date.now()
       )
-        throw new ValidationError("Original phase is unavailable or expired; no silent renewal");
+        throw new ValidationError("Original phase is unavailable or expired. It is not renewed silently");
       phase.phaseRef = p.phaseRef;
       phase.expiresAt = p.expiresAt;
     }
@@ -131,7 +131,7 @@ export async function startFoundryTaskRun(
           inArray(schema.agentRuns.status, [...ACTIVE_RUN_STATUSES]),
         ),
       );
-    if (busy) throw new ValidationError("This task already has active work; do not duplicate or replace it");
+    if (busy) throw new ValidationError("This task already has active work. Do not duplicate or replace it");
     const { run, steered } = await enqueueRunJob(tx, written.message, agent.id);
     if (!run || steered) throw new ValidationError("Existing work owns this conversation");
     const pin: FoundryBuilderRunPin = { ...phase, orgId, taskId, agentId: agent.id, runIds: [run.id] };
