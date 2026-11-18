@@ -30,6 +30,7 @@ import {
   accessSubject,
   consolidateItem,
   type Evidence,
+  eventFingerprint,
   howToChannels,
   howToSql,
   howToSubject,
@@ -680,11 +681,13 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
       createdByKind: "agent",
       createdById: agent.id,
     };
+    base.eventKey = learnEventKey(run.id, base);
     try {
       const res = await consolidateItem(db, base, judging);
       out.saved.push({ id: res.item.id, action: res.action, trust: res.item.trust, scopeType: res.item.scopeType });
       // Only what a person told it, or what changes a person's memory, gets one plain line in the chat.
-      const line = savedReceiptLine(res);
+      // A replayed receipt was already said in the chat when it was first applied.
+      const line = res.replayed ? null : savedReceiptLine(res);
       if (line)
         await recordAgentActions(db, ctx, [
           {
@@ -723,6 +726,15 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
   }
   return out;
 }
+
+/**
+ * One receipt per run and claim, so a retried learn job applies an item it already saved once (A15). Built from the
+ * receipt's own fingerprint, so one key never carries two claims (two people's same preference, a reworded title):
+ * a different claim is a different event, never a refused one. Keyed by the claim, not its position, so a retry whose
+ * model returns other items still saves those.
+ */
+export const learnEventKey = (runId: string, item: NewContextItem) =>
+  `learn:${runId}:${eventFingerprint(item).slice(0, 40)}`;
 
 /** An access fact's key names this agent as the holder (`@handle service`). */
 const ownAccess = (handle: string, key: string) => key.trim().toLowerCase().startsWith(`@${handle.toLowerCase()} `);

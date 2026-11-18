@@ -1,8 +1,9 @@
-import { describe, expect, setSystemTime, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
 
+import { holdSkies } from "@agenteschat/ui";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
@@ -21,6 +22,11 @@ const REACH_TEXT =
   "With Tailscale, a private network for your devices: your phone and the people you invite join it, and nobody else can reach agentes.chat.";
 const USAGE_TEXT =
   "Counts such as people, agents, machine sizes, AI tokens used and how much data the agents' browsers send and receive. Never messages, files, names or sites.";
+
+// The first screen's sky turns from day to night when "On your own server" is picked (DAWN_MS, 1.7 s of frames).
+// These tests check what each screen says and does, not the dawn: the skies stand still, as with reduced motion.
+beforeAll(() => holdSkies());
+afterAll(() => holdSkies(false));
 
 /** The first run on a fake host, with what it opened in the browser and in Tailscale; `host` changes the host first. */
 async function firstRun(
