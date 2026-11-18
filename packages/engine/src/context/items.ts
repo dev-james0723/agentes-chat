@@ -577,7 +577,8 @@ export async function consolidateItem(
 }
 
 /** What an event writes: a replay of the same event writes the same thing in the same place, by the same giver. */
-const eventFingerprint = (i: NewContextItem) =>
+/** What a producer event's receipt is bound to: a reused key with another fingerprint is refused. */
+export const eventFingerprint = (i: NewContextItem) =>
   createHash("sha256")
     .update(
       JSON.stringify([
