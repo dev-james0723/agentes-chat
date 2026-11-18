@@ -20,6 +20,7 @@ export * from "./operator";
 export * from "./paperclip-routines";
 export * from "./paperclip-workspaces";
 export * from "./push";
+export * from "./run-files";
 export * from "./runtime";
 export * from "./sandbox";
 export * from "./shared-budget";

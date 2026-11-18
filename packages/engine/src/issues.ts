@@ -41,6 +41,7 @@ import { enqueue } from "./outbox";
 import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
+import { queueRetentionReport } from "./run-files";
 import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
 import { AUDIENCE_MAX, type Audience, admitTaskAgents, taskSeenSql } from "./task-access";
 import {
@@ -1313,6 +1314,9 @@ export async function updateIssue(
   if (patch.assignee !== undefined || row.status !== current.status) {
     await notifyIssueChanged(deps, author, current, row).catch(() => {});
   }
+  // Ended: a dry-run report of its files (ADR 0197).
+  if (row.status !== current.status)
+    await queueRetentionReport(db, orgId, { type: "issue", id: row.id }, row.status, row.updatedAt);
   return view;
 }
 
@@ -1983,6 +1987,7 @@ export async function setWorkIssueState(
   const view = (await workViews(deps.db, work.orgId, [work.id])).get(work.id);
   if (!view) return;
   const author: WorkActor = { type: "agent", id: work.agentId };
+  let statusChanged = false;
   const row = await deps.db.transaction(async (tx) => {
     // Criteria and status share this row. Decide from the locked, current values so a committed edit before
     // this transaction cannot be overwritten using an earlier read. No work/run locks are acquired here.
@@ -2017,6 +2022,7 @@ export async function setWorkIssueState(
       .returning();
     if (!updated) return null;
     if (status !== current.status) {
+      statusChanged = true;
       await addActivity(tx, updated, {
         kind: "event",
         author,
@@ -2047,6 +2053,8 @@ export async function setWorkIssueState(
   });
   if (!row) return;
   await announce(deps, work.orgId, await one(deps.db, row), "issue.updated");
+  if (statusChanged)
+    await queueRetentionReport(deps.db, work.orgId, { type: "issue", id: row.id }, row.status, row.updatedAt);
 }
 
 /** A task's steps at every depth (`union`: a loop ends). */

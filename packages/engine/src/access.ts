@@ -38,7 +38,17 @@ const { agentScopes, connectorConnections, agents } = schema;
  * scope missing here would be dropped by any save.
  */
 export const BUILTIN_TOOLS: Record<string, string[]> = {
-  "": ["ask_user", "request_approval", "react", "show_block", "start_poll", "ask_choices", "web_search", "web_fetch"],
+  "": [
+    "ask_user",
+    "request_approval",
+    "react",
+    "show_block",
+    "start_poll",
+    "ask_choices",
+    "web_search",
+    "web_fetch",
+    "register_files",
+  ],
   "context:read": ["search_context", "get_summary", "expand"],
   "memory:write": ["remember", "update_memory", "forget", "save_how_to", "propose_instruction_change"],
   "drive:read": ["read_artifact", "list_artifacts", "share_artifact"],
@@ -159,6 +169,10 @@ export const BUILTIN_TOOL_INFO: Record<string, { label: string; description: str
       "Brings into the conversation a file it made in another one (such as a DM), if the person asking has access.",
   },
   create_artifact: { label: "Create file", description: "Creates a document, table, diff, diagram or page." },
+  register_files: {
+    label: "Register files",
+    description: "Notes which files on its computer it made for a task and what each is for. Deletes nothing.",
+  },
   update_artifact: { label: "Update file", description: "Saves a new version of a file." },
   list_issues: { label: "View issues", description: "Lists and opens issues." },
   create_issue: { label: "Create issue", description: "Creates an issue with acceptance criteria." },
