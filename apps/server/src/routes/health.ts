@@ -1,5 +1,6 @@
 import type { Edition } from "@agenteschat/modules";
 import { createRoute, type OpenAPIHono, z } from "@hono/zod-openapi";
+import type { SourceIdentity } from "../source-identity";
 
 const HealthResponse = z
   .object({
@@ -8,6 +9,10 @@ const HealthResponse = z
     edition: z.enum(["selfhost", "cloud"]),
     database: z.enum(["ok", "unreachable"]),
     modules: z.array(z.string()).openapi({ description: "Extra modules loaded by this edition." }),
+    source: z.object({ digest: z.string(), files: z.number().int() }).nullable().optional().openapi({
+      description:
+        "The source this process runs, from its own files (`scripts/runtime-identity.ts` maps it to a git revision). Null when it could not be worked out; absent when the server does not report it.",
+    }),
   })
   .openapi("Health");
 
@@ -34,6 +39,8 @@ export interface HealthDeps {
   pingDatabase: () => Promise<void>;
   /** True once the server is shutting down (`SHUTDOWN_DELAY_MS`): a proxy's health check stops sending requests here. */
   draining?: () => boolean;
+  /** The running source's identity; its failure reports `source: null` and leaves the server healthy. */
+  sourceIdentity?: () => Promise<SourceIdentity>;
 }
 
 async function healthOf(deps: HealthDeps) {
@@ -42,12 +49,14 @@ async function healthOf(deps: HealthDeps) {
     .then(() => "ok" as const)
     .catch(() => "unreachable" as const);
   const draining = deps.draining?.() === true;
+  const source = deps.sourceIdentity ? { source: await deps.sourceIdentity().catch(() => null) } : {};
   return {
     status: draining ? ("draining" as const) : database === "ok" ? ("ok" as const) : ("degraded" as const),
     version: deps.version,
     edition: deps.edition,
     database,
     modules: deps.modules,
+    ...source,
   };
 }
 
