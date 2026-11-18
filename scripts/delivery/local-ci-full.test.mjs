@@ -161,3 +161,58 @@ test("review, sign and verify: only a complete, passed, reviewed, signed receipt
     /invalid_review_result/,
   );
 });
+
+test("leftover ignored files make a candidate not fresh, so the run does not start", async () => {
+  const { work, sha } = repo();
+  writeFileSync(join(work, ".gitignore"), "dist/\n");
+  git(work, "add", ".");
+  git(work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "ignore");
+  git(work, "push", "-q", "origin", "HEAD:refs/heads/candidate");
+  const head = git(work, "rev-parse", "HEAD");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(work, "dist"));
+  writeFileSync(join(work, "dist", "old.js"), "stale");
+  const v = await verifySource({ root: work, sha: head, remote: "origin", branch: "candidate", fresh: true });
+  assert.ok(v.blockers.includes("not_fresh_checkout"));
+  assert.equal((await verifySource({ root: work, sha: head, remote: "origin", branch: "candidate" })).ok, true);
+  assert.notEqual(sha, head);
+});
+
+test("a review counts only when its file names this exact head and a result", async () => {
+  const { reviewFromFile } = await import("./local-ci-attest.mjs");
+  const head = "a".repeat(40);
+  assert.equal(reviewFromFile(`reviewer notes\nhead: ${head}\nresult: approved\n`, head), "approved");
+  assert.throws(
+    () => reviewFromFile(`head: ${"b".repeat(40)}\nresult: approved\n`, head),
+    /review_does_not_name_this_head/,
+  );
+  assert.throws(() => reviewFromFile(`head: ${head}\nlooks good\n`, head), /review_result_missing/);
+  assert.throws(() => reviewFromFile(`head: .*\nresult: approved\n`, ".*"), /invalid_head/);
+});
+
+test("signing rechecks every step log against its hash", async () => {
+  const { checkLogs } = await import("./local-ci-attest.mjs");
+  const { createHash } = await import("node:crypto");
+  const dir = mkdtempSync(join(tmpdir(), "local-ci-logs-"));
+  writeFileSync(join(dir, "lint.log"), "ok\n");
+  const good = createHash("sha256").update("ok\n").digest("hex");
+  const receipt = { mode: "full", sourceVerified: true, steps: [{ id: "lint", logSha256: good }] };
+  checkLogs(receipt, dir);
+  writeFileSync(join(dir, "lint.log"), "edited\n");
+  assert.throws(() => checkLogs(receipt, dir), /log_hash_mismatch:lint/);
+  assert.throws(() => checkLogs({ ...receipt, mode: "partial" }, dir), /receipt_not_full/);
+});
+
+test("the publisher takes the signer's key from its own config only", async () => {
+  const { pinnedPublicKey } = await import("./local-ci-attest.mjs");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const dir = mkdtempSync(join(tmpdir(), "local-ci-pin-"));
+  const { publicKey } = generateKeyPairSync("ed25519");
+  const path = join(dir, "signer.pub.pem");
+  writeFileSync(path, publicKey.export({ type: "spki", format: "pem" }), { mode: 0o600 });
+  assert.equal(pinnedPublicKey({ signerPublicKeyPath: path }).asymmetricKeyType, "ed25519");
+  assert.throws(() => pinnedPublicKey({}), /signer_public_key_not_pinned/);
+  const { chmodSync } = await import("node:fs");
+  chmodSync(path, 0o644);
+  assert.throws(() => pinnedPublicKey({ signerPublicKeyPath: path }), /key_file_permissions_unsafe/);
+});
