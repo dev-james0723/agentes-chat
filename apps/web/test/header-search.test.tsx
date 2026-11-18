@@ -125,7 +125,7 @@ describe("the header search (Discord's)", () => {
   test("a message older than what's loaded: the conversation pages back to it, the buttons waiting meanwhile, then they close", async () => {
     const state = seedState();
     const at = Date.now() - 3_600_000;
-    for (let i = 0; i < 400; i++)
+    for (let i = 0; i < 304; i++)
       state.messages.push({
         id: `h-${i}`,
         channelId: GENERAL_ID,
@@ -152,11 +152,14 @@ describe("the header search (Discord's)", () => {
       await held;
       return load(...args);
     });
+    const pagesBefore = pages.mock.calls.length;
     await act(async () => fireEvent.click(jump));
     expect((jump as HTMLButtonElement).disabled).toBe(true);
     release();
     await waitFor(() => expect(row("h-3")?.classList.contains("ac-msg--focus")).toBe(true), { timeout: 10_000 });
     expect(pages.mock.calls.at(-1)?.[2]?.limit).toBe(200);
+    // 304 messages, 100 shown: the message is two pages of 200 back, so going to it pages back more than once.
+    expect(pages.mock.calls.length - pagesBefore).toBeGreaterThanOrEqual(2);
     expect(results()).toBeNull();
   }, 15_000);
 
