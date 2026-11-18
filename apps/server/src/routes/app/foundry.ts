@@ -6,7 +6,7 @@ import { type AppDeps, body, createAppRouter, errors, json, OrgParams, requireSe
  * No credential, raw evaluator artifact, host command or global grant is exposed. */
 export function foundryRoutes(deps: AppDeps) {
   const app = createAppRouter(deps);
-  app.use("*", requireSession(deps.auth));
+  app.use("/organizations/*", requireSession(deps.auth));
   app.openapi(
     createRoute({
       method: "post",

@@ -51,7 +51,9 @@ const WRONG_CANARY_OUTPUT = {
 const RUNTIME = "b".repeat(64);
 const PROFILE = "c".repeat(64);
 const SIMULATED_LIMITS = { ...FOUNDRY_PURE_TOOL_LIMITS, maxProcesses: 1 };
-const EXPIRY = new Date(TEST_NOW.getTime() + 24 * 3600_000).toISOString();
+// Some paths (enrollment, a test that sets state.now to the wall clock) check expiry against real time,
+// so the simulated qualification must outlive both the fixed test clock and today.
+const EXPIRY = new Date(Math.max(TEST_NOW.getTime(), Date.now()) + 24 * 3600_000).toISOString();
 const POSITIVE_TRIGGER = "Normalize synthetic task receipts using receipt-normalizer/v1.";
 
 function bundle(version: string) {
