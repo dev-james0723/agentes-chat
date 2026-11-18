@@ -155,7 +155,7 @@ const issueKey = (ref: string) => {
   const shown = text.replace(/[\p{Cc}\p{Cf}]/gu, "");
   const unseen = shown.length === text.length ? "" : " (shown without the characters in it that can't be seen)";
   throw new NotFoundError(
-    `Issue not found: "${shown.slice(0, 64)}"${unseen} is not a task number or id. Give its number as list_issues shows it, or its id; list_issues finds a task by words (query).`,
+    `Issue not found: "${shown.slice(0, 64)}"${unseen} is not a task number or id. Give its number as list_issues shows it, or its id. list_issues finds a task by words (query).`,
   );
 };
 

@@ -243,7 +243,7 @@ export function createHostMcpToolSource(deps: HostMcpDeps): ToolSource {
           );
           const exposed = (catalog.tools ?? []).map((t) => exposedToolName(c.toolPrefix, t.name));
           if (new Set(exposed).size !== exposed.length)
-            throw new ValidationError("Host MCP tool names collide; owner review is required");
+            throw new ValidationError("Host MCP tool names collide. The owner must review them");
           const rows = await deps.db
             .select()
             .from(customTools)
@@ -326,7 +326,7 @@ export function createHostMcpToolSource(deps: HostMcpDeps): ToolSource {
         const currentAccess =
           tool.access === "approval" || currentTool.sensitive || currentTool.access !== "read" ? "approval" : "read";
         if (customScope(c.id, currentAccess) !== scope || (currentAccess === "approval" && ctx.approved !== true))
-          throw new ForbiddenError("Host MCP tool policy changed; reload tools and obtain current approval");
+          throw new ForbiddenError("Host MCP tool policy changed. Reload the tools and get a current approval");
         await active(deps, ctx);
         await machine(deps, ctx.orgId, bound.machineId);
         const reply = await deps.hub.call(
