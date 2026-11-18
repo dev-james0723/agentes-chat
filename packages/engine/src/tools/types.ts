@@ -189,6 +189,11 @@ export interface ToolDefinition {
    * posts next carries `meta.readOutside` (ADR 0117). It changes nothing about the call itself.
    */
   readsOutside?: true;
+  /**
+   * Our own tool only looks (it writes nothing anyone sees): a failure of it can't have changed anything, so a cut
+   * turn knows its outcome (`noEffectOnError`). Set by the tool itself; a read scope alone is not proof.
+   */
+  readOnly?: true;
   /** A mission's tool (agent mode, ADR 0029): its approvals are bound to that mission too. */
   missionId?: string;
   /**

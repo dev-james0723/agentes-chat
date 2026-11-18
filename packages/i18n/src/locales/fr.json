@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Vérifier le partage d’un brouillon privé",
     "destination": "Destination : bibliothèque de compétences de l’organisation",
@@ -10,9 +13,6 @@
     "body": "Texte complet de la compétence",
     "review": "Vérifier le brouillon privé",
     "withdraw": "Retirer l’autorisation de partage"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Fermer",
@@ -8305,11 +8305,11 @@
       "issue": {
         "created": "Tâche créée dans agentes"
       },
-      "deploy": {
-        "succeeded": "Déploiement terminé"
-      },
       "paperclip": {
         "received": "Demande Paperclip reçue"
+      },
+      "deploy": {
+        "succeeded": "Déploiement terminé"
       }
     },
     "when": {
@@ -13079,6 +13079,7 @@
     "agentSub": "Par connecteur et par sujet. Par défaut, les actions sensibles demandent une approbation."
   },
   "connectFlow": {
+    "accessRequired": "Les nouvelles connexions ne donnent aucun accès supplémentaire aux agents. Vérifiez l'accès dans Ajuster. Les autorisations existantes Tous les outils restent valables.",
     "steps": "Étapes",
     "step": {
       "0": "Connexion",
@@ -13155,6 +13156,8 @@
     "saved_other": "{{name}} : {{count}} agents peuvent l'utiliser.",
     "done": {
       "title": "{{name}} connecté",
+      "accessRequired": "Les nouvelles connexions ne donnent aucun accès supplémentaire aux agents. Vérifiez l'accès dans Ajuster. Les autorisations existantes Tous les outils restent valables.",
+      "accessPending": "Vérifiez les outils, puis choisissez l'accès des agents dans Ajuster. Les autorisations existantes Tous les outils restent valables.",
       "everyone": "Tous les agents peuvent l'utiliser.",
       "waiting": "Les agents ne reçoivent les outils que lorsque vous continuez, aux niveaux que nous suggérons.",
       "asks_one": "{{count}} action demande une approbation dans le chat.",

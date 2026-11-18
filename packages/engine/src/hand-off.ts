@@ -545,10 +545,12 @@ export function createHandOffToolSource(deps: HandOffDeps): ToolSource {
           .from(agentRuns)
           .where(and(eq(agentRuns.id, ctx.runId), eq(agentRuns.orgId, ctx.orgId)))
           .for("update");
-        if (!run?.background) return { refused: "Only background work (a routine's run) hands off: just reply." };
-        if (run.status !== "running") return { refused: `Nothing was delivered: ${BLOCKED.stopped}. Finish now.` };
+        if (!run?.background)
+          return { refused: "Only background work (a routine's run) hands off: just reply.", checked: true };
+        if (run.status !== "running")
+          return { refused: `Nothing was delivered: ${BLOCKED.stopped}. Finish now.`, checked: true };
         const brief = await routineBriefOfRun(tx, run);
-        if (!brief) return { refused: `Nothing was delivered: ${BLOCKED.handoff_blocked}. Finish now.` };
+        if (!brief) return { refused: `Nothing was delivered: ${BLOCKED.handoff_blocked}. Finish now.`, checked: true };
         const [already] = await tx
           .select({ id: routineRuns.id })
           .from(routineRuns)
@@ -557,6 +559,7 @@ export function createHandOffToolSource(deps: HandOffDeps): ToolSource {
           return {
             refused:
               "You already handed off this run's message; it was delivered and can't be changed. Finish now: nothing else is posted.",
+            checked: true,
           };
         }
         const block = await routineDeliveryBlock(tx, brief);
@@ -568,7 +571,14 @@ export function createHandOffToolSource(deps: HandOffDeps): ToolSource {
         if (!delivered) return { refused: `Nothing was delivered: ${BLOCKED.stopped}. Finish now.` };
         return { delivered };
       });
-      if ("refused" in handed) return { content: handed.refused ?? "", isError: true };
+      // Refused by a check before anything was written in it (`checked`): a known outcome. A blocked delivery records its
+      // block first, so it stays as it was.
+      if ("refused" in handed)
+        return {
+          content: handed.refused ?? "",
+          isError: true,
+          ...("checked" in handed && handed.checked ? { data: { refusedByCheck: "forbidden" } } : {}),
+        };
       await publishDelivery(deps.pubsub, handed.delivered);
       const { unreachedAgents: agents, unreachedPeople: people } = handed.delivered.message.meta;
       const note = unreachedNote(stringsOf(agents), "that conversation", false, stringsOf(people), true);

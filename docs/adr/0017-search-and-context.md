@@ -79,3 +79,12 @@ holds for all the agent's work when its giver decides the agent's approvals, so 
 what a computer brain keeps in its own files. Those rest on the prompt line. A preference kept "everywhere" from a DM
 still reads in that person's own runs in a channel, where everyone reads the reply, and in the memory list of who holds
 `review_memory`.
+
+## Addendum (2026-11-18): a consulted agent and a public channel
+
+The rule above ("a consulted agent reads the person's DM with it only when everyone where they asked is in that DM")
+now has one more condition: where they asked must not be a public channel. Anyone in the workspace may join a public
+channel later and read the answer relayed there, so its current members are not the whole audience. A private channel
+or a DM keeps the rule as written (`memoryOutputChannels` in `context/memory-visibility.ts`). `search_context` keeps a
+hit from that DM only when this check let the DM in (`dmWithRunPerson`); every other message hit still has to come
+from a channel the run may answer into.

@@ -25,6 +25,7 @@ import type { EmbeddingResult } from "@agenteschat/providers";
 import { agentIdsSeen, isPlaybook } from "./audience";
 import { caches } from "./cache";
 import { ACCESS_WORD, HOW_TO_WORD } from "./context/items";
+import { memorySourceVisibilityForUser } from "./context/memory-visibility";
 import { personAgentDmKey } from "./dms";
 import { cutText } from "./format";
 import type { ModelGateway } from "./gateway";
@@ -50,11 +51,26 @@ export interface SearchDeps {
 /** Builds the search document of one source, or null when it should not be in the index. */
 export type DocumentBuilder = (db: Database, orgId: string, sourceId: string) => Promise<SearchDocument | null>;
 
-const builders = new Map<SearchKind, DocumentBuilder>();
+type Registry = {
+  builders: Map<SearchKind, DocumentBuilder>;
+  /** Lists the source ids of other kinds for reindexing (registered by their modules). */
+  extraSources: Map<SearchKind, (db: Database, orgId: string) => Promise<string[]>>;
+};
+
+/**
+ * The registries sit behind a hoisted function, never a top-level `const`: a module that registers can run before
+ * this file's body does (wiki.ts is reached from here through messages → works → missions), and a `const` read then
+ * throws "Cannot access before initialization".
+ */
+function registry(): Registry {
+  const self = registry as typeof registry & { value?: Registry };
+  self.value ??= { builders: new Map(), extraSources: new Map() };
+  return self.value;
+}
 
 /** Registers how a kind of source becomes a search document (messages, context items, issues, files). */
 export function registerDocumentBuilder(kind: SearchKind, builder: DocumentBuilder) {
-  builders.set(kind, builder);
+  registry().builders.set(kind, builder);
 }
 
 registerDocumentBuilder("message", async (db, orgId, id) => {
@@ -101,7 +117,7 @@ export async function enqueueIndex(tx: Executor, input: { orgId: string; kind: S
 
 /** Job `search.index`: builds the document (or removes it), embeds it if possible, upserts. */
 export async function indexSource(deps: SearchDeps, input: { orgId: string; kind: SearchKind; sourceId: string }) {
-  const builder = builders.get(input.kind);
+  const builder = registry().builders.get(input.kind);
   if (!builder) return;
   const index = await deps.search.forOrg(input.orgId);
   const doc = await builder(deps.db, input.orgId, input.sourceId);
@@ -169,7 +185,7 @@ export async function reindexOrg(
     const docs: SearchDocument[] = [];
     for (const r of rows) {
       if (r.id === cursorId) continue;
-      const doc = await builders.get("message")?.(deps.db, orgId, r.id);
+      const doc = await registry().builders.get("message")?.(deps.db, orgId, r.id);
       if (doc) docs.push(doc);
     }
     await upsertWithEmbeddings(deps, orgId, docs);
@@ -189,15 +205,15 @@ export async function reindexOrg(
   for (let i = 0; i < items.length; i += page) {
     const docs: SearchDocument[] = [];
     for (const it of items.slice(i, i + page)) {
-      const doc = await builders.get("context_item")?.(deps.db, orgId, it.id);
+      const doc = await registry().builders.get("context_item")?.(deps.db, orgId, it.id);
       if (doc) docs.push(doc);
     }
     await upsertWithEmbeddings(deps, orgId, docs);
     indexed += docs.length;
   }
-  for (const [kind, builder] of builders) {
+  for (const [kind, builder] of registry().builders) {
     if (kind === "message" || kind === "context_item" || !wanted(kind)) continue;
-    for (const id of (await extraSources.get(kind)?.(deps.db, orgId)) ?? []) {
+    for (const id of (await registry().extraSources.get(kind)?.(deps.db, orgId)) ?? []) {
       const doc = await builder(deps.db, orgId, id);
       if (doc) {
         await upsertWithEmbeddings(deps, orgId, [doc]);
@@ -208,10 +224,8 @@ export async function reindexOrg(
   return indexed;
 }
 
-/** Lists the source ids of other kinds for reindexing (registered by their modules). */
-const extraSources = new Map<SearchKind, (db: Database, orgId: string) => Promise<string[]>>();
 export function registerReindexSource(kind: SearchKind, list: (db: Database, orgId: string) => Promise<string[]>) {
-  extraSources.set(kind, list);
+  registry().extraSources.set(kind, list);
 }
 
 /**
@@ -299,7 +313,7 @@ export async function agentSearchChannels(
  * The conversation the routine of this room reports to, when its creator is still a member of it and of the
  * workspace: its runs summarize it, so they read what the creator reads there and nothing else. Null otherwise.
  */
-async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
+export async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
   const routineId = roomKey.match(/\|r:([^|]+)$/)?.[1];
   if (!routineId) return null;
   const [routine] = await db
@@ -407,7 +421,15 @@ export async function searchVisible(
     match?: "all" | "any";
   } & Pick<
     SearchQuery,
-    "after" | "before" | "messages" | "sort" | "visibleIssueScopes" | "visibleFileScopes" | "minTextRank"
+    | "after"
+    | "before"
+    | "messages"
+    | "sort"
+    | "visibleIssueScopes"
+    | "visibleFileScopes"
+    | "minTextRank"
+    | "maxDistance"
+    | "maxDistanceFromBest"
   >,
 ): Promise<SearchHit[]> {
   // A list by date ranks by no vector: no embedding to pay for. A provider that fails or is slow leaves the words.
@@ -423,7 +445,7 @@ export async function searchVisible(
           .catch(() => null)
       : null;
   const index = await deps.search.forOrg(input.orgId);
-  return index.query({
+  const hits = await index.query({
     text: input.text,
     embedding: embedded?.vectors[0] ?? null,
     embeddingModel: embedded?.model,
@@ -434,11 +456,46 @@ export async function searchVisible(
     limit: input.limit,
     match: input.match,
     minTextRank: input.minTextRank,
+    maxDistance: input.maxDistance,
+    maxDistanceFromBest: input.maxDistanceFromBest,
     after: input.after,
     before: input.before,
     messages: input.messages,
     sort: input.sort,
   });
+  const ids = hits.filter((h) => h.kind === "context_item").map((h) => h.sourceId);
+  const canonical = ids.length
+    ? await deps.db
+        .select()
+        .from(contextItems)
+        .where(
+          and(
+            eq(contextItems.orgId, input.orgId),
+            inArray(contextItems.id, ids),
+            eq(contextItems.status, "active"),
+            isNull(contextItems.supersededBy),
+          ),
+        )
+    : [];
+  const current = new Map(
+    canonical
+      .filter((item) => item.channelIds.every((id) => input.visibleChannelIds.includes(id)))
+      .map((item) => [item.id, item]),
+  );
+  return hits
+    .filter((hit) => hit.kind !== "context_item" || current.has(hit.sourceId))
+    .map((hit) => {
+      const item = hit.kind === "context_item" ? current.get(hit.sourceId) : undefined;
+      return item
+        ? {
+            ...hit,
+            channelIds: item.channelIds,
+            title: `${item.kind}${item.title ? `: ${item.title}` : ""}`,
+            snippet: cutText(item.content, 500),
+            createdAt: item.createdAt,
+          }
+        : hit;
+    });
 }
 
 /** A person's search filters (ADR 0123): what `searchForUser` takes besides the words. */
@@ -521,23 +578,18 @@ export async function searchForUser(
   if (items.length > 0) {
     const [rows, agentsSeen] = await Promise.all([
       deps.db
-        .select({
-          id: contextItems.id,
-          agentId: contextItems.agentId,
-          scopeType: contextItems.scopeType,
-          scopeId: contextItems.scopeId,
-          kind: contextItems.kind,
-          createdByKind: contextItems.createdByKind,
-        })
+        .select()
         .from(contextItems)
         .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, items))),
       agentIdsSeen(deps.db, userId, orgId),
     ]);
     const reviews = can(membership, "review_memory");
+    const sourceVisible = await memorySourceVisibilityForUser(deps.db, orgId, userId, visible, rows);
     const shown = new Set(
       rows
         .filter(
           (r) =>
+            sourceVisible.has(r.id) &&
             (!r.agentId || agentsSeen.details.has(r.agentId)) &&
             (!isPlaybook(r) || agentsSeen.playbook.has(r.agentId ?? "")) &&
             (reviews || r.scopeType !== "person" || r.scopeId === userId),

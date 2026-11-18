@@ -12697,7 +12697,7 @@ export const en = {
   },
   connectFlow: {
     accessRequired:
-      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
     steps: "Steps",
     step: { "0": "Connect", "1": "What it does", "2": "Who can use it" },
     connectTitle: "Connect {{name}}",
@@ -12775,7 +12775,7 @@ export const en = {
     done: {
       title: "{{name}} connected",
       accessRequired:
-        "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+        "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
       accessPending:
         "Review the tools, then choose agent access in Adjust. Existing All tools permissions still apply.",
       everyone: "Every agent can use it.",
@@ -18945,7 +18945,7 @@ export const en = {
         text: "Tell us what was missing or got in your way. We read everything.",
       },
       /** "Send feedback" is the row at the bottom of the sidebar (`feedback.open`): the same words. */
-      where: "Use Send feedback at the bottom of the sidebar to share feedback.",
+      where: "Share feedback using Send feedback at the bottom of the sidebar.",
     },
     /** Over the sky where the workspace's agents stand: asleep at night, then awake by day. */
     stage: {

@@ -7,8 +7,10 @@ import {
   addRunStep,
   afterTurnDone,
   agentMadeSkills,
+  buildRunContext,
   consolidateOrg,
   createAgent,
+  createChannel,
   drainOutbox,
   editContextItem,
   insertMessage,
@@ -30,7 +32,8 @@ import {
   type ToolContext,
   type ToolSource,
 } from "../src";
-import { learnTags, readsOutside, reportLearnFailure } from "../src/context/learn";
+import type { NewContextItem } from "../src/context/items";
+import { learnEventKey, learnTags, readsOutside, reportLearnFailure } from "../src/context/learn";
 import { continuationVerdict, runCalls } from "../src/continuation";
 import { createLlmJudge, judgeCallOf, withJudgeCall, withJudgeFallback } from "../src/judge";
 import { addMember, setup as baseSetup, type Fixture } from "./fixtures";
@@ -101,10 +104,16 @@ async function setup(options: Parameters<typeof baseSetup>[0] = {}) {
 }
 
 /** A run of the agent in `general`, answering a person's message (a routine's when `background`). */
-async function personRun(body = "@dev do it", background = false, meta?: Record<string, unknown>, userId = f.owner.id) {
+async function personRun(
+  body = "@dev do it",
+  background = false,
+  meta?: Record<string, unknown>,
+  userId = f.owner.id,
+  channelId = f.general.id,
+) {
   const msg = await insertMessage(f.db, {
     orgId: f.org.id,
-    channelId: f.general.id,
+    channelId,
     author: { type: "person", userId },
     body,
     meta,
@@ -114,7 +123,7 @@ async function personRun(body = "@dev do it", background = false, meta?: Record<
     .values({
       orgId: f.org.id,
       agentId: f.agent.id,
-      channelId: f.general.id,
+      channelId,
       threadRootId: msg.id,
       triggerMessageId: msg.id,
       trigger: "mention",
@@ -124,6 +133,15 @@ async function personRun(body = "@dev do it", background = false, meta?: Record<
     })
     .returning();
   if (!run) throw new Error("no run");
+  // These runs bypass the executor: record the publication coverage the native context builder gives a run
+  // (ADR 0191), as the executor does, so `update_skill` judges the run on what it actually read.
+  // The agent as it is now (a test may have changed its owner), as the executor reads it.
+  const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+  const context = await buildRunContext(f.db, run, agent ?? f.agent, { maxMessages: 100, toolsAvailable: true });
+  await f.db
+    .update(schema.agentRuns)
+    .set({ transcript: { publicationCapture: context.publicationCapture } })
+    .where(eq(schema.agentRuns.id, run.id));
   return { run, msg };
 }
 
@@ -137,7 +155,23 @@ async function step(
 ) {
   const toolUseId = `tu_${crypto.randomUUID()}`;
   await addRunStep(f.db, run, "tool_call", { toolUseId, name, input });
-  await addRunStep(f.db, run, "tool_result", { toolUseId, name, content, isError });
+  // A native load_skill result names the skill and version it loaded (ADR 0191 reads it as the run's proof).
+  const [loaded] =
+    name === "load_skill"
+      ? await f.db
+          .select()
+          .from(schema.skills)
+          .where(
+            and(eq(schema.skills.orgId, run.orgId), eq(schema.skills.slug, String((input as { name?: unknown }).name))),
+          )
+      : [];
+  await addRunStep(f.db, run, "tool_result", {
+    toolUseId,
+    name,
+    content,
+    isError,
+    ...(loaded ? { data: { skill: { id: loaded.id, version: loaded.version } } } : {}),
+  });
 }
 
 /** Calls a tool as `run` would. */
@@ -280,9 +314,10 @@ describe("agents learn on their own (ADR 0120)", () => {
       text: "list the northwind models",
     });
     const line = memory.text.split("\n").find((l) => l.includes("List the Northwind models")) ?? "";
-    expect(line).toContain("[more with expand]");
-    expect(line.length).toBeGreaterThan(600);
-    expect(line.length).toBeLessThan(800);
+    // A method that fits is preserved whole; no partial command or clipped condition.
+    expect(line).toContain(method.slice(0, 1400).trim());
+    expect(line).not.toContain("[more with expand]");
+    expect(memory.pack?.tokenCount).toBeLessThanOrEqual(memory.pack?.limit ?? 0);
 
     // Two of its own facts: the old one used a lot, the new one fresh. Off the request, they come in only by name
     // (ADR 0167), the fresh one first.
@@ -444,6 +479,49 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(await f.db.select().from(schema.skills)).toEqual([]);
   });
 
+  test("a preference, lesson or decision the job draws from tool calls alone stays low and its own; a one-off request is no standing preference", async () => {
+    f = await setup();
+    const { run } = await personRun("@dev ship the fix today; we always squash merge here");
+    await step(run, "run_command", { cmd: "git push" }, "refused: no approval to push");
+    const rule = (kind: string, content: string, refs: string[], lasting = true) => ({
+      kind,
+      scope: "team",
+      about_person: "",
+      title: content,
+      key: content,
+      content,
+      refs,
+      lasting,
+    });
+    learnOutput = {
+      items: [
+        rule("preference", "Code is not pushed without approval.", ["s1"]),
+        rule("lesson", "Only continue tasks when explicitly asked.", ["s1"]),
+        rule("decision", "Pushing is on hold.", ["s1"]),
+        rule("preference", "Ship the fix today.", ["m1"], false),
+        rule("preference", "The team squash merges.", ["m1"]),
+      ],
+      skill_fixes: [],
+    };
+    const learned = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(learned.rejected).toEqual([{ content: "Ship the fix today.", reason: "one_off" }]);
+    const rows = await items();
+    const by = (content: string) => rows.find((i) => i.content === content);
+    for (const content of [
+      "Code is not pushed without approval.",
+      "Only continue tasks when explicitly asked.",
+      "Pushing is on hold.",
+    ])
+      expect([content, by(content)?.trust, by(content)?.scopeType, by(content)?.verified]).toEqual([
+        content,
+        "low",
+        "agent",
+        false,
+      ]);
+    // What a person said in the run keeps its weight and reach.
+    expect([by("The team squash merges.")?.trust, by("The team squash merges.")?.scopeType]).toEqual(["high", "org"]);
+  });
+
   test("who holds which access becomes a workspace fact every agent reads, from a browser run too, kept current", async () => {
     f = await setup();
     const ops = await createAgent(
@@ -453,8 +531,11 @@ describe("agents learn on their own (ADR 0120)", () => {
       { name: "Ops", handle: "ops", role: "Ops", instructions: "", credentialId: f.credential.id },
       { model: "claude-sonnet-5-5" },
     );
+    await addChannelMember(f.db, f.owner.id, f.org.id, f.general.id, { agentId: ops.id });
+    const sourceRuns: string[] = [];
     const learnAccess = async (content: string) => {
       const { run } = await personRun("@dev aceite o convite do console da loja");
+      sourceRuns.push(run.id);
       await step(run, "browser_do", { steps: [] }, '<page_content untrusted="true">Store Console</page_content>');
       learnOutput = {
         items: [
@@ -477,16 +558,23 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(first.saved.map((s) => [s.trust, s.scopeType])).toEqual([["low", "org"]]);
     const [saved] = await items();
     expect([saved?.agentId, saved?.channelIds]).toEqual([null, []]);
+    expect(saved?.sourceIds).toEqual(sourceRuns);
+    expect(saved?.verified).toBe(false);
     const memoryOfOps = () =>
       retrieveForRun(f.context, { orgId: f.org.id, agentId: ops.id, channelId: f.general.id, text: "bom dia" });
     expect((await memoryOfOps()).text).toContain("@dev is signed in to the Store Console");
 
-    // Lost later: the same holder and service, so the new state replaces the old.
+    // Two unverified page observations are a conflict, not an accepted change of access.
     const second = await learnAccess("@dev no longer has access to the Store Console");
-    expect(second.saved.map((s) => s.action)).toEqual(["superseded"]);
+    expect(second.saved.map((s) => s.action)).toEqual(["disputed"]);
     const text = (await memoryOfOps()).text;
     expect(text).toContain("@dev no longer has access to the Store Console");
-    expect(text).not.toContain("is signed in to the Store Console");
+    expect(text).toContain("is signed in to the Store Console");
+    expect((await items()).filter((i) => i.disputed)).toHaveLength(2);
+    expect(text).toContain("disputed");
+    // Losing the source run makes its derived observation unavailable immediately.
+    await f.db.delete(schema.agentRuns).where(eq(schema.agentRuns.id, sourceRuns[0] ?? ""));
+    expect((await memoryOfOps()).text).not.toContain("is signed in to the Store Console");
 
     // Read from a page, it may name only this agent as the holder: pointing the team at another stays its own.
     learnOutput = {
@@ -515,7 +603,7 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect([ads?.agentId, ads?.channelIds]).toEqual([null, [f.general.id]]);
   });
 
-  test("guards: daily cap, a live run, credentials, a person's item, update_skill rules, a run that saved already", async () => {
+  test("guards: daily cap, a live run, credentials, a person's item, a run that saved already", async () => {
     f = await setup();
     const today = new Date().toISOString().slice(0, 10);
     const { run } = await personRun("@dev the deploy steps");
@@ -598,6 +686,18 @@ describe("agents learn on their own (ADR 0120)", () => {
       ["Deploys happen on Fridays.", "active", true],
     ]);
 
+    // A run that already saved what it learned queues nothing more.
+    const { run: saved } = await personRun("@dev remember this");
+    await step(saved, "remember", { content: "x" }, "Saved");
+    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "fact" })).toBe(false);
+    // Who holds an access is the team's, not the agent's own note: still learned.
+    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "access" })).toBe(true);
+  });
+
+  // Its own test since ADR 0191 (f9e71cd5e): update_skill is weighed on a run whose whole context the native builder
+  // captured, and the memories the guards above leave behind would make every change here a deferral.
+  test("update_skill rules: after load_skill only, never a locked skill or another agent's", async () => {
+    f = await setup();
     // update_skill: only after load_skill in the run, never a locked skill or another agent's; a person's skill
     // changes at once while agents improve skills by themselves (the default), else it becomes a proposal.
     const skill = async (slug: string, extra: Partial<typeof schema.skills.$inferInsert> = {}) => {
@@ -611,20 +711,41 @@ describe("agents learn on their own (ADR 0120)", () => {
     await skill("mine", { origin: "agent", ownerAgentId: f.agent.id });
     await skill("frozen", { origin: "agent", ownerAgentId: f.agent.id, locked: true });
     await skill("handbook");
+    // Each change is asked for in a room of its own, and every run starts before any change: since ADR 0191 a skill
+    // changes only on a run whose whole context the native builder captured, and a change already made shows in a
+    // later run's context (the channel's recent actions, the agent's recent work with that person).
+    let rooms = 0;
+    const room = async () => {
+      const c = await createChannel(f.db, f.owner.id, f.org.id, { name: `fixes-${++rooms}` });
+      await addChannelMember(f.db, f.owner.id, f.org.id, c.id, { agentId: f.agent.id });
+      return c.id;
+    };
+    const member = await addMember(f.db, f.org.id, "member");
     const { run: work } = await personRun("@dev ship it");
+    const { run: frozenRun } = await personRun("@dev fix frozen", false, undefined, f.owner.id, await room());
+    const { run: handbookRun } = await personRun("@dev fix handbook", false, undefined, f.owner.id, await room());
+    const { run: memberRun } = await personRun("@dev fix the handbook", false, undefined, member.id, await room());
+    const { run: otherRun } = await personRun("@dev fix mine", false, undefined, f.owner.id, await room());
+    /** `run` loads `name` (and only it: another skill loaded is context ADR 0191 doesn't qualify) and changes it. */
+    const loadAndFix = async (run: typeof work, name: string) => {
+      await invoke(run, "load_skill", { name });
+      return invoke(run, "update_skill", { name, body: `# ${name}\n1. The fixed step.` });
+    };
     const fix = (name: string) => invoke(work, "update_skill", { name, body: `# ${name}\n1. The fixed step.` });
-    expect((await fix("mine")).content).toContain("Load the skill mine with load_skill first");
-    for (const name of ["mine", "frozen", "handbook"]) await invoke(work, "load_skill", { name });
+    // Not loaded in this run, so no native read proves what the change rests on: deferred with the fixed text
+    // (ADR 0191, which replaced the read-before-write message on this path), and nothing is written (v2 below).
+    const unread = await fix("mine");
+    expect(unread.isError).toBe(true);
+    expect(unread.content).toContain("source review");
+    await invoke(work, "load_skill", { name: "mine" });
     await step(work, "load_skill", { name: "mine" }, "loaded");
     expect(
       (await invoke(work, "update_skill", { name: "mine", body: "token: ghp_abcdefghijklmnopqrstuvwxyz" })).content,
     ).toContain("credential");
     expect((await fix("mine")).content).toBe("Updated mine (v2).");
-    expect((await fix("frozen")).content).toContain("A person locked this skill");
-    expect((await fix("handbook")).content).toBe("Updated handbook (v2).");
+    expect((await loadAndFix(frozenRun, "frozen")).content).toContain("A person locked this skill");
+    expect((await loadAndFix(handbookRun, "handbook")).content).toBe("Updated handbook (v2).");
     await setSkillSettings(f.db, f.owner.id, f.org.id, { agentsImprove: false });
-    const member = await addMember(f.db, f.org.id, "member");
-    const { run: memberRun } = await personRun("@dev fix the handbook", false, undefined, member.id);
     await step(memberRun, "load_skill", { name: "handbook" }, "loaded");
     const proposed = await invoke(memberRun, "update_skill", {
       name: "handbook",
@@ -653,18 +774,58 @@ describe("agents learn on their own (ADR 0120)", () => {
       .update(schema.skills)
       .set({ ownerAgentId: other?.id ?? null })
       .where(and(eq(schema.skills.orgId, f.org.id), eq(schema.skills.slug, "mine")));
-    expect((await fix("mine")).content).toContain("belongs to another agent");
-
-    // A run that already saved what it learned queues nothing more.
-    const { run: saved } = await personRun("@dev remember this");
-    await step(saved, "remember", { content: "x" }, "Saved");
-    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "fact" })).toBe(false);
-    // Who holds an access is the team's, not the agent's own note: still learned.
-    expect(await afterTurnDone(f.context, saved, { judged: true, signal: "access" })).toBe(true);
+    expect((await loadAndFix(otherRun, "mine")).content).toContain("belongs to another agent");
   });
 });
 
 describe("learning guards", () => {
+  test("a learn event key is one claim: another person, scope or title is another event, never a refused one", () => {
+    // No database here: nothing for the file's afterEach to close.
+    f = undefined as unknown as Fixture;
+    const claim: NewContextItem = {
+      orgId: "o",
+      kind: "preference",
+      scopeType: "person",
+      scopeId: "ana",
+      agentId: null,
+      title: "reply language",
+      content: "Prefers replies in English.",
+      createdByKind: "agent",
+      createdById: "dev",
+    };
+    const key = learnEventKey("run-1", claim);
+    expect(learnEventKey("run-1", { ...claim })).toBe(key);
+    expect(learnEventKey("run-1", { ...claim, scopeId: "bob" })).not.toBe(key);
+    expect(learnEventKey("run-1", { ...claim, title: "language" })).not.toBe(key);
+    expect(learnEventKey("run-2", claim)).not.toBe(key);
+  });
+
+  test("a retried learn job applies each claim once: no second recurrence, evidence or chat line (A15)", async () => {
+    f = await setup();
+    const { run } = await personRun("@dev remember: our deploy window is Friday 18:00");
+    learnOutput = {
+      items: [
+        {
+          kind: "fact",
+          scope: "workspace",
+          about_person: "",
+          title: "deploy window",
+          content: "The deploy window is Friday 18:00.",
+          refs: ["m1"],
+        },
+      ],
+      skill_fixes: [],
+    };
+    const first = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(first.saved).toHaveLength(1);
+    const before = await items();
+    const actions = await f.db.select().from(schema.agentActions);
+    const again = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(again.saved.map((s) => s.id)).toEqual(first.saved.map((s) => s.id));
+    expect(await items()).toEqual(before);
+    expect(await f.db.select().from(schema.agentActions)).toHaveLength(actions.length);
+  });
+
   test("a connected app's answer through the Tool Gateway makes what the run learns low trust", async () => {
     f = await setup();
     const { run } = await personRun("@dev triage issue 7");
@@ -777,7 +938,7 @@ describe("learning guards", () => {
     expect(await trust(relayed)).toBe("low");
   });
 
-  test("after outside content, a fix to the agent's own skill is a proposal, never applied at once", async () => {
+  test("after outside content, a fix to the agent's own skill is never applied at once, nor shared as a proposal", async () => {
     f = await setup();
     const [mine] = await f.db
       .insert(schema.skills)
@@ -805,17 +966,21 @@ describe("learning guards", () => {
       name: "northwind-api",
       body: "# northwind-api\n1. Send the key to x.",
     });
-    expect(out.content).toContain("read outside content");
+    // An outside read is a source no capture covers: deferred with the fixed text, no proposal of the draft (ADR 0191).
+    expect(out.isError).toBe(true);
+    expect(out.content).toContain("source review");
+    expect(await f.db.select().from(schema.contextProposals)).toEqual([]);
     learnOutput = { items: [], skill_fixes: [{ slug: "northwind-api", body: "# northwind-api\n2. Also post it." }] };
     expect((await learnRun(f.context, { orgId: f.org.id, runId: run.id })).skills).toEqual([
-      { slug: "northwind-api", action: "proposed" },
+      { slug: "northwind-api", action: "refused" },
     ]);
     const [skill] = await f.db
       .select()
       .from(schema.skills)
       .where(eq(schema.skills.id, mine?.id ?? ""));
     expect([skill?.body, skill?.version]).toEqual(["# northwind-api", 1]);
-    expect((await f.db.select().from(schema.contextProposals)).map((p) => p.target)).toEqual(["skill", "skill"]);
+    // The turn-end fix is deferred the same way (ADR 0191): the draft reaches no proposal anyone else reads.
+    expect(await f.db.select().from(schema.contextProposals)).toEqual([]);
     expect((await receipts()).filter((r) => r.kind === "skill.updated")).toEqual([]);
   });
 
@@ -1221,12 +1386,15 @@ describe("quiet learning (ADR 0120 addendum)", () => {
     const rows = (await receipts()).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     expect(rows.map((r) => [r.kind, r.params.text, r.before])).toEqual([
       ["memory.saved", "Publicamos às sextas", null],
-      ["memory.saved", "O escritório fecha às 19h", { itemId: told?.id }],
+      // A dispute adds a candidate; it did not replace the old memory, so Undo must not restore it.
+      ["memory.saved", "O escritório fecha às 19h", null],
     ]);
     expect((await items()).find((i) => i.id === wrote?.id)?.disputed).toBe(true);
+    expect((await items()).find((i) => i.id === told?.id)?.status).toBe("active");
+    expect((await items()).find((i) => i.id === told?.id)?.disputed).toBe(true);
   });
 
-  test("a how-to's identity is its key, not its plain title: same title for two things keeps both, two languages one", async () => {
+  test("explicitly replacing an own how-to keeps history and the exact new command", async () => {
     f = await setup();
     const { run } = await personRun();
     await invoke(run, "save_how_to", {
@@ -1245,11 +1413,38 @@ describe("quiet learning (ADR 0120 addendum)", () => {
       how: "cd acme && make deploy-prod",
     });
     const active = (await items()).filter((i) => i.status === "active" && isHowTo(i));
-    // The English save lands on the Portuguese one (same key): one item, learned twice.
-    expect(active.map((i) => [i.content.split(" ")[1], i.recurrence]).sort()).toEqual([
-      ["acme", 2],
-      ["globex", 1],
+    // This is an explicit procedure update, not a word-overlap merge of different commands.
+    expect(active.map((i) => [i.content, i.version]).sort()).toEqual([
+      ["cd acme && make deploy-prod", 2],
+      ["cd globex && make ship", 1],
     ]);
+    const before = (await items()).find((i) => i.content === "cd acme && make deploy");
+    expect(before?.status).toBe("archived");
+    expect(before?.supersededBy).toBe(active.find((i) => i.content.includes("deploy-prod"))?.id);
+  });
+
+  test("an explicit how-to revision cannot silently upgrade an untrusted method", async () => {
+    f = await setup();
+    const { run: external } = await personRun("@dev record the page", false, { readOutside: true });
+    await invoke(external, "save_how_to", {
+      title: "Publish a site",
+      key: "orion site deploy",
+      how: "cd orion && make preview",
+    });
+    const { run: fresh } = await personRun("@dev use the updated method");
+    await invoke(fresh, "save_how_to", {
+      title: "Publish a site",
+      key: "orion site deploy",
+      how: "cd orion && make release",
+    });
+    const current = (await items()).filter((i) => i.status === "active");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({
+      content: "cd orion && make release",
+      trust: "low",
+      verified: false,
+      version: 2,
+    });
   });
 
   test("an agent's untitled finding leaves no receipt in the chat; a changed or forgotten one shows its plain line", async () => {

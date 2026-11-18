@@ -30,6 +30,7 @@ import {
   accessSubject,
   consolidateItem,
   type Evidence,
+  eventFingerprint,
   howToChannels,
   howToSql,
   howToSubject,
@@ -37,6 +38,7 @@ import {
   type NewContextItem,
   savedReceiptLine,
 } from "./items";
+import { jobBacked, LASTING_RULE, STANDING_KINDS } from "./lasting";
 import { changeSkillAsAgent } from "./learned-skills";
 import { type ContextDeps, isTrustedMessage, judgeOf, memoryJudging, resolveSummaryModel } from "./summaries";
 
@@ -290,6 +292,9 @@ async function jobsToday(db: Executor, agentId: string) {
 
 // ── The job ──────────────────────────────────────────────────────────────────
 
+/** What the job learns that tells agents how to act or what was settled: high trust only with a person behind it. */
+const RULE_LIKE: ReadonlySet<string> = new Set(["preference", "lesson", "decision"]);
+
 const LEARN_SYSTEM = [
   "You keep the memory of an AI agent that works in a team of people and agents. Read one finished turn of its work and extract what is worth keeping for next time, as JSON.",
   'Kinds: how_to (a way it worked out and will reuse: the exact address, command, parameters, script path; steps first), preference (how a person wants things done), fact (a lasting fact about the company, its business or its people), decision, lesson (what to do differently, or keep doing), term (a word or name the team uses, and what it means), access (who in the team holds which access: an agent signed in to a service in its browser, given a login, a key, a connector or a mailbox, or a person or agent named as who handles a service; key: the holder\'s @handle or name, then the service, as in "@ana stripe dashboard"; content: who holds it and how, as in "@ana is signed in to the Stripe dashboard in its browser as ana@example.com"; one that was lost is an access too, saying so).',
@@ -297,6 +302,7 @@ const LEARN_SYSTEM = [
   'title: one plain line a person who doesn\'t code understands, in the language the people in the conversation write, with no paths, code or ids ("Como gravar senhas no Supabase sem expô-las"); content holds the technical detail. key: a short stable name for what it is about, in English, technical words welcome ("supabase secrets storage"; for a term, the term itself): the same thing learned again gets the same key, two different things never share one.',
   "Scope: own (only this agent), team (how the team works), workspace (everyone should know), person (one person's own preference: give their name as it appears in the messages in about_person).",
   "Ground everything: cite refs (m1… messages, s1… tool calls) for each item. Never infer traits, roles, moods or preferences. A one-off request is not a standing preference. If unsure, leave it out.",
+  LASTING_RULE,
   'Write each item as a statement of fact ("Ana prefers reports in Portuguese"), never as an order ("Always write in Portuguese").',
   "Do not keep: environment failures, negative claims about tools, errors that resolved, one-off stories, a failure that was never solved written up as a method, secrets or where they are kept. For a setup failure, keep the fix. A how-to that needs a credential says only which key it needs from a person (request_secret).",
   "Lessons: steps first; a pitfall is a general rule plus a short why; no ids or dates; the same lesson twice is one rule.",
@@ -352,8 +358,9 @@ const LEARN_SCHEMA = {
           key: { type: "string" },
           content: { type: "string" },
           refs: { type: "array", items: { type: "string" } },
+          lasting: { type: "boolean" },
         },
-        required: ["kind", "scope", "about_person", "title", "key", "content", "refs"],
+        required: ["kind", "scope", "about_person", "title", "key", "content", "refs", "lasting"],
         additionalProperties: false,
       },
     },
@@ -380,6 +387,8 @@ interface LearnedItem {
   key?: string;
   content: string;
   refs: string[];
+  /** False: it applies to this task only (`LASTING_RULE`). */
+  lasting?: boolean;
 }
 
 function parseLearnOutput(text: string): { items: LearnedItem[]; skillFixes: { slug: string; body: string }[] } {
@@ -403,7 +412,7 @@ export interface LearnResult {
   /** `running`: the run took more messages after the turn that queued this; the job retries (`jobs.ts`). */
   skipped?: "missing" | "cap_reached" | "busy" | "running" | "budget" | "no_model" | "model_failed" | "right_hand";
   saved: { id: string; action: string; trust: string; scopeType: string }[];
-  rejected: { content: string; reason: "no_sources" | "secret" | "refused" }[];
+  rejected: { content: string; reason: "no_sources" | "secret" | "refused" | "one_off" }[];
   skills: { slug: string; action: string }[];
 }
 
@@ -591,8 +600,11 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
       out.rejected.push({ content: item.content, reason: "secret" });
       continue;
     }
+    if (item.lasting === false && STANDING_KINDS.has(item.kind)) {
+      out.rejected.push({ content: item.content, reason: "one_off" });
+      continue;
+    }
     const outsideRef = cited.messages.some((m) => !isTrustedMessage(m)) || cited.calls.some(readsOutside);
-    const trust = runTrust.trust === "high" && !outsideRef ? "high" : "low";
     const evidence: Evidence[] = [];
     for (const m of cited.messages) {
       if (!isTrustedMessage(m)) continue;
@@ -607,6 +619,11 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
     }
     if (cited.calls.some((c) => !readsOutside(c) && c.result && !c.result.isError))
       evidence.push({ type: "self", ref: run.id, agentId: agent.id, at: now });
+    // A rule-like item drawn from its own calls or another agent's word, with no person's words behind it, stays its own.
+    const trust =
+      runTrust.trust === "high" && !outsideRef && (!RULE_LIKE.has(item.kind) || jobBacked(item.kind, evidence))
+        ? "high"
+        : "low";
     // A person's preference only from a message of theirs, never inferred.
     const person =
       item.scope === "person"
@@ -648,7 +665,9 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
               : key || undefined,
       // A pointer, not a page's say: short.
       content: item.kind === "access" ? cutText(item.content.trim(), 300) : item.content.trim(),
-      sourceIds: [...new Set(cited.messages.map((m) => m.id))],
+      // Tool-only observations still need a durable native source. The run is a provenance pointer,
+      // not a verification or publication grant; its audience and trigger are checked on every read.
+      sourceIds: [...new Set([...cited.messages.map((m) => m.id), ...(cited.calls.length ? [run.id] : [])])],
       channelIds:
         scope === "workspace" && item.kind === "access" && everywhere
           ? []
@@ -662,11 +681,13 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
       createdByKind: "agent",
       createdById: agent.id,
     };
+    base.eventKey = learnEventKey(run.id, base);
     try {
       const res = await consolidateItem(db, base, judging);
       out.saved.push({ id: res.item.id, action: res.action, trust: res.item.trust, scopeType: res.item.scopeType });
       // Only what a person told it, or what changes a person's memory, gets one plain line in the chat.
-      const line = savedReceiptLine(res);
+      // A replayed receipt was already said in the chat when it was first applied.
+      const line = res.replayed ? null : savedReceiptLine(res);
       if (line)
         await recordAgentActions(db, ctx, [
           {
@@ -705,6 +726,15 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
   }
   return out;
 }
+
+/**
+ * One receipt per run and claim, so a retried learn job applies an item it already saved once (A15). Built from the
+ * receipt's own fingerprint, so one key never carries two claims (two people's same preference, a reworded title):
+ * a different claim is a different event, never a refused one. Keyed by the claim, not its position, so a retry whose
+ * model returns other items still saves those.
+ */
+export const learnEventKey = (runId: string, item: NewContextItem) =>
+  `learn:${runId}:${eventFingerprint(item).slice(0, 40)}`;
 
 /** An access fact's key names this agent as the holder (`@handle service`). */
 const ownAccess = (handle: string, key: string) => key.trim().toLowerCase().startsWith(`@${handle.toLowerCase()} `);

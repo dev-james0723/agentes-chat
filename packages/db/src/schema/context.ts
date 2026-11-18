@@ -147,6 +147,13 @@ export const contextItems = pgTable(
     version: integer().notNull().default(1),
     /** Summaries: the newest source they cover. */
     coversUntil: timestamp({ withTimezone: true }),
+    /** When the claim holds in the world (half-open); null = unknown/unbounded. Separate from when it was recorded. */
+    validFrom: timestamp({ withTimezone: true }),
+    validTo: timestamp({ withTimezone: true }),
+    /** The revision of the source the claim was read from (a message edit, a file hash); null = not recorded. */
+    sourceRevision: text(),
+    /** When a successor replaced this row (known time); null on rows superseded before it was recorded. */
+    supersededAt: timestamp({ withTimezone: true }),
     /** `job`, `agent` or `person`. */
     createdByKind: text().notNull().default("job"),
     createdById: text(),
@@ -162,6 +169,27 @@ export const contextItems = pgTable(
     index().on(t.agentId, t.status),
     index().on(t.orgId, t.subjectKey),
   ],
+);
+
+/**
+ * One row per producer event applied to memory: a repeated or reordered delivery returns this receipt instead of
+ * writing again. Claimed in the same transaction as the write, so a failed write leaves no receipt.
+ */
+export const contextItemEvents = pgTable(
+  "context_item_events",
+  {
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    eventKey: text().notNull(),
+    /** No foreign key: a deleted item keeps its receipt so the event is not applied again. */
+    itemId: uuid(),
+    action: text(),
+    /** What the event wrote (scope, owner, giver, kind, content): a replay must match it or is refused. */
+    fingerprint: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.eventKey] })],
 );
 
 /** Which items a run's context included: feeds relevance (and feedback). */

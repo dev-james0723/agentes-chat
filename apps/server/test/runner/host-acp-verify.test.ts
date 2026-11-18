@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { verifyLocalHostAcp } from "../../runner/host-acp-verify";
 
 test("verifies a no-tools session using the selected advertised model, with no real CLI or account", async () => {
-  const home = mkdtempSync(path.join(path.resolve(import.meta.dir, "../../../../.."), "host-acp-verify-test-"));
+  // The probe wants its runner home inside the user's home: there, not beside the checkout (which may be read-only).
+  const home = mkdtempSync(path.join(os.homedir(), "host-acp-verify-test-"));
   const root = path.join(home, "runner");
   mkdirSync(root, { mode: 0o700 });
   const fake = path.join(home, "fake-acp");

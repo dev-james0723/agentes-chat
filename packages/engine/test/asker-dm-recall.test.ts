@@ -56,7 +56,7 @@ async function call(ctx: ToolContext, name: string, input: Record<string, unknow
 const asked = (userId: string, body: string, meta?: Record<string, unknown>) =>
   insertMessage(f.db, { orgId: f.org.id, channelId: f.general.id, author: { type: "person", userId }, body, meta });
 
-describe("the agent reads the asker's own DM with it from anywhere else they talk", () => {
+describe("private recall stays within the answer audience", () => {
   async function world() {
     f = await setup({ reply: () => ({ chunks: ["Anotado."] }) });
     const bia = await addMember(f.db, f.org.id, "member", "bia");
@@ -72,13 +72,27 @@ describe("the agent reads the asker's own DM with it from anywhere else they tal
     return { bia, dm, said };
   }
 
-  test("the asker's channel run finds it, marked private; another member's and a routine's don't", async () => {
-    const { bia } = await world();
+  test("the requester, another member and a routine cannot bring a private DM into a public answer", async () => {
+    const { bia, dm, said } = await world();
     const mine = await runOn(f.general.id, (await asked(f.owner.id, "@dev já te falei da vitrine?")).id);
     const found = await call(mine, "search_context", { query: "deploy vitrine adiado" });
-    expect(found.content).toContain("adiado para segunda");
-    expect(found.content).toContain("your DM with");
-    expect(found.content).toContain("private");
+    expect(found.content).not.toContain("adiado para segunda");
+    expect(found.content).not.toContain("your DM with");
+    expect(found.content).not.toContain(said.id);
+    const privateRun = await runOn(
+      dm.id,
+      (
+        await insertMessage(f.db, {
+          orgId: f.org.id,
+          channelId: dm.id,
+          author: { type: "person", userId: f.owner.id },
+          body: "Please recall the deployment.",
+        })
+      ).id,
+    );
+    expect((await call(privateRun, "search_context", { query: "deploy vitrine adiado" })).content).toContain(
+      "adiado para segunda",
+    );
 
     const theirs = await runOn(f.general.id, (await asked(bia.id, "@dev já falaram da vitrine?")).id);
     expect((await call(theirs, "search_context", { query: "deploy vitrine adiado" })).content).not.toContain(
@@ -91,12 +105,31 @@ describe("the agent reads the asker's own DM with it from anywhere else they tal
     );
   });
 
-  test("read_conversation opens it for the asker, each line marked private, and for no one else", async () => {
-    const { bia, said } = await world();
+  test("read_conversation refuses public disclosure and retains direct private access", async () => {
+    const { bia, dm, said } = await world();
     const mine = await runOn(f.general.id, (await asked(f.owner.id, "@dev o que eu te disse?")).id);
     const read = await call(mine, "read_conversation", { message: said.id });
-    expect(read.content).toContain("adiado para segunda");
-    expect(read.content).toContain("your DM with");
+    expect(read.isError).toBe(true);
+    expect(read.content).not.toContain("adiado para segunda");
+    expect(
+      (
+        await call(
+          await runOn(
+            dm.id,
+            (
+              await insertMessage(f.db, {
+                orgId: f.org.id,
+                channelId: dm.id,
+                author: { type: "person", userId: f.owner.id },
+                body: "Please recall the deployment.",
+              })
+            ).id,
+          ),
+          "read_conversation",
+          { message: said.id },
+        )
+      ).content,
+    ).toContain("adiado para segunda");
     const theirs = await runOn(f.general.id, (await asked(bia.id, "@dev o que ele disse?")).id);
     expect((await call(theirs, "read_conversation", { message: said.id })).isError).toBe(true);
     // Words read from outside (a page, an email) are no one's own: nothing extra.

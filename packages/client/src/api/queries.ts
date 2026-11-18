@@ -3638,17 +3638,19 @@ export function useMemoryAction(orgId: string, agentId: string) {
   return useMutation({
     mutationFn: (
       action:
-        | { type: "edit"; id: string; text: string }
-        | { type: "pin"; id: string; pinned: boolean }
-        | { type: "archive"; id: string; archived: boolean }
-        | { type: "confirm"; id: string }
+        | ((
+            | { type: "edit"; id: string; text: string }
+            | { type: "pin"; id: string; pinned: boolean }
+            | { type: "archive"; id: string; archived: boolean }
+            | { type: "confirm"; id: string }
+          ) & { expectedVersion: number | undefined })
         | { type: "team"; id: string },
     ) => {
-      if (action.type === "edit") return api.memory.edit(orgId, action.id, action.text);
-      if (action.type === "pin") return api.memory.setPinned(orgId, action.id, action.pinned);
-      if (action.type === "confirm") return api.memory.confirm(orgId, action.id);
+      if (action.type === "edit") return api.memory.edit(orgId, action.id, action.text, action.expectedVersion);
+      if (action.type === "pin") return api.memory.setPinned(orgId, action.id, action.pinned, action.expectedVersion);
+      if (action.type === "confirm") return api.memory.confirm(orgId, action.id, action.expectedVersion);
       if (action.type === "team") return api.memory.makeTeam(orgId, action.id);
-      return api.memory.setArchived(orgId, action.id, action.archived);
+      return api.memory.setArchived(orgId, action.id, action.archived, action.expectedVersion);
     },
     onSuccess: () =>
       Promise.all([

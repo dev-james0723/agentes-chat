@@ -36,6 +36,7 @@ import {
   type ToolSource,
   WRAP_UP_NOTE,
 } from "../src";
+import { closeBridgeEffectEpoch } from "../src/bridge-effect-epoch";
 import { deliverNotice } from "../src/delivery";
 import * as ledger from "../src/routine-ledger";
 import { type Fixture, setup } from "./fixtures";
@@ -886,12 +887,17 @@ describe("recovery", () => {
         transcript: { system: [], messages: [], postedUpTo: 0, postedCount: 0, deltaSeq: 0 },
       })
       .where(eq(schema.agentRuns.id, run.id));
-    await issueRunToolToken(f.db, { orgId: f.org.id, agentId: f.agent.id, machineId, runId: run.id });
+    const tokenId = crypto.randomUUID();
+    await issueRunToolToken(f.db, { orgId: f.org.id, agentId: f.agent.id, machineId, runId: run.id, tokenId });
     // Its job was claimed by the worker that died.
     await f.db
       .update(schema.outbox)
       .set({ status: "processing", lockedUntil: new Date(Date.now() + 600_000), lockedBy: "dead" });
 
+    // While its turn's bridge epoch is open, an effect may be in flight: the run is held, never sent again.
+    expect((await recoverStaleRuns({ db: f.db, pubsub: f.pubsub })).resumed).toEqual([]);
+    // Its turn closed with nothing unsettled: it is sent again, and the turn's token can no longer act.
+    await closeBridgeEffectEpoch(f.db, run.id, tokenId, 1);
     expect((await recoverStaleRuns({ db: f.db, pubsub: f.pubsub })).resumed).toEqual([run.id]);
     const tokens = await f.db.select().from(schema.runToolTokens).where(eq(schema.runToolTokens.runId, run.id));
     expect(tokens).toHaveLength(1);

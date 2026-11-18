@@ -1,4 +1,4 @@
-import { type Database, eq, like, schema } from "@agenteschat/db";
+import { type Database, type Executor, eq, like, schema } from "@agenteschat/db";
 import type { BlobStore } from "./blob";
 
 const { blobs } = schema;
@@ -6,6 +6,40 @@ const { blobs } = schema;
 const ORG_KEY = /^(?:orgs|org-logos)\/([0-9a-f-]{36})\//i;
 /** A person's photo (`avatars/{userId}/…`): theirs in every org, so it belongs to none. */
 const PERSON_KEY = /^avatars\/[^/]+\//;
+
+const orgOf = (key: string) => {
+  const orgId = ORG_KEY.exec(key)?.[1];
+  if (orgId) return orgId;
+  if (PERSON_KEY.test(key)) return null;
+  throw new Error(`blob key must start with orgs/{orgId}/, org-logos/{orgId}/ or avatars/{userId}/: ${key}`);
+};
+
+/**
+ * Writes one blob of the Postgres store through `db`. A caller already in a transaction passes it, so the blob
+ * commits or rolls back with the rows that name it and never waits for a second connection (with a pool of one,
+ * as PGlite has, it would wait forever).
+ */
+export async function putPostgresBlob(
+  db: Executor,
+  key: string,
+  body: Uint8Array,
+  { contentType }: { contentType: string },
+) {
+  const row = {
+    key,
+    orgId: orgOf(key),
+    contentType,
+    size: body.byteLength,
+    content: Buffer.from(body).toString("base64"),
+  };
+  await db
+    .insert(blobs)
+    .values(row)
+    .onConflictDoUpdate({
+      target: blobs.key,
+      set: { contentType: row.contentType, size: row.size, content: row.content },
+    });
+}
 
 /**
  * Platform storage in Postgres, for deployments without a bucket. A key
@@ -15,30 +49,9 @@ const PERSON_KEY = /^avatars\/[^/]+\//;
  * checks.
  */
 export function createPostgresBlobStore(db: Database): BlobStore {
-  const orgOf = (key: string) => {
-    const orgId = ORG_KEY.exec(key)?.[1];
-    if (orgId) return orgId;
-    if (PERSON_KEY.test(key)) return null;
-    throw new Error(`blob key must start with orgs/{orgId}/, org-logos/{orgId}/ or avatars/{userId}/: ${key}`);
-  };
   return {
     kind: "postgres",
-    async put(key, body, { contentType }) {
-      const row = {
-        key,
-        orgId: orgOf(key),
-        contentType,
-        size: body.byteLength,
-        content: Buffer.from(body).toString("base64"),
-      };
-      await db
-        .insert(blobs)
-        .values(row)
-        .onConflictDoUpdate({
-          target: blobs.key,
-          set: { contentType: row.contentType, size: row.size, content: row.content },
-        });
-    },
+    put: (key, body, options) => putPostgresBlob(db, key, body, options),
     async get(key) {
       const [row] = await db.select().from(blobs).where(eq(blobs.key, key));
       if (!row) return null;

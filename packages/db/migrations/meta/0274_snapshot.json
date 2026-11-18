@@ -1,6 +1,6 @@
 {
-  "id": "6b82500d-9d51-4008-8132-aee128c9c72b",
-  "prevId": "764a5687-c5ae-445e-b504-b50de9359c36",
+  "id": "eaec1f46-e0b5-4298-bd2c-46b617431f9a",
+  "prevId": "8edec065-63dd-4f2c-b5fb-b7f769f18b63",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -7611,6 +7611,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "valid_from": {
+          "name": "valid_from",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "valid_to": {
+          "name": "valid_to",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_revision": {
+          "name": "source_revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "superseded_at": {
+          "name": "superseded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_by_kind": {
           "name": "created_by_kind",
           "type": "text",
@@ -7669,9 +7693,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "context_items_org_id_scope_type_scope_id_index": {
           "name": "context_items_org_id_scope_type_scope_id_index",
@@ -7696,9 +7720,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "context_items_agent_id_status_index": {
           "name": "context_items_agent_id_status_index",
@@ -7717,9 +7741,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "context_items_org_id_subject_key_index": {
           "name": "context_items_org_id_subject_key_index",
@@ -7738,39 +7762,39 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "context_items_org_id_organizations_id_fk": {
           "name": "context_items_org_id_organizations_id_fk",
           "tableFrom": "context_items",
-          "tableTo": "organizations",
           "columnsFrom": [
             "org_id"
           ],
+          "tableTo": "organizations",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "context_items_org_id_agent_id_agents_org_id_id_fk": {
           "name": "context_items_org_id_agent_id_agents_org_id_id_fk",
           "tableFrom": "context_items",
-          "tableTo": "agents",
           "columnsFrom": [
             "org_id",
             "agent_id"
           ],
+          "tableTo": "agents",
           "columnsTo": [
             "org_id",
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -11120,13 +11144,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "recovery_revision": {
-          "name": "recovery_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
         "binding_generation": {
           "name": "binding_generation",
           "type": "integer",
@@ -11312,12 +11329,6 @@
         "evaluation_ref": {
           "name": "evaluation_ref",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "evaluation_job": {
-          "name": "evaluation_job",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -28888,6 +28899,78 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.context_item_events": {
+      "name": "context_item_events",
+      "schema": "",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_key": {
+          "name": "event_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "context_item_events_org_id_organizations_id_fk": {
+          "name": "context_item_events_org_id_organizations_id_fk",
+          "tableFrom": "context_item_events",
+          "columnsFrom": [
+            "org_id"
+          ],
+          "tableTo": "organizations",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "context_item_events_org_id_event_key_pk": {
+          "name": "context_item_events_org_id_event_key_pk",
+          "columns": [
+            "org_id",
+            "event_key"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

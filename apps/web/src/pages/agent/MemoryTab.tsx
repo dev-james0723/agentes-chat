@@ -187,11 +187,12 @@ function LearnedRow({ m }: { m: Memory }) {
   const { agent } = useAgentEdit();
   const toast = useToast();
   const act = useMemoryAction(org.id, agent.id);
-  const [draft, setDraft] = useState<string | null>(null);
+  // The revision belongs to the opened draft, not to a background-refreshed row.
+  const [draft, setDraft] = useState<{ text: string; version: number | undefined } | null>(null);
   const save = () =>
     draft !== null &&
     act.mutate(
-      { type: "edit", id: m.id, text: draft },
+      { type: "edit", id: m.id, expectedVersion: draft.version, text: draft.text },
       {
         onSuccess: () => {
           setDraft(null);
@@ -216,7 +217,12 @@ function LearnedRow({ m }: { m: Memory }) {
       ) : (
         <Locked when={act.isPending}>
           <Field label={t("agentPage.memory.edit")} id={`learned-${m.id}`}>
-            <Textarea rows={3} maxLength={8000} value={draft} onChange={(e) => setDraft(e.target.value)} />
+            <Textarea
+              rows={3}
+              maxLength={8000}
+              value={draft.text}
+              onChange={(e) => setDraft({ ...draft, text: e.target.value })}
+            />
           </Field>
         </Locked>
       )}
@@ -247,7 +253,10 @@ function LearnedRow({ m }: { m: Memory }) {
                 title={t("memory.confirmTitle")}
                 disabled={act.isPending}
                 onClick={() =>
-                  act.mutate({ type: "confirm", id: m.id }, { onSuccess: () => toast.show(t("memory.confirmed")) })
+                  act.mutate(
+                    { type: "confirm", id: m.id, expectedVersion: m.version },
+                    { onSuccess: () => toast.show(t("memory.confirmed")) },
+                  )
                 }
               >
                 {t("memory.confirm")}
@@ -265,7 +274,7 @@ function LearnedRow({ m }: { m: Memory }) {
                 {t("teamMemory.make")}
               </Button>
             )}
-            <Button variant="link" onClick={() => setDraft(m.text)}>
+            <Button variant="link" onClick={() => setDraft({ text: m.text, version: m.version })}>
               {t("agentPage.memory.edit")}
             </Button>
             <Button
@@ -273,7 +282,7 @@ function LearnedRow({ m }: { m: Memory }) {
               disabled={act.isPending}
               onClick={() =>
                 act.mutate(
-                  { type: "archive", id: m.id, archived: true },
+                  { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
                   { onSuccess: () => toast.show(t("agentPage.memory.forgotten")) },
                 )
               }
@@ -283,7 +292,7 @@ function LearnedRow({ m }: { m: Memory }) {
           </>
         ) : (
           <>
-            <Button size="sm" variant="primary" disabled={!draft.trim()} loading={act.isPending} onClick={save}>
+            <Button size="sm" variant="primary" disabled={!draft.text.trim()} loading={act.isPending} onClick={save}>
               {t("agentPage.memory.save")}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
@@ -400,7 +409,7 @@ function RulesCard({ rules }: { rules: Memory[] }) {
                   disabled={act.isPending}
                   onClick={() =>
                     act.mutate(
-                      { type: "archive", id: m.id, archived: true },
+                      { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
                       { onSuccess: () => toast.show(t("agentPage.memory.ruleRemoved")) },
                     )
                   }

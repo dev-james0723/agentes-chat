@@ -1088,7 +1088,7 @@ export async function setAgentBrain(
     }
     if (brainConfigHash(locked) !== expectedConfigHash) {
       throw new ConflictError(
-        "The agent's brain configuration changed; read it again before saving",
+        "The agent's brain configuration changed. Read it again before saving",
         "brain.config_changed",
       );
     }

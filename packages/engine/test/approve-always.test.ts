@@ -198,7 +198,7 @@ function composioMcp() {
   return { connect, calls };
 }
 
-/** A Composio server connected by address and its suggestions accepted: every agent's, whole (`connector:*`). */
+/** A Composio fixture account whose access is explicitly granted to the agent under test. */
 async function composio(fx: Fixture, mcp: ReturnType<typeof composioMcp>, label = "Composio") {
   const deps: CustomDeps = {
     db: fx.db,
@@ -214,6 +214,8 @@ async function composio(fx: Fixture, mcp: ReturnType<typeof composioMcp>, label 
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // Approval scenarios start with an explicit grant for this fixture account, not an implicit global grant.
+  await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: "connector:*" }]);
   return { deps, serverId: started.server.id };
 }
 
@@ -257,6 +259,8 @@ async function connectServer(fx: Fixture, mcp: { connect: McpConnect }, label: s
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // Approval scenarios start with an explicit grant for this fixture account, not an implicit global grant.
+  await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: "connector:*" }]);
   return { deps, serverId: started.server.id };
 }
 
@@ -775,6 +779,8 @@ async function sqlWorld(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // Approval scenarios start with an explicit grant for this fixture account, not an implicit global grant.
+  await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: "connector:*" }]);
   const gateway = createToolGateway({ sources: [createConnectorToolSource(deps)] });
   return { mcp, gateway, serverId: started.server.id, name: "banco_execute_sql" };
 }

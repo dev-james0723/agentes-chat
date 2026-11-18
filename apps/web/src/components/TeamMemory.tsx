@@ -20,13 +20,13 @@ export function TeamMemoryCard() {
   const list = useTeamMemories(org.id);
   const act = useMemoryAction(org.id, "");
   const toast = useToast();
-  const [draft, setDraft] = useState<{ id: string; text: string } | null>(null);
+  const [draft, setDraft] = useState<{ id: string; text: string; version: number | undefined } | null>(null);
   const title = t("teamMemory.title");
   const items = list.data ?? [];
   const save = () =>
     draft &&
     act.mutate(
-      { type: "edit", id: draft.id, text: draft.text },
+      { type: "edit", id: draft.id, text: draft.text, expectedVersion: draft.version },
       {
         onSuccess: () => {
           setDraft(null);
@@ -59,7 +59,7 @@ export function TeamMemoryCard() {
                       rows={3}
                       maxLength={8000}
                       value={draft.text}
-                      onChange={(e) => setDraft({ id: m.id, text: e.target.value })}
+                      onChange={(e) => setDraft({ ...draft, text: e.target.value })}
                     />
                   </Field>
                 </Locked>
@@ -86,7 +86,7 @@ export function TeamMemoryCard() {
                     </>
                   ) : (
                     <>
-                      <Button variant="link" onClick={() => setDraft({ id: m.id, text: m.text })}>
+                      <Button variant="link" onClick={() => setDraft({ id: m.id, text: m.text, version: m.version })}>
                         {t("agentPage.memory.edit")}
                       </Button>
                       <Button
@@ -94,7 +94,7 @@ export function TeamMemoryCard() {
                         disabled={act.isPending}
                         onClick={() =>
                           act.mutate(
-                            { type: "archive", id: m.id, archived: true },
+                            { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
                             { onSuccess: () => toast.show(t("teamMemory.removed")) },
                           )
                         }

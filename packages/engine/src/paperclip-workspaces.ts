@@ -377,7 +377,7 @@ export async function registerPaperclipWorkspace(
       .values({ ...input, orgId, ownerId: actorId, agents: pins })
       .onConflictDoNothing()
       .returning();
-    if (!created) throw new ConflictError("Project binding already exists; register a new local UUID instead");
+    if (!created) throw new ConflictError("Project binding already exists. Register a new local UUID instead");
     for (const id of input.agentIds)
       await assertWorkspaceBinding(
         tx,

@@ -254,6 +254,7 @@ export function createTeamStatusToolSource(): ToolSource {
     description:
       "What the team is doing now, for this person: each agent's work, open and stuck tasks, what finished or failed today, what waits for them.",
     scope: "",
+    readOnly: true,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     describe: () => ({ title: "Check on the team" }),
     async execute(_input, ctx) {

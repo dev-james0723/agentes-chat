@@ -267,7 +267,7 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
                     variant="link"
                     title={t("memory.confirmTitle")}
                     disabled={action.isPending}
-                    onClick={() => action.mutate({ type: "confirm", id: m.id })}
+                    onClick={() => action.mutate({ type: "confirm", id: m.id, expectedVersion: m.version })}
                   >
                     {t("memory.confirm")}
                   </Button>
@@ -275,12 +275,19 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
                 <Button variant="link" onClick={() => setEditing(m)}>
                   {t("memory.edit")}
                 </Button>
-                <Button variant="link" onClick={() => action.mutate({ type: "pin", id: m.id, pinned: !m.pinned })}>
+                <Button
+                  variant="link"
+                  onClick={() =>
+                    action.mutate({ type: "pin", id: m.id, expectedVersion: m.version, pinned: !m.pinned })
+                  }
+                >
                   {m.pinned ? t("memory.unpin") : t("memory.pin")}
                 </Button>
                 <Button
                   variant="link"
-                  onClick={() => action.mutate({ type: "archive", id: m.id, archived: !m.archived })}
+                  onClick={() =>
+                    action.mutate({ type: "archive", id: m.id, expectedVersion: m.version, archived: !m.archived })
+                  }
                 >
                   {m.archived ? t("memory.restore") : t("memory.archive")}
                 </Button>
@@ -301,7 +308,11 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
         memory={editing}
         onClose={() => setEditing(null)}
         onSave={(text) => {
-          if (editing) action.mutate({ type: "edit", id: editing.id, text }, { onSuccess: () => setEditing(null) });
+          if (editing)
+            action.mutate(
+              { type: "edit", id: editing.id, text, expectedVersion: editing.version },
+              { onSuccess: () => setEditing(null) },
+            );
         }}
       />
     </div>

@@ -1,6 +1,7 @@
 import { and, type Executor, eq, type SQL, schema, sql } from "@agenteschat/db";
 import { PROVIDERS, type ProviderCause, ProviderError, providerCause } from "@agenteschat/providers";
 import { BRAIN_NAMES, type ComputerBrainKind, planName } from "./brains/types";
+import { recordRunOutcome } from "./context/outcomes";
 import { cutText, pgSafeJson } from "./format";
 import { recordRunFinished } from "./operator-events";
 import { standingErrorDetail } from "./standing";
@@ -419,6 +420,26 @@ export class InvalidRunTransitionError extends Error {
   }
 }
 
+/** Run errors that say nothing about the work (a provider, a plan or quota, the computer, our own fault). */
+const INFRA_CODES = new Set([
+  "plan_limit",
+  "budget",
+  "rate_limited",
+  "timeout",
+  "overloaded",
+  "provider_unavailable",
+  NO_AI,
+]);
+const INFRA_ERRORS =
+  /^run\.(provider_|computer_|cli_|no_ai|person_limit|budget_exceeded|interrupted|missing_credential|credential_|our_error|account_missing|brain_unavailable|windows_sandbox)/;
+
+/** A failure of the infrastructure, not of the work: by the brain's code or by the stored error's code. */
+export function infraFailure(code: string | null, error: string | null): boolean {
+  if (code && (INFRA_CODES.has(code) || INFRA_ERRORS.test(code))) return true;
+  const stored = runErrorDetail(error)?.errorCode;
+  return !!stored && INFRA_ERRORS.test(stored);
+}
+
 /**
  * Compare-and-set transition: succeeds only if the run is still in `from`.
  * Returns the updated run, or null when another worker moved it first.
@@ -488,14 +509,18 @@ export async function transitionRun(
     )
     .returning();
   if (row && isTerminal(to)) {
-    await recordRunFinished(
-      db,
-      row,
+    const failed =
       to === "failed"
         ? { code: failure?.code ?? runErrorDetail(row.error)?.errorCode ?? null, cause: failure?.cause ?? null }
-        : undefined,
-    );
+        : undefined;
+    await recordRunFinished(db, row, failed);
     await releaseProfileTurns(db, row.id);
+    // Its own savepoint (or transaction): an outcome that can't be written never undoes the run's end.
+    await db
+      .transaction((tx) =>
+        recordRunOutcome(tx, row, failed && { ...failed, infra: infraFailure(failed.code, row.error) }),
+      )
+      .catch(() => {});
   }
   return row ?? null;
 }

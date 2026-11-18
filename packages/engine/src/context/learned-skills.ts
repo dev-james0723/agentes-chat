@@ -775,7 +775,7 @@ export async function shareAcrossAgents(deps: ContextDeps, orgId: string) {
       });
       await tx
         .update(contextItems)
-        .set({ status: "archived", supersededBy: item.id, updatedAt: new Date() })
+        .set({ status: "archived", supersededBy: item.id, supersededAt: sql`now()`, updatedAt: new Date() })
         .where(
           inArray(
             contextItems.id,
