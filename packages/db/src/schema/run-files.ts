@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { bigint, check, foreignKey, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents";
 import { agentRuns } from "./runtime";
 import { organizations } from "./tenancy";
@@ -28,7 +28,7 @@ export const runFiles = pgTable(
     kind: text().notNull(),
     /** `canonical` (the deliverable), `evidence` (proof a check passed), `scratch`, `derived` (rebuildable) or `unknown`. */
     role: text().notNull(),
-    size: integer(),
+    size: bigint({ mode: "number" }),
     sha256: text(),
     note: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),

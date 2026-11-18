@@ -1878,7 +1878,8 @@ export async function concludeMission(
     "mission.closed",
   );
   // Ended: a dry-run report of its files (ADR 0197).
-  await queueRetentionReport(deps.db, orgId, { type: "mission", id: mission.id }, input.outcome);
+  // Its status is already saved: a failed enqueue must not stop the rest of the closing.
+  await queueRetentionReport(deps.db, orgId, { type: "mission", id: mission.id }, input.outcome).catch(() => {});
   // The folder goes away once its tasks ended (a canceled write item still commits its partial work); the
   // branch stays unless the person chose to delete everything on cancel (ADR 0044).
   row = await closeMissionWorktree(deps, row, {

@@ -1,6 +1,8 @@
-import { and, type Database, eq, inArray, schema, sql } from "@agenteschat/db";
+import { and, type Database, type Executor, eq, inArray, isNull, or, schema, sql } from "@agenteschat/db";
 import { ValidationError } from "./errors";
 import { enqueue } from "./outbox";
+import { SANDBOX_SCOPE } from "./sandbox";
+import type { ToolDefinition } from "./tools/types";
 
 /**
  * The files agents make, and what to keep once the work ends (ADR 0197).
@@ -11,7 +13,17 @@ import { enqueue } from "./outbox";
  * the report at all, so it is never a candidate.
  */
 
-const { runFiles, retentionReports, agentRuns, artifactVersions, artifacts, machineTasks } = schema;
+const {
+  runFiles,
+  retentionReports,
+  agentRuns,
+  agentWorks,
+  artifactVersions,
+  artifacts,
+  machineTasks,
+  missions,
+  issues,
+} = schema;
 
 export const RUN_FILE_KINDS = ["image", "video", "html", "markdown", "log", "build", "other"] as const;
 export const RUN_FILE_ROLES = ["canonical", "evidence", "scratch", "derived", "unknown"] as const;
@@ -29,23 +41,35 @@ const EXTENSIONS: [RegExp, RunFileKind][] = [
   [/\.(md|markdown)$/i, "markdown"],
   [/\.(log|jsonl)$/i, "log"],
 ];
-const BUILD_DIRS = /(^|\/)(dist|build|\.build|\.next|out|target|DerivedData)\//;
+// Case-insensitive: the default APFS volume is, so `Node_Modules` is the same folder.
+const BUILD_DIRS = /(^|\/)(dist|build|\.build|\.next|out|target|deriveddata)\//i;
+const DEPENDENCIES = /(^|\/)node_modules(\/|$)/i;
 
-/** A file's kind from its path, when the agent did not say. */
+/** A file's kind from its (clean) path, when the agent did not say. */
 export function kindOfPath(path: string): RunFileKind {
   if (BUILD_DIRS.test(path)) return "build";
   for (const [re, kind] of EXTENSIONS) if (re.test(path)) return kind;
   return "other";
 }
 
-/** A workspace-relative path, without `..`: anything else is refused, never guessed at. */
+/**
+ * One file, relative to the workspace, in one spelling: backslashes become slashes and `.` and empty segments go,
+ * so `a/./b`, `a//b` and `a\b` are the same row. Absolute, rooted, drive and home paths, `..`, shell expansions,
+ * control characters, a trailing slash (a folder) and the workspace itself are refused, never guessed at.
+ */
 export function cleanRunPath(raw: unknown): string {
-  const path = typeof raw === "string" ? raw.trim().replace(/^\.\//, "") : "";
-  if (!path || path.length > MAX_PATH) throw new ValidationError("Each file needs a path of up to 1000 characters.");
-  if (path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path))
-    throw new ValidationError(`"${path}": give the path relative to your workspace.`);
-  if (path.split(/[\\/]/).includes("..")) throw new ValidationError(`"${path}": a path may not use "..".`);
-  return path;
+  const given = typeof raw === "string" ? raw.trim() : "";
+  if (!given || given.length > MAX_PATH) throw new ValidationError("Each file needs a path of up to 1000 characters.");
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point.
+  if (/[\u0000-\u001f\u007f]/.test(given)) throw new ValidationError("A path may not hold control characters.");
+  const slashed = given.replace(/\\/g, "/");
+  if (slashed.startsWith("/") || slashed.startsWith("~") || /^[A-Za-z]:/.test(slashed) || slashed.includes("$"))
+    throw new ValidationError(`"${given}": give the path relative to your workspace, as written on disk.`);
+  if (slashed.endsWith("/")) throw new ValidationError(`"${given}": register files, not folders.`);
+  const parts = slashed.split("/").filter((p) => p !== "" && p !== ".");
+  if (parts.includes("..")) throw new ValidationError(`"${given}": a path may not use "..".`);
+  if (parts.length === 0) throw new ValidationError(`"${given}": register files, not the workspace itself.`);
+  return parts.join("/");
 }
 
 export interface RunFileInput {
@@ -57,7 +81,7 @@ export interface RunFileInput {
   note?: unknown;
 }
 
-/** Records (or updates, same run and path) the files a run made. */
+/** Records (or updates, same run and path) the files a run made. All or nothing: one bad path records none. */
 export async function registerRunFiles(
   db: Database,
   who: { orgId: string; agentId: string; runId: string },
@@ -69,7 +93,7 @@ export async function registerRunFiles(
     const path = cleanRunPath(f.path);
     const role = RUN_FILE_ROLES.includes(f.role as RunFileRole) ? (f.role as RunFileRole) : "unknown";
     const kind = RUN_FILE_KINDS.includes(f.kind as RunFileKind) ? (f.kind as RunFileKind) : kindOfPath(path);
-    const size = Number.isInteger(f.size) && (f.size as number) >= 0 ? (f.size as number) : null;
+    const size = Number.isSafeInteger(f.size) && (f.size as number) >= 0 ? (f.size as number) : null;
     const sha256 = typeof f.sha256 === "string" && /^[a-f0-9]{64}$/.test(f.sha256) ? f.sha256 : null;
     const note = typeof f.note === "string" && f.note.trim() ? f.note.trim().slice(0, 300) : null;
     return { orgId: who.orgId, agentId: who.agentId, runId: who.runId, path, role, kind, size, sha256, note };
@@ -90,6 +114,64 @@ export async function registerRunFiles(
       },
     })
     .returning({ path: runFiles.path, role: runFiles.role, kind: runFiles.kind });
+}
+
+/**
+ * The tool, offered by the computer's tool source only where the agent has a computer (ADR 0197): an agent that
+ * only chats makes no files there to register.
+ */
+export function registerFilesTool(db: Database): ToolDefinition {
+  return {
+    name: "register_files",
+    description:
+      "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept.",
+    scope: SANDBOX_SCOPE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        files: {
+          type: "array",
+          minItems: 1,
+          maxItems: MAX_FILES_PER_CALL,
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: MAX_PATH },
+              role: { enum: [...RUN_FILE_ROLES] },
+              kind: { enum: [...RUN_FILE_KINDS] },
+              size: { type: "integer", minimum: 0 },
+              sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+              note: { type: "string", maxLength: 300 },
+            },
+            required: ["path", "role"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["files"],
+      additionalProperties: false,
+    },
+    async execute(input, ctx) {
+      // A mission task's bridge call has no run of its own to file these under.
+      if (!ctx.runId) return { content: "Files are registered from a run; this call has none.", isError: true };
+      try {
+        const rows = await registerRunFiles(
+          db,
+          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
+          input.files as RunFileInput[],
+        );
+        const counts = new Map<string, number>();
+        for (const r of rows) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
+        const summary = [...counts].map(([role, n]) => `${n} ${role}`).join(", ");
+        return {
+          content: `Registered ${rows.length} file(s): ${summary}. Nothing was moved or deleted.`,
+          data: { files: rows },
+        };
+      } catch (error) {
+        return { content: error instanceof Error ? error.message : String(error), isError: true };
+      }
+    },
+  };
 }
 
 export type RetentionDecision = "keep" | "candidate";
@@ -114,7 +196,7 @@ export function retentionDecision(file: { where: "drive" | "computer"; path: str
   why: string;
 } {
   if (file.where === "drive") return { decision: "keep", why: "A Drive file: people open it from the task." };
-  if (/(^|\/)node_modules(\/|$)/.test(file.path))
+  if (DEPENDENCIES.test(file.path))
     return { decision: "keep", why: "Dependencies: shared copies on disk, cleaning them frees almost nothing." };
   switch (file.role) {
     case "canonical":
@@ -140,43 +222,84 @@ export function retentionDecision(file: { where: "drive" | "computer"; path: str
 }
 
 type Subject = { type: "issue" | "mission"; id: string };
+type Outcome = "done" | "canceled";
 
+/**
+ * Every run that worked on it. A task: runs filed under it, and runs of background work linked to it (a later run
+ * of the same work may not carry the task). A mission: the agent's runs in the mission's thread (as canceling the
+ * mission finds them) and runs that started its tasks.
+ */
 async function runsOf(db: Database, orgId: string, subject: Subject): Promise<string[]> {
   if (subject.type === "issue") {
+    const works = db
+      .select({ id: agentWorks.id })
+      .from(agentWorks)
+      .where(and(eq(agentWorks.orgId, orgId), eq(agentWorks.issueId, subject.id)));
     const rows = await db
       .select({ id: agentRuns.id })
       .from(agentRuns)
-      .where(and(eq(agentRuns.orgId, orgId), eq(agentRuns.issueId, subject.id)));
+      .where(and(eq(agentRuns.orgId, orgId), or(eq(agentRuns.issueId, subject.id), inArray(agentRuns.workId, works))));
     return rows.map((r) => r.id);
   }
-  const rows = await db
+  const [mission] = await db
+    .select()
+    .from(missions)
+    .where(and(eq(missions.orgId, orgId), eq(missions.id, subject.id)));
+  if (!mission) return [];
+  const thread = await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.orgId, orgId),
+        eq(agentRuns.agentId, mission.agentId),
+        eq(agentRuns.channelId, mission.channelId),
+        eq(agentRuns.threadRootId, mission.threadRootId),
+      ),
+    );
+  const starters = await db
     .select({ id: machineTasks.runId })
     .from(machineTasks)
     .where(and(eq(machineTasks.orgId, orgId), eq(machineTasks.missionId, subject.id)));
-  return [...new Set(rows.map((r) => r.id).filter((id): id is string => Boolean(id)))];
+  return [...new Set([...thread, ...starters].map((r) => r.id).filter((id): id is string => Boolean(id)))];
+}
+
+/** Its status now: the report is about how it stands when the job runs, not when it was queued. */
+async function statusOf(db: Database, orgId: string, subject: Subject): Promise<string | null> {
+  const table = subject.type === "issue" ? issues : missions;
+  const [row] = await db
+    .select({ status: table.status })
+    .from(table)
+    .where(and(eq(table.orgId, orgId), eq(table.id, subject.id)));
+  return row?.status ?? null;
 }
 
 /** Builds the report for a task or a mission from what its runs saved and registered. */
-export async function buildRetentionReport(
-  db: Database,
-  orgId: string,
-  subject: Subject,
-  outcome: "done" | "canceled",
-) {
+export async function buildRetentionReport(db: Database, orgId: string, subject: Subject, outcome: Outcome) {
   const runIds = await runsOf(db, orgId, subject);
   const items: RetentionItem[] = [];
   if (runIds.length > 0) {
+    // One item per Drive file a run saved (not per version), trashed ones left out. Ids and names only: whoever
+    // reads the report still needs access to a file to open it.
     const drive = await db
-      .select({
+      .selectDistinctOn([artifacts.id], {
+        artifactId: artifacts.id,
         runId: artifactVersions.runId,
         title: artifacts.title,
         fileName: artifactVersions.fileName,
         size: artifactVersions.size,
-        contentType: artifactVersions.contentType,
       })
       .from(artifactVersions)
       .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
-      .where(and(eq(artifactVersions.orgId, orgId), inArray(artifactVersions.runId, runIds)));
+      .where(
+        and(
+          eq(artifactVersions.orgId, orgId),
+          eq(artifacts.orgId, orgId),
+          inArray(artifactVersions.runId, runIds),
+          isNull(artifacts.deletedAt),
+        ),
+      )
+      .orderBy(artifacts.id, sql`${artifactVersions.version} desc`);
     for (const d of drive) {
       const path = d.fileName ?? d.title;
       const file = { where: "drive" as const, path, role: "canonical", kind: kindOfPath(path) };
@@ -186,9 +309,15 @@ export async function buildRetentionReport(
       .select()
       .from(runFiles)
       .where(and(eq(runFiles.orgId, orgId), inArray(runFiles.runId, runIds)));
+    const paths = new Set(local.map((f) => f.path));
     for (const f of local) {
       const file = { where: "computer" as const, path: f.path, role: f.role, kind: f.kind };
-      items.push({ ...file, size: f.size, runId: f.runId, ...retentionDecision(file) });
+      // A path that holds other registered files is a folder after all: it stays.
+      const holdsOthers = [...paths].some((p) => p !== f.path && p.startsWith(`${f.path}/`));
+      const decided = holdsOthers
+        ? { decision: "keep" as const, why: "A folder holding other registered files." }
+        : retentionDecision(file);
+      items.push({ ...file, size: f.size, runId: f.runId, ...decided });
     }
   }
   const candidates = items.filter((i) => i.decision === "candidate");
@@ -205,27 +334,30 @@ export async function buildRetentionReport(
   };
 }
 
-/** Writes (or rewrites) the report of a task or mission that ended. Idempotent, as jobs must be. */
-export async function writeRetentionReport(
-  db: Database,
-  orgId: string,
-  subject: Subject,
-  outcome: "done" | "canceled",
-) {
-  const report = await buildRetentionReport(db, orgId, subject, outcome);
+/**
+ * Writes (or rewrites) the report of a task or mission, as it stands now: one that was reopened before the job ran
+ * gets none, and the outcome is its current one, whatever order the jobs ran in. Idempotent, as jobs must be.
+ */
+export async function writeRetentionReport(db: Database, orgId: string, subject: Subject) {
+  const status = await statusOf(db, orgId, subject);
+  if (status !== "done" && status !== "canceled") return null;
+  const report = await buildRetentionReport(db, orgId, subject, status);
   await db
     .insert(retentionReports)
-    .values({ orgId, subjectType: subject.type, subjectId: subject.id, outcome, report })
+    .values({ orgId, subjectType: subject.type, subjectId: subject.id, outcome: status, report })
     .onConflictDoUpdate({
       target: [retentionReports.orgId, retentionReports.subjectType, retentionReports.subjectId],
-      set: { outcome, report, createdAt: new Date() },
+      set: { outcome: status, report, createdAt: new Date() },
     });
   return report;
 }
 
-/** Queues the report once a task or a mission reaches `done` or `canceled`; other states queue nothing. */
+/**
+ * Queues the report once a task or a mission reaches `done` or `canceled`; other states queue nothing. Call it in
+ * the transaction that changes the status, so the change and its job commit together.
+ */
 export async function queueRetentionReport(
-  db: Database,
+  db: Executor,
   orgId: string,
   subject: Subject,
   status: string,
@@ -235,7 +367,7 @@ export async function queueRetentionReport(
   await enqueue(db, {
     orgId,
     kind: RETENTION_REPORT_JOB,
-    payload: { subjectType: subject.type, subjectId: subject.id, outcome: status },
+    payload: { subjectType: subject.type, subjectId: subject.id },
     dedupeKey: `${RETENTION_REPORT_JOB}:${subject.type}:${subject.id}:${status}:${at.getTime()}`,
   });
 }

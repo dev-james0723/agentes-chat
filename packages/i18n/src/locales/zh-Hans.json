@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "审核私密草稿的共享",
     "destination": "目标：组织技能库",
@@ -10,9 +13,6 @@
     "body": "技能完整正文",
     "review": "审核私密草稿",
     "withdraw": "撤回共享批准"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "关闭",
@@ -7829,11 +7829,11 @@
       "issue": {
         "created": "在 agentes 中创建了任务"
       },
-      "deploy": {
-        "succeeded": "部署完成"
-      },
       "paperclip": {
         "received": "收到 Paperclip 请求"
+      },
+      "deploy": {
+        "succeeded": "部署完成"
       }
     },
     "when": {
@@ -15886,6 +15886,10 @@
     "create_artifact": {
       "label": "创建文件",
       "description": "创建文档、表格、差异、图表或页面。"
+    },
+    "register_files": {
+      "label": "登记文件",
+      "description": "记录为任务在电脑上生成的文件及每个文件的用途。不会删除任何文件。"
     },
     "update_artifact": {
       "label": "更新文件",

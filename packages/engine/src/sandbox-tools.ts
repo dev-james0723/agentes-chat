@@ -89,6 +89,7 @@ import {
 import { missionOfRun, type RunMission, runActsForMission } from "./mission-context";
 import { recordTaskFinished } from "./operator-events";
 import { routineKeysAllowed } from "./routine-keys";
+import { registerFilesTool } from "./run-files";
 import { runnerUpdateWay } from "./runner-update";
 import { replyThreadOf } from "./runs";
 import {
@@ -1880,9 +1881,11 @@ export function createSandboxToolSource(
       const holds = keepsRunning(computer)
         ? await holdsText({ db: ctx.db, ...(deps.pubsub ? { pubsub: deps.pubsub } : {}) }, ctx.orgId, ctx.agentId)
         : "";
-      const tools = keep(
-        build(settings.requireApproval, settings.execTimeoutSeconds, computer, ctx.threadRootId, devices, holds),
-      );
+      const tools = keep([
+        ...build(settings.requireApproval, settings.execTimeoutSeconds, computer, ctx.threadRootId, devices, holds),
+        // What the agent made on its computer and what for (ADR 0197): only where there is a computer.
+        ...(computer.kind === "none" ? [] : [registerFilesTool(ctx.db)]),
+      ]);
       if (!mission) return tools;
       return tools.map((t) => ({
         ...t,

@@ -38,17 +38,7 @@ const { agentScopes, connectorConnections, agents } = schema;
  * scope missing here would be dropped by any save.
  */
 export const BUILTIN_TOOLS: Record<string, string[]> = {
-  "": [
-    "ask_user",
-    "request_approval",
-    "react",
-    "show_block",
-    "start_poll",
-    "ask_choices",
-    "web_search",
-    "web_fetch",
-    "register_files",
-  ],
+  "": ["ask_user", "request_approval", "react", "show_block", "start_poll", "ask_choices", "web_search", "web_fetch"],
   "context:read": ["search_context", "get_summary", "expand"],
   "memory:write": ["remember", "update_memory", "forget", "save_how_to", "propose_instruction_change"],
   "drive:read": ["read_artifact", "list_artifacts", "share_artifact"],
@@ -88,6 +78,7 @@ export const BUILTIN_TOOLS: Record<string, string[]> = {
   ],
   "sandbox:run": [
     "run_code",
+    "register_files",
     "write_file",
     "read_file",
     "list_files",

@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Vérifier le partage d’un brouillon privé",
     "destination": "Destination : bibliothèque de compétences de l’organisation",
@@ -10,9 +13,6 @@
     "body": "Texte complet de la compétence",
     "review": "Vérifier le brouillon privé",
     "withdraw": "Retirer l’autorisation de partage"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Fermer",
@@ -8305,11 +8305,11 @@
       "issue": {
         "created": "Tâche créée dans agentes"
       },
-      "deploy": {
-        "succeeded": "Déploiement terminé"
-      },
       "paperclip": {
         "received": "Demande Paperclip reçue"
+      },
+      "deploy": {
+        "succeeded": "Déploiement terminé"
       }
     },
     "when": {
@@ -16879,6 +16879,10 @@
     "create_artifact": {
       "label": "Créer un fichier",
       "description": "Crée un document, un tableau, un diff, un diagramme ou une page."
+    },
+    "register_files": {
+      "label": "Enregistrer des fichiers",
+      "description": "Note les fichiers créés sur son ordinateur pour une tâche et à quoi sert chacun. Ne supprime rien."
     },
     "update_artifact": {
       "label": "Mettre à jour un fichier",

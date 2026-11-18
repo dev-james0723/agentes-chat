@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Sprawdź udostępnienie prywatnej wersji roboczej",
     "destination": "Miejsce docelowe: biblioteka umiejętności organizacji",
@@ -10,9 +13,6 @@
     "body": "Pełna treść umiejętności",
     "review": "Sprawdź prywatną wersję roboczą",
     "withdraw": "Wycofaj zgodę na udostępnienie"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Zamknij",
@@ -8530,11 +8530,11 @@
       "issue": {
         "created": "Zadanie utworzone w agentes"
       },
-      "deploy": {
-        "succeeded": "Wdrożenie zakończone"
-      },
       "paperclip": {
         "received": "Otrzymano prośbę z Paperclip"
+      },
+      "deploy": {
+        "succeeded": "Wdrożenie zakończone"
       }
     },
     "when": {
@@ -17386,6 +17386,10 @@
     "create_artifact": {
       "label": "Utwórz plik",
       "description": "Tworzy dokument, tabelę, diff, diagram lub stronę."
+    },
+    "register_files": {
+      "label": "Zarejestruj pliki",
+      "description": "Zapisuje, jakie pliki utworzył na swoim komputerze do zadania i do czego służy każdy z nich. Niczego nie usuwa."
     },
     "update_artifact": {
       "label": "Zaktualizuj plik",

@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Delen van een privéconcept beoordelen",
     "destination": "Bestemming: vaardighedenbibliotheek van de organisatie",
@@ -10,9 +13,6 @@
     "body": "Volledige tekst van de vaardigheid",
     "review": "Privéconcept beoordelen",
     "withdraw": "Goedkeuring voor delen intrekken"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Sluiten",
@@ -8091,11 +8091,11 @@
       "issue": {
         "created": "Taak gemaakt in agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy voltooid"
-      },
       "paperclip": {
         "received": "Paperclip-verzoek ontvangen"
+      },
+      "deploy": {
+        "succeeded": "Deploy voltooid"
       }
     },
     "when": {
@@ -16428,6 +16428,10 @@
     "create_artifact": {
       "label": "Bestand maken",
       "description": "Maakt een document, tabel, diff, diagram of pagina."
+    },
+    "register_files": {
+      "label": "Bestanden registreren",
+      "description": "Noteert welke bestanden het op zijn computer voor een taak heeft gemaakt en waarvoor elk dient. Verwijdert niets."
     },
     "update_artifact": {
       "label": "Bestand bijwerken",

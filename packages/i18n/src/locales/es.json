@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Revisar el uso compartido de un borrador privado",
     "destination": "Destino: biblioteca de habilidades de la organización",
@@ -10,9 +13,6 @@
     "body": "Texto completo de la habilidad",
     "review": "Revisar borrador privado",
     "withdraw": "Retirar aprobación para compartir"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Cerrar",
@@ -8253,11 +8253,11 @@
       "issue": {
         "created": "Tarea creada en agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy terminado"
-      },
       "paperclip": {
         "received": "Solicitud de Paperclip recibida"
+      },
+      "deploy": {
+        "succeeded": "Deploy terminado"
       }
     },
     "when": {
@@ -16796,6 +16796,10 @@
     "create_artifact": {
       "label": "Crear archivo",
       "description": "Crea un documento, tabla, diff, diagrama o página."
+    },
+    "register_files": {
+      "label": "Registrar archivos",
+      "description": "Anota qué archivos hizo en su computadora para una tarea y para qué sirve cada uno. No borra nada."
     },
     "update_artifact": {
       "label": "Actualizar archivo",

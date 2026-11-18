@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Verifica la condivisione di una bozza privata",
     "destination": "Destinazione: raccolta delle competenze dell’organizzazione",
@@ -10,9 +13,6 @@
     "body": "Testo completo della competenza",
     "review": "Verifica la bozza privata",
     "withdraw": "Ritira l’approvazione alla condivisione"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Chiudi",
@@ -8309,11 +8309,11 @@
       "issue": {
         "created": "Attività creata in agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy completato"
-      },
       "paperclip": {
         "received": "Richiesta Paperclip ricevuta"
+      },
+      "deploy": {
+        "succeeded": "Deploy completato"
       }
     },
     "when": {
@@ -16883,6 +16883,10 @@
     "create_artifact": {
       "label": "Crea file",
       "description": "Crea un documento, una tabella, un diff, un diagramma o una pagina."
+    },
+    "register_files": {
+      "label": "Registra file",
+      "description": "Annota quali file ha creato sul suo computer per un'attività e a cosa serve ciascuno. Non elimina nulla."
     },
     "update_artifact": {
       "label": "Aggiorna file",

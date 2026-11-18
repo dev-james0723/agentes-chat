@@ -921,14 +921,10 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
     },
     // A task or mission ended: what to keep and what could be cleaned, as a dry run (ADR 0197).
     [RETENTION_REPORT_JOB]: async (job) => {
-      const { subjectType, subjectId, outcome } = job.payload;
-      if (
-        (subjectType !== "issue" && subjectType !== "mission") ||
-        typeof subjectId !== "string" ||
-        (outcome !== "done" && outcome !== "canceled")
-      )
+      const { subjectType, subjectId } = job.payload;
+      if ((subjectType !== "issue" && subjectType !== "mission") || typeof subjectId !== "string")
         throw new PermanentJobError("bad retention report payload");
-      await writeRetentionReport(deps.db, orgOf(job), { type: subjectType, id: subjectId }, outcome);
+      await writeRetentionReport(deps.db, orgOf(job), { type: subjectType, id: subjectId });
     },
     "routine.run": async (job) => {
       await executeRoutineRun(

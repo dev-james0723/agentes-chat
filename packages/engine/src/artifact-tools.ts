@@ -21,7 +21,6 @@ import {
 import { refusalData } from "./errors";
 import type { ModelFile } from "./file-reader";
 import { personBehindCall } from "./requester";
-import { RUN_FILE_KINDS, RUN_FILE_ROLES, registerRunFiles } from "./run-files";
 import { replyThreadOf } from "./runs";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { neutralizeUntrusted, untrustedBlock } from "./untrusted";
@@ -351,57 +350,6 @@ export function createArtifactToolSource(deps: ArtifactDeps): ToolSource {
           return {
             content: `Shared "${a.title}" (${a.kind}) in this conversation as artifact ${a.id}; its card goes with your reply. ${from}`,
             data: { artifact: { id: a.id, version: a.version, title: a.title } },
-          };
-        } catch (error) {
-          return failed(error);
-        }
-      },
-    },
-    {
-      name: "register_files",
-      description:
-        "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. Paths are relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept.",
-      scope: "",
-      // Only an agent with a computer makes files there (ADR 0197).
-      needs: { name: "run_code", scope: "sandbox:run" },
-      inputSchema: {
-        type: "object",
-        properties: {
-          files: {
-            type: "array",
-            minItems: 1,
-            maxItems: 100,
-            items: {
-              type: "object",
-              properties: {
-                path: { type: "string", minLength: 1, maxLength: 1000 },
-                role: { enum: [...RUN_FILE_ROLES] },
-                kind: { enum: [...RUN_FILE_KINDS] },
-                size: { type: "integer", minimum: 0 },
-                sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-                note: { type: "string", maxLength: 300 },
-              },
-              required: ["path", "role"],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ["files"],
-        additionalProperties: false,
-      },
-      async execute(input, ctx) {
-        try {
-          const rows = await registerRunFiles(
-            deps.db,
-            { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
-            input.files as never,
-          );
-          const counts = new Map<string, number>();
-          for (const r of rows) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
-          const summary = [...counts].map(([role, n]) => `${n} ${role}`).join(", ");
-          return {
-            content: `Registered ${rows.length} file(s): ${summary}. Nothing was moved or deleted.`,
-            data: { files: rows },
           };
         } catch (error) {
           return failed(error);

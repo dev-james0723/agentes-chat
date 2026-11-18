@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "非公開の下書きの共有を確認",
     "destination": "共有先：組織のスキルライブラリ",
@@ -10,9 +13,6 @@
     "body": "スキルの全文",
     "review": "非公開の下書きを確認",
     "withdraw": "共有の承認を取り消す"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "閉じる",
@@ -7784,11 +7784,11 @@
       "issue": {
         "created": "agentesでタスクが作成されたとき"
       },
-      "deploy": {
-        "succeeded": "デプロイが完了したとき"
-      },
       "paperclip": {
         "received": "Paperclip のリクエストを受信"
+      },
+      "deploy": {
+        "succeeded": "デプロイが完了したとき"
       }
     },
     "when": {
@@ -15818,6 +15818,10 @@
     "create_artifact": {
       "label": "ファイルを作成",
       "description": "ドキュメント、表、差分、図、ページを作成します。"
+    },
+    "register_files": {
+      "label": "ファイルを登録",
+      "description": "タスクのためにコンピューターで作ったファイルと、それぞれの用途を記録します。何も削除しません。"
     },
     "update_artifact": {
       "label": "ファイルを更新",

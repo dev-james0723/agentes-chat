@@ -1298,6 +1298,9 @@ export async function updateIssue(
     if (!updated) throw new NotFoundError("Issue not found");
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
+    // Ended: a dry-run report of its files, committed with the change (ADR 0197).
+    if (updated.status !== current.status)
+      await queueRetentionReport(tx, orgId, { type: "issue", id: updated.id }, updated.status, updated.updatedAt);
     if (set.description !== undefined && (set.description.includes("[[") || current.description.includes("[["))) {
       await syncWikiLinks(tx, orgId, { type: "issue", id: updated.id, channelId: updated.channelId }, set.description);
     }
@@ -1314,9 +1317,6 @@ export async function updateIssue(
   if (patch.assignee !== undefined || row.status !== current.status) {
     await notifyIssueChanged(deps, author, current, row).catch(() => {});
   }
-  // Ended: a dry-run report of its files (ADR 0197).
-  if (row.status !== current.status)
-    await queueRetentionReport(db, orgId, { type: "issue", id: row.id }, row.status, row.updatedAt);
   return view;
 }
 
@@ -1987,7 +1987,6 @@ export async function setWorkIssueState(
   const view = (await workViews(deps.db, work.orgId, [work.id])).get(work.id);
   if (!view) return;
   const author: WorkActor = { type: "agent", id: work.agentId };
-  let statusChanged = false;
   const row = await deps.db.transaction(async (tx) => {
     // Criteria and status share this row. Decide from the locked, current values so a committed edit before
     // this transaction cannot be overwritten using an earlier read. No work/run locks are acquired here.
@@ -2022,7 +2021,7 @@ export async function setWorkIssueState(
       .returning();
     if (!updated) return null;
     if (status !== current.status) {
-      statusChanged = true;
+      await queueRetentionReport(tx, work.orgId, { type: "issue", id: updated.id }, status, now);
       await addActivity(tx, updated, {
         kind: "event",
         author,
@@ -2053,8 +2052,6 @@ export async function setWorkIssueState(
   });
   if (!row) return;
   await announce(deps, work.orgId, await one(deps.db, row), "issue.updated");
-  if (statusChanged)
-    await queueRetentionReport(deps.db, work.orgId, { type: "issue", id: row.id }, row.status, row.updatedAt);
 }
 
 /** A task's steps at every depth (`union`: a loop ends). */

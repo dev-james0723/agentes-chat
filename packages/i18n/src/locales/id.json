@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Tinjau pembagian draf pribadi",
     "destination": "Tujuan: pustaka keterampilan organisasi",
@@ -10,9 +13,6 @@
     "body": "Isi lengkap keterampilan",
     "review": "Tinjau draf pribadi",
     "withdraw": "Tarik persetujuan berbagi"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Tutup",
@@ -7821,11 +7821,11 @@
       "issue": {
         "created": "Tugas dibuat di agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy selesai"
-      },
       "paperclip": {
         "received": "Permintaan Paperclip diterima"
+      },
+      "deploy": {
+        "succeeded": "Deploy selesai"
       }
     },
     "when": {
@@ -15872,6 +15872,10 @@
     "create_artifact": {
       "label": "Buat file",
       "description": "Membuat dokumen, tabel, diff, diagram, atau halaman."
+    },
+    "register_files": {
+      "label": "Daftarkan file",
+      "description": "Mencatat file yang dibuat di komputernya untuk sebuah tugas dan kegunaan masing-masing. Tidak menghapus apa pun."
     },
     "update_artifact": {
       "label": "Perbarui file",

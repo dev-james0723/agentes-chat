@@ -19,7 +19,7 @@ CREATE TABLE "run_files" (
 	"path" text NOT NULL,
 	"kind" text NOT NULL,
 	"role" text NOT NULL,
-	"size" integer,
+	"size" bigint,
 	"sha256" text,
 	"note" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

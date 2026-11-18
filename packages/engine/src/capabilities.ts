@@ -254,17 +254,17 @@ export function describeCapabilities(
 }
 
 /**
- * GitHub work (ADR 0016, amended 2026-11-03): the workspace's GitHub connection and our git proxy, never the person's
- * own sign-in. A `gh auth login` on the computer leaves their token there, with all their access, outside the
- * connector's scopes, the approvals and the git proxy's branch rules.
- */
-/**
  * How an agent with a computer keeps its files (ADR 0197): the short version every such agent reads; the rules
  * behind it are the retention report's, never the prompt's.
  */
 export const FILES_GUIDANCE =
   "- Files on your computer: put deliverables where the task asks and temporary files in a scratch folder. Take a screenshot only at a meaningful change or a check; before recording, set a length and size limit. When you hand off, list the files you made with `register_files` (deliverable, evidence, scratch or rebuildable). It deletes nothing; files you don't register are kept.";
 
+/**
+ * GitHub work (ADR 0016, amended 2026-11-03): the workspace's GitHub connection and our git proxy, never the person's
+ * own sign-in. A `gh auth login` on the computer leaves their token there, with all their access, outside the
+ * connector's scopes, the approvals and the git proxy's branch rules.
+ */
 export const GITHUB_GUIDANCE =
   "- GitHub: use the GitHub connector's tools and git through `git_clone`; read-only gh (gh pr view, gh run view…) runs without asking only where gh is already signed in. Never sign the person in to gh (gh auth login) nor ask for a GitHub token. When the connector lacks something, say what, and that an admin can reconnect GitHub in Connectors to add it.";
 
