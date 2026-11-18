@@ -31,7 +31,7 @@ export const FULL_STEPS = Object.freeze({
   build: { argv: ["bun", "run", "build"], timeoutMs: 900_000 },
   "migration-drift": {
     argv: sh(
-      'bun run db:generate ci-drift-check < /dev/null; s=$(git status --porcelain -- packages/db/migrations); echo "$s"; if [ -n "$s" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi',
+      'bun run db:generate ci-drift-check < /dev/null || exit 1; s=$(git status --porcelain -- packages/db/migrations); echo "$s"; if [ -n "$s" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi',
     ),
     timeoutMs: 300_000,
   },
@@ -98,12 +98,18 @@ function git(root, ...args) {
 }
 
 /** The candidate is exactly `sha`, clean, and the same commit the remote branch names now. */
-export async function verifySource({ root, sha, remote, branch }) {
+export async function verifySource({ root, sha, remote, branch, fresh = false }) {
   const blockers = [];
   const head = await git(root, "rev-parse", "HEAD");
   if (head.code !== 0 || head.out !== sha) blockers.push("head_mismatch");
   const status = await git(root, "status", "--porcelain", "--untracked-files=normal");
   if (status.code !== 0 || status.out !== "") blockers.push("dirty_workspace");
+  // Before the run the candidate must be a fresh checkout: ignored leftovers (an old build, dist) could be what the
+  // tests or the image build actually use.
+  if (fresh) {
+    const ignored = await git(root, "status", "--porcelain", "--ignored", "--untracked-files=all");
+    if (ignored.code !== 0 || ignored.out !== "") blockers.push("not_fresh_checkout");
+  }
   const ls = await git(root, "ls-remote", remote, `refs/heads/${branch}`);
   if (ls.code !== 0 || ls.out.split(/\s+/)[0] !== sha) blockers.push("remote_branch_not_at_sha");
   return { ok: blockers.length === 0, blockers };
@@ -120,8 +126,13 @@ function runStep(id, step, { root, out, env }) {
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        process.kill(-p.pid, "SIGKILL");
+        process.kill(-p.pid, "SIGTERM");
       } catch {}
+      setTimeout(() => {
+        try {
+          process.kill(-p.pid, "SIGKILL");
+        } catch {}
+      }, 120_000).unref();
     }, step.timeoutMs);
     const finish = (exitCode) => {
       clearTimeout(timer);
@@ -151,7 +162,7 @@ export async function runFull({ root, sha, repository, remote, branch, out, dock
   const free = statfsSync(absRoot);
   const freeBytes = free.bavail * free.bsize;
   const startedAt = new Date().toISOString();
-  const source = await verifySource({ root: absRoot, sha, remote, branch });
+  const source = await verifySource({ root: absRoot, sha, remote, branch, fresh: true });
   const receipt = {
     schema: "local-ci-release/v1",
     mode: only ? "partial" : "full",
