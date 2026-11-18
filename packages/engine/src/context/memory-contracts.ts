@@ -215,32 +215,43 @@ export function toMemoryEnvelope(item: ContextItem): Mapped<NativeMemoryEnvelope
 }
 
 /**
- * Limitation (A07 partial): native supersession models a correction, so a successor hides its predecessor in every
- * later known-time view, also when the successor only started later in the world ("Paris from January", then "Tokyo
- * from February": asked now about mid-January, this returns nothing). Keeping that history needs successors to close
- * their predecessor's validity instead of replacing it.
- *
  * Bitemporal view over rows the caller has already authorized: `knownAt` is what memory held at that time (recorded
  * by then, not yet superseded); `asOf` is what holds in the world then (validity half-open, unknown bounds open). A
- * late correction adds a successor, so earlier known-time views keep showing what was believed then. Rows archived
- * without a successor, and superseded rows whose supersession time was never recorded, have no reliable known-time
- * span and are left out. Not an authorization or visibility check.
+ * late correction adds a successor, so earlier known-time views keep showing what was believed then.
+ *
+ * A successor that starts later in the world than its predecessor ("Paris from January", then "Tokyo from
+ * February") is a change over time, not a correction: asked about a time before the successor starts, the
+ * predecessor still answers, up to the successor's start. A successor with no start, or one starting no later than
+ * its predecessor, corrects it everywhere. The successor must be among `items` for this; otherwise the predecessor
+ * stays out. Rows archived without a successor, and superseded rows whose supersession time was never recorded,
+ * have no reliable known-time span and are left out. Not an authorization or visibility check.
  */
 export function memoryViewAt<
-  T extends Pick<ContextItem, "status" | "supersededBy" | "supersededAt" | "createdAt" | "validFrom" | "validTo">,
+  T extends Pick<
+    ContextItem,
+    "id" | "status" | "supersededBy" | "supersededAt" | "createdAt" | "validFrom" | "validTo"
+  >,
 >(items: readonly T[], at: { knownAt?: Date; asOf?: Date }): T[] {
   const known = at.knownAt?.getTime() ?? Number.POSITIVE_INFINITY;
   const asOf = at.asOf?.getTime();
+  const byId = new Map(items.map((i) => [i.id, i]));
   return items.filter((i) => {
     if (i.status === "archived" && !i.supersededBy) return false;
     if (i.createdAt.getTime() > known) return false;
+    let validTo = i.validTo?.getTime();
     if (i.supersededBy) {
       if (!i.supersededAt) return false;
-      if (i.supersededAt.getTime() <= known) return false;
+      if (i.supersededAt.getTime() <= known) {
+        // Replaced by then: only a later-starting successor leaves it the time before that start.
+        const next = byId.get(i.supersededBy)?.validFrom?.getTime();
+        const laterStart = next !== undefined && (!i.validFrom || next > i.validFrom.getTime());
+        if (!laterStart || asOf === undefined || asOf >= next) return false;
+        validTo = validTo === undefined ? next : Math.min(validTo, next);
+      }
     }
     if (asOf === undefined) return true;
     if (i.validFrom && i.validFrom.getTime() > asOf) return false;
-    if (i.validTo && i.validTo.getTime() <= asOf) return false;
+    if (validTo !== undefined && validTo <= asOf) return false;
     return true;
   });
 }
