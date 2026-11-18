@@ -33,6 +33,7 @@ import {
   isExpandable,
   MENTION_RE,
   NOTIFICATION_FILTERS,
+  notificationSourceLabel,
   opensConnectAi,
   replyTarget,
   restrictionOf,
@@ -694,7 +695,8 @@ function Row({
   const joiner = n.kind === "invitation_accepted" ? joinerOf(t, dir, n) : undefined;
   const name = joiner ?? nameOf(t, dir, first);
   const own = workspaceHeadline(n);
-  const label = own ? t(own, { name: n.source.label }) : n.kind === "app_created" ? appCreatedLine(t, n) : name;
+  const sourceLabel = notificationSourceLabel(n, (id) => dir.anyAgent(id)?.name);
+  const label = own ? t(own, { name: sourceLabel }) : n.kind === "app_created" ? appCreatedLine(t, n) : name;
   const reaction = n.kind === "reaction";
   const group = n.actors.length > 1;
   const other = n.actors.find((a, i) => i > 0 && (a.id !== first?.id || a.type !== first?.type));

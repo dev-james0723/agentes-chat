@@ -109,7 +109,7 @@ export const PORTRAIT_CODE = /^1(\.[A-Za-z0-9]{1,24}){1,48}$/;
  * An uploaded image (base64): JPEG, PNG or WebP up to 2 MB, checked by its
  * bytes, without metadata; named by a hash of its content.
  */
-function readImage(input: { imageBase64: string; contentType: string }, code: "avatar" | "logo") {
+export function readAvatarImage(input: { imageBase64: string; contentType: string }, code: "avatar" | "logo") {
   const clean = input.imageBase64.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new ValidationError("The image isn't base64", `${code}.not_base64`);
   const bytes = new Uint8Array(Buffer.from(clean, "base64"));
@@ -142,7 +142,7 @@ export async function setAvatar(
 ): Promise<{ avatarUrl: string }> {
   if (input.portrait !== undefined && !PORTRAIT_CODE.test(input.portrait))
     throw new ValidationError("That isn't a portrait's recipe", "avatar.portrait");
-  const { body, type, file } = readImage(input, "avatar");
+  const { body, type, file } = readAvatarImage(input, "avatar");
   await deps.blobs.put(`avatars/${userId}/${file}`, body, { contentType: type });
   const [before] = await deps.db.select({ image: users.image }).from(users).where(eq(users.id, userId));
   const avatarUrl = `/api/app/avatars/${encodeURIComponent(userId)}/${file}${input.portrait ? `#px=${input.portrait}` : ""}`;
@@ -210,7 +210,7 @@ export async function setOrgLogo(
   input: { imageBase64: string; contentType: string },
 ): Promise<{ logo: string }> {
   await requirePermission(deps.db, actorId, orgId, "configure");
-  const { body, type, file } = readImage(input, "logo");
+  const { body, type, file } = readAvatarImage(input, "logo");
   await deps.blobs.put(`org-logos/${orgId}/${file}`, body, { contentType: type });
   const [before] = await deps.db
     .select({ logo: organizations.logo })

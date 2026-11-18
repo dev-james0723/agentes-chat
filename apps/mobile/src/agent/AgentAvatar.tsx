@@ -8,9 +8,10 @@ import {
 } from "@agenteschat/ui/agent/engine";
 import { avatarSkyCell, avatarSkyCells, avatarSkyTones } from "@agenteschat/ui/sky/avatar";
 import { Canvas, createPicture, Picture } from "@shopify/react-native-skia";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
+import { usePhoto } from "@/lib/use-photo";
 import { useReducedMotion, useTheme } from "@/ui/theme";
 import { useFrameTime } from "./live";
 import type { AgentLookInput } from "./looks";
@@ -122,9 +123,15 @@ function AgentAvatarView({
   const dark = scheme === "dark";
   const { t: tr } = useTranslation();
   const { color, eyes, accessory, id } = agent;
+  const photo = usePhoto(agent.avatarUrl);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const uri = photo?.uri;
+  useEffect(() => setFailedImage((failed) => (failed === uri ? failed : null)), [uri]);
+  const showPhoto = Boolean(photo && failedImage !== uri);
   const seed = useMemo(() => seedOf(id ?? `${color}:${eyes}:${accessory ?? ""}`), [id, color, eyes, accessory]);
-  const t = useFrameTime(live && !reduced, STILL_T);
+  const t = useFrameTime(live && !reduced && !showPhoto, STILL_T);
   const picture = useMemo(() => {
+    if (showPhoto) return null;
     const frame = agentFrame(
       { color, eyes, accessory },
       size,
@@ -138,7 +145,7 @@ function AgentAvatarView({
       { gaze, bodyless },
     );
     return createPicture((canvas) => replay(canvas, frame), { width: size, height: size });
-  }, [color, eyes, accessory, size, mode, t, seed, reduced, tile, dark, expression, gaze, bodyless]);
+  }, [color, eyes, accessory, size, mode, t, seed, reduced, tile, dark, expression, gaze, bodyless, showPhoto]);
   const label = name
     ? tr(mode === "run" ? "mobile.a11y.agentWorking" : "mobile.a11y.agent", { name })
     : tr("mobile.a11y.agentPlain");
@@ -157,16 +164,35 @@ function AgentAvatarView({
         },
       ]}
     >
-      <Canvas style={{ width: size, height: size }}>
-        <Picture picture={picture} />
-      </Canvas>
+      {showPhoto && photo ? (
+        <>
+          <Image
+            key={photo.uri}
+            source={photo}
+            resizeMode="cover"
+            style={[StyleSheet.absoluteFill, { borderRadius: size * 0.3 }, mode === "sleep" && { opacity: 0.55 }]}
+            onError={() => setFailedImage(photo.uri)}
+            accessibilityIgnoresInvertColors
+          />
+          {mode === "run" || mode === "think" ? (
+            <View
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, { borderRadius: size * 0.3, borderWidth: 2, borderColor: c.agent }]}
+            />
+          ) : null}
+        </>
+      ) : picture ? (
+        <Canvas style={{ width: size, height: size }}>
+          <Picture picture={picture} />
+        </Canvas>
+      ) : null}
     </View>
   );
 }
 
 /**
- * An agent, drawn by the shared engine (`@agenteschat/ui/agent/engine`) on a Skia canvas: never any
- * other way. Living agents share one ~25 fps clock; with reduced motion, `live={false}`, an off-screen
+ * An agent's saved photo, with its shared-engine pixel appearance as the fallback.
+ * Living pixel agents share one ~25 fps clock; with reduced motion, `live={false}`, an off-screen
  * screen or the app in the background they hold a still frame.
  */
 export const AgentAvatar = memo(
@@ -183,5 +209,6 @@ export const AgentAvatar = memo(
     a.agent.color === b.agent.color &&
     a.agent.eyes === b.agent.eyes &&
     a.agent.accessory === b.agent.accessory &&
-    a.agent.id === b.agent.id,
+    a.agent.id === b.agent.id &&
+    a.agent.avatarUrl === b.agent.avatarUrl,
 );

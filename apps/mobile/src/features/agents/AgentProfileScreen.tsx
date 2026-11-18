@@ -210,7 +210,7 @@ function Profile({ id }: { id: string }) {
   const noAi = !held && aiStateOf(aiStatus.data, id) === "no_ai";
   const waitingNow = asking[0];
   const [allDid, setAllDid] = useState(false);
-  const look = agentLook(agent);
+  const look = { ...agentLook(agent), avatarUrl: agent?.avatarUrl };
   const name = agent?.name ?? detail.data?.name ?? "";
   const g = genderOf(name);
   const ownerId = agent?.ownerUserId ?? null;

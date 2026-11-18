@@ -656,6 +656,14 @@ export interface ApiClient {
   };
   agents: {
     list(orgId: string): Promise<Agent[]>;
+    /** Upload a portrait (JPEG, PNG or WebP, up to 2 MB); owner or admin. */
+    setAgentAvatar(
+      orgId: string,
+      agentId: string,
+      input: { data: string; contentType: string },
+    ): Promise<{ avatarUrl: string }>;
+    /** Return to its existing pixel appearance. */
+    removeAgentAvatar(orgId: string, agentId: string): Promise<void>;
     /** Its month by account and day, and the account it thinks with now (ADR 0063). */
     planUsage(orgId: string, agentId: string): Promise<AgentPlanUsage>;
     /** The agents as a team: grouped by person, with who consulted whom in the last day. */

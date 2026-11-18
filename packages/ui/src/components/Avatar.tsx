@@ -1,4 +1,4 @@
-import { type HTMLAttributes, useLayoutEffect, useRef } from "react";
+import { type HTMLAttributes, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Expression } from "../agent/engine.js";
 import { addLiveAgent, drawLive, type LiveAgent } from "../agent/live";
 import { cx } from "../cx";
@@ -14,7 +14,8 @@ export type AvatarKind = "person" | "agent";
  * The agent symbol's state: `idle` blinks now and then, `thinking` looks
  * around (with a halo), `writing` has dash eyes (with a halo), `waiting`
  * looks up at you (waiting on a person's decision, no halo). The halo shows
- * only without the tile (`xs`, `xl`): in a tile the moving face says it. `sleeping` has closed eyes and a pixel zz
+ * only without the tile (`xs`, `xl`): in a tile the moving face says it. Photos keep the halo at every size.
+ * `sleeping` has closed eyes and a pixel zz
  * (paused until its plan or budget is back, no halo).
  */
 export type AgentState = "idle" | "thinking" | "writing" | "waiting" | "sleeping";
@@ -26,6 +27,7 @@ export interface AvatarProps extends HTMLAttributes<HTMLSpanElement> {
   initials?: string;
   /** 18 (receipts), 24, 36 (default), 56 or 112px (the customizer preview). */
   size?: "xs" | "sm" | "md" | "lg" | "xl";
+  /** Saved photo; an agent falls back to its pixel appearance if it cannot load. */
   imageUrl?: string | null;
   /** Agent is executing: the halo (same as `state="thinking"` unless `state` says otherwise). */
   running?: boolean;
@@ -118,8 +120,8 @@ function AgentBody({
 /**
  * One tile for everyone: a rounded square (radius 30% of the side) with a
  * hairline and a faint top highlight. People show their photo, their pixel
- * portrait or initials in it, with an optional presence badge on the corner. Agents are the living
- * symbol from the agent engine standing in their own pixel sky: the dithered
+ * portrait or initials in it, with an optional presence badge on the corner. Agents show their saved photo,
+ * or the living symbol from the agent engine standing in its pixel sky: the dithered
  * body with the cut corner, white eyes and a pixel accessory, turning its
  * head, blinking and now and then making a face (see `state` and
  * `expression`). Unframed (`xs`, `xl`), the agent stands on its own.
@@ -146,6 +148,10 @@ export function Avatar({
   const tile = framed ?? (size !== "xs" && size !== "xl");
   const a11y = labelled ? ({ role: "img", "aria-label": name } as const) : ({ "aria-hidden": true } as const);
   const agent = kind === "agent";
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  // A new address is a new image. A failed photo falls back to the saved pixel look.
+  useEffect(() => setFailedImage((failed) => (failed === imageUrl ? failed : null)), [imageUrl]);
+  const photo = agent && Boolean(imageUrl) && failedImage !== imageUrl;
   const mood: AgentState = state ?? (running ? "thinking" : "idle");
   // A photo that is a drawn portrait (ADR 0166) is drawn here from its recipe, crisp at this size.
   const portrait = !agent && imageUrl && canDrawPortraits() ? recipeOfUrl(imageUrl) : null;
@@ -154,6 +160,7 @@ export function Avatar({
       className={cx(
         "ac-avatar",
         kind === "agent" && "ac-avatar--agent",
+        photo && "ac-avatar--photo",
         size !== "md" && `ac-avatar--${size}`,
         tile && "ac-avatar--framed",
         agent && mood !== "idle" && mood !== "waiting" && mood !== "sleeping" && "ac-avatar--running",
@@ -170,7 +177,15 @@ export function Avatar({
       style={agent ? { ...appearanceStyle(appearance), ...style } : style}
       {...rest}
     >
-      {agent ? (
+      {photo ? (
+        <img
+          key={imageUrl}
+          src={imageUrl ?? undefined}
+          alt=""
+          draggable={false}
+          onError={() => setFailedImage(imageUrl ?? null)}
+        />
+      ) : agent ? (
         <AgentBody
           appearance={appearance}
           state={mood}

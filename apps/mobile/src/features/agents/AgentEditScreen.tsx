@@ -172,7 +172,7 @@ export function AgentEditScreen({ id }: { id: string }) {
       >
         <Locked when={update.isPending}>
           <View style={styles.hero}>
-            <AgentAvatar agent={{ ...draft.look, id }} size={96} name={draft.name} />
+            <AgentAvatar agent={{ ...draft.look, id, avatarUrl: agent.avatarUrl }} size={96} name={draft.name} />
             <Text variant="footnote" tone="muted">
               @{draft.handle}
             </Text>

@@ -14,6 +14,7 @@ export const formerAgent = (a: FormerAgent): Agent => ({
   canTalk: false,
   former: a.deleted ? "deleted" : "archived",
   ...(a.appearance ? { appearance: a.appearance } : {}),
+  avatarUrl: a.avatarUrl ?? null,
 });
 
 /** Agents no longer in the team by id (ADR 0082), apart from the team's so no list or picker offers them. */

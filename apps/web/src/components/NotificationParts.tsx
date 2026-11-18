@@ -7,6 +7,7 @@ import { agentGrammar } from "@agenteschat/client/lib/grammar";
 import {
   askersOf,
   channelOf,
+  notificationSourceLabel,
   runFailedGroupOf,
   widgetNoticeOf,
   workspaceHeadline,
@@ -219,6 +220,7 @@ export function Headline({
   // A personal workspace (ADR 0159): its computer is its person's agents', and its name ("Personal") says no place.
   const personal = isPersonal(useOrg().org);
   const name = nameOf(t, dir, n.actors[0]);
+  const sourceLabel = notificationSourceLabel(n, (id) => dir.anyAgent(id)?.name);
   const names = namesText(
     t,
     n.actors.map((a) => nameOf(t, dir, a)),
@@ -234,7 +236,7 @@ export function Headline({
   );
   const own = workspaceHeadline(n);
   if (own === "computerSetup.notification.ready" && personal) return t("computerSetup.notification.readyPersonal");
-  if (own) return t(own, { name: n.source.label });
+  if (own) return t(own, { name: sourceLabel });
   if (n.kind === "app_created") return appCreatedLine(t, n);
   if (deviceNoticeOf(n)) return <DeviceHeadline n={n} dir={dir} />;
   // A board's notice (ADR 0135): the agent who looks after the widget or asks to publish the board.
@@ -294,13 +296,13 @@ export function Headline({
     case "agent_unreached":
       return k("agentUnreached", { name });
     case "browser_profile_request":
-      return k("browserProfileRequest", { name, agent: n.source.label ?? "" });
+      return k("browserProfileRequest", { name, agent: sourceLabel ?? "" });
     case "desktop_taken": {
-      const agent = n.source.label ?? "";
+      const agent = sourceLabel ?? "";
       return k("desktopTaken", { name, agent, context: agentGrammar(agent).context });
     }
     case "plan_lent": {
-      const agent = n.source.label ?? "";
+      const agent = sourceLabel ?? "";
       return k("planLent", { name, agent, plan: n.latest.plan ?? "", context: agentGrammar(agent).context });
     }
     case "plan_serves":
@@ -352,7 +354,7 @@ export function Headline({
     case "proposal_waiting":
       return k("proposalWaiting", { names });
     case "change_request":
-      return k(n.source.proposalId ? "changeRequest" : "changeRequestAgent", { name, agent: n.source.label ?? "" });
+      return k(n.source.proposalId ? "changeRequest" : "changeRequestAgent", { name, agent: sourceLabel ?? "" });
     case "usage_limit": {
       // The person's own rows say a percent only; who decides reads the amount (ADR 0141).
       const l = n.latest;

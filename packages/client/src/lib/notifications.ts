@@ -17,6 +17,24 @@ import { billingHoldOf } from "./billing";
 import type { Words } from "./routine-view";
 import { secretNoticeLine } from "./secret-requests";
 
+/**
+ * A notification's source label as it appears now. Only these producers store the named agent's ID here:
+ * change requests with a proposal ID name its target; without one the ID is the proposer and the label is
+ * a new-agent draft or action. Threads, routines and written notification text keep their stored wording.
+ */
+export function notificationSourceLabel(
+  n: Pick<AppNotification, "kind" | "source" | "latest">,
+  agentNameOf: (id: string) => string | undefined,
+): string | undefined {
+  const namesAgent =
+    n.kind === "browser_profile_request" ||
+    n.kind === "desktop_taken" ||
+    n.kind === "plan_lent" ||
+    (n.kind === "change_request" && Boolean(n.source.proposalId)) ||
+    (n.kind === "org_standing" && n.latest.statusTo === "agent_hold");
+  return namesAgent && n.source.agentId ? (agentNameOf(n.source.agentId) ?? n.source.label) : n.source.label;
+}
+
 /** The inbox's filters, each counted ("Concluídas" is apart: `done`). */
 export const NOTIFICATION_FILTERS = ["all", "mentions", "waiting", "unread", "reactions"] as const satisfies Exclude<
   NotificationFilter,
