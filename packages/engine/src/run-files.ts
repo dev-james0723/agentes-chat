@@ -1,7 +1,6 @@
-import { and, type Database, type Executor, eq, inArray, isNull, or, schema, sql } from "@agenteschat/db";
-import { ValidationError } from "./errors";
+import { and, type Database, type Executor, eq, gte, inArray, isNull, lte, or, schema, sql } from "@agenteschat/db";
+import { refusalData, ValidationError } from "./errors";
 import { enqueue } from "./outbox";
-import { SANDBOX_SCOPE } from "./sandbox";
 import type { ToolDefinition } from "./tools/types";
 
 /**
@@ -125,7 +124,8 @@ export function registerFilesTool(db: Database): ToolDefinition {
     name: "register_files",
     description:
       "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept.",
-    scope: SANDBOX_SCOPE,
+    // The computer's scope, written out: importing it would tie this module to the computer's whole graph.
+    scope: "sandbox:run",
     inputSchema: {
       type: "object",
       properties: {
@@ -153,7 +153,7 @@ export function registerFilesTool(db: Database): ToolDefinition {
     },
     async execute(input, ctx) {
       // A mission task's bridge call has no run of its own to file these under.
-      if (!ctx.runId) return { content: "Files are registered from a run; this call has none.", isError: true };
+      if (!ctx.runId) return refused(new ValidationError("Files are registered from a run; this call has none."));
       try {
         const rows = await registerRunFiles(
           db,
@@ -168,10 +168,15 @@ export function registerFilesTool(db: Database): ToolDefinition {
           data: { files: rows },
         };
       } catch (error) {
-        return { content: error instanceof Error ? error.message : String(error), isError: true };
+        return refused(error);
       }
     },
   };
+}
+
+/** A refusal the bridge knows as one (a bad path is fixed and sent again, never an effect left in doubt). */
+function refused(error: unknown) {
+  return { content: error instanceof Error ? error.message : String(error), isError: true, ...refusalData(error) };
 }
 
 export type RetentionDecision = "keep" | "candidate";
@@ -255,6 +260,9 @@ async function runsOf(db: Database, orgId: string, subject: Subject): Promise<st
         eq(agentRuns.agentId, mission.agentId),
         eq(agentRuns.channelId, mission.channelId),
         eq(agentRuns.threadRootId, mission.threadRootId),
+        // Only while it was open: chat in the thread before it, or an earlier mission there, is not its work.
+        gte(agentRuns.createdAt, mission.createdAt),
+        lte(agentRuns.createdAt, mission.closedAt ?? new Date()),
       ),
     );
   const starters = await db

@@ -189,6 +189,9 @@ describe("register_files", () => {
       },
     );
     expect(out.isError).toBe(true);
+    // A bad path is a refusal the bridge knows: the agent fixes it and sends again.
+    const bad = await registerFilesTool(f.db).execute({ files: [{ path: "/abs.md", role: "scratch" }] }, ctxOf(f, run));
+    expect(bad).toMatchObject({ isError: true, data: { refusedByCheck: "invalid_request" } });
   });
 });
 
@@ -260,6 +263,11 @@ describe("the report", () => {
     const root = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
       body: "missão",
     });
+    const before = await runOn(fx, { threadRootId: root.id });
+    await registerRunFiles(fx.db, { orgId: fx.org.id, agentId: fx.agent.id, runId: before.id }, [
+      { path: "before/chat.png", role: "scratch" },
+    ]);
+    await Bun.sleep(5);
     const [mission] = await fx.db
       .insert(schema.missions)
       .values({
