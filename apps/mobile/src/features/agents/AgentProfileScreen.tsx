@@ -279,7 +279,7 @@ function Profile({ id }: { id: string }) {
           style: "destructive",
           onPress: () =>
             memoryAct.mutate(
-              { type: "archive", id: m.id, archived: true },
+              { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
               {
                 onSuccess: () => toast({ title: t("mobile.intentAgents.fix.forgotten"), agentId: id }),
                 onError: failed,
@@ -1008,7 +1008,7 @@ function GivenRules({ agentId, name, rightHand }: { agentId: string; name: strin
         style: "destructive",
         onPress: () =>
           remove.mutate(
-            { type: "archive", id: m.id, archived: true },
+            { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
             {
               onSuccess: () => toast({ title: t("agentPage.memory.ruleRemoved"), agentId }),
               onError: failed,
@@ -1086,12 +1086,14 @@ export function MemoryFix({
   const c = useColors();
   const toast = useToast();
   const action = useMemoryAction(orgId, agentId);
+  // Keep the editor bound to what was opened, including after a list refresh.
+  const [opened] = useState({ id: m.id, version: m.version });
   const [text, setText] = useState(m.text);
   const changed = text.trim() !== "" && text.trim() !== m.text.trim();
   const failed = useErrorToast();
   const save = () =>
     action.mutate(
-      { type: "edit", id: m.id, text: text.trim() },
+      { type: "edit", id: opened.id, expectedVersion: opened.version, text: text.trim() },
       {
         onSuccess: () => {
           toast({ title: t("mobile.intentAgents.fix.saved"), agentId });
@@ -1102,7 +1104,7 @@ export function MemoryFix({
     );
   const forget = () =>
     action.mutate(
-      { type: "archive", id: m.id, archived: true },
+      { type: "archive", id: opened.id, expectedVersion: opened.version, archived: true },
       {
         onSuccess: () => {
           toast({ title: t("mobile.intentAgents.fix.forgotten"), agentId });

@@ -55,20 +55,21 @@ const results = async () =>
 const memoryIn = async (agentId: string, channelId: string) =>
   (await retrieveForRun(f.context, { orgId: f.org.id, agentId, channelId, text: "email sign-up task board 160" })).text;
 
-test("an agent's own lesson from a private channel reaches its routine's room, never another agent", async () => {
+test("an own lesson retains its private source and stays out of an unbound routine and other agents", async () => {
   await savedInPrivateChannel(LESSON);
   const [item] = await f.db.select().from(schema.contextItems);
   // Low trust and unverified even with a person behind the run: the agent's own finding, read everywhere.
   expect(item).toMatchObject({
     scopeType: "agent",
     agentId: f.agent.id,
-    channelIds: [],
+    channelIds: [f.general.id],
     trust: "low",
     verified: false,
   });
 
   const room = await openRoutineRoom(f.db, f.org.id, f.agent.id, crypto.randomUUID());
-  expect(await memoryIn(f.agent.id, room.id)).toContain("#160");
+  expect(await memoryIn(f.agent.id, f.general.id)).toContain("#160");
+  expect(await memoryIn(f.agent.id, room.id)).not.toContain("#160");
 
   const other = await createAgent(
     f.db,

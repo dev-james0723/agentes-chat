@@ -1174,14 +1174,17 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
             query: { about: filter?.about },
           })
         ).memories,
-      edit: (orgId, id, text) =>
-        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { text } }),
-      setPinned: (orgId, id, pinned) =>
-        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { pinned } }),
-      setArchived: (orgId, id, archived) =>
-        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { archived } }),
-      confirm: (orgId, id) =>
-        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { confirmed: true } }),
+      edit: (orgId, id, text, expectedVersion) =>
+        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { text, expectedVersion } }),
+      setPinned: (orgId, id, pinned, expectedVersion) =>
+        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { pinned, expectedVersion } }),
+      setArchived: (orgId, id, archived, expectedVersion) =>
+        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, { method: "PATCH", json: { archived, expectedVersion } }),
+      confirm: (orgId, id, expectedVersion) =>
+        request<Memory>(`${org(orgId)}/memories/${enc(id)}`, {
+          method: "PATCH",
+          json: { confirmed: true, expectedVersion },
+        }),
       revert: async (orgId, id) => {
         await request<unknown>(`${org(orgId)}/memories/${enc(id)}/revert`, { json: {} });
       },

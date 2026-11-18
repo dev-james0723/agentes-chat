@@ -232,16 +232,17 @@ test("said in a DM, kept 'everywhere': it reaches that person's runs, never some
   await drainOutbox(f.db, f.handlers);
   const [kept] = await f.db.select().from(schema.contextItems);
   expect(kept).toMatchObject({ scopeType: "person", scopeId: f.owner.id, channelIds: [] });
-  const memoryFor = async (personId: string) =>
-    (
-      await retrieveForRun(f.context, {
-        orgId: f.org.id,
-        agentId: f.agent.id,
-        channelId: f.general.id,
-        text: "viagem de outubro",
-        personIds: [personId],
-      })
-    ).text;
+  // What the run's prompt receives: accepted human preferences come as requiredText (executor), the rest as text.
+  const memoryFor = async (personId: string) => {
+    const m = await retrieveForRun(f.context, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      text: "viagem de outubro",
+      personIds: [personId],
+    });
+    return `${m.requiredText ?? ""}\n${m.text}`;
+  };
   expect(await memoryFor(f.owner.id)).toContain("viagem de outubro");
   expect(await memoryFor(bob.id)).not.toContain("viagem de outubro");
 });

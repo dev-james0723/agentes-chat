@@ -22,10 +22,10 @@ import { agentsByHandle, handleOf } from "../agents";
 import { type AgentsDmReads, agentsDmReads, readerOfRun } from "../agents-dm-reads";
 import { runAuthorityById, UUID } from "../authority";
 import { caches } from "../cache";
-import { isChannelMember, peopleAllIn, personReach } from "../channels";
+import { isChannelMember, personReach } from "../channels";
 import { consultationOrigin } from "../consultations";
 import { personAgentDmKey } from "../dms";
-import { refusalData } from "../errors";
+import { ForbiddenError, refusalData } from "../errors";
 import type { MemoryUpdate } from "../events";
 import { cutText } from "../format";
 import { type DescribedMessage, describeMessages, messageIdOf } from "../message-links";
@@ -44,6 +44,7 @@ import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../too
 import { neutralizeUntrusted, untrustedBlock } from "../untrusted";
 import { wikiHitsForAgent } from "../wiki";
 import { inWorkspaceWords } from "../workspace-mode";
+import { buildMemoryPack, MEMORY_PACK_PREFIX, type MemoryPackReceipt, RUN_MEMORY_BUDGET } from "./context-pack";
 import { recordContextUse } from "./feedback";
 import {
   accessSql,
@@ -51,12 +52,12 @@ import {
   type ContextItem,
   checkPermissionText,
   consolidateItem,
+  currentItemVisible,
   getContextItems,
   howToChannels,
   howToSql,
   howToSubject,
   isAccess,
-  isHowTo,
   isInfraFact,
   isQuote,
   isTeamWide,
@@ -66,6 +67,7 @@ import {
   personMayRead,
   personSaid,
   RECHECK_AFTER_DAYS,
+  requirePublicMemorySources,
   savedReceiptLine,
   supersede,
   TEAM_KINDS,
@@ -74,6 +76,7 @@ import {
 } from "./items";
 import { kindFamily, overlap } from "./judgments";
 import { learnTrust, ownWords } from "./learn";
+import { memoryOutputChannels, memorySourceVisibility, personsOwnWords } from "./memory-visibility";
 import { CARD_MAX_AGENTS, ownerDecides, type Proposal, proposeChange } from "./proposals";
 import { type ContextDeps, ensureThreadSummary, judgeOf, memoryJudging } from "./summaries";
 
@@ -117,6 +120,14 @@ export function itemLabel(
 /** An item as a model reads it after its label: a quote's words alone (`isQuote`), else its title and content. */
 export const itemText = (item: Pick<ContextItem, "title" | "content" | "evidence">, content = item.content) =>
   `${item.title && !isQuote(item) ? `${item.title}: ` : ""}${content}`;
+
+/** Human evidence and current verification are required before memory is treated as an accepted instruction. */
+const isAcceptedRequirement = (item: ContextItem) =>
+  ["rule", "preference"].includes(item.kind) &&
+  item.trust === "high" &&
+  item.verified &&
+  !item.disputed &&
+  personSaid(item);
 
 /** The names of the people whose own words these trusted items are (`personSaid`), by item id: one query. */
 export async function speakersOf(db: Database, items: ContextItem[]): Promise<Map<string, string>> {
@@ -172,20 +183,37 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
    */
   const recallScope = async (ctx: ToolContext) => {
     const reader = await rightHandReader(ctx);
-    if (reader) return { channels: await personReach(ctx.db, ctx.orgId, reader), own: null, asker: null };
+    if (reader)
+      return {
+        channels: await memoryOutputChannels(
+          ctx.db,
+          { ...ctx, personReader: reader },
+          await personReach(ctx.db, ctx.orgId, reader),
+        ),
+        own: null,
+        asker: null,
+      };
     const [own, asker] = await Promise.all([
       agentSearchChannels(ctx.db, ctx.orgId, ctx.agentId, ctx.channelId),
       askerDm(ctx),
     ]);
-    const channels = asker && !own.includes(asker.channelId) ? [...own, asker.channelId] : own;
-    return { channels, own, asker };
+    const channels = await memoryOutputChannels(
+      ctx.db,
+      ctx,
+      asker && !own.includes(asker.channelId) ? [...own, asker.channelId] : own,
+    );
+    return {
+      channels,
+      own: own.filter((id) => channels.includes(id)),
+      asker: asker && channels.includes(asker.channelId) ? asker : null,
+    };
   };
 
   const tools: ToolDefinition[] = [
     {
       name: "search_context",
       description:
-        "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private).",
+        "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind `action`) and, without `kinds`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Private sources are available only when the answer audience may read them.",
       scope: "context:read",
       readOnly: true,
       inputSchema: {
@@ -240,6 +268,12 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
             )
           ).map((i) => [i.id, i]),
         );
+        const sourceVisible = await memorySourceVisibility(
+          ctx.db,
+          { ...ctx, personIds: person ? [person] : [] },
+          channels,
+          [...items.values()],
+        );
         // In the agents' DM: of what was said there, only messages and memories made for the same person.
         const dmReadable = dm
           ? await Promise.all(
@@ -261,6 +295,10 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               ]);
         const hits = found.filter(
           (h, i) =>
+            (h.kind !== "context_item" ||
+              (sourceVisible.has(h.sourceId) &&
+                currentItemVisible(items.get(h.sourceId), ctx.orgId, ctx.agentId, channels) &&
+                personMayRead(items.get(h.sourceId), person, ctx.agentId))) &&
             dmReadable?.[i] !== false &&
             (h.kind !== "file" ||
               !fileReach ||
@@ -278,6 +316,14 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         );
         const speakers = await speakersOf(ctx.db, [...items.values()]);
         const shown = hits
+          .filter((h) => {
+            const message = said.get(h.sourceId);
+            // The person's own DM comes in only when `dmWithRunPerson` let it in (ADR 0017 addendum 2026-11-18).
+            return (
+              h.kind !== "message" ||
+              Boolean(message && (channels.includes(message.channelId) || message.channelId === theirDm))
+            );
+          })
           // Rules come whole in "# Rules people gave you", and only those that hold for this run's person.
           .filter((h) => items.get(h.sourceId)?.kind !== "rule")
           .filter((h) => personMayRead(items.get(h.sourceId), person, ctx.agentId))
@@ -287,19 +333,36 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
             const m = said.get(h.sourceId);
             const theirs = asker && h.channelIds.includes(asker.channelId) ? privateFrom(asker.name) : null;
             const by = m ? ` ${m.who} in ${theirs ?? m.where} ${m.link}` : theirs ? ` from ${theirs}` : "";
-            const text = `${label} id=${h.sourceId} (${h.createdAt.toISOString().slice(0, 10)})${by} ${h.snippet.replace(/\s+/g, " ")}`;
+            const text = `${label} id=${h.sourceId} (${h.createdAt.toISOString().slice(0, 10)})${by} ${(item ? itemText(item) : m ? m.body : h.snippet).replace(/\s+/g, " ")}`;
             // Only what came from outside stays in the envelope (ADR 0167): the team's trusted memory, its messages
             // that relay nothing from outside and the wiki read as the team's.
             const inside = item ? item.trust === "low" : m ? m.meta?.readOutside === true : h.kind !== "wiki";
-            return { text, inside };
+            return {
+              id: h.sourceId,
+              text,
+              inside,
+              reference: `${label} id=${h.sourceId} [Full text omitted by context budget; use expand with this id.]`,
+            };
           });
-        const own = shown.filter((l) => !l.inside).map((l) => neutralizeUntrusted(l.text));
-        const outside = [...shown.filter((l) => l.inside).map((l) => l.text), ...steps];
+        const bounded = buildMemoryPack(
+          [
+            ...shown.map((line) => ({
+              id: line.id,
+              text: line.inside ? untrustedBlock("workspace search", line.text) : neutralizeUntrusted(line.text),
+              reference: line.inside
+                ? untrustedBlock("workspace search", line.reference)
+                : neutralizeUntrusted(line.reference),
+            })),
+            ...steps.map((text, i) => ({ id: `step:${i}`, text: untrustedBlock("workspace search", text) })),
+          ],
+          { limit: 3000 },
+        );
         return {
-          content: [...own, ...(outside.length ? [untrustedBlock("workspace search", outside.join("\n"))] : [])].join(
-            "\n",
-          ),
-          data: { hits: hits.length + steps.length },
+          content: bounded.text || "No results.",
+          data: {
+            hits: bounded.receipt.includedIds.length + bounded.receipt.referenceIds.length,
+            contextPack: bounded.receipt,
+          },
         };
       },
     },
@@ -368,7 +431,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               createdByKind: "agent",
               createdById: ctx.agentId,
             },
-            { ...memoryJudging(deps), mayReplace: (old) => old.createdByKind !== "person" },
+            { ...memoryJudging(deps), replaceOwnProcedure: true, mayReplace: (old) => old.createdByKind !== "person" },
           );
           stored = true;
           await indexSource(deps, { orgId: ctx.orgId, kind: "context_item", sourceId: res.item.id }).catch(() => {});
@@ -400,7 +463,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         const [root] = await ctx.db
           .select({ channelId: messages.channelId })
           .from(messages)
-          .where(and(eq(messages.orgId, ctx.orgId), eq(messages.id, threadId)));
+          .where(and(eq(messages.orgId, ctx.orgId), eq(messages.id, threadId), isNull(messages.deletedAt)));
         const { channels: readable, asker } = await recallScope(ctx);
         if (!root || !readable.includes(root.channelId)) {
           return { content: "Thread not found.", isError: true };
@@ -415,7 +478,15 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           if (!(await dm.ofMessages(thread.map((m) => m.id)))) return { content: "Thread not found.", isError: true };
         }
         const summary = await ensureThreadSummary(deps, ctx.orgId, threadId, { force: true });
-        return summary
+        const visible = summary
+          ? await memorySourceVisibility(
+              ctx.db,
+              { ...ctx, personIds: [(await personRequester(ctx)) ?? ""] },
+              readable,
+              [summary],
+            )
+          : new Set<string>();
+        return summary && visible.has(summary.id)
           ? { content: `${from}${itemLabel(summary)} ${summary.content}` }
           : { content: "Nothing to summarize yet." };
       },
@@ -486,6 +557,9 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         if (
           !item?.channelIds.every((c) => allowed.includes(c)) ||
           !personMayRead(item, person, ctx.agentId) ||
+          !(await memorySourceVisibility(ctx.db, { ...ctx, personIds: person ? [person] : [] }, allowed, [item])).has(
+            item.id,
+          ) ||
           (dm && !(await dm.item(item)))
         ) {
           return { content: "Not found.", isError: true };
@@ -501,7 +575,9 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
                 createdAt: messages.createdAt,
               })
               .from(messages)
-              .where(and(eq(messages.orgId, ctx.orgId), inArray(messages.id, item.sourceIds)))
+              .where(
+                and(eq(messages.orgId, ctx.orgId), inArray(messages.id, item.sourceIds), isNull(messages.deletedAt)),
+              )
           : [];
         const srcOutcomes = item.sourceIds.length
           ? await ctx.db
@@ -518,7 +594,9 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               (m) =>
                 `source message ${m.id} (${m.createdAt.toISOString().slice(0, 10)})${asker?.channelId === m.channelId ? ` from ${privateFrom(asker.name)}` : ""}: ${cutText(m.body, 500)}`,
             ),
-          ...srcOutcomes.map((o) => `source outcome ${o.id}: ${o.polarity} ${o.kind} ${o.subject} ${o.summary}`),
+          ...srcOutcomes
+            .filter((o) => o.channelId !== null && allowed.includes(o.channelId))
+            .map((o) => `source outcome ${o.id}: ${o.polarity} ${o.kind} ${o.subject} ${o.summary}`),
         ];
         return {
           content: lines.join("\n"),
@@ -678,7 +756,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
           const said = (rule || input.basis !== "found") && person !== null && author?.id === person;
           // "Everywhere" from a DM reaches this person's runs only: what they said there never reads in someone else's.
           const [here] = await ctx.db
-            .select({ kind: schema.channels.kind, dmKey: schema.channels.dmKey })
+            .select({
+              kind: schema.channels.kind,
+              dmKey: schema.channels.dmKey,
+              visibility: schema.channels.visibility,
+            })
             .from(schema.channels)
             .where(and(eq(schema.channels.orgId, ctx.orgId), eq(schema.channels.id, ctx.channelId)));
           const theirsAlone =
@@ -739,7 +821,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               // A rule about the agent's own conduct holds in every conversation: no channel keeps it out of a run.
               // Only when a person said it. What the right hand keeps for a person stays in their DM with it.
               // Its rule too: it holds by its giver, not by channel (`rulesForPerson`), and lists only to who reads there.
-              channelIds: mine || ((rule || input.everywhere === true) && !kept.person && said) ? [] : [ctx.channelId],
+              channelIds:
+                (mine && here?.kind === "channel" && here.visibility === "public") ||
+                ((rule || input.everywhere === true) && !kept.person && said)
+                  ? []
+                  : [ctx.channelId],
               // An agent's own finding read in all its work stays low trust (unverified): never promoted or shared.
               trust: said ? "high" : mine ? "low" : trust,
               evidence: said
@@ -1099,7 +1185,13 @@ async function originReadable(ctx: ToolContext, origin: DescribedMessage) {
   const person = await personBehindCall(ctx);
   if (!person || !(await isChannelMember(ctx.db, ctx.orgId, origin.channelId, person))) return false;
   const isPublic = origin.channelKind === "channel" && origin.visibility === "public";
-  if (!isPublic && !(await peopleAllIn(ctx.db, ctx.orgId, ctx.channelId, origin.channelId))) return false;
+  if (
+    !isPublic &&
+    !(await memoryOutputChannels(ctx.db, { ...ctx, personReader: person }, [origin.channelId])).includes(
+      origin.channelId,
+    )
+  )
+    return false;
   const [cited] = await ctx.db
     .select({ id: messages.id })
     .from(messages)
@@ -1133,7 +1225,8 @@ async function dmWithRunPerson(ctx: ToolContext): Promise<string | null> {
   if (!row) return null;
   // The asking agent relays the answer where it was asked: it stays out unless everyone there is in this DM.
   const asked = await consultationOrigin(ctx.db, ctx.orgId, ctx.runId);
-  return !asked || (await peopleAllIn(ctx.db, ctx.orgId, asked.channelId, row.id)) ? row.id : null;
+  if (!asked) return null;
+  return (await memoryOutputChannels(ctx.db, ctx, [row.id])).includes(row.id) ? row.id : null;
 }
 
 /**
@@ -1263,6 +1356,14 @@ async function saveForTeam(
     everywhere: boolean;
   },
 ) {
+  if (input.everywhere) {
+    await requirePublicMemorySources(ctx.db, ctx.orgId, {
+      id: crypto.randomUUID(),
+      scopeType: "org",
+      channelIds: [ctx.channelId],
+      sourceIds: [ctx.triggerMessageId],
+    });
+  }
   const membership = await getMembership(ctx.db, input.person, ctx.orgId);
   if (!membership || closedRefusal(membership.standing) || !can(membership, "review_memory")) {
     const { proposals } = await proposeChange(deps, {
@@ -1527,10 +1628,15 @@ export async function retrieveForRun(
     /** The holdout arm (`memoryArmOf`): its own items come in whatever the request, as before ADR 0167. */
     withOwn?: boolean;
   },
-): Promise<{ text: string; itemIds: string[]; matchedIds: string[] }> {
+): Promise<{ text: string; itemIds: string[]; matchedIds: string[]; requiredText?: string; pack?: MemoryPackReceipt }> {
   const { db } = deps;
   if (!(await orgHasMemory(db, input.orgId))) return { text: "", itemIds: [], matchedIds: [] };
-  const allowed = await injectableChannels(db, input.orgId, input.agentId, input.channelId);
+  const allowed = await memoryOutputChannels(
+    db,
+    input,
+    await injectableChannels(db, input.orgId, input.agentId, input.channelId),
+  );
+  if (!allowed.length) return { text: "", itemIds: [], matchedIds: [] };
   const people = [...new Set(input.personIds ?? [])];
   // In the agents' DM nobody writes in their own name: the one person a run there is for is the one behind it.
   const dm = await agentsDmReads(db, input.orgId, input.channelId, () =>
@@ -1644,46 +1750,67 @@ export async function retrieveForRun(
         hits.map((h) => h.sourceId),
       )
     )
-      .filter((i) => i.status === "active" && !i.supersededBy && (!i.agentId || i.agentId === input.agentId))
+      .filter((i) => currentItemVisible(i, input.orgId, input.agentId, allowed))
       .filter((i) => i.kind !== "thread_summary" && i.kind !== "rule" && !isTeamWide(i) && forPeople(i))
       .sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99) - (b.relevance - a.relevance));
     searched = await withLinked(db, base, searched);
   }
-  const budget = input.budgetChars ?? MEMORY_BUDGET_CHARS;
-  // The fixed core first and never cut: what people said and pinned. Then what matched this request, before who
-  // holds which access: the budget goes to what the run is about (ADR 0167).
-  const core = new Set([...team, ...pinned, ...personal, ...said].map((i) => i.id));
   const candidates = [...team, ...pinned, ...personal, ...said, ...searched, ...own, ...holders];
+  const [sourceVisible, ownWords] = await Promise.all([
+    memorySourceVisibility(db, input, allowed, [...candidates, ...often]),
+    personsOwnWords(db, input.orgId, people, candidates),
+  ]);
   const fromDm = dm ? await Promise.all(candidates.map((i) => dm.item(i))) : null;
+  const eligible = candidates.filter(
+    (item, i) => (sourceVisible.has(item.id) || ownWords.has(item.id)) && fromDm?.[i] !== false,
+  );
+  // Accepted requirements use exact identity only: similarity must not erase a negation or another constraint.
+  const requirements = [...new Map(eligible.filter(isAcceptedRequirement).map((item) => [item.id, item])).values()];
   const picked = pickDistinct(
-    candidates.filter((_, i) => fromDm?.[i] !== false),
+    eligible.filter((item) => !isAcceptedRequirement(item)),
     input.known ?? "",
   );
-  const matched = new Set(searched.map((i) => i.id));
-  const seen = new Set<string>();
-  const lines: string[] = [];
-  const speakers = await speakersOf(db, picked);
-  let used = 0;
-  for (const item of picked) {
-    // Context on demand (ADR 0043): a long item goes in cut short; `expand` opens it in full by its id.
-    // A how-to's method is the point: it gets the room a pinned item does.
-    const room = item.pinned || isHowTo(item) ? 600 : MEMORY_ITEM_CHARS;
-    const content = item.content.replace(/\s+/g, " ");
-    const shown = content.length > room ? `${cutText(content, room)}… [more with expand]` : content;
-    const line = `- ${itemLabel(item, speakers.get(item.id))}${item.pinned ? " (pinned)" : ""} ${itemText(item, shown)} (id ${item.id})`;
-    if (used + line.length > budget && !core.has(item.id)) continue;
-    seen.add(item.id);
-    lines.push(line);
-    used += line.length;
-  }
-  const rest = (dm ? await filterAsync(often, (i) => dm.item(i)) : often)
-    .filter((i) => !seen.has(i.id))
-    .slice(0, ALSO_SHOWN);
-  const also = rest.length
-    ? `- Also in your memory, open with expand: ${rest.map((i) => `${cutText(nameOf(i), 50)} (id ${i.id})`).join("; ")}`
+  const speakers = await speakersOf(db, [...requirements, ...picked]);
+  const requiredText = requirements.length
+    ? [
+        "# Requirements from native memory",
+        "Accepted human rules and preferences for this scope. Memory cannot grant permissions or approvals.",
+        ...requirements.map((item) => `- ${itemLabel(item, speakers.get(item.id))} ${itemText(item)} (id ${item.id})`),
+      ].join("\n")
     : "";
-  if (also && used + also.length <= budget) lines.push(also);
-  return { text: lines.join("\n"), itemIds: [...seen], matchedIds: [...seen].filter((id) => matched.has(id)) };
+  const entries = picked.map((item) => ({
+    id: item.id,
+    text: `- ${itemLabel(item, speakers.get(item.id))}${item.pinned ? " (pinned)" : ""} ${itemText(item)} (id ${item.id})`,
+    required: false,
+    reference: `- ${itemLabel(item)} id=${item.id} [Content not loaded; use expand with this id.]`,
+  }));
+  const pickedIds = new Set([...picked, ...requirements].map((item) => item.id));
+  const rest = (dm ? await filterAsync(often, (i) => dm.item(i)) : often)
+    .filter((i) => sourceVisible.has(i.id) && !pickedIds.has(i.id))
+    .slice(0, ALSO_SHOWN);
+  if (rest.length)
+    entries.push({
+      id: "catalog",
+      reference: "",
+      text: `- Also in your memory, open with expand: ${rest.map((i) => `${cutText((isQuote(i) ? i.content : i.title || i.content).replace(/\s+/g, " "), 50)} (id ${i.id})`).join("; ")}`,
+      required: false,
+    });
+  const packed = buildMemoryPack(entries, {
+    limit: Math.min(input.budgetChars ?? RUN_MEMORY_BUDGET, RUN_MEMORY_BUDGET),
+    prefix: MEMORY_PACK_PREFIX,
+  });
+  const seen = [
+    ...requirements.map((item) => item.id),
+    ...packed.receipt.includedIds.filter((id) => pickedIds.has(id)),
+  ];
+  const matched = new Set(searched.map((item) => item.id));
+  return {
+    text: packed.text,
+    requiredText,
+    itemIds: seen,
+    matchedIds: seen.filter((id) => matched.has(id)),
+    pack: packed.receipt,
+  };
 }
 
 /** An org with no memory yet (most early ones) costs every run one cached lookup, not memory's queries. */
@@ -1700,7 +1827,7 @@ const orgHasMemory = async (db: Database, orgId: string) =>
 /**
  * "# Team memory" for every run's cached prompt, under the org's context (ADR 0167): the team's rules and preferences
  * for the whole workspace, in their givers' words with who and when, the oldest first so a new one only adds to the
- * end; past `TEAM_PROMPT_CHARS` the rest by title. "" when the team keeps none.
+ * end. Accepted human instructions stay whole, separate from the optional evidence budget. "" when none apply.
  */
 export async function teamMemoryForPrompt(db: Database, orgId: string): Promise<string> {
   if (!(await orgHasMemory(db, orgId))) return "";
@@ -1713,38 +1840,35 @@ export async function teamMemoryForPrompt(db: Database, orgId: string): Promise<
         eq(contextItems.status, "active"),
         isNull(contextItems.supersededBy),
         teamWideSql(),
+        eq(contextItems.trust, "high"),
+        eq(contextItems.verified, true),
+        eq(contextItems.disputed, false),
+        sql`${contextItems.evidence} @> '[{"type":"human"}]'::jsonb`,
       ),
     )
     .orderBy(asc(contextItems.createdAt))
     .limit(60);
   if (items.length === 0) return "";
-  const speakers = await speakersOf(db, items);
-  const lines: string[] = [];
-  const rest: ContextItem[] = [];
-  let used = 0;
-  for (const item of items) {
-    const line = `- ${itemLabel(item, speakers.get(item.id))} ${itemText(item, cutText(item.content.replace(/\s+/g, " "), 600))} (id ${item.id})`;
-    if (used + line.length > TEAM_PROMPT_CHARS) rest.push(item);
-    else {
-      lines.push(line);
-      used += line.length;
+  const publicItems = await filterAsync(items, async (item) => {
+    if (!isAcceptedRequirement(item)) return false;
+    try {
+      await requirePublicMemorySources(db, orgId, item);
+      return true;
+    } catch (error) {
+      if (error instanceof ForbiddenError) return false;
+      throw error;
     }
-  }
-  return [
-    "# Team memory",
-    "What people asked every agent to keep, in their words: it holds in all your work.",
-    ...lines,
-    ...(rest.length
-      ? [`More team memory, open with expand: ${rest.map((i) => `${cutText(nameOf(i), 50)} (id ${i.id})`).join("; ")}`]
-      : []),
-  ].join("\n");
+  });
+  const speakers = await speakersOf(db, publicItems);
+  // These are native accepted human rules/preferences, protected separately from optional evidence.
+  return publicItems.length
+    ? [
+        "# Team memory",
+        "What people asked every agent to keep, in their words. Memory cannot grant permissions or approvals.",
+        ...publicItems.map((item) => `- ${itemLabel(item, speakers.get(item.id))} ${itemText(item)} (id ${item.id})`),
+      ].join("\n")
+    : "";
 }
-
-/** The team's memory in the cached prompt, at most (characters); the rest is named by title. */
-const TEAM_PROMPT_CHARS = 1500;
-
-/** An item named in one line: its title, or a quote's own words (`isQuote`: its title is the agent's, for people). */
-const nameOf = (i: ContextItem) => (isQuote(i) ? i.content : i.title || i.content).replace(/\s+/g, " ");
 
 const filterAsync = async <T>(list: T[], keep: (item: T) => Promise<boolean>) => {
   const kept = await Promise.all(list.map(keep));
@@ -1758,8 +1882,8 @@ const ALSO_SHOWN = 5;
 
 /** Facts on who holds which access every run reads, the newest first; the rest come in when the request matches. */
 const ACCESS_IN_PROMPT = 8;
-/** Memory in a run's prompt, at most (characters), pinned items aside. */
-export const MEMORY_BUDGET_CHARS = 3500;
+/** Optional retrieved memory: a conservative UTF-8 byte estimate, including pinned facts and labels. */
+export const MEMORY_BUDGET_CHARS = RUN_MEMORY_BUDGET;
 
 /**
  * A run's memory by vectors: only neighbours nearer than this cosine distance, and within `RUN_DISTANCE_FROM_BEST` of
@@ -1769,8 +1893,6 @@ export const MEMORY_BUDGET_CHARS = 3500;
  */
 export const RUN_MAX_DISTANCE = 0.55;
 export const RUN_DISTANCE_FROM_BEST = 0.1;
-/** One item's content in the prompt, at most (pinned ones: 600). */
-const MEMORY_ITEM_CHARS = 240;
 
 /** Two items of the same family that share this much (`overlap`) say the same thing: only the newest goes in. */
 const SAME_ITEM = 0.7;
@@ -1800,7 +1922,7 @@ export function pickDistinct(candidates: ContextItem[], known: string): ContextI
       continue;
     const family = kindFamily(item.kind);
     const twin = out.findIndex((kept) => {
-      if (kept.pinned) return false;
+      if (kept.pinned || kept.disputed || item.disputed) return false;
       if (item.kind === "period_summary" || kept.kind === "period_summary")
         return item.kind === kept.kind && channelOf(item) === channelOf(kept);
       // Who holds what: two holders of one service, or one of two, read alike and are both true.

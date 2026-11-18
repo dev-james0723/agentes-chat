@@ -19,6 +19,7 @@ import {
   makeTeamMemory,
   mayEditItem,
   memoryScorecard,
+  memorySourceVisibilityForUser,
   NotFoundError,
   ownerDecides,
   type Proposal as ProposalRow,
@@ -92,6 +93,7 @@ const Memory = z
       .openapi({ description: "A `rule` the viewer may remove: its giver, the agent's owner or an admin." }),
     channelId: z.uuid().nullable().optional().openapi({ description: "Where it was learned." }),
     updatedAt: z.string(),
+    version: z.number().int().min(1).openapi({ description: "Native revision; send as expectedVersion on edits." }),
     from: z
       .object({
         messageId: z.uuid(),
@@ -230,7 +232,11 @@ const KIND: Record<ContextItem["kind"], z.infer<typeof Memory>["kind"]> = {
 };
 
 /** `items` must be visible to the viewer; `visible` (the channels they read) also bounds the old versions shown. */
-async function memoryViews(db: Database, items: ContextItem[], visible: readonly string[]) {
+async function memoryViews(db: Database, items: ContextItem[], visible: readonly string[], actorId: string) {
+  const orgId = items[0]?.orgId;
+  if (!orgId) return [];
+  const sourceVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, items);
+  items = items.filter((item) => item.orgId === orgId && sourceVisible.has(item.id));
   if (items.length === 0) return [];
   const channelIds = [...new Set(items.flatMap((i) => i.channelIds))];
   const channels = channelIds.length
@@ -241,21 +247,23 @@ async function memoryViews(db: Database, items: ContextItem[], visible: readonly
     : [];
   const channelName = new Map(channels.map((c) => [c.id, c.name]));
   const replaced = await db
-    .select({
-      supersededBy: schema.contextItems.supersededBy,
-      content: schema.contextItems.content,
-      channelIds: schema.contextItems.channelIds,
-    })
+    .select()
     .from(schema.contextItems)
     .where(
-      inArray(
-        schema.contextItems.supersededBy,
-        items.map((i) => i.id),
+      and(
+        eq(schema.contextItems.orgId, orgId),
+        inArray(
+          schema.contextItems.supersededBy,
+          items.map((i) => i.id),
+        ),
       ),
     );
-  // A version merged in from a channel the viewer can't read isn't quoted.
+  // Historical snippets obey the same live source closure, even when old copied channel labels were empty.
+  const previousVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, replaced);
   const previous = new Map(
-    replaced.filter((r) => itemVisibleIn(r, visible)).map((r) => [r.supersededBy, itemWords(r).text]),
+    replaced
+      .filter((r) => previousVisible.has(r.id) && itemVisibleIn(r, visible))
+      .map((r) => [r.supersededBy, itemWords(r).text]),
   );
   const people = items.flatMap((i) => (i.createdByKind === "person" && i.createdById ? [i.createdById] : []));
   const names = new Map(
@@ -311,6 +319,7 @@ async function memoryViews(db: Database, items: ContextItem[], visible: readonly
       disputed: i.disputed,
       channelId: i.channelIds[0] ?? null,
       updatedAt: i.updatedAt.toISOString(),
+      version: i.version,
     };
   });
 }
@@ -504,7 +513,7 @@ export function memoryRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId } = c.req.valid("param");
       const { items, visible } = await listOrgMemoryRows(db, c.get("user").id, orgId);
-      return c.json({ memories: await memoryViews(db, items, visible) }, 200);
+      return c.json({ memories: await memoryViews(db, items, visible, c.get("user").id) }, 200);
     },
   );
 
@@ -565,7 +574,7 @@ export function memoryRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId } = c.req.valid("param");
       const { items, visible } = await listTeamMemories(db, c.get("user").id, orgId);
-      return c.json({ memories: await memoryViews(db, items, visible) }, 200);
+      return c.json({ memories: await memoryViews(db, items, visible, c.get("user").id) }, 200);
     },
   );
 
@@ -583,7 +592,12 @@ export function memoryRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId, memoryId } = c.req.valid("param");
       const row = await makeTeamMemory(db, c.get("user").id, orgId, memoryId);
-      const [view] = await memoryViews(db, [row], await userVisibleChannels(db, orgId, c.get("user").id));
+      const [view] = await memoryViews(
+        db,
+        [row],
+        await userVisibleChannels(db, orgId, c.get("user").id),
+        c.get("user").id,
+      );
       return c.json(view, 200);
     },
   );
@@ -615,7 +629,7 @@ export function memoryRoutes(deps: AppDeps) {
         .filter((r) => !r.supersededBy)
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.getTime() - a.updatedAt.getTime());
       if (c.req.valid("query").about !== "me") {
-        const views = await memoryViews(db, current, visible);
+        const views = await memoryViews(db, current, visible, c.get("user").id);
         const rules = new Map(current.filter((i) => i.kind === "rule").map((i) => [i.id, i]));
         const removable = new Map(
           await Promise.all([...rules].map(async ([id, i]) => [id, await mayEditItem(db, viewerId, i)] as const)),
@@ -630,7 +644,7 @@ export function memoryRoutes(deps: AppDeps) {
         (i) =>
           ABOUT_KINDS.has(i.kind) && (mine.has(i.id) || (i.createdByKind === "person" && i.createdById === viewerId)),
       );
-      const views = await memoryViews(db, about, visible);
+      const views = await memoryViews(db, about, visible, c.get("user").id);
       return c.json({ memories: views.map((v) => ({ ...v, from: mine.get(v.id) ?? null })) }, 200);
     },
   );
@@ -651,6 +665,7 @@ export function memoryRoutes(deps: AppDeps) {
             pinned: z.boolean().optional(),
             archived: z.boolean().optional(),
             confirmed: z.literal(true).optional(),
+            expectedVersion: z.number().int().min(1).optional(),
           }),
         ),
       },
@@ -664,10 +679,16 @@ export function memoryRoutes(deps: AppDeps) {
         pinned: input.pinned,
         archived: input.archived,
         confirmed: input.confirmed,
+        expectedVersion: input.expectedVersion,
       });
       // The memory mark on the message it came from changes for everyone in the channel.
       await announceMessageMemories({ db, pubsub: deps.adapters.pubsub }, orgId, row).catch(() => {});
-      const [view] = await memoryViews(db, [row], await userVisibleChannels(db, orgId, c.get("user").id));
+      const [view] = await memoryViews(
+        db,
+        [row],
+        await userVisibleChannels(db, orgId, c.get("user").id),
+        c.get("user").id,
+      );
       return c.json(view, 200);
     },
   );
@@ -686,7 +707,12 @@ export function memoryRoutes(deps: AppDeps) {
       const { orgId, memoryId } = c.req.valid("param");
       const row = await revertMemoryChange(db, c.get("user").id, orgId, memoryId);
       await announceMessageMemories({ db, pubsub: deps.adapters.pubsub }, orgId, row).catch(() => {});
-      const [view] = await memoryViews(db, [row], await userVisibleChannels(db, orgId, c.get("user").id));
+      const [view] = await memoryViews(
+        db,
+        [row],
+        await userVisibleChannels(db, orgId, c.get("user").id),
+        c.get("user").id,
+      );
       return c.json(view, 200);
     },
   );

@@ -2187,6 +2187,8 @@ export type MemoryKind = "fact" | "decision" | "lesson" | "preference" | "rule";
 
 export interface Memory {
   id: string;
+  /** Native revision for optimistic writes; absent on older servers. */
+  version?: number;
   agentId: string;
   kind: MemoryKind;
   text: string;

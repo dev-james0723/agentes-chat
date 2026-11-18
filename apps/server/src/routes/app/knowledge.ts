@@ -355,6 +355,7 @@ export function knowledgeRoutes(deps: AppDeps) {
             title: z.string().max(300).optional(),
             pinned: z.boolean().optional(),
             archived: z.boolean().optional(),
+            expectedVersion: z.number().int().min(1).optional(),
           }),
         ),
       },

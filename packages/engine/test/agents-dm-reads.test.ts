@@ -139,7 +139,7 @@ async function twoConsultations() {
 }
 
 describe("the agents' DM reads only what was made for the same person (consultations)", () => {
-  test("a person's own DM with the consulted agent: only while everyone where they asked is in it", async () => {
+  test("a person's own DM with the consulted agent: never into a public channel, else only while everyone there is in it", async () => {
     const { bob, infra, dm, forAna } = await twoConsultations();
     const theirs = await openDm(f.db, f.owner.id, f.org.id, { agentId: infra.id });
     const said = await insertMessage(f.db, {
@@ -170,6 +170,9 @@ describe("the agents' DM reads only what was made for the same person (consultat
           query: "payroll bonus",
         })
       ).content;
+    // Anyone may join a public channel and read the relayed answer later (ADR 0017 addendum 2026-11-18).
+    expect(await search()).not.toContain("stays between us");
+    await f.db.update(schema.channels).set({ visibility: "private" }).where(eq(schema.channels.id, f.general.id));
     expect(await search()).toContain("stays between us");
     await addChannelMember(f.db, f.owner.id, f.org.id, f.general.id, { userId: bob.id });
     expect(await search()).not.toContain("stays between us");

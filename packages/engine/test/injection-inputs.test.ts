@@ -487,7 +487,8 @@ describe("raw channels inside the envelope", () => {
     await drainOutbox(f.db, f.handlers);
     const search = await call(ctx, "search_context", { query: "deploy checklist" });
     enveloped(search.content, "workspace search");
-    const own = search.content.slice(0, search.content.indexOf("<external_data "));
+    // Lines are ordered by relevance, so the team's own lines are whatever stands outside every envelope.
+    const own = search.content.replace(/<external_data [\s\S]*?<\/external_data>/g, "");
     expect(own).toContain("deploy checklist");
     expect(own).not.toMatch(CLOSER);
   });

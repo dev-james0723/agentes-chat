@@ -261,7 +261,7 @@ Beyond this, you can't. Never say you did or can do, offer or promise something 
       "name": "save_how_to",
     },
     {
-      "description": "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind \`action\`) and, without \`kinds\`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Outside your direct messages with the person who asked, it also reads them (marked private).",
+      "description": "Search this organization's messages, summaries, decisions, facts and lessons that you can see, what the team did outside (emails sent, pull requests opened, posts: kind \`action\`) and, without \`kinds\`, your own earlier tool calls (commands, requests, scripts). Use it before answering questions about past work and before a task you or a teammate may have done before. Private sources are available only when the answer audience may read them.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
