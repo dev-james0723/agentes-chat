@@ -18,9 +18,19 @@ function cookiePair(token: string): string {
   if (!pair) throw new Error("Session cookie is empty");
   return pair;
 }
+// Better Auth skips origin checks under the test runner. This security suite must
+// exercise the production checks, including when the OAuth test replaces its server.
+async function createOriginCheckedServer(options: Parameters<typeof createTestServer>[0]) {
+  const server = await createTestServer(options);
+  const context = await server.auth.$context;
+  context.skipOriginCheck = false;
+  context.skipCSRFCheck = false;
+  return server;
+}
+
 let t: TestServer;
 beforeEach(async () => {
-  t = await createTestServer({ env: { PUBLIC_URL: publicOrigin, LOCAL_HTTP_LOGIN: "true" } });
+  t = await createOriginCheckedServer({ env: { PUBLIC_URL: publicOrigin, LOCAL_HTTP_LOGIN: "true" } });
 });
 afterEach(() => t.close());
 
@@ -131,7 +141,7 @@ test("TLS proxy internal HTTP request still issues HTTPS session cookies", async
 
 test("OAuth callback origin currently follows the initiating host", async () => {
   await t.close();
-  t = await createTestServer({
+  t = await createOriginCheckedServer({
     env: {
       PUBLIC_URL: publicOrigin,
       LOCAL_HTTP_LOGIN: "true",
@@ -159,7 +169,8 @@ test("untrusted origins and forged proxy host do not grant login", async () => {
     origin: "https://evil.example",
     cookie,
   });
-  expect(badOrigin.status).not.toBe(200);
+  expect(badOrigin.status).toBe(403);
+  expect(((await badOrigin.json()) as { code: string }).code).toBe("INVALID_ORIGIN");
   const badHost = await request("http://evil.example", "/api/auth/sign-in/email", creds, {
     "x-forwarded-host": new URL(publicOrigin).host,
     "x-forwarded-proto": "https",
