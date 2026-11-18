@@ -104,32 +104,37 @@ describe("where the sheet is", () => {
           })),
         }),
       });
+    // A connection is no agent's until given (connector default-deny): the sentence sends to Ajustar for that.
     expect([0, 1, 2].map((n) => ours(n)?.text)).toEqual([
-      "Todos os agentes podem usar.",
-      "Todos os agentes podem usar. 1 ação pede aprovação no chat.",
-      "Todos os agentes podem usar. 2 ações pedem aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 2 ações pedem aprovação no chat.",
     ]);
     expect(ours(1)?.waiting).toBeNull();
-    // A server by address no one gave levels yet: Continuar is what gives agents its tools.
+    // A server by address no one gave levels yet: its tools first, then who has it, in Ajustar.
     const fresh = server(TOOLS);
     expect(doneSummary(t, { kind: "server", server: fresh })).toEqual({
-      text: "Os agentes só recebem as ferramentas quando você continuar, nos níveis que sugerimos. 1 ação pede aprovação no chat.",
+      text: "Revise as ferramentas e escolha o acesso dos agentes em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
       waiting: fresh,
       unreadable: null,
     });
     // Its levels saved (a one-click server comes so): nothing waits.
     const saved = server(TOOLS.map((x) => ({ ...x, access: x.level ?? "approval" })));
     expect(doneSummary(t, { kind: "server", server: saved })).toEqual({
-      text: "Todos os agentes podem usar. 1 ação pede aprovação no chat.",
+      text: "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo. 1 ação pede aprovação no chat.",
       waiting: null,
       unreadable: null,
     });
     expect(doneSummary(t, { kind: "server", server: server([], { toolsError: "401" }) })?.unreadable).toBe("401");
-    // The lists still catching up: nothing to say yet. A connection they never list: everyone's, nothing known to ask.
+    // The lists still catching up: nothing to say yet. A connection they never list: no agent's yet, nothing known to ask.
     expect(doneSummary(t, { kind: "loading" })).toBeNull();
-    expect(doneSummary(t, { kind: "none" })?.text).toBe("Todos os agentes podem usar.");
+    expect(doneSummary(t, { kind: "none" })?.text).toBe(
+      "Novas conexões não liberam acesso adicional. Revise o acesso em Ajustar. Permissões existentes de Todas as ferramentas continuam valendo.",
+    );
     const en = await translator("en");
-    expect(doneSummary(en, { kind: "none" })?.text).toBe("Every agent can use it.");
+    expect(doneSummary(en, { kind: "none" })?.text).toBe(
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
+    );
   });
 
   test("the steps: a catalog service starts with what it does, a server by address with connecting, then who", () => {

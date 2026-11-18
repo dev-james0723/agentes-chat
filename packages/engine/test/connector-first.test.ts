@@ -56,8 +56,14 @@ async function world(options: { offer?: boolean; catalog?: boolean } = {}) {
   return runContext(f);
 }
 
-const connectGithub = () =>
-  createApiKeyConnection(deps(), f.owner.id, f.org.id, { connector: "github", apiKey: "ghp_fake_fixture" });
+const connectGithub = async () => {
+  const connection = await createApiKeyConnection(deps(), f.owner.id, f.org.id, {
+    connector: "github",
+    apiKey: "ghp_fake_fixture",
+  });
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: connection.id, scope: "github:pr.read" }]);
+  return connection;
+};
 
 async function ask(ctx: ToolContext, input: Record<string, unknown>) {
   const r = await f.tools?.invoke(ctx, { toolUseId: `tu_${Math.random()}`, name: "request_secret", input });

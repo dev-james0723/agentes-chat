@@ -12697,7 +12697,7 @@ export const en = {
   },
   connectFlow: {
     accessRequired:
-      "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+      "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
     steps: "Steps",
     step: { "0": "Connect", "1": "What it does", "2": "Who can use it" },
     connectTitle: "Connect {{name}}",
@@ -12775,7 +12775,7 @@ export const en = {
     done: {
       title: "{{name}} connected",
       accessRequired:
-        "New connections grant no additional agent access. Review access in Adjust; existing All tools permissions still apply.",
+        "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply.",
       accessPending:
         "Review the tools, then choose agent access in Adjust. Existing All tools permissions still apply.",
       everyone: "Every agent can use it.",

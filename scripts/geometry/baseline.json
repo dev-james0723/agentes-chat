@@ -485,5 +485,6 @@
   "wordwrap@390 span in p.nac__hi",
   "wordwrap@390 span in span.nac__similar",
   "wordwrap@390 span.ac-eventpill__text in span.ac-eventpill__main at div.ac-eventpill.rq-done",
-  "wordwrap@390 span.ac-hint__bubble.ac-glass.ac-menu__tip in body"
+  "wordwrap@390 span.ac-hint__bubble.ac-glass.ac-menu__tip in body",
+  "wordwrap@390 span.cal-chip__title in button.cal-chip.cal-chip--block"
 ]

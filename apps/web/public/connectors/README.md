@@ -6,4 +6,6 @@ Most come from [Simple Icons](https://simpleicons.org) 16.32.0 (CC0 1.0, public 
 
 A mark in its maker's colors, which a mask would flatten (PayPal's, Canva's, Outlook's), is in `../brands/`. The mailboxes' marks (Gmail, Outlook, iCloud) and colors live in `MAIL_BRANDS` in `packages/client/src/lib/mail.ts`.
 
+`plug.svg` is no brand's mark: the generic connector glyph of `packages/ui/src/icons/extra.ts`, for a service without a one-color mark here yet (Stitch).
+
 Each icon is a trademark of its owner, used only to name the service.
