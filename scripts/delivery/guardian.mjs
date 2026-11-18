@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Read-only delivery observation. This utility never commits, pushes, merges or deploys.
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,7 +110,12 @@ export function observe(
     throw new Error("Invalid remote name");
   const root = realpathSync(inputRoot);
   const reader = createGitReader(root);
-  if (realpathSync(reader.read(["rev-parse", "--show-toplevel"]).trim()) !== root)
+  // macOS APFS may expose the same directory as /Volumes/Data and /Volumes/Macintosh HD.
+  // Compare filesystem identity, not differing display paths. Nested directories remain rejected.
+  const top = reader.read(["rev-parse", "--show-toplevel"]).trim();
+  const currentStat = statSync(root);
+  const topStat = statSync(top);
+  if (currentStat.dev !== topStat.dev || currentStat.ino !== topStat.ino)
     throw new Error("Select the exact repository root");
   const startHead = reader.read(["rev-parse", "HEAD"]).trim();
   const branch = reader.read(["branch", "--show-current"]).trim();
