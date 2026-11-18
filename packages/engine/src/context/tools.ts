@@ -316,9 +316,10 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         );
         const speakers = await speakersOf(ctx.db, [...items.values()]);
         const shown = hits
-          .filter(
-            (h) => h.kind !== "message" || (said.has(h.sourceId) && channels.includes(said.get(h.sourceId)!.channelId)),
-          )
+          .filter((h) => {
+            const message = said.get(h.sourceId);
+            return h.kind !== "message" || Boolean(message && channels.includes(message.channelId));
+          })
           // Rules come whole in "# Rules people gave you", and only those that hold for this run's person.
           .filter((h) => items.get(h.sourceId)?.kind !== "rule")
           .filter((h) => personMayRead(items.get(h.sourceId), person, ctx.agentId))
@@ -426,7 +427,7 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
               createdByKind: "agent",
               createdById: ctx.agentId,
             },
-            { ...memoryJudging(deps), mayReplace: (old) => old.createdByKind !== "person" },
+            { ...memoryJudging(deps), replaceOwnProcedure: true, mayReplace: (old) => old.createdByKind !== "person" },
           );
           stored = true;
           await indexSource(deps, { orgId: ctx.orgId, kind: "context_item", sourceId: res.item.id }).catch(() => {});
@@ -1782,7 +1783,7 @@ export async function retrieveForRun(
     entries.push({
       id: "catalog",
       reference: "",
-      text: `- Also in your memory, open with expand: ${rest.map((i) => `${i.title || i.kind} (id ${i.id})`).join("; ")}`,
+      text: `- Also in your memory, open with expand: ${rest.map((i) => `${cutText((isQuote(i) ? i.content : i.title || i.content).replace(/\s+/g, " "), 50)} (id ${i.id})`).join("; ")}`,
       required: false,
     });
   const packed = buildMemoryPack(entries, {

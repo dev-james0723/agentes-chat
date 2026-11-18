@@ -27,6 +27,7 @@ import { can, getMembership, type Membership, requirePermission } from "../organ
 import { hasContact } from "../outside";
 import { enqueueIndex, userVisibleChannels } from "../search";
 import { type Plan, planConsolidation } from "./judgments";
+import { memorySourceVisibilityForUser } from "./memory-visibility";
 
 const { agentActions, agents, contextItems, messages } = schema;
 
@@ -417,6 +418,15 @@ export const memoryRevisionMatches = (current: ContextItem, expected: ContextIte
   current.agentId === expected.agentId &&
   current.trust === expected.trust &&
   current.verified === expected.verified &&
+  current.kind === expected.kind &&
+  current.subjectKey === expected.subjectKey &&
+  current.createdByKind === expected.createdByKind &&
+  current.createdById === expected.createdById &&
+  current.pinned === expected.pinned &&
+  current.disputed === expected.disputed &&
+  current.confidence === expected.confidence &&
+  current.coversUntil?.getTime() === expected.coversUntil?.getTime() &&
+  JSON.stringify(current.relatedIds) === JSON.stringify(expected.relatedIds) &&
   JSON.stringify(current.channelIds) === JSON.stringify(expected.channelIds) &&
   JSON.stringify(current.sourceIds) === JSON.stringify(expected.sourceIds) &&
   JSON.stringify(current.evidence) === JSON.stringify(expected.evidence);
@@ -458,9 +468,8 @@ export async function supersede(tx: Executor, old: ContextItem, next: NewContext
   return { ...row, version: current.version + 1 };
 }
 
-/** Only exact text after Unicode/spacing normalization is an automatic duplicate; negations and symbols stay. */
-export const sameMemoryText = (a: string, b: string) =>
-  a.normalize("NFC").trim().replace(/\s+/gu, " ") === b.normalize("NFC").trim().replace(/\s+/gu, " ");
+/** Exact stored text only: whitespace, Unicode and case can be data inside commands or identifiers. */
+export const sameMemoryText = (a: string, b: string) => a === b;
 
 /** A person's explicit correction replaces that same person's earlier statement, never another person's guess. */
 export const sameGiverCorrection = (old: ContextItem, next: NewContextItem) =>
@@ -504,14 +513,16 @@ export interface MemoryJudging {
    * may hold a permission ("no need to ask me before each send"), so the permission check is skipped.
    */
   personsRule?: boolean;
+  /** Native save_how_to is an explicit same-author procedure revision, not an inferred factual correction. */
+  replaceOwnProcedure?: boolean;
 }
 
 /**
  * Adds a fact, decision, preference or lesson, consolidating with what
  * exists on the same subject in the same scope (same agent for lessons):
- * - near-identical content → merged (evidence united, recurrence +1, confidence max);
- * - different content on the same subject → the new one supersedes the old
- *   (a contradiction keeps history; nothing is deleted silently);
+ * - identical content → merged (evidence united, recurrence +1, confidence max);
+ * - explicit same-author corrections or stronger evidence may supersede;
+ * - equally supported contradictory claims stay disputed with both histories;
  * - otherwise → created.
  */
 export async function consolidateItem(
@@ -522,7 +533,7 @@ export async function consolidateItem(
   const { judge } = judging;
   if (!judging.personsRule) await checkPermissionText(judge, input.orgId, `${input.title ?? ""}\n${input.content}`);
   // By meaning first (outside the transaction: the judge is a network call); words when it can't.
-  if (judge && judging.semantic) {
+  if (judge && judging.semantic && !judging.replaceOwnProcedure) {
     const plan = await planConsolidation(db, judge, input);
     if (plan) {
       const done = await db.transaction((tx) => applyPlan(tx, input, plan, judging.mayReplace));
@@ -564,6 +575,25 @@ export async function consolidateItem(
     if (sameMemoryText(old.content, input.content)) {
       return { action: "merged", item: await mergeInto(tx, old, input) };
     }
+    const ownProcedure =
+      judging.replaceOwnProcedure === true &&
+      old.kind === "note" &&
+      input.kind === "note" &&
+      isHowTo(old) &&
+      old.createdByKind === "agent" &&
+      input.createdByKind === "agent" &&
+      Boolean(input.agentId) &&
+      input.createdById === input.agentId &&
+      old.createdById === input.agentId;
+    if (ownProcedure && (!judging.mayReplace || judging.mayReplace(old))) {
+      const item = await supersede(tx, old, {
+        ...input,
+        subject: input.subject ?? old.subjectKey,
+        // A procedure revision is not a human confirmation of its old external sources.
+        trust: old.trust === "low" || input.trust === "low" ? "low" : "high",
+      });
+      return { action: "superseded", item, previous: old };
+    }
     if (
       (judging.mayReplace && !judging.mayReplace(old)) ||
       (!sameGiverCorrection(old, input) && !strongerMemoryEvidence(old, input))
@@ -585,7 +615,11 @@ async function keepBeside(tx: Executor, old: ContextItem, input: NewContextItem)
     relatedIds: [old.id],
     disputed: true,
   });
-  if (input.trust !== "low") await tx.update(contextItems).set({ disputed: true }).where(eq(contextItems.id, old.id));
+  if (input.trust !== "low" || old.trust === "low")
+    await tx
+      .update(contextItems)
+      .set({ disputed: true })
+      .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)));
   await linkBack(tx, [old.id], item.id);
   return { action: "disputed", item, previous: old };
 }
@@ -737,7 +771,8 @@ export async function listContextItems(
     )
     .orderBy(desc(contextItems.pinned), desc(contextItems.relevance), desc(contextItems.updatedAt))
     .limit(Math.min(filter.limit ?? 100, 500));
-  return rows.filter((i) => !isPlaybook(i) || seen.playbook.has(i.agentId ?? ""));
+  const sourceVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, rows);
+  return rows.filter((i) => sourceVisible.has(i.id) && (!isPlaybook(i) || seen.playbook.has(i.agentId ?? "")));
 }
 
 /** Whether someone who reads `visible` may see an item: every channel it came from (org-wide ones too). */
@@ -764,7 +799,8 @@ export async function listAgentMemoryRows(db: Database, actorId: string, orgId: 
       ),
     );
   const playbook = !!agent && readsPlaybook(agent, actorId, membership);
-  return { items: rows.filter((i) => playbook || !isPlaybook(i)), visible };
+  const sourceVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, rows);
+  return { items: rows.filter((i) => sourceVisible.has(i.id) && (playbook || !isPlaybook(i))), visible };
 }
 
 /**
@@ -797,7 +833,8 @@ export async function listOrgMemoryRows(db: Database, actorId: string, orgId: st
         (!isPlaybook(r.item) || readsPlaybook(r.agent, actorId, membership)),
     )
     .map((r) => r.item);
-  return { items, visible };
+  const sourceVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, items);
+  return { items: items.filter((i) => sourceVisible.has(i.id)), visible };
 }
 
 /**
@@ -858,6 +895,13 @@ async function loadItem(db: Database, orgId: string, itemId: string) {
   return row;
 }
 
+/** Mutation responses and undo return content: review permission never bypasses its source boundary. */
+async function requireMutationSourceRead(db: Database, actorId: string, item: ContextItem) {
+  const visible = await userVisibleChannels(db, item.orgId, actorId);
+  const readable = await memorySourceVisibilityForUser(db, item.orgId, actorId, visible, [item]);
+  if (!readable.has(item.id)) throw new NotFoundError("Item not found");
+}
+
 /**
  * A person edits an item: content edits create a new version (history kept),
  * pin and archive change it in place. An edit by a person is human evidence.
@@ -885,6 +929,7 @@ export async function editContextItem(
     input.pinned === undefined &&
     input.archived === undefined;
   if (!onlyConfirms || !(await saidBy(db, actorId, item))) await requireEdit(db, actorId, item);
+  await requireMutationSourceRead(db, actorId, item);
   // Permission precedes conflict details, including optional caller-supplied versions.
   if (
     input.expectedVersion !== undefined &&
@@ -902,9 +947,11 @@ export async function editContextItem(
       .from(contextItems)
       .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, itemId)))
       .for("update");
-    if (!locked || !memoryRevisionMatches(locked, item)) throw changedMemory();
+    if (!locked) throw new NotFoundError("Item not found");
     const authorityDb = tx as Database;
     if (!onlyConfirms || !(await saidBy(authorityDb, actorId, locked))) await requireEdit(authorityDb, actorId, locked);
+    await requireMutationSourceRead(authorityDb, actorId, locked);
+    if (!memoryRevisionMatches(locked, item)) throw changedMemory();
     let current = locked;
     if (contentChanged || titleChanged) {
       current = await supersede(tx, locked, {
@@ -1054,7 +1101,8 @@ export async function listTeamMemories(db: Database, actorId: string, orgId: str
     )
     .orderBy(desc(contextItems.createdAt))
     .limit(200);
-  return { items, visible };
+  const sourceVisible = await memorySourceVisibilityForUser(db, orgId, actorId, visible, items);
+  return { items: items.filter((i) => sourceVisible.has(i.id)), visible };
 }
 
 /**
@@ -1258,6 +1306,7 @@ export async function revertMemoryChange(
   const visible = await userVisibleChannels(db, orgId, actorId);
   if (!itemVisibleIn(item, visible) || !seesPreference(membership, actorId, item))
     throw new NotFoundError("Item not found");
+  await requireMutationSourceRead(db, actorId, item);
   const [asked] = await db
     .select({ id: agentActions.id })
     .from(agentActions)
@@ -1273,6 +1322,7 @@ export async function revertMemoryChange(
     )
     .limit(1);
   if (!asked) await requireEdit(db, actorId, item);
+  if (item.supersededBy) throw changedMemory();
   const [previous] = await db
     .select()
     .from(contextItems)
@@ -1280,29 +1330,48 @@ export async function revertMemoryChange(
     .orderBy(desc(contextItems.createdAt))
     .limit(1);
   return db.transaction(async (tx) => {
+    const ids = [item.id, ...(previous ? [previous.id] : [])].sort();
+    const locked = await tx
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, ids)))
+      .orderBy(contextItems.id)
+      .for("update");
+    const fresh = locked.find((row) => row.id === item.id);
+    if (!fresh) throw new NotFoundError("Item not found");
+    const authorityDb = tx as Database;
+    if (!asked) await requireEdit(authorityDb, actorId, fresh);
+    await requireMutationSourceRead(authorityDb, actorId, fresh);
+    if (!memoryRevisionMatches(fresh, item) || fresh.supersededBy) throw changedMemory();
+    if (previous) {
+      const prior = locked.find((row) => row.id === previous.id);
+      if (!prior) throw changedMemory();
+      await requireMutationSourceRead(authorityDb, actorId, prior);
+      if (!memoryRevisionMatches(prior, previous)) throw changedMemory();
+    }
     let restored: ContextItem;
     if (item.status === "archived" && !item.supersededBy) {
       const [row] = await tx
         .update(contextItems)
-        .set({ status: "active", updatedAt: new Date() })
+        .set({ status: "active", version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
         .where(eq(contextItems.id, item.id))
         .returning();
       restored = row ?? item;
     } else if (previous) {
       const [row] = await tx
         .update(contextItems)
-        .set({ status: "active", supersededBy: null, updatedAt: new Date() })
+        .set({ status: "active", supersededBy: null, version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
         .where(eq(contextItems.id, previous.id))
         .returning();
       await tx
         .update(contextItems)
-        .set({ status: "archived", updatedAt: new Date() })
+        .set({ status: "archived", version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
         .where(eq(contextItems.id, item.id));
       restored = row ?? previous;
     } else {
       const [row] = await tx
         .update(contextItems)
-        .set({ status: "archived", updatedAt: new Date() })
+        .set({ status: "archived", version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
         .where(eq(contextItems.id, item.id))
         .returning();
       restored = row ?? item;

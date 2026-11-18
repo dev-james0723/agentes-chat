@@ -8,8 +8,10 @@ import {
   createFakeJudge,
   editContextItem,
   ForbiddenError,
+  indexSource,
   insertContextItem,
   type NewContextItem,
+  retrieveForRun,
   ValidationError,
 } from "../src";
 import { supersede } from "../src/context/items";
@@ -163,7 +165,7 @@ describe("consolidation identity and evidence", () => {
     const first = await consolidateItem(f.db, input("Orion runs in Paris.", own));
     const second = await consolidateItem(
       f.db,
-      input("Orion runs in Tokyo.", { ...own, evidence: [{ ...own.evidence[0], ref: "observation-b" }] }),
+      input("Orion runs in Tokyo.", { ...own, evidence: own.evidence.map((e) => ({ ...e, ref: "observation-b" })) }),
     );
     expect(second.action).toBe("disputed");
     expect((await rows()).find((r) => r.id === first.item.id)?.status).toBe("active");
@@ -252,4 +254,56 @@ describe("maintenance preserves unresolved and separate claims", () => {
     await consolidateByMeaning(f.context, f.org.id);
     expect((await rows()).filter((r) => r.status === "active" && r.disputed)).toHaveLength(2);
   });
+});
+
+describe("unresolved evidence stays unresolved on read", () => {
+  test("two low-trust observations are both disputed, not only the newer one", async () => {
+    f = await setup();
+    const own = {
+      trust: "low" as const,
+      createdByKind: "agent" as const,
+      createdById: f.agent.id,
+      evidence: [{ type: "self" as const, ref: "a", at: new Date().toISOString() }],
+    };
+    await consolidateItem(f.db, input("Orion reports permission is available.", own));
+    await consolidateItem(f.db, input("Orion reports permission is unavailable.", own));
+    expect((await rows()).filter((r) => r.status === "active" && r.disputed)).toHaveLength(2);
+  });
+
+  test("retrieval does not collapse contradictory facts that share most words", async () => {
+    f = await setup();
+    const a = await insertContextItem(
+      f.db,
+      input("Orion releases are allowed after the review completes.", { disputed: true }),
+    );
+    const b = await insertContextItem(
+      f.db,
+      input("Orion releases are not allowed after the review completes.", { disputed: true }),
+    );
+    for (const item of [a, b])
+      await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: item.id });
+    const result = await retrieveForRun(f.context, {
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      text: "Orion releases review",
+    });
+    expect(result.itemIds).toContain(a.id);
+    expect(result.itemIds).toContain(b.id);
+    expect(result.text).toContain("not allowed");
+  });
+});
+
+describe("revision fences include author and requirement metadata", () => {
+  for (const patch of [{ pinned: true }, { disputed: true }, { createdById: "changed-author" }]) {
+    test(`an unchanged clock does not hide a metadata change: ${Object.keys(patch)[0]}`, async () => {
+      f = await setup();
+      const old = await insertContextItem(f.db, input("Orion runs in Paris."));
+      await f.db.update(schema.contextItems).set(patch).where(eq(schema.contextItems.id, old.id));
+      await expect(f.db.transaction((tx) => supersede(tx, old, input("Orion runs in Rome.")))).rejects.toBeInstanceOf(
+        ConflictError,
+      );
+      expect(await rows()).toHaveLength(1);
+    });
+  }
 });

@@ -170,10 +170,25 @@ describe("consolidation", () => {
     channelIds: [fx.general.id],
   });
 
-  test("near-identical items merge; a contradiction supersedes and keeps history; credentials are refused", async () => {
+  test("exact duplicate merges; the same person corrects their claim with history; credentials are refused", async () => {
     f = await setup();
-    const first = await consolidateItem(f.db, { ...base(f), subject: "deploy day", content: "We deploy on Tuesdays." });
-    const again = await consolidateItem(f.db, { ...base(f), subject: "deploy day", content: "we deploy on tuesdays" });
+    const author = {
+      createdByKind: "person" as const,
+      createdById: f.owner.id,
+      evidence: [{ type: "human" as const, ref: f.owner.id, at: new Date().toISOString() }],
+    };
+    const first = await consolidateItem(f.db, {
+      ...base(f),
+      ...author,
+      subject: "deploy day",
+      content: "We deploy on Tuesdays.",
+    });
+    const again = await consolidateItem(f.db, {
+      ...base(f),
+      ...author,
+      subject: "deploy day",
+      content: "We deploy on Tuesdays.",
+    });
     expect([first.action, again.action, again.item.id, again.item.recurrence]).toEqual([
       "created",
       "merged",
@@ -182,6 +197,7 @@ describe("consolidation", () => {
     ]);
     const changed = await consolidateItem(f.db, {
       ...base(f),
+      ...author,
       subject: "deploy day",
       content: "We deploy on Thursdays now.",
     });
@@ -197,7 +213,8 @@ describe("consolidation", () => {
   test("periodic consolidation dedupes, decays unused items and archives stale ones (pinned never)", async () => {
     f = await setup();
     const a = await consolidateItem(f.db, { ...base(f), subject: "a", content: "Customers pay yearly" });
-    await consolidateItem(f.db, { ...base(f), subject: "b", content: "customers pay yearly." });
+    // Different candidate keys, identical payloads: create both to exercise the maintenance job.
+    await f.db.insert(schema.contextItems).values({ ...base(f), subjectKey: "b", content: "Customers pay yearly" });
     const stale = await consolidateItem(f.db, { ...base(f), subject: "c", content: "The old office is in Rua X" });
     const pinned = await consolidateItem(f.db, {
       ...base(f),

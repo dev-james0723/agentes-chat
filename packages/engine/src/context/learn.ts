@@ -664,7 +664,9 @@ export async function learnRun(deps: ContextDeps, input: { orgId: string; runId:
               : key || undefined,
       // A pointer, not a page's say: short.
       content: item.kind === "access" ? cutText(item.content.trim(), 300) : item.content.trim(),
-      sourceIds: [...new Set(cited.messages.map((m) => m.id))],
+      // Tool-only observations still need a durable native source. The run is a provenance pointer,
+      // not a verification or publication grant; its audience and trigger are checked on every read.
+      sourceIds: [...new Set([...cited.messages.map((m) => m.id), ...(cited.calls.length ? [run.id] : [])])],
       channelIds:
         scope === "workspace" && item.kind === "access" && everywhere
           ? []

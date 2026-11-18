@@ -25,6 +25,7 @@ import type { EmbeddingResult } from "@agenteschat/providers";
 import { agentIdsSeen, isPlaybook } from "./audience";
 import { caches } from "./cache";
 import { ACCESS_WORD, HOW_TO_WORD } from "./context/items";
+import { memorySourceVisibilityForUser } from "./context/memory-visibility";
 import { personAgentDmKey } from "./dms";
 import { cutText } from "./format";
 import type { ModelGateway } from "./gateway";
@@ -577,23 +578,18 @@ export async function searchForUser(
   if (items.length > 0) {
     const [rows, agentsSeen] = await Promise.all([
       deps.db
-        .select({
-          id: contextItems.id,
-          agentId: contextItems.agentId,
-          scopeType: contextItems.scopeType,
-          scopeId: contextItems.scopeId,
-          kind: contextItems.kind,
-          createdByKind: contextItems.createdByKind,
-        })
+        .select()
         .from(contextItems)
         .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, items))),
       agentIdsSeen(deps.db, userId, orgId),
     ]);
     const reviews = can(membership, "review_memory");
+    const sourceVisible = await memorySourceVisibilityForUser(deps.db, orgId, userId, visible, rows);
     const shown = new Set(
       rows
         .filter(
           (r) =>
+            sourceVisible.has(r.id) &&
             (!r.agentId || agentsSeen.details.has(r.agentId)) &&
             (!isPlaybook(r) || agentsSeen.playbook.has(r.agentId ?? "")) &&
             (reviews || r.scopeType !== "person" || r.scopeId === userId),

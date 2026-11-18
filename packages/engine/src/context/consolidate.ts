@@ -302,6 +302,17 @@ export async function consolidateByMeaning(deps: ContextDeps, orgId: string, now
       return out; // no Jev (or it's down): try again on the next run
     }
     const touched = await db.transaction(async (tx) => {
+      // The judgment ran outside the transaction. Both sides must still be the versions it saw.
+      // Stable id order avoids opposing maintenance workers taking the two row locks in reverse order.
+      const ids = [...new Set([item.id, ...(plan.action === "create" ? plan.related : [plan.target.id])])].sort();
+      const locked = await tx
+        .select()
+        .from(contextItems)
+        .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, ids)))
+        .orderBy(asc(contextItems.id))
+        .for("update");
+      const fresh = locked.find((row) => row.id === item.id);
+      if (fresh?.status !== "active" || fresh.supersededBy || !memoryRevisionMatches(fresh, item)) return [];
       if (plan.action === "create") {
         if (plan.related.length === 0) return [];
         await tx
@@ -317,12 +328,8 @@ export async function consolidateByMeaning(deps: ContextDeps, orgId: string, now
         out.linked += plan.related.length;
         return [];
       }
-      const [target] = await tx
-        .select()
-        .from(contextItems)
-        .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, plan.target.id)))
-        .for("update");
-      if (!target || !memoryRevisionMatches(target, plan.target)) return [];
+      const target = locked.find((row) => row.id === plan.target.id);
+      if (target?.status !== "active" || target.supersededBy || !memoryRevisionMatches(target, plan.target)) return [];
       if (plan.action === "dispute") {
         for (const [claim, other] of [
           [item, target],
