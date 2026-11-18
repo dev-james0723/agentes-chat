@@ -39,6 +39,10 @@ const item = (patch: Partial<ContextItem> = {}): ContextItem => ({
   createdByKind: "person",
   createdById: "person-1",
   proposedAt: null,
+  validFrom: null,
+  validTo: null,
+  sourceRevision: null,
+  supersededAt: null,
   createdAt: new Date("2026-11-10T08:00:00.000Z"),
   updatedAt: new Date("2026-11-10T08:00:00.000Z"),
   ...patch,
@@ -156,17 +160,11 @@ describe("the envelope carries native identity, scope and time without inventing
     expect(r.value.observedAt).toBeNull();
     expect(r.value.validFrom).toBeNull();
     expect(r.value.validTo).toBeNull();
+    expect(r.value.sourceRevision).toBeNull();
     expect(r.value.unmappedFields).toEqual(
-      expect.arrayContaining([
-        "policyRevision",
-        "sourceRevision",
-        "audienceIds",
-        "validFrom",
-        "validTo",
-        "observedAt",
-        "sourceRefs",
-      ]),
+      expect.arrayContaining(["policyRevision", "audienceIds", "observedAt", "sourceRefs"]),
     );
+    expect(r.value.unmappedFields).not.toContain("validFrom");
   });
 
   test("only supporting evidence dates support; hypotheses add no time", () => {

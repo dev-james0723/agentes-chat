@@ -139,6 +139,55 @@ export async function memorySourceVisibility(
   );
 }
 
+/**
+ * A person's own "everywhere" preference (ADR 0120): kept for them under no channel, high trust, every source a live
+ * message that same person wrote. It follows the runs they are behind wherever those runs answer: the output-audience
+ * source check would otherwise hide "keep the October trip from the team" from the very public-channel run that must
+ * obey it. Someone else's runs never get it (`people` is whom the run acts for), nor does anything an agent or a
+ * page wrote, nor an item whose source was deleted.
+ */
+export async function personsOwnWords(
+  db: Database,
+  orgId: string,
+  people: readonly string[],
+  items: readonly ContextItem[],
+): Promise<Set<string>> {
+  const own = items.filter(
+    (i) =>
+      i.orgId === orgId &&
+      i.scopeType === "person" &&
+      i.scopeId !== null &&
+      people.includes(i.scopeId) &&
+      i.channelIds.length === 0 &&
+      i.trust === "high" &&
+      i.status === "active" &&
+      !i.supersededBy &&
+      i.sourceIds.length > 0,
+  );
+  if (!own.length) return new Set();
+  const { messages } = schema;
+  const rows = await db
+    .select({
+      id: messages.id,
+      authorType: messages.authorType,
+      authorUserId: messages.authorUserId,
+      deletedAt: messages.deletedAt,
+    })
+    .from(messages)
+    .where(and(eq(messages.orgId, orgId), inArray(messages.id, [...new Set(own.flatMap((i) => i.sourceIds))])));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return new Set(
+    own
+      .filter((i) =>
+        i.sourceIds.every((id) => {
+          const m = byId.get(id);
+          return Boolean(m && !m.deletedAt && m.authorType === "person" && m.authorUserId === i.scopeId);
+        }),
+      )
+      .map((i) => i.id),
+  );
+}
+
 /** Human inspector/search uses the same source closure, but native human/agent-detail permissions. */
 export async function memorySourceVisibilityForUser(
   db: Database,

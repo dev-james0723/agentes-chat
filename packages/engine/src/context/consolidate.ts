@@ -91,7 +91,7 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
             .where(eq(contextItems.id, keep.id));
           await tx
             .update(contextItems)
-            .set({ status: "archived", supersededBy: keep.id, updatedAt: now })
+            .set({ status: "archived", supersededBy: keep.id, supersededAt: sql`now()`, updatedAt: now })
             .where(eq(contextItems.id, dup.id));
           for (const id of [keep.id, dup.id])
             await enqueue(tx, { orgId, kind: "search.index", payload: { kind: "context_item", sourceId: id } });
@@ -377,6 +377,7 @@ export async function consolidateByMeaning(deps: ContextDeps, orgId: string, now
         .set({
           status: "archived",
           supersededBy: winner.id,
+          supersededAt: sql`now()`,
           relatedIds: [...new Set([...loser.relatedIds, winner.id])],
           updatedAt: now,
         })

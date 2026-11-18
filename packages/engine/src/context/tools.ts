@@ -76,7 +76,7 @@ import {
 } from "./items";
 import { kindFamily, overlap } from "./judgments";
 import { learnTrust, ownWords } from "./learn";
-import { memoryOutputChannels, memorySourceVisibility } from "./memory-visibility";
+import { memoryOutputChannels, memorySourceVisibility, personsOwnWords } from "./memory-visibility";
 import { CARD_MAX_AGENTS, ownerDecides, type Proposal, proposeChange } from "./proposals";
 import { type ContextDeps, ensureThreadSummary, judgeOf, memoryJudging } from "./summaries";
 
@@ -1752,9 +1752,14 @@ export async function retrieveForRun(
     searched = await withLinked(db, base, searched);
   }
   const candidates = [...team, ...pinned, ...personal, ...said, ...searched, ...own, ...holders];
-  const sourceVisible = await memorySourceVisibility(db, input, allowed, [...candidates, ...often]);
+  const [sourceVisible, ownWords] = await Promise.all([
+    memorySourceVisibility(db, input, allowed, [...candidates, ...often]),
+    personsOwnWords(db, input.orgId, people, candidates),
+  ]);
   const fromDm = dm ? await Promise.all(candidates.map((i) => dm.item(i))) : null;
-  const eligible = candidates.filter((item, i) => sourceVisible.has(item.id) && fromDm?.[i] !== false);
+  const eligible = candidates.filter(
+    (item, i) => (sourceVisible.has(item.id) || ownWords.has(item.id)) && fromDm?.[i] !== false,
+  );
   // Accepted requirements use exact identity only: similarity must not erase a negation or another constraint.
   const requirements = [...new Map(eligible.filter(isAcceptedRequirement).map((item) => [item.id, item])).values()];
   const picked = pickDistinct(

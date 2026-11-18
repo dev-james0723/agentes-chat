@@ -101,12 +101,9 @@ export function logicalMemoryStatus(
 /** Contract fields native rows do not store yet (T01/T02 schema work); readers must treat them as unknown. */
 export const UNMAPPED_MEMORY_FIELDS = [
   "sourceRefs",
-  "sourceRevision",
   "policyRevision",
   "audienceIds",
   "observedAt",
-  "validFrom",
-  "validTo",
   "expiresAt",
   "derivedFrom",
   "scope.projectId",
@@ -143,8 +140,13 @@ export interface NativeMemoryEnvelope {
   /** Latest time native recorded a change to this row. */
   recordedAt: string;
   firstRecordedAt: string;
-  validFrom: null;
-  validTo: null;
+  /** When the claim holds in the world, half-open; null = unknown or unbounded. */
+  validFrom: string | null;
+  validTo: string | null;
+  /** The source revision it was read from; null = not recorded (every row written before T01). */
+  sourceRevision: string | null;
+  /** When a successor replaced it (known time); null when current or superseded before this was recorded. */
+  supersededAt: string | null;
   /** Native supersession points forward only (old.supersededBy = new); predecessors need a lookup. */
   supersedes: string[];
   supersededBy: string | null;
@@ -198,8 +200,11 @@ export function toMemoryEnvelope(item: ContextItem): Mapped<NativeMemoryEnvelope
       supportAttachedAt: times.length ? new Date(times[0] as number).toISOString() : null,
       recordedAt: item.updatedAt.toISOString(),
       firstRecordedAt: item.createdAt.toISOString(),
-      validFrom: null,
-      validTo: null,
+      validFrom: item.validFrom?.toISOString() ?? null,
+      validTo: item.validTo?.toISOString() ?? null,
+      sourceRevision: item.sourceRevision,
+      // A version that un-superseded a row without clearing its time (before T01) must not look replaced.
+      supersededAt: item.supersededBy ? (item.supersededAt?.toISOString() ?? null) : null,
       supersedes: [],
       supersededBy: item.supersededBy,
       contentHash: createHash("sha256").update(item.content).digest("hex"),
@@ -207,4 +212,35 @@ export function toMemoryEnvelope(item: ContextItem): Mapped<NativeMemoryEnvelope
       unmappedFields: UNMAPPED_MEMORY_FIELDS,
     },
   };
+}
+
+/**
+ * Limitation (A07 partial): native supersession models a correction, so a successor hides its predecessor in every
+ * later known-time view, also when the successor only started later in the world ("Paris from January", then "Tokyo
+ * from February": asked now about mid-January, this returns nothing). Keeping that history needs successors to close
+ * their predecessor's validity instead of replacing it.
+ *
+ * Bitemporal view over rows the caller has already authorized: `knownAt` is what memory held at that time (recorded
+ * by then, not yet superseded); `asOf` is what holds in the world then (validity half-open, unknown bounds open). A
+ * late correction adds a successor, so earlier known-time views keep showing what was believed then. Rows archived
+ * without a successor, and superseded rows whose supersession time was never recorded, have no reliable known-time
+ * span and are left out. Not an authorization or visibility check.
+ */
+export function memoryViewAt<
+  T extends Pick<ContextItem, "status" | "supersededBy" | "supersededAt" | "createdAt" | "validFrom" | "validTo">,
+>(items: readonly T[], at: { knownAt?: Date; asOf?: Date }): T[] {
+  const known = at.knownAt?.getTime() ?? Number.POSITIVE_INFINITY;
+  const asOf = at.asOf?.getTime();
+  return items.filter((i) => {
+    if (i.status === "archived" && !i.supersededBy) return false;
+    if (i.createdAt.getTime() > known) return false;
+    if (i.supersededBy) {
+      if (!i.supersededAt) return false;
+      if (i.supersededAt.getTime() <= known) return false;
+    }
+    if (asOf === undefined) return true;
+    if (i.validFrom && i.validFrom.getTime() > asOf) return false;
+    if (i.validTo && i.validTo.getTime() <= asOf) return false;
+    return true;
+  });
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   and,
   arrayContained,
@@ -29,7 +30,7 @@ import { enqueueIndex, userVisibleChannels } from "../search";
 import { type Plan, planConsolidation } from "./judgments";
 import { memorySourceVisibilityForUser } from "./memory-visibility";
 
-const { agentActions, agents, contextItems, messages } = schema;
+const { agentActions, agents, contextItemEvents, contextItems, messages } = schema;
 
 export type ContextItem = typeof contextItems.$inferSelect;
 export type ContextKind = ContextItem["kind"];
@@ -362,11 +363,22 @@ export interface NewContextItem {
   relatedIds?: string[];
   /** Contradicted by another item, until a person resolves it. */
   disputed?: boolean;
+  /** When the claim holds in the world (half-open); unknown when absent. */
+  validFrom?: Date | null;
+  validTo?: Date | null;
+  /** The revision of the source it was read from (a message edit, a file hash). */
+  sourceRevision?: string | null;
+  /** The producer event this write applies: the same key in the same organization applies once (consolidateItem). */
+  eventKey?: string;
 }
 
 /** Inserts an item (content checked) and enqueues its indexing, in the caller's transaction. */
 export async function insertContextItem(tx: Executor, input: NewContextItem): Promise<ContextItem> {
   checkContent(`${input.title ?? ""}\n${input.content}`);
+  if (input.validFrom && input.validTo && input.validTo.getTime() <= input.validFrom.getTime())
+    throw new ValidationError("A memory's validity must end after it starts", "memory.validity_order");
+  if ((input.sourceRevision?.length ?? 0) > 200)
+    throw new ValidationError("A source revision is an identifier, at most 200 characters", "memory.source_revision");
   const evidence = input.evidence ?? [];
   const [row] = await tx
     .insert(contextItems)
@@ -394,6 +406,9 @@ export async function insertContextItem(tx: Executor, input: NewContextItem): Pr
       createdById: input.createdById ?? null,
       relatedIds: input.relatedIds ?? [],
       disputed: input.disputed ?? false,
+      validFrom: input.validFrom ?? null,
+      validTo: input.validTo ?? null,
+      sourceRevision: input.sourceRevision ?? null,
     })
     .returning();
   if (!row) throw new Error("context item insert returned nothing");
@@ -426,6 +441,10 @@ export const memoryRevisionMatches = (current: ContextItem, expected: ContextIte
   current.disputed === expected.disputed &&
   current.confidence === expected.confidence &&
   current.coversUntil?.getTime() === expected.coversUntil?.getTime() &&
+  current.validFrom?.getTime() === expected.validFrom?.getTime() &&
+  current.validTo?.getTime() === expected.validTo?.getTime() &&
+  current.sourceRevision === expected.sourceRevision &&
+  current.supersededAt?.getTime() === expected.supersededAt?.getTime() &&
   JSON.stringify(current.relatedIds) === JSON.stringify(expected.relatedIds) &&
   JSON.stringify(current.channelIds) === JSON.stringify(expected.channelIds) &&
   JSON.stringify(current.sourceIds) === JSON.stringify(expected.sourceIds) &&
@@ -462,7 +481,7 @@ export async function supersede(tx: Executor, old: ContextItem, next: NewContext
     .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, row.id)));
   await tx
     .update(contextItems)
-    .set({ supersededBy: row.id, status: "archived", updatedAt: new Date() })
+    .set({ supersededBy: row.id, supersededAt: sql`now()`, status: "archived", updatedAt: new Date() })
     .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)));
   await enqueueIndex(tx, { orgId: old.orgId, kind: "context_item", sourceId: old.id });
   return { ...row, version: current.version + 1 };
@@ -493,6 +512,8 @@ export type ConsolidateResult = {
   action: "created" | "merged" | "superseded" | "outweighed" | "disputed";
   item: ContextItem;
   previous?: ContextItem;
+  /** The event was applied before: this is its stored receipt, and nothing changed now. */
+  replayed?: true;
 };
 
 /**
@@ -531,17 +552,108 @@ export async function consolidateItem(
   judging: MemoryJudging = {},
 ): Promise<ConsolidateResult> {
   const { judge } = judging;
+  // A delivered event costs no judge call and changes nothing again.
+  if (input.eventKey) {
+    const prior = await eventReceipt(db, input, input.eventKey);
+    if (prior) return prior;
+  }
   if (!judging.personsRule) await checkPermissionText(judge, input.orgId, `${input.title ?? ""}\n${input.content}`);
   // By meaning first (outside the transaction: the judge is a network call); words when it can't.
   if (judge && judging.semantic && !judging.replaceOwnProcedure) {
     const plan = await planConsolidation(db, judge, input);
     if (plan) {
-      const done = await db.transaction((tx) => applyPlan(tx, input, plan, judging.mayReplace));
+      const done = await db.transaction((tx) =>
+        oncePerEvent(tx, input, () => applyPlan(tx, input, plan, judging.mayReplace)),
+      );
       if (done) return done;
     }
   }
   const subjectKey = normalizeSubject(input.subject ?? input.title ?? input.content.slice(0, 120));
-  return db.transaction(async (tx) => {
+  const applied = await db.transaction((tx) =>
+    oncePerEvent(tx, input, () => consolidateByWords(tx, input, judging, subjectKey)),
+  );
+  if (!applied) throw new Error("memory consolidation returned nothing");
+  return applied;
+}
+
+/** What an event writes: a replay of the same event writes the same thing in the same place, by the same giver. */
+const eventFingerprint = (i: NewContextItem) =>
+  createHash("sha256")
+    .update(
+      JSON.stringify([
+        i.kind,
+        i.scopeType,
+        i.scopeId ?? null,
+        i.agentId ?? null,
+        i.createdByKind ?? "job",
+        i.createdById ?? null,
+        i.title ?? "",
+        i.content,
+      ]),
+    )
+    .digest("hex");
+
+/** Successor links followed at most this far when a replay looks for the event's current memory. */
+const MAX_SUCCESSOR_HOPS = 20;
+
+/**
+ * The stored receipt of an applied event (`replayed`), with the memory it wrote as it is now: a later replacement
+ * is followed to the current version in the same organization. A key reused for another write is refused, so a
+ * replay never answers with a memory from someone else's scope.
+ */
+async function eventReceipt(db: Executor, input: NewContextItem, eventKey: string): Promise<ConsolidateResult | null> {
+  const [event] = await db
+    .select()
+    .from(contextItemEvents)
+    .where(and(eq(contextItemEvents.orgId, input.orgId), eq(contextItemEvents.eventKey, eventKey)));
+  if (!event) return null;
+  if (event.fingerprint !== eventFingerprint(input))
+    throw new ConflictError("This event key was already used for a different memory write.", "memory.event_key_reused");
+  let id = event.itemId;
+  for (let hop = 0; id && hop <= MAX_SUCCESSOR_HOPS; hop++) {
+    const [item] = await db
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, input.orgId), eq(contextItems.id, id)));
+    if (!item) break;
+    if (!item.supersededBy) return { action: event.action as ConsolidateResult["action"], item, replayed: true };
+    id = item.supersededBy;
+  }
+  throw new ConflictError("This event was already applied and its memory no longer exists.", "memory.event_applied");
+}
+
+/**
+ * Claims the input's event in the write's own transaction, so a rolled-back write leaves no receipt and a concurrent
+ * delivery waits on the claim, then reads the receipt. Without an event key it just applies.
+ */
+async function oncePerEvent(
+  tx: Executor,
+  input: NewContextItem,
+  apply: () => Promise<ConsolidateResult | null>,
+): Promise<ConsolidateResult | null> {
+  const key = input.eventKey;
+  if (!key) return apply();
+  // Read committed (the default): a concurrent claim waits for the first transaction, then sees its receipt.
+  const [claimed] = await tx
+    .insert(contextItemEvents)
+    .values({ orgId: input.orgId, eventKey: key, fingerprint: eventFingerprint(input) })
+    .onConflictDoNothing()
+    .returning();
+  if (!claimed) return eventReceipt(tx, input, key);
+  const where = and(eq(contextItemEvents.orgId, input.orgId), eq(contextItemEvents.eventKey, key));
+  const res = await apply();
+  if (!res) await tx.delete(contextItemEvents).where(where);
+  else await tx.update(contextItemEvents).set({ itemId: res.item.id, action: res.action }).where(where);
+  return res;
+}
+
+async function consolidateByWords(
+  tx: Executor,
+  input: NewContextItem,
+  judging: MemoryJudging,
+  subjectKey: string,
+): Promise<ConsolidateResult> {
+  {
     const existing = await tx
       .select()
       .from(contextItems)
@@ -601,7 +713,7 @@ export async function consolidateItem(
       return keepBeside(tx, old, input);
     const item = await supersede(tx, old, { ...input, subject: input.subject ?? old.subjectKey });
     return { action: "superseded", item, previous: old };
-  });
+  }
 }
 
 /**
@@ -717,7 +829,13 @@ async function applyPlan(
   const loser = await insertContextItem(tx, { ...input, subject: input.subject ?? target.subjectKey });
   await tx
     .update(contextItems)
-    .set({ status: "archived", supersededBy: target.id, relatedIds: [target.id], updatedAt: new Date() })
+    .set({
+      status: "archived",
+      supersededBy: target.id,
+      supersededAt: sql`now()`,
+      relatedIds: [target.id],
+      updatedAt: new Date(),
+    })
     .where(eq(contextItems.id, loser.id));
   await linkBack(tx, [target.id], loser.id);
   return { action: "outweighed", item: target, previous: { ...loser, status: "archived", supersededBy: target.id } };
@@ -1268,7 +1386,7 @@ export async function makeTeamMemory(db: Database, actorId: string, orgId: strin
     for (const c of copies) {
       await tx
         .update(contextItems)
-        .set({ status: "archived", supersededBy: team.id, updatedAt: new Date() })
+        .set({ status: "archived", supersededBy: team.id, supersededAt: sql`now()`, updatedAt: new Date() })
         .where(eq(contextItems.id, c.id));
       await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: c.id });
       if (c.kind === "rule" && c.agentId) caches.contextPresence.delete(rulesPresenceKey(orgId, c.agentId));
@@ -1360,7 +1478,13 @@ export async function revertMemoryChange(
     } else if (previous) {
       const [row] = await tx
         .update(contextItems)
-        .set({ status: "active", supersededBy: null, version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
+        .set({
+          status: "active",
+          supersededBy: null,
+          supersededAt: null,
+          version: sql`${contextItems.version} + 1`,
+          updatedAt: new Date(),
+        })
         .where(eq(contextItems.id, previous.id))
         .returning();
       await tx
