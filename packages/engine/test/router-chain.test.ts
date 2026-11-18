@@ -446,16 +446,24 @@ describe("rules, when nothing can read the message", () => {
 });
 
 describe("Jev and the small model", () => {
-  /** A fake TypeSafe: Dev should answer. */
+  /**
+   * A fake TypeSafe: Dev should answer. It answers every question it is asked (the router refuses a reply that
+   * leaves one out): a person's message is not purely social.
+   */
   const jevFetch = (status = 200) =>
-    (async () =>
-      status === 200
-        ? Response.json({
-            model: "jev-1.14.0",
-            answers: { needs_agent: { type: "noul", noul: 0.9 }, agent_0: { type: "noul", noul: 0.9 } },
-            usage: { input_tokens: 900, output_tokens: 10 },
-          })
-        : new Response("boom", { status })) as unknown as typeof fetch;
+    (async (_url: string, init: RequestInit) => {
+      if (status !== 200) return new Response("boom", { status });
+      const { questions } = JSON.parse(String(init.body)) as { questions: Record<string, unknown> };
+      return Response.json({
+        model: "jev-1.14.0",
+        answers: {
+          needs_agent: { type: "noul", noul: 0.9 },
+          agent_0: { type: "noul", noul: 0.9 },
+          ...(questions.social ? { social: { type: "choice", choice: "none", probabilities: { none: 1 } } } : {}),
+        },
+        usage: { input_tokens: 900, output_tokens: 10 },
+      });
+    }) as unknown as typeof fetch;
 
   test("Jev decides, and says so; down, the small model decides and the decision names Jev's failure", async () => {
     f = await setup({

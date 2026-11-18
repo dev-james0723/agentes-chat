@@ -2274,16 +2274,29 @@ export class AccountManager {
     // With the switch off or the self-check failing, no CLI runs on its store: it stays as last known.
     if (cliShared && !this.opts.sharedLogin?.ready())
       return { id, kind, loggedIn: false, statusUnknown: true, ...shared };
-    const r = await this.serial(
-      id,
-      async () => {
-        const { command, env } = cliShared
-          ? this.sharedCli(id)
-          : { command: this.command(kind), env: this.env(kind, dir) };
-        return runCli(command, STATUS_ARGS[kind], env, this.opts.statusTimeoutMs ?? STATUS_TIMEOUT_MS);
-      },
-      this.cliOps,
-    ).catch((err: unknown): CliResult => ({ status: null, stdout: "", stderr: String(err) }));
+    const ask = () =>
+      this.serial(
+        id,
+        async () => {
+          const { command, env } = cliShared
+            ? this.sharedCli(id)
+            : { command: this.command(kind), env: this.env(kind, dir) };
+          return runCli(command, STATUS_ARGS[kind], env, this.opts.statusTimeoutMs ?? STATUS_TIMEOUT_MS);
+        },
+        this.cliOps,
+      ).catch((err: unknown): CliResult => ({ status: null, stdout: "", stderr: String(err) }));
+    let r = await ask();
+    // Grok Build lists its models before it renews an expired token with the refresh token it keeps: its first start
+    // after the token's hours are up says "not authenticated" and leaves the renewed sign-in on disk. One more look
+    // reads that, so a sign-in that renews itself never reads as signed out (and its agents as having no AI).
+    const grokAuth = () => existsSync(path.join(dir, "auth.json"));
+    if (
+      kind === "grok" &&
+      r.status !== null &&
+      grokAuth() &&
+      !parseGrokStatus(r.status, `${r.stdout}\n${r.stderr}`, true).loggedIn
+    )
+      r = await ask();
     if (out) out.said = saidIn(withoutTokens(stripAnsi(`${r.stdout}\n${r.stderr}`)));
     // Codex says it on stderr.
     const status =
@@ -2292,7 +2305,7 @@ export class AccountManager {
         : kind === "cursor"
           ? parseCursorStatus(r.status, `${r.stdout}\n${r.stderr}`)
           : kind === "grok"
-            ? parseGrokStatus(r.status, `${r.stdout}\n${r.stderr}`, existsSync(path.join(dir, "auth.json")))
+            ? parseGrokStatus(r.status, `${r.stdout}\n${r.stderr}`, grokAuth())
             : kind === "antigravity"
               ? parseAgyStatus(r.status, `${r.stdout}\n${r.stderr}`, agyAuthOf(dir))
               : parseCodexStatus(r.status, `${r.stdout}\n${r.stderr}`);

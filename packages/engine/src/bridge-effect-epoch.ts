@@ -1,4 +1,5 @@
 import { and, type Executor, eq, isNull, schema, sql } from "@agenteschat/db";
+import { reconcileBridgeCalls } from "./effect-readback";
 
 const { runToolTokens, agentRuns } = schema;
 
@@ -93,6 +94,16 @@ export async function closeBridgeEffectEpoch(
   turnCompleted = false,
 ): Promise<{ runId: string; turn: number; tools: string[] } | null> {
   const settled = turnCompleted ? ["completed", "unknown"] : ["completed"];
+  // A cut turn: calls answered without proof whose effect can be read back are settled first (`effect-readback`).
+  // A failed read settles nothing: those calls keep holding, as before.
+  if (!turnCompleted) {
+    await db
+      .select({ id: agentRuns.id, orgId: agentRuns.orgId, agentId: agentRuns.agentId })
+      .from(agentRuns)
+      .where(eq(agentRuns.id, runId))
+      .then(([run]) => run && reconcileBridgeCalls(db, run, epochId))
+      .catch(() => {});
+  }
   // Closing admission and recording uncertainty happen in that order. If the marker write fails, the durable
   // closed_unknown state still blocks resumption; late receipts cannot silently clear it.
   const [closed] = await db
@@ -104,10 +115,18 @@ export async function closeBridgeEffectEpoch(
       and(eq(runToolTokens.id, epochId), eq(runToolTokens.runId, runId), eq(runToolTokens.effectEpochState, "open")),
     )
     .returning({ calls: runToolTokens.effectCalls, state: runToolTokens.effectEpochState });
-  if (!closed) throw new Error("bridge effect epoch not open");
-  const calls = closed.calls as Record<string, { state?: unknown }>;
+  if (!closed) {
+    // A stop closes the run's epoch itself (`fenceBridgeEpochOnStop`) and leaves its hold on the run: the turn that
+    // ends after it reads that hold, as from its own close.
+    const [fenced] = await db
+      .select({ state: runToolTokens.effectEpochState })
+      .from(runToolTokens)
+      .where(and(eq(runToolTokens.id, epochId), eq(runToolTokens.runId, runId)));
+    if (fenced?.state !== "closed_unknown") throw new Error("bridge effect epoch not open");
+  }
+  const calls = (closed?.calls ?? {}) as Record<string, { state?: unknown }>;
   const bridgeUnknown = Object.values(calls).some((call) => !settled.includes(String(call.state)));
-  if (closed.state === "closed_unknown") {
+  if (closed?.state === "closed_unknown") {
     const marker = {
       runId,
       turn,

@@ -44,7 +44,15 @@ import { PLAN_NOTICE, PLAN_PAUSE } from "@agenteschat/ui/plan-state";
 import { pendingConnectors } from "./access";
 import { linkRunActions, publishMessageActions } from "./agent-actions";
 import { withTimeout } from "./agent-media";
-import { announceAgentStatus, askRunStatus, startRunStatus, statusCandidates } from "./agent-status";
+import {
+  announceAgentStatus,
+  askRunStatus,
+  type StatusPick,
+  startRunStatus,
+  statusCandidates,
+  statusPickOf,
+  statusQuestions,
+} from "./agent-status";
 import { type Agent, getAgentCached } from "./agents";
 import { agentsDmReads, readerOfRun } from "./agents-dm-reads";
 import { type AgentAi, agentAiState, noAiReasonOf, ownNotSignedIn } from "./ai-status";
@@ -2118,29 +2126,53 @@ async function executeRunInner(
     recentRead ??= recentForJudge(db, run).catch(() => [] as string[]);
     return recentRead;
   };
+  // The run's status lines (ADR 0084 §8–9), read beside the run: their queries count apart from the run's.
+  const statusLines = needsContext ? queryTrace.run({ count: 0 }, () => statusCandidates(db, run, granted)) : null;
+  statusLines?.catch(() => {});
+  // Where Automático is asked about the same agent, the status questions ride in its request: one judge call, the
+  // run's state sent once. Its answer still reaches the status beside the run, never in its way.
+  const shareStatus = Boolean(judge) && needsContext && autoWanted(agent) && !isRightHand(agent);
+  const sharedStatus = Promise.withResolvers<StatusPick | null>();
   // "Automático": the judge picks the run's model tier and effort while the context is built; the
   // choice is applied once the brain is known, before the first model call. Never blocks: no answer in time
   // is medium/medium.
   const askAuto = (): Promise<AutoChoice> => {
     if (!judge) return Promise.resolve(fallbackChoice("none"));
-    return Promise.all([recentMessages(), inMission(db, run).catch(() => false)])
-      .then(([recent, mission]) =>
-        chooseAutoModel(judge, {
-          orgId: run.orgId,
-          agentId: agent.id,
-          runId: run.id,
-          agent: isRightHand(agent)
-            ? { name: agent.name, role: RIGHT_HAND_AUTO.role, instructions: RIGHT_HAND_AUTO.instructions }
-            : { name: agent.name, role: agent.role, instructions: agent.instructions },
-          message: trigger?.body ?? topTrigger?.body ?? "",
-          recent,
-          routine: run.background || Boolean(trigger?.meta?.routine),
-          mission,
-          computer: brainOf(agent.brain) !== "model",
-          tools: granted.length > 0,
-        }),
-      )
-      .catch(() => fallbackChoice("error"));
+    return Promise.all([
+      recentMessages(),
+      inMission(db, run).catch(() => false),
+      shareStatus && statusLines ? statusLines.catch(() => []) : [],
+    ])
+      .then(([recent, mission, lines]) => {
+        if (lines.length === 0) sharedStatus.resolve(null);
+        return chooseAutoModel(
+          judge,
+          {
+            orgId: run.orgId,
+            agentId: agent.id,
+            runId: run.id,
+            agent: isRightHand(agent)
+              ? { name: agent.name, role: RIGHT_HAND_AUTO.role, instructions: RIGHT_HAND_AUTO.instructions }
+              : { name: agent.name, role: agent.role, instructions: agent.instructions },
+            message: trigger?.body ?? topTrigger?.body ?? "",
+            recent,
+            routine: run.background || Boolean(trigger?.meta?.routine),
+            mission,
+            computer: brainOf(agent.brain) !== "model",
+            tools: granted.length > 0,
+          },
+          lines.length > 0
+            ? {
+                questions: statusQuestions(lines),
+                answers: (answers) => sharedStatus.resolve(answers.then(statusPickOf).catch(() => null)),
+              }
+            : undefined,
+        );
+      })
+      .catch(() => {
+        sharedStatus.resolve(null);
+        return fallbackChoice("error");
+      });
   };
   const autoAsked = needsContext && autoWanted(agent) ? askAuto() : null;
   // The judge's answer is awaited where the tools are needed: the context is read meanwhile (`CONTEXT_TOOLS`).
@@ -2177,18 +2209,20 @@ async function executeRunInner(
   if (needsContext) {
     void queryTrace
       .run({ count: 0 }, async () => {
-        const lines = await statusCandidates(db, run, granted);
-        const pick = judge
-          ? await askRunStatus(judge, {
-              orgId: run.orgId,
-              agentId: agent.id,
-              runId: run.id,
-              agent: { name: agent.name, role: agent.role, instructions: agent.instructions },
-              message: trigger?.body ?? topTrigger?.body ?? "",
-              recent: await recentMessages(),
-              candidates: lines,
-            }).catch(() => null)
-          : null;
+        const lines = (await statusLines) ?? [];
+        const pick = shareStatus
+          ? await sharedStatus.promise
+          : judge
+            ? await askRunStatus(judge, {
+                orgId: run.orgId,
+                agentId: agent.id,
+                runId: run.id,
+                agent: { name: agent.name, role: agent.role, instructions: agent.instructions },
+                message: trigger?.body ?? topTrigger?.body ?? "",
+                recent: await recentMessages(),
+                candidates: lines,
+              }).catch(() => null)
+            : null;
         await startRunStatus({ db, pubsub: deps.pubsub }, run, lines, pick);
       })
       .catch(() => {});
@@ -6175,9 +6209,7 @@ async function executeRunInner(
       // a cut turn (the catch path) keeps native starts as unknown.
       // A call that returned an error the brain read (a browser action that timed out) is settled by the brain's own
       // end of turn: noted on the run, never a failure of a reply it finished.
-      const epochHold = bridgeEpochId
-        ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true)
-        : null;
+      const epochHold = bridgeEpochId ? await closeBridgeEffectEpoch(db, run.id, bridgeEpochId, turn, [], true) : null;
       if (epochHold) return stopOnClosedEpochHold(epochHold, deltas.lastText());
       // The files its own tools made are cards on this reply too.
       await Promise.all(sharing);

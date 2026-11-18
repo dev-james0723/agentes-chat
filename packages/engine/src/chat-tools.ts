@@ -249,7 +249,11 @@ export function createChatToolSource(deps: {
           const movable = (moving || (here && inThread)) && !!run && (await movableRun(ctx.db, run));
           if (here && !(moving && inThread && movable)) {
             const out = inThread && movable ? " To continue at this channel's top level instead, set `move_here`." : "";
-            return { content: `${SAME_CONVERSATION}${out}`, isError: true };
+            return {
+              content: `${SAME_CONVERSATION}${out}`,
+              isError: true,
+              data: { refusedByCheck: "invalid_request" },
+            };
           }
           if (moving && !movable) {
             return { content: "This work stays where it is: post without `move_here`.", isError: true };

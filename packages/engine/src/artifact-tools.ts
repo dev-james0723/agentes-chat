@@ -228,6 +228,7 @@ export function createArtifactToolSource(deps: ArtifactDeps): ToolSource {
       description:
         "Read an artifact (latest version unless you ask for one). Tables come as CSV, diffs as a patch; uploaded files as name, type and size, plus their text (pictures and PDFs shown to you). Long ones go on at `offset`.",
       scope: "drive:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -274,6 +275,7 @@ export function createArtifactToolSource(deps: ArtifactDeps): ToolSource {
       description:
         "List Drive files you can see, newest first, with where each came from (#channel, DM, Drive) and who made it. By default it includes the conversations (DMs, private channels) you share with the person who asked; filter by words, kind, your own files or date.",
       scope: "drive:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
