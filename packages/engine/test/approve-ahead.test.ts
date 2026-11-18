@@ -37,6 +37,7 @@ import {
   setMemberRoles,
   type ToolContext,
   updateRoutine,
+  grantScopes,
 } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
 
@@ -108,6 +109,8 @@ async function world(fx: Fixture) {
   });
   if (started.status !== "connected") throw new Error(`expected connected, got ${started.status}`);
   await acceptCustomSuggestion(deps, fx.owner.id, fx.org.id, started.server.id);
+  // A connection is no agent's until it is granted (connector default-deny); this agent is given it whole.
+  await grantScopes(fx.db, fx.org.id, fx.agent.id, [{ connectionId: started.server.id, scope: "connector:*" }]);
   const sources = [
     createConnectorToolSource(deps),
     createScheduleToolSource({ pubsub: fx.pubsub, context: fx.context }),
