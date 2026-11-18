@@ -30657,6 +30657,9 @@
   "toolReview.agentSub": {
     "value": "By connector and subject. By default, sensitive actions ask for approval."
   },
+  "connectFlow.accessRequired": {
+    "value": "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply."
+  },
   "connectFlow.steps": {
     "value": "Steps"
   },
@@ -30854,6 +30857,12 @@
   },
   "connectFlow.done.title": {
     "value": "{{name}} connected"
+  },
+  "connectFlow.done.accessRequired": {
+    "value": "New connections grant no additional agent access. Review access in Adjust. Existing All tools permissions still apply."
+  },
+  "connectFlow.done.accessPending": {
+    "value": "Review the tools, then choose agent access in Adjust. Existing All tools permissions still apply."
   },
   "connectFlow.done.everyone": {
     "value": "Every agent can use it."

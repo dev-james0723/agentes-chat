@@ -13532,6 +13532,7 @@
     "agentSub": "Według konektora i tematu. Domyślnie akcje wrażliwe proszą o zatwierdzenie."
   },
   "connectFlow": {
+    "accessRequired": "Nowe połączenia nie dają agentom dodatkowego dostępu. Sprawdź dostęp w Dostosuj. Istniejące uprawnienia Wszystkie narzędzia nadal obowiązują.",
     "steps": "Kroki",
     "step": {
       "0": "Połącz",
@@ -13611,6 +13612,8 @@
     "saved_other": "{{name}}: może z niego korzystać {{count}} agenta.",
     "done": {
       "title": "Połączono z {{name}}",
+      "accessRequired": "Nowe połączenia nie dają agentom dodatkowego dostępu. Sprawdź dostęp w Dostosuj. Istniejące uprawnienia Wszystkie narzędzia nadal obowiązują.",
+      "accessPending": "Przejrzyj narzędzia, a potem wybierz dostęp agentów w Dostosuj. Istniejące uprawnienia Wszystkie narzędzia nadal obowiązują.",
       "everyone": "Każdy agent może z niego korzystać.",
       "waiting": "Agenci dostaną narzędzia dopiero, gdy przejdziesz dalej, na poziomach, które sugerujemy.",
       "asks_one": "{{count}} akcja prosi o zatwierdzenie na czacie.",

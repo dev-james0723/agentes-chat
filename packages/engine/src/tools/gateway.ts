@@ -508,6 +508,10 @@ export type InvokeResult =
 const readsOutsideText = (tool: ToolDefinition, output: ToolOutput) =>
   Boolean(tool.external || tool.readsOutside) && output.content.trim() !== "";
 
+/** Our own tool that only reads, by its own mark (`readOnly`): a read scope alone is not proof. */
+export const noEffectOnError = (tool: ToolDefinition) =>
+  !tool.external && !tool.connectionId && !tool.connector && tool.readOnly === true;
+
 export function createToolGateway(deps: {
   sources: ToolSource[];
   /** Source-only scoped pilot: absent means legacy behavior. Never a model tool argument. */
@@ -642,7 +646,12 @@ export function createToolGateway(deps: {
   async function outputOf(tool: ToolDefinition, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutput> {
     const done = startInFlight(`tool ${tool.name}`, ctx.runId);
     try {
-      const output = await tool.execute(input, ctx);
+      const executed = await tool.execute(input, ctx);
+      // A failure that can't have changed anything is a known outcome for a cut turn (`knownBridgeResult`).
+      const output =
+        executed.isError && noEffectOnError(tool)
+          ? { ...executed, data: { ...executed.data, noEffect: "read" } }
+          : executed;
       if (
         nativeSkillReadPending(ctx) &&
         (output.outcome ||
@@ -683,10 +692,16 @@ export function createToolGateway(deps: {
       const hint =
         deps.faultHint && !tool.external && !tool.connectionId && isUnexpectedError(error) ? deps.faultHint : "";
       // An MCP server's error text is its own words too.
+      // Any failure of our own tool that only reads is a known outcome. A typed error thrown by any other tool is not
+      // proof by itself (it may have written first): only the tool can say it refused before writing (`refusalData`).
+      const data = {
+        ...(error instanceof ToolOffError ? { toolOff: error.toolOff } : {}),
+        ...(noEffectOnError(tool) ? { noEffect: "read" } : {}),
+      };
       return {
         content: `Tool failed: ${tool.external ? wrapExternal(tool.name, message) : message}${hint && `\n${hint}`}`,
         isError: true,
-        ...(error instanceof ToolOffError ? { data: { toolOff: error.toolOff } } : {}),
+        ...(Object.keys(data).length ? { data } : {}),
       };
     } finally {
       done();

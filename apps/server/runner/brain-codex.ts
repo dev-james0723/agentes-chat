@@ -1,6 +1,15 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -33,7 +42,7 @@ import {
 } from "./codex-windows";
 import { RunnerError } from "./errors";
 import { killTree } from "./exec";
-import { cachedCodexVersion, envValue } from "./executors";
+import { cachedCodexVersion, envValue, resolveCommand } from "./executors";
 import { CODEX_MCP_ENV, CODEX_MCP_SERVER, codexWritableRoots } from "./mcp";
 import { isInside, resolveForAgent } from "./paths";
 import type { Spawn } from "./scope-gate";
@@ -232,6 +241,45 @@ export const codexSandbox = (profile: CommandProfile) => (profile === "plan" ? "
  * (`codexWritableRoots`, an empty list when the agent has no folder besides its own).
  */
 export const CODEX_NO_NETWORK = "sandbox_workspace_write.network_access=false";
+
+/** The permission profile a turn gets when the runner keeps reads in the agent's folders (`readsOnlyInFolders`). */
+export const CODEX_READ_PROFILE = "agentes_folders";
+
+/** Where people's files live, hidden from such a turn but for its own folders. */
+const HIDDEN_ROOTS: Partial<Record<NodeJS.Platform, string[]>> = {
+  darwin: ["/Users", "/Volumes"],
+  linux: ["/home", "/root", "/mnt", "/media"],
+};
+
+/**
+ * Codex's `-c` overrides for a permission profile (Codex 0.166's `[permissions.<name>]`, the `codex exec` sandbox
+ * enforces it on every command and on Codex's own file helper): the system reads, the homes and volumes don't, but
+ * the turn's folders (`cwd` and `roots`, written in a `work` turn, read in a `plan` turn) and `readable` (the folder
+ * Codex itself runs from: it starts its file helper from there, inside the sandbox). Temp folders are written in a
+ * `work` turn, as in `workspace-write`. No network: a profile leaves it off. Values are TOML (JSON strings are).
+ */
+export function codexFolderPermissions(input: {
+  profile: CommandProfile;
+  cwd: string;
+  roots: string[];
+  readable?: string[];
+  platform?: NodeJS.Platform;
+}): string[] {
+  const work = input.profile !== "plan";
+  const entries = new Map<string, string>([[":root", "read"]]);
+  for (const p of HIDDEN_ROOTS[input.platform ?? process.platform] ?? []) entries.set(p, "none");
+  if (work) {
+    entries.set(":tmpdir", "write");
+    entries.set(":slash_tmp", "write");
+  }
+  for (const p of input.readable ?? []) entries.set(p, "read");
+  for (const p of [input.cwd, ...input.roots]) entries.set(p, work ? "write" : "read");
+  const table = [...entries].map(([k, v]) => `${JSON.stringify(k)}=${JSON.stringify(v)}`).join(",");
+  return [
+    `default_permissions=${JSON.stringify(CODEX_READ_PROFILE)}`,
+    `permissions.${CODEX_READ_PROFILE}.filesystem={${table}}`,
+  ];
+}
 
 /** The Codex home a turn runs in: its account's folder (ADR 0041), else the computer's own. */
 export const codexHomeOf = (account?: { home: string }) =>
@@ -477,9 +525,22 @@ export function codexTurnArgs(input: {
    * sandbox (`CODEX_WINDOWS_CONFIG`).
    */
   windows?: boolean;
+  /** The runner's `readsOnlyInFolders`: a plan or work turn runs in `codexFolderPermissions`, not `--sandbox`. */
+  readsOnlyInFolders?: boolean;
+  /** With `readsOnlyInFolders`: folders read besides the turn's (where Codex itself is installed). */
+  readable?: string[];
 }): string[] {
   const instructions = input.windows ? undefined : input.instructions?.trim();
   const sandbox = input.chat ? "read-only" : codexSandbox(input.profile ?? "work");
+  const folders =
+    input.readsOnlyInFolders && !input.chat && !input.windows
+      ? codexFolderPermissions({
+          profile: input.profile ?? "work",
+          cwd: input.cwd,
+          roots: input.writableRoots ?? [],
+          ...(input.readable ? { readable: input.readable } : {}),
+        })
+      : null;
   return [
     "exec",
     "--json",
@@ -492,11 +553,15 @@ export function codexTurnArgs(input: {
       : []),
     "-C",
     input.cwd,
-    "--sandbox",
-    sandbox,
-    ...(sandbox === "workspace-write"
-      ? ["-c", CODEX_NO_NETWORK, "-c", codexWritableRoots(input.writableRoots ?? [])]
-      : []),
+    ...(folders
+      ? folders.flatMap((c) => ["-c", c])
+      : [
+          "--sandbox",
+          sandbox,
+          ...(sandbox === "workspace-write"
+            ? ["-c", CODEX_NO_NETWORK, "-c", codexWritableRoots(input.writableRoots ?? [])]
+            : []),
+        ]),
     ...(input.windows && !input.chat ? CODEX_WINDOWS_CONFIG.flatMap((c) => ["-c", c]) : []),
     ...(instructions && !input.thread ? ["-c", `developer_instructions=${JSON.stringify(instructions)}`] : []),
     ...(input.mcp ? codexBridgeOverrides({ runId: input.runId, ...input.mcp }).flatMap((o) => ["-c", o]) : []),
@@ -831,6 +896,8 @@ export interface CodexTurnInput {
   keepAlive?: boolean;
   /** Protocol 41: the team's right hand (`codexTurnArgs`' `chat`), always on `codex exec`, killed at a tool of Codex's own. */
   chat?: boolean;
+  /** The runner's `readsOnlyInFolders`: always on `codex exec`, in `codexFolderPermissions`. */
+  readsOnlyInFolders?: boolean;
 }
 
 /** The app-server mode as `runCodexTurn` sees it (`CodexAppServers`). */
@@ -874,7 +941,8 @@ export async function runCodexTurn(input: CodexTurnInput, opts: CodexTurnOptions
   // A long-lived app-server takes messages mid-turn; exec runs the turns it can't (an older CLI, a failed handshake…).
   // A `chat` turn's flags exist only for `exec`, and so does leaving someone's own Codex rules out (`--ignore-rules`),
   // which a turn needs wherever Codex would load some (an allow there runs a command outside the sandbox, unasked).
-  const appServer = opts.app && !codexRulesNear(codexHomeOf(input.account), input.cwd);
+  // The folder allow-list is a permission profile, given on `codex exec`'s command line: never an app-server's thread.
+  const appServer = opts.app && !input.readsOnlyInFolders && !codexRulesNear(codexHomeOf(input.account), input.cwd);
   const run = (turn: CodexTurnInput, turnOpts: CodexTurnOptions) =>
     turnOpts.app && !turn.chat && appServer
       ? turnOpts.app.turn({ ...turn, version }, turnOpts, () => runCodexExec(turn, turnOpts))
@@ -916,6 +984,17 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
   mkdirSync(opts.workDir, { recursive: true });
   const lastFile = path.join(opts.workDir, "last.txt");
   rmSync(lastFile, { force: true });
+  // In the folder profile Codex starts its file helper inside the sandbox from the path it was started by: start it by
+  // its real path, and let that folder be read (a link's folder, like `~/.local/bin`, would be hidden).
+  let bin = opts.bin;
+  if (input.readsOnlyInFolders && !windows) {
+    const pathList = envValue({ ...process.env, ...(opts.env ?? {}) }, "PATH", platform) ?? "";
+    try {
+      bin = realpathSync(resolveCommand(opts.bin ?? "codex", pathList));
+    } catch {
+      return fail("codex_missing", "Codex is not installed on this computer.");
+    }
+  }
   const args = codexTurnArgs({
     cwd: input.cwd,
     lastFile,
@@ -931,6 +1010,7 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
     profile: input.profile ?? "work",
     ...(input.chat ? { chat: true } : {}),
     ...(windows ? { windows } : {}),
+    ...(input.readsOnlyInFolders && bin ? { readsOnlyInFolders: true, readable: [path.dirname(bin)] } : {}),
   });
   const base: NodeJS.ProcessEnv = {
     ...withoutContainers(input.chat ? withoutSignIns(process.env) : process.env),
@@ -948,7 +1028,7 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
   });
 
   const launch = codexLaunch(args, {
-    ...(opts.bin ? { bin: opts.bin } : {}),
+    ...(bin ? { bin } : {}),
     platform,
     pathList: envValue(env, "PATH", platform) ?? "",
   });
@@ -1072,6 +1152,8 @@ export interface CodexBrainContext {
   bin?: string;
   /** Protocol 10: folders allowed for the agent besides its own (real paths). */
   grants?: string[];
+  /** The runner's `readsOnlyInFolders` (`codexFolderPermissions`). */
+  readsOnlyInFolders?: boolean;
   /** Protocol 13: the accounts' folders (ADR 0041); without it a turn with an account is `account_missing`. */
   accounts?: AccountFolders;
   /** Set per request in a worker (protocol 29): what root handed this turn for its account (`AccountManager.grant`). */
@@ -1169,6 +1251,7 @@ export async function handleCodexBrainTurn(
         ...(req.permissions?.asks === "never" ? { asks: "never" as const } : {}),
         ...(req.keepAlive === false ? { keepAlive: false } : {}),
         ...(chat ? { chat } : {}),
+        ...(ctx.readsOnlyInFolders && !chat ? { readsOnlyInFolders: true } : {}),
       },
       {
         threads,

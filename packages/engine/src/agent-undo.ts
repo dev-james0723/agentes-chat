@@ -177,7 +177,12 @@ async function setMemory(
     for (const c of changes) {
       await tx
         .update(contextItems)
-        .set({ status: c.status, supersededBy: c.supersededBy, updatedAt: new Date() })
+        .set({
+          status: c.status,
+          supersededBy: c.supersededBy,
+          supersededAt: c.supersededBy ? sql`now()` : null,
+          updatedAt: new Date(),
+        })
         .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, c.id)));
       await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: c.id });
     }

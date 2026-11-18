@@ -111,9 +111,10 @@ describe("trust from each memory's own source (ADR 0167)", () => {
 
     // Agents read the quote under the person's name and the day it was saved, never the agent's paraphrase.
     const memory = await memoryFor("relatórios");
-    expect(memory.text).toContain(`[preference · ana, ${today()}] lembra: relatórios sempre em português`);
-    expect(memory.text).not.toContain("Ana wants reports");
-    expect(memory.text).not.toContain("untrusted");
+    expect(memory.requiredText).toContain(`[preference · ana, ${today()}] lembra: relatórios sempre em português`);
+    expect(memory.requiredText).not.toContain("Ana wants reports");
+    expect(memory.requiredText).not.toContain("untrusted");
+    expect(memory.text).not.toContain("lembra: relatórios sempre em português");
   });
 
   test("a rule saves in a marked run too, as the person's words; an address they never wrote still doesn't", async () => {

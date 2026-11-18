@@ -1,4 +1,5 @@
 import { and, asc, type Database, desc, eq, gte, inArray, lt, rowsOf, schema, sql } from "@agenteschat/db";
+import { cjkIndexTerms, cjkQueryText, isCjk } from "./cjk";
 import { contentWords } from "./stopwords";
 
 export type SearchKind = "message" | "context_item" | "issue" | "file" | "wiki" | "action";
@@ -49,6 +50,11 @@ export interface SearchQuery {
   minTextRank?: number;
   /** Vector hits farther than this cosine distance are dropped (default 0.75, i.e. similarity < 0.25). */
   maxDistance?: number;
+  /**
+   * Vector hits farther than the nearest one plus this are dropped too: a request that matches one memory well
+   * doesn't drag in every loose neighbour, and one that matches nothing well keeps only its few nearest.
+   */
+  maxDistanceFromBest?: number;
   /** Only documents whose source was created at or after `after` and before `before` (ADR 0123). */
   after?: Date;
   before?: Date;
@@ -169,6 +175,20 @@ function messageConditions(f: MessageFilter) {
   return parts.length ? sql.join(parts, sql` and `) : null;
 }
 
+/**
+ * The stored title (`search_documents.title`, indexed with the body): the title on its first line, shown; then, never
+ * shown, its keywords (a memory's English key, ADR 0167) and its CJK pairs, ranked as the title; then the body's CJK
+ * pairs (`cjkIndexTerms`). A document without CJK keeps the title it had, so older rows need no rewrite: a reindex
+ * (job `search.reindex`) or the next edit of each source adds the pairs.
+ */
+function indexedTitle(d: SearchDocument): string {
+  const title = (d.title ?? "").replace(/\n/g, " ");
+  const keywords = [d.keywords?.trim() ?? "", cjkIndexTerms(`${title} ${d.keywords ?? ""}`)].filter(Boolean).join(" ");
+  const body = cjkIndexTerms(d.body);
+  if (body) return `${title}\n${keywords}\n${body}`;
+  return keywords ? `${title}\n${keywords}` : title;
+}
+
 /** Reciprocal-rank fusion constant: dampens the weight of top ranks. */
 const RRF_K = 60;
 
@@ -215,10 +235,7 @@ export function createPostgresSearchResolver(db: Database): SearchIndexResolver 
               kind: d.kind,
               sourceId: d.sourceId,
               channelIds: d.channelIds,
-              // Keywords ride on the title's second line: indexed and ranked as the title, cut off every hit.
-              title: d.keywords?.trim()
-                ? `${(d.title ?? "").replace(/\n/g, " ")}\n${d.keywords.trim()}`
-                : (d.title ?? ""),
+              title: indexedTitle(d),
               body: d.body,
               embedding: d.embedding ?? null,
               embeddingModel: d.embedding ? (d.embeddingModel ?? null) : null,
@@ -277,23 +294,35 @@ export function createPostgresSearchResolver(db: Database): SearchIndexResolver 
           );
           const anyWords = contentWords(text);
           const useAny = q.match === "any" && anyWords.length > 0;
+          // CJK by pairs (`cjkQueryText`), or as written: a document indexed before pairs still matches its runs.
           const tsQuery = useAny
             ? sql`to_tsquery('simple', ${anyWords.join(" | ")})`
-            : sql`websearch_to_tsquery('simple', ${text})`;
+            : cjkQueryText(text) === text
+              ? sql`websearch_to_tsquery('simple', ${text})`
+              : sql`(websearch_to_tsquery('simple', ${cjkQueryText(text)}) || websearch_to_tsquery('simple', ${text}))`;
           // Retrieval: matches per word of the document (a long one mentioning a word in passing doesn't outrank a
           // short one about it), doubled when the title has one. The title only multiplies: a common word in many
           // titles ("empresa") doesn't lift a page that barely mentions it.
           const density = sql`ts_rank_cd(${t.tsv}, ${tsQuery}, 2|32)`;
-          // "Pasta/Título" would parse as one path token: the slash goes, so the title's first word counts.
-          const inTitle = sql`(to_tsvector('simple', replace(${t.title}, '/', ' ')) @@ ${tsQuery})`;
+          // "Pasta/Título" would parse as one path token: the slash goes, so the title's first word counts. The title is
+          // its first two lines (`indexedTitle`): the third holds the body's CJK pairs.
+          const inTitle = sql`(to_tsvector('simple', replace(split_part(${t.title}, E'\n', 1) || ' ' || split_part(${t.title}, E'\n', 2), '/', ' ')) @@ ${tsQuery})`;
           const anyRank = sql`(${density} * (1 + ${inTitle}::int))`;
+          const matches = (w: string) => sql`(${t.tsv} @@ to_tsquery('simple', ${w}))::int`;
           const relevant =
             useAny && q.minTextRank
-              ? sql`(${density} >= ${q.minTextRank} and (${inTitle} or (${sql.join(
-                  anyWords.map((w) => sql`(${t.tsv} @@ to_tsquery('simple', ${w}))::int`),
-                  sql` + `,
-                )}) >= 2))`
+              ? sql`(${density} >= ${q.minTextRank} and (${inTitle} or (${sql.join(anyWords.map(matches), sql` + `)}) >= 2))`
               : undefined;
+          // One shared pair of CJK characters ("任務", "一個") says little about what a text is about: a hit by pairs
+          // needs two of them (one when the request has only one, "報價"), or a word of another script (which alone is
+          // enough, as before).
+          const pairs = useAny ? Math.min(2, anyWords.filter(isCjk).length) : 0;
+          const enoughPairs = pairs
+            ? sql`(${sql.join(
+                anyWords.map((w) => (isCjk(w) ? matches(w) : sql`${pairs} * ${matches(w)}`)),
+                sql` + `,
+              )}) >= ${pairs}`
+            : undefined;
           const toHit = (row: typeof t.$inferSelect, score: number): SearchHit => ({
             kind: row.kind as SearchKind,
             sourceId: row.sourceId,
@@ -329,7 +358,7 @@ export function createPostgresSearchResolver(db: Database): SearchIndexResolver 
               ? db
                   .select()
                   .from(t)
-                  .where(and(scope, sql`${t.tsv} @@ ${tsQuery}`, relevant))
+                  .where(and(scope, sql`${t.tsv} @@ ${tsQuery}`, relevant, enoughPairs))
                   .orderBy(desc(useAny ? anyRank : sql`ts_rank_cd(${t.tsv}, ${tsQuery})`), desc(t.sourceCreatedAt))
                   .limit(50)
               : Promise.resolve([]);
@@ -343,7 +372,9 @@ export function createPostgresSearchResolver(db: Database): SearchIndexResolver 
                     where ${scope} and ${t.embedding} is not null
                       ${q.embeddingModel ? sql`and ${t.embeddingModel} = ${q.embeddingModel}` : sql``}
                     order by distance limit 50
-                  ) select id from nearest where distance < ${q.maxDistance ?? 0.75} order by distance + 0`;
+                  ) select id from nearest where distance < ${q.maxDistance ?? 0.75}
+                    ${q.maxDistanceFromBest !== undefined ? sql`and distance <= (select min(distance) from nearest) + ${q.maxDistanceFromBest}` : sql``}
+                    order by distance + 0`;
                 const ids = rowsOf<{ id: string }>(
                   (await iterativeScans())
                     ? await db.transaction(async (tx) => {

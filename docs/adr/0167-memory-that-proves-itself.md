@@ -144,3 +144,42 @@ still matches word for word, and keys cover only the languages written and only 
 Checked offline: 24 made-up memories, Portuguese requests for English ones and the reverse, among lookalikes that
 share their words, with a fake model that gives a translation its original's vector: every one is in the top 5 of
 the hybrid ranking, almost none by words alone. A real model is checked in production.
+
+## Addendum (2026-11-16): current sources and optimistic memory edits
+
+This increment tightens the existing native context service; it creates no separate memory store, scheduler,
+provider or permission authority. Local tests establish the cases they exercise, not production acceptance or a
+measured token/latency benefit.
+
+- An index hit is only a candidate. Recall, injection and human memory lists recheck the current canonical item
+  and its native source closure. Missing, deleted, superseded or currently unreadable dependencies are excluded.
+  Human review permission does not grant access to another person's DM. Private publication approvals are not
+  ordinary readable source payloads. A run cited for a tool observation must still have its readable trigger in
+  the same channel; a run reference establishes provenance, not factual verification or permission to publish.
+- Output audience is narrower than an agent's total read access. Private data does not enter a public answer
+  merely because its requester once discussed it privately. Routine reports use their actual destination;
+  uncertain destinations fail closed for private sources. Existing accepted human rules retain their native
+  authority checks and are not treated as optional retrieved facts.
+- Automatic lexical deduplication requires exact stored text. Whitespace, case, symbols and negations may be
+  significant in commands or identifiers. Separate entity scopes and channel sets do not merge. Equally supported
+  contradictory claims remain disputed; an explicit correction by the same human or stronger evidence is treated
+  separately from mere recency. A same-agent `save_how_to` is a narrowly typed procedure-revision intent, not a
+  general authority to replace facts. It creates an immutable successor and cannot upgrade external source trust.
+- Supersession validates the source-bearing revision while holding its row lock. Background semantic maintenance
+  locks both judged rows in stable identifier order and rechecks both snapshots before changing either one.
+  A stale writer fails without an orphan successor. Content and title edits keep the old version; metadata changes
+  increment the native version so a stale client can detect them.
+- The existing memory API returns `version` and accepts `expectedVersion`. Web and mobile actions send the
+  displayed revision; an editor captures the revision when it opens and retains it across background refreshes.
+  A newer query-cache value must not silently authorize an older draft. Legacy servers without a version remain
+  compatible, while the server still performs its current authorization and transactional revision checks.
+- Optional retrieved evidence is packed as complete items or a labeled reopenable reference. This does not allow
+  an optimization cap to truncate accepted human requirements. Native full-context overflow, bitemporal history,
+  durable producer idempotency, restore-time tombstone replay and protected end-to-end acceptance remain separate
+  lifecycle requirements; this increment does not claim those are implemented by a source-visibility check.
+
+Mutation responses and history previews use that same source boundary. Pin/confirm/edit and undo revalidate
+readability before returning content; a broad copied channel label cannot expose another person's DM. Historical
+predecessor lookup is organization-scoped and checks its own sources, not only the successor's visibility. Undo
+rejects an already superseded revision and rechecks locked snapshots before restoration, incrementing metadata
+versions so an old client cannot reuse an earlier fence after a restore.

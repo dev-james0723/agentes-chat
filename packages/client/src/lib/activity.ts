@@ -176,6 +176,7 @@ const BUILTIN: Record<string, ActivityKind> = {
   write_file: "pcFiles",
   read_file: "pcFiles",
   list_files: "pcFiles",
+  register_files: "pcFiles",
   export_file: "exportingFile",
   upload_file: "exportingFile",
   import_file: "importingFile",
@@ -234,6 +235,8 @@ const BUILTIN: Record<string, ActivityKind> = {
   use_tool: "findingTools",
   follow_up: "followingUp",
   get_my_usage: "checkingUsage",
+  get_my_profile: "gettingContext",
+  shared_budget_authorize: "requestingApproval",
   find_agent: "findingAgent",
   // The right hand's look at the team: its tasks, open and stuck, and what waits.
   team_status: "listingTasks",

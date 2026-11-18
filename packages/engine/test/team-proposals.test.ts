@@ -382,13 +382,13 @@ describe("the team card", () => {
       .map((s) => s.scope);
   };
 
-  test("an admin's team gets every connected app at Ler e escrever, as every agent has it", async () => {
+  test("an admin's team gets no connected app it was not granted: connections are no agent's until given", async () => {
     f = await setup({ rightHand: true });
     const github = await connectGithub(f);
     const out = await call(f, await lodiRun(f, f.owner.id, "monta o time"), PROPOSE_TEAM_TOOL, TEAM);
     const id = (out.data as { actionCard: { messageId: string } }).actionCard.messageId;
     expect((await createTeam({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, id)).card.state).toBe("created");
-    expect(await grantsOn(f, "iara", github)).toEqual(["connector:*"]);
+    expect(await grantsOn(f, "iara", github)).toEqual([]);
   });
 
   test("a member's team starts without access (ADR 0085 §5)", async () => {

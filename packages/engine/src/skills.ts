@@ -1,4 +1,4 @@
-import type { BlobStoreResolver, PubSub } from "@agenteschat/adapters";
+import { type BlobStoreResolver, type PubSub, putPostgresBlob } from "@agenteschat/adapters";
 import { and, asc, type Database, eq, gt, inArray, isNull, lte, schema, sql } from "@agenteschat/db";
 import { getAgent } from "./agents";
 import { recordAudit } from "./audit";
@@ -518,7 +518,10 @@ async function storeFiles(
     let blobKey: string | null = null;
     if (status !== "ignored") {
       blobKey = `${location.prefix}skills/${s.id}/v${version}/${publication}/${path}`;
-      await location.store.put(blobKey, data, { contentType: mime });
+      // Callers publish a version in one transaction (ADR 0020, 2026-11-13): this server's Postgres store writes
+      // through it, so the file commits with its version and needs no second connection while the first is held.
+      if (location.store.kind === "postgres") await putPostgresBlob(deps.db, blobKey, data, { contentType: mime });
+      else await location.store.put(blobKey, data, { contentType: mime });
     }
     return {
       orgId: s.orgId,

@@ -27,6 +27,7 @@ import {
   getAgentBrowser,
   grantScopes,
   type Judge,
+  knownBridgeResult,
   type MachineCaller,
   MachineRequestError,
   type MachineStatus,
@@ -240,6 +241,16 @@ test("each tool is one agent-browser command in the agent's session, with its si
   sent = b.since();
   await b.call("browser_upload", { target: "e4", path: "reports/q3.pdf" });
   expect(sent()).toMatchObject([{ command: "upload", args: ["@e4", "reports/q3.pdf"] }]);
+});
+
+test("an address that isn't a full web address is a typed refusal: nothing reaches the computer", async () => {
+  const b = await browserSetup();
+  await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: null, scope: "browser:use" }]);
+  const before = b.calls.length;
+  const out = await b.call("browser_open", { url: "shop.example/cart" });
+  expect(out).toMatchObject({ isError: true, data: { refusedByCheck: "invalid_request" } });
+  expect(knownBridgeResult(out)).toBe(true);
+  expect(b.calls.length).toBe(before);
 });
 
 test("on protocol 17 an action, its settling and the look after it are one round trip", async () => {

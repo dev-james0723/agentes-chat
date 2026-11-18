@@ -12693,6 +12693,7 @@
     "agentSub": "Per connector en onderwerp. Standaard vragen gevoelige acties om goedkeuring."
   },
   "connectFlow": {
+    "accessRequired": "Nieuwe verbindingen geven agents geen extra toegang. Controleer de toegang bij Aanpassen. Bestaande rechten voor Alle tools blijven gelden.",
     "steps": "Stappen",
     "step": {
       "0": "Koppelen",
@@ -12766,6 +12767,8 @@
     "saved_other": "{{name}}: {{count}} agents kunnen het gebruiken.",
     "done": {
       "title": "{{name}} gekoppeld",
+      "accessRequired": "Nieuwe verbindingen geven agents geen extra toegang. Controleer de toegang bij Aanpassen. Bestaande rechten voor Alle tools blijven gelden.",
+      "accessPending": "Bekijk de tools en kies daarna bij Aanpassen welke agents toegang krijgen. Bestaande rechten voor Alle tools blijven gelden.",
       "everyone": "Elke agent kan het gebruiken.",
       "waiting": "Agents krijgen de tools pas als je doorgaat, op de niveaus die wij voorstellen.",
       "asks_one": "{{count}} actie vraagt om goedkeuring in de chat.",
