@@ -1,0 +1,1 @@
+ALTER TABLE "foundry_invocations" ADD COLUMN "recovery_revision" integer DEFAULT 0 NOT NULL;

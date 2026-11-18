@@ -3736,7 +3736,18 @@ test("stopped between calls: the stopped reply keeps the stretch it was on, neve
   await post(f, "@dev resume as lojas");
   await drainOutbox(f.db, handlers);
 
-  expect((await f.db.select().from(schema.agentRuns))[0]?.status).toBe("canceled");
+  const [stopped] = await f.db.select().from(schema.agentRuns);
+  expect(stopped?.status).toBe("canceled");
+  // Saving a canceled reply must not discard the durable uncertainty fence.
+  expect(
+    (stopped?.transcript as { effectUncertain?: { runId: string; tools: string[] } } | null)?.effectUncertain,
+  ).toMatchObject({
+    runId: stopped?.id,
+    tools: ["interrupted computer turn"],
+  });
+  const epochs = await f.db.select().from(schema.runToolTokens);
+  expect(epochs).toHaveLength(1);
+  expect(epochs[0]?.effectEpochState).toBe("closed_unknown");
   expect((await timeline(f)).at(-1)?.body).toBe("Resumo das lojas:\n\n_Stopped by ana._");
 });
 

@@ -18,9 +18,12 @@ export function validateJson(schema: JsonSchema, value: unknown, path = "input")
     errors.push(`${path}: must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(", ")}`);
   }
   if (typeof value === "string") {
-    if (typeof schema.minLength === "number" && value.length < schema.minLength)
+    // JSON Schema measures Unicode code points, not UTF-16 code units.
+    let length = 0;
+    for (const _point of value) length++;
+    if (typeof schema.minLength === "number" && length < schema.minLength)
       errors.push(`${path}: too short (at least ${schema.minLength} characters)`);
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength)
+    if (typeof schema.maxLength === "number" && length > schema.maxLength)
       errors.push(`${path}: too long (at most ${schema.maxLength} characters)`);
   }
   if (typeof value === "number") {

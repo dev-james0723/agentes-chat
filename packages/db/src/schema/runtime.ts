@@ -167,6 +167,8 @@ export const agentRuns = pgTable(
      * the agent's stored brain.
      */
     brain: text(),
+    /** Operator-owned restricted execution policy; ordinary tools and transcript writes cannot change it. */
+    foundryPolicy: jsonb().$type<Record<string, unknown>>(),
     /**
      * Long work (ADR 0121): this run stepped out of its conversation into the background. Its replies land in the
      * work's thread and its end goes home; the newest run with this id is the work's current one.
