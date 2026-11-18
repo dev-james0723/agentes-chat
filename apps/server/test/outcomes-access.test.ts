@@ -43,3 +43,16 @@ test("outcomes quote a conversation only to who reads it; the rest keep kind and
   expect(outcomes.find((o) => o.kind === "query")).toMatchObject({ subject: "", summary: "" });
   expect(outcomes.find((o) => o.kind === "deploy")).toMatchObject({ subject: "app", summary: "shipped" });
 });
+
+test("the Outcomes page leaves out how each run ended: those are for learning and routing", async () => {
+  const owner = browser(t);
+  await signUp(owner, "owner@example.com");
+  const { orgId, channelId, agentId } = await seedOrg(owner);
+  await t.db.insert(schema.outcomes).values([
+    { orgId, agentId, kind: "run_done", polarity: "positive", source: "run", channelId },
+    { orgId, agentId, kind: "pr_merged", polarity: "positive", subject: "app#1", source: "tool", channelId },
+  ]);
+  const res = await owner(`/api/app/organizations/${orgId}/outcomes?agentId=${agentId}`);
+  const { outcomes } = (await res.json()) as { outcomes: { kind: string }[] };
+  expect(outcomes.map((o) => o.kind)).toEqual(["pr_merged"]);
+});

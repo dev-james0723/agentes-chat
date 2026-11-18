@@ -6,7 +6,8 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
-import { NotFoundError, refusalData } from "./errors";
+import { refusalData } from "./errors";
+import { issueKey } from "./issue-key";
 import { projectByName } from "./issue-projects";
 import {
   askAgentToImplement,
@@ -137,27 +138,6 @@ async function describeIssue(deps: IssueDeps, ctx: ToolContext, i: IssueView) {
     .filter(Boolean)
     .join("\n");
 }
-
-/**
- * An issue's number (`131`, `#131`) or id, as `getIssue` takes it. Anything else names no task, and is refused here:
- * the id column is a UUID, so other text there fails the query (its SQL shown to the agent, the outcome unknown to
- * the run) instead of finding nothing. A number past its column's range finds nothing in the lookup itself
- * (`findVisible`). A key in another tracker's style ("ABC-131") is not read as #131: that number could be any tracker's.
- */
-const issueKey = (ref: string) => {
-  // Characters that can't be seen (control and format ones: a zero-width space, a byte order mark) name nothing at
-  // either end, like spaces: a pasted number often brings one.
-  const text = ref.replace(/^[\s\p{Cc}\p{Cf}]+|[\s\p{Cc}\p{Cf}]+$/gu, "");
-  const n = /^#?(\d+)$/.exec(text);
-  if (n) return { number: Number(n[1]) };
-  if (UUID.test(text)) return { id: text };
-  // Said back as it can be read, saying so when part of it can't, and with no example that is itself a number.
-  const shown = text.replace(/[\p{Cc}\p{Cf}]/gu, "");
-  const unseen = shown.length === text.length ? "" : " (shown without the characters in it that can't be seen)";
-  throw new NotFoundError(
-    `Issue not found: "${shown.slice(0, 64)}"${unseen} is not a task number or id. Give its number as list_issues shows it, or its id. list_issues finds a task by words (query).`,
-  );
-};
 
 async function find(deps: IssueDeps, ctx: ToolContext, ref: string) {
   return getIssue(deps.db, actorOf(ctx), ctx.orgId, issueKey(ref));
@@ -441,6 +421,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
       name: "list_issues",
       description: "List or find issues of the organization (by words, number or status). Also shows one in detail.",
       scope: "issues:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: {
@@ -714,6 +695,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
         additionalProperties: false,
       },
       async execute(input, ctx) {
+        let wrote = false;
         try {
           // The right hand comments for the person in their DM, on a task they see (ADR 0137 §13).
           if (await rightHandAway(ctx)) return ONLY_IN_DM;
@@ -721,10 +703,13 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
           if (reader)
             await getIssue(deps.db, { type: "person", userId: reader }, ctx.orgId, issueKey(str(input.issue)));
           const current = await find(deps, ctx, str(input.issue));
+          // Files brought, or the comment posted: a failure after that is no refusal before a write.
+          wrote = (givenFiles(input) ?? []).length > 0;
           const files = await bringToTask(deps, ctx, current.id, givenFiles(input) ?? []);
           await commentIssue(deps, actorOf(ctx), ctx.orgId, current.id, str(input.text), {
             linkFileIds: files.brought,
           });
+          wrote = true;
           const note =
             files.brought.length || files.refused.length ? filesNote(await find(deps, ctx, current.id), files) : "";
           return {
@@ -732,6 +717,8 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
             data: { issue: { id: current.id, number: current.number } },
           };
         } catch (error) {
+          if (wrote)
+            return { content: `Failed: ${error instanceof Error ? error.message : String(error)}`, isError: true };
           return failed(error);
         }
       },

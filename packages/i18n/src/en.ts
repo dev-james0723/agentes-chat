@@ -18945,7 +18945,7 @@ export const en = {
         text: "Tell us what was missing or got in your way. We read everything.",
       },
       /** "Send feedback" is the row at the bottom of the sidebar (`feedback.open`): the same words. */
-      where: "To write to us, use Send feedback, at the bottom of the sidebar.",
+      where: "Share feedback using Send feedback at the bottom of the sidebar.",
     },
     /** Over the sky where the workspace's agents stand: asleep at night, then awake by day. */
     stage: {

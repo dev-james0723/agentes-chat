@@ -765,3 +765,21 @@ describe("push devices (ADR 0035, ADR 0071)", () => {
     expect(JSON.parse(String(calls.at(-1)?.init.body))).toEqual({ ids: ["n1", "n2"] });
   });
 });
+
+test("memory writes transport the version seen by their caller and keep legacy calls compatible", async () => {
+  const path = "/api/app/organizations/o1/memories/m1";
+  const { fetch, calls } = fakeFetch({ [`PATCH ${path}`]: { status: 200, body: { id: "m1", version: 8 } } });
+  const api = createHttpApi({ fetch });
+  expect((await api.memory.edit("o1", "m1", "Exact updated text", 7)).version).toBe(8);
+  await api.memory.setPinned("o1", "m1", true, 7);
+  await api.memory.setArchived("o1", "m1", true, 7);
+  await api.memory.confirm("o1", "m1", 7);
+  await api.memory.edit("o1", "m1", "Legacy caller");
+  expect(calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([
+    { text: "Exact updated text", expectedVersion: 7 },
+    { pinned: true, expectedVersion: 7 },
+    { archived: true, expectedVersion: 7 },
+    { confirmed: true, expectedVersion: 7 },
+    { text: "Legacy caller" },
+  ]);
+});

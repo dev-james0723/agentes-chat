@@ -41,7 +41,11 @@ if (args[0] === "--version") {
   process.exit(0);
 }
 if (args[0] === "models") {
-  if (!existsSync(auth)) process.stdout.write("You are not authenticated.\n\n");
+  // A sign-in whose token expired (`{"expired":true}`): like Grok Build, this start lists before it renews the token
+  // with the refresh token it keeps, so it says "not authenticated" and leaves a renewed sign-in on disk.
+  const expired = existsSync(auth) && readFileSync(auth, "utf8").includes('"expired"');
+  if (expired) writeFileSync(auth, "{}");
+  if (!existsSync(auth) || expired) process.stdout.write("You are not authenticated.\n\n");
   process.stdout.write("Default model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n");
   process.exit(0);
 }

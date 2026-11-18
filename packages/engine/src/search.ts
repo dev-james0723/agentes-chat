@@ -25,6 +25,7 @@ import type { EmbeddingResult } from "@agenteschat/providers";
 import { agentIdsSeen, isPlaybook } from "./audience";
 import { caches } from "./cache";
 import { ACCESS_WORD, HOW_TO_WORD } from "./context/items";
+import { memorySourceVisibilityForUser } from "./context/memory-visibility";
 import { personAgentDmKey } from "./dms";
 import { cutText } from "./format";
 import type { ModelGateway } from "./gateway";
@@ -312,7 +313,7 @@ export async function agentSearchChannels(
  * The conversation the routine of this room reports to, when its creator is still a member of it and of the
  * workspace: its runs summarize it, so they read what the creator reads there and nothing else. Null otherwise.
  */
-async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
+export async function routineReportChannel(db: Database, orgId: string, agentId: string, roomKey: string) {
   const routineId = roomKey.match(/\|r:([^|]+)$/)?.[1];
   if (!routineId) return null;
   const [routine] = await db
@@ -420,7 +421,15 @@ export async function searchVisible(
     match?: "all" | "any";
   } & Pick<
     SearchQuery,
-    "after" | "before" | "messages" | "sort" | "visibleIssueScopes" | "visibleFileScopes" | "minTextRank"
+    | "after"
+    | "before"
+    | "messages"
+    | "sort"
+    | "visibleIssueScopes"
+    | "visibleFileScopes"
+    | "minTextRank"
+    | "maxDistance"
+    | "maxDistanceFromBest"
   >,
 ): Promise<SearchHit[]> {
   // A list by date ranks by no vector: no embedding to pay for. A provider that fails or is slow leaves the words.
@@ -436,7 +445,7 @@ export async function searchVisible(
           .catch(() => null)
       : null;
   const index = await deps.search.forOrg(input.orgId);
-  return index.query({
+  const hits = await index.query({
     text: input.text,
     embedding: embedded?.vectors[0] ?? null,
     embeddingModel: embedded?.model,
@@ -447,11 +456,46 @@ export async function searchVisible(
     limit: input.limit,
     match: input.match,
     minTextRank: input.minTextRank,
+    maxDistance: input.maxDistance,
+    maxDistanceFromBest: input.maxDistanceFromBest,
     after: input.after,
     before: input.before,
     messages: input.messages,
     sort: input.sort,
   });
+  const ids = hits.filter((h) => h.kind === "context_item").map((h) => h.sourceId);
+  const canonical = ids.length
+    ? await deps.db
+        .select()
+        .from(contextItems)
+        .where(
+          and(
+            eq(contextItems.orgId, input.orgId),
+            inArray(contextItems.id, ids),
+            eq(contextItems.status, "active"),
+            isNull(contextItems.supersededBy),
+          ),
+        )
+    : [];
+  const current = new Map(
+    canonical
+      .filter((item) => item.channelIds.every((id) => input.visibleChannelIds.includes(id)))
+      .map((item) => [item.id, item]),
+  );
+  return hits
+    .filter((hit) => hit.kind !== "context_item" || current.has(hit.sourceId))
+    .map((hit) => {
+      const item = hit.kind === "context_item" ? current.get(hit.sourceId) : undefined;
+      return item
+        ? {
+            ...hit,
+            channelIds: item.channelIds,
+            title: `${item.kind}${item.title ? `: ${item.title}` : ""}`,
+            snippet: cutText(item.content, 500),
+            createdAt: item.createdAt,
+          }
+        : hit;
+    });
 }
 
 /** A person's search filters (ADR 0123): what `searchForUser` takes besides the words. */
@@ -534,23 +578,18 @@ export async function searchForUser(
   if (items.length > 0) {
     const [rows, agentsSeen] = await Promise.all([
       deps.db
-        .select({
-          id: contextItems.id,
-          agentId: contextItems.agentId,
-          scopeType: contextItems.scopeType,
-          scopeId: contextItems.scopeId,
-          kind: contextItems.kind,
-          createdByKind: contextItems.createdByKind,
-        })
+        .select()
         .from(contextItems)
         .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.id, items))),
       agentIdsSeen(deps.db, userId, orgId),
     ]);
     const reviews = can(membership, "review_memory");
+    const sourceVisible = await memorySourceVisibilityForUser(deps.db, orgId, userId, visible, rows);
     const shown = new Set(
       rows
         .filter(
           (r) =>
+            sourceVisible.has(r.id) &&
             (!r.agentId || agentsSeen.details.has(r.agentId)) &&
             (!isPlaybook(r) || agentsSeen.playbook.has(r.agentId ?? "")) &&
             (reviews || r.scopeType !== "person" || r.scopeId === userId),

@@ -366,16 +366,17 @@ describe("what it remembers is each person's, kept in their own DM with it", () 
     const lodi = await lodiOf();
     return f.db.select().from(schema.contextItems).where(eq(schema.contextItems.agentId, lodi.id));
   };
-  const injected = async (channelId: string, personId: string) =>
-    (
-      await retrieveForRun(f.context, {
-        orgId: f.org.id,
-        agentId: (await lodiOf()).id,
-        channelId,
-        text: "relatórios",
-        personIds: [personId],
-      })
-    ).text;
+  // What the run's prompt receives: accepted human preferences come as requiredText (executor), the rest as text.
+  const injected = async (channelId: string, personId: string) => {
+    const m = await retrieveForRun(f.context, {
+      orgId: f.org.id,
+      agentId: (await lodiOf()).id,
+      channelId,
+      text: "relatórios",
+      personIds: [personId],
+    });
+    return `${m.requiredText ?? ""}\n${m.text}`;
+  };
 
   test("a note from one person's DM is theirs alone: never read, changed or forgotten from another's DM or a channel", async () => {
     f = await setup({ rightHand: true });

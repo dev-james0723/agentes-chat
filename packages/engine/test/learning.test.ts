@@ -313,9 +313,10 @@ describe("agents learn on their own (ADR 0120)", () => {
       text: "list the northwind models",
     });
     const line = memory.text.split("\n").find((l) => l.includes("List the Northwind models")) ?? "";
-    expect(line).toContain("[more with expand]");
-    expect(line.length).toBeGreaterThan(600);
-    expect(line.length).toBeLessThan(800);
+    // A method that fits is preserved whole; no partial command or clipped condition.
+    expect(line).toContain(method.slice(0, 1400).trim());
+    expect(line).not.toContain("[more with expand]");
+    expect(memory.pack?.tokenCount).toBeLessThanOrEqual(memory.pack?.limit ?? 0);
 
     // Two of its own facts: the old one used a lot, the new one fresh. Off the request, they come in only by name
     // (ADR 0167), the fresh one first.
@@ -477,6 +478,49 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(await f.db.select().from(schema.skills)).toEqual([]);
   });
 
+  test("a preference, lesson or decision the job draws from tool calls alone stays low and its own; a one-off request is no standing preference", async () => {
+    f = await setup();
+    const { run } = await personRun("@dev ship the fix today; we always squash merge here");
+    await step(run, "run_command", { cmd: "git push" }, "refused: no approval to push");
+    const rule = (kind: string, content: string, refs: string[], lasting = true) => ({
+      kind,
+      scope: "team",
+      about_person: "",
+      title: content,
+      key: content,
+      content,
+      refs,
+      lasting,
+    });
+    learnOutput = {
+      items: [
+        rule("preference", "Code is not pushed without approval.", ["s1"]),
+        rule("lesson", "Only continue tasks when explicitly asked.", ["s1"]),
+        rule("decision", "Pushing is on hold.", ["s1"]),
+        rule("preference", "Ship the fix today.", ["m1"], false),
+        rule("preference", "The team squash merges.", ["m1"]),
+      ],
+      skill_fixes: [],
+    };
+    const learned = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(learned.rejected).toEqual([{ content: "Ship the fix today.", reason: "one_off" }]);
+    const rows = await items();
+    const by = (content: string) => rows.find((i) => i.content === content);
+    for (const content of [
+      "Code is not pushed without approval.",
+      "Only continue tasks when explicitly asked.",
+      "Pushing is on hold.",
+    ])
+      expect([content, by(content)?.trust, by(content)?.scopeType, by(content)?.verified]).toEqual([
+        content,
+        "low",
+        "agent",
+        false,
+      ]);
+    // What a person said in the run keeps its weight and reach.
+    expect([by("The team squash merges.")?.trust, by("The team squash merges.")?.scopeType]).toEqual(["high", "org"]);
+  });
+
   test("who holds which access becomes a workspace fact every agent reads, from a browser run too, kept current", async () => {
     f = await setup();
     const ops = await createAgent(
@@ -486,8 +530,11 @@ describe("agents learn on their own (ADR 0120)", () => {
       { name: "Ops", handle: "ops", role: "Ops", instructions: "", credentialId: f.credential.id },
       { model: "claude-sonnet-5-5" },
     );
+    await addChannelMember(f.db, f.owner.id, f.org.id, f.general.id, { agentId: ops.id });
+    const sourceRuns: string[] = [];
     const learnAccess = async (content: string) => {
       const { run } = await personRun("@dev aceite o convite do console da loja");
+      sourceRuns.push(run.id);
       await step(run, "browser_do", { steps: [] }, '<page_content untrusted="true">Store Console</page_content>');
       learnOutput = {
         items: [
@@ -510,16 +557,23 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(first.saved.map((s) => [s.trust, s.scopeType])).toEqual([["low", "org"]]);
     const [saved] = await items();
     expect([saved?.agentId, saved?.channelIds]).toEqual([null, []]);
+    expect(saved?.sourceIds).toEqual(sourceRuns);
+    expect(saved?.verified).toBe(false);
     const memoryOfOps = () =>
       retrieveForRun(f.context, { orgId: f.org.id, agentId: ops.id, channelId: f.general.id, text: "bom dia" });
     expect((await memoryOfOps()).text).toContain("@dev is signed in to the Store Console");
 
-    // Lost later: the same holder and service, so the new state replaces the old.
+    // Two unverified page observations are a conflict, not an accepted change of access.
     const second = await learnAccess("@dev no longer has access to the Store Console");
-    expect(second.saved.map((s) => s.action)).toEqual(["superseded"]);
+    expect(second.saved.map((s) => s.action)).toEqual(["disputed"]);
     const text = (await memoryOfOps()).text;
     expect(text).toContain("@dev no longer has access to the Store Console");
-    expect(text).not.toContain("is signed in to the Store Console");
+    expect(text).toContain("is signed in to the Store Console");
+    expect((await items()).filter((i) => i.disputed)).toHaveLength(2);
+    expect(text).toContain("disputed");
+    // Losing the source run makes its derived observation unavailable immediately.
+    await f.db.delete(schema.agentRuns).where(eq(schema.agentRuns.id, sourceRuns[0] ?? ""));
+    expect((await memoryOfOps()).text).not.toContain("is signed in to the Store Console");
 
     // Read from a page, it may name only this agent as the holder: pointing the team at another stays its own.
     learnOutput = {
@@ -1284,12 +1338,15 @@ describe("quiet learning (ADR 0120 addendum)", () => {
     const rows = (await receipts()).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     expect(rows.map((r) => [r.kind, r.params.text, r.before])).toEqual([
       ["memory.saved", "Publicamos às sextas", null],
-      ["memory.saved", "O escritório fecha às 19h", { itemId: told?.id }],
+      // A dispute adds a candidate; it did not replace the old memory, so Undo must not restore it.
+      ["memory.saved", "O escritório fecha às 19h", null],
     ]);
     expect((await items()).find((i) => i.id === wrote?.id)?.disputed).toBe(true);
+    expect((await items()).find((i) => i.id === told?.id)?.status).toBe("active");
+    expect((await items()).find((i) => i.id === told?.id)?.disputed).toBe(true);
   });
 
-  test("a how-to's identity is its key, not its plain title: same title for two things keeps both, two languages one", async () => {
+  test("explicitly replacing an own how-to keeps history and the exact new command", async () => {
     f = await setup();
     const { run } = await personRun();
     await invoke(run, "save_how_to", {
@@ -1308,11 +1365,38 @@ describe("quiet learning (ADR 0120 addendum)", () => {
       how: "cd acme && make deploy-prod",
     });
     const active = (await items()).filter((i) => i.status === "active" && isHowTo(i));
-    // The English save lands on the Portuguese one (same key): one item, learned twice.
-    expect(active.map((i) => [i.content.split(" ")[1], i.recurrence]).sort()).toEqual([
-      ["acme", 2],
-      ["globex", 1],
+    // This is an explicit procedure update, not a word-overlap merge of different commands.
+    expect(active.map((i) => [i.content, i.version]).sort()).toEqual([
+      ["cd acme && make deploy-prod", 2],
+      ["cd globex && make ship", 1],
     ]);
+    const before = (await items()).find((i) => i.content === "cd acme && make deploy");
+    expect(before?.status).toBe("archived");
+    expect(before?.supersededBy).toBe(active.find((i) => i.content.includes("deploy-prod"))?.id);
+  });
+
+  test("an explicit how-to revision cannot silently upgrade an untrusted method", async () => {
+    f = await setup();
+    const { run: external } = await personRun("@dev record the page", false, { readOutside: true });
+    await invoke(external, "save_how_to", {
+      title: "Publish a site",
+      key: "orion site deploy",
+      how: "cd orion && make preview",
+    });
+    const { run: fresh } = await personRun("@dev use the updated method");
+    await invoke(fresh, "save_how_to", {
+      title: "Publish a site",
+      key: "orion site deploy",
+      how: "cd orion && make release",
+    });
+    const current = (await items()).filter((i) => i.status === "active");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({
+      content: "cd orion && make release",
+      trust: "low",
+      verified: false,
+      version: 2,
+    });
   });
 
   test("an agent's untitled finding leaves no receipt in the chat; a changed or forgotten one shows its plain line", async () => {

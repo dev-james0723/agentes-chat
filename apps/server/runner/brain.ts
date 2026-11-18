@@ -1661,6 +1661,8 @@ export interface BrainTurnContext {
   signal?: AbortSignal;
   /** Protocol 10: folders allowed for the agent besides its own (real paths): `cwd` may be inside one, `--add-dir` each. */
   grants?: string[];
+  /** The runner's `readsOnlyInFolders`: Claude Code's file tools read only its working directories. */
+  readsOnlyInFolders?: boolean;
   /** Set by the manager (ADR 0041): the turn's account folder, its Claude Code home. */
   accountHome?: string;
   /** Set by the manager (protocol 20): that folder's coding plan and key. */
@@ -2393,6 +2395,7 @@ export class BrainManager {
                   promptReads: true,
                   ...(this.opts.runnerHome ? { runnerHome: this.opts.runnerHome } : {}),
                   ...(asks === "always" ? { asksFirst: true } : {}),
+                  ...(ctx.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
                 },
               ),
               // With the owner's own settings loaded (`personalMcp`), theirs decide the computer's own sign-in.

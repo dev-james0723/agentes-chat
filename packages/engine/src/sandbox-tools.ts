@@ -1016,6 +1016,7 @@ export function createSandboxToolSource(
       name: "read_file",
       description: "Read a text file from your computer's workspace.",
       scope: SANDBOX_SCOPE,
+      readOnly: true,
       readsOutside: true,
       inputSchema: {
         type: "object",
@@ -1062,6 +1063,7 @@ export function createSandboxToolSource(
       name: "list_files",
       description: "List files in your computer's workspace (or a folder of it); they persist across conversations.",
       scope: SANDBOX_SCOPE,
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { path: { type: "string", maxLength: 300 }, ...computerProp(devices) },

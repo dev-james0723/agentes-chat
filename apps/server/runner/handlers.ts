@@ -327,6 +327,8 @@ export interface HandlerContext {
   };
   /** Set per request (protocol 10): the folders allowed for the request's agent, as real paths. */
   grants?: string[];
+  /** The runner's `readsOnlyInFolders`: brain turns' CLIs read only the agent's folders where they can enforce it. */
+  readsOnlyInFolders?: boolean;
   /** A worker (system mode): its agent's home, as a real path. */
   ownHome?: string;
   /** Protocol 12: the agents' browsers (ADR 0040); without it the runner refuses `browser.*`. */
@@ -1293,6 +1295,7 @@ async function doBrainTurn(
     ...(ctx.paperclipBeforeLaunch ? { beforeLaunch: ctx.paperclipBeforeLaunch } : {}),
     emit: (event) => scope.emit?.({ type: "brain.event", runId, event }),
     ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
+    ...(ctx.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
     ...(ctx.grant ? { grant: ctx.grant } : {}),
   });
   signedOut(ctx, req, final);
@@ -1470,6 +1473,7 @@ async function doCodexTurn(
           ...(ctx.secretsDir && !chat ? { secretsDir: ctx.secretsDir } : {}),
           ...(codex.mcp ? { mcp: codex.mcp } : {}),
           ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
+          ...(ctx.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
           ...(ctx.accounts || codex.accounts ? { accounts: ctx.accounts ?? codex.accounts } : {}),
           ...(codex.spawn ? { spawn: codex.spawn } : {}),
         },
@@ -1515,6 +1519,7 @@ async function doCodexTurn(
           ...(ctx.secretsDir && !chat ? { secretsDir: ctx.secretsDir } : {}),
           ...(codex.mcp ? { mcp: codex.mcp } : {}),
           ...(ctx.grants && !chat ? { grants: ctx.grants } : {}),
+          ...(ctx.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
           ...(ctx.accounts || codex.accounts ? { accounts: ctx.accounts ?? codex.accounts } : {}),
           ...(codex.app && !ctx.paperclipBeforeLaunch ? { app: codex.app } : {}),
           ...(ctx.paperclipBeforeLaunch ? { beforeLaunch: ctx.paperclipBeforeLaunch } : {}),

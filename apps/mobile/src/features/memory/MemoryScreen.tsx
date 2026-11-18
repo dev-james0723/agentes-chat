@@ -235,7 +235,7 @@ function MemoryDetail({ id }: { id: string }) {
         style: "destructive",
         onPress: () =>
           action.mutate(
-            { type: "archive", id: m.id, archived: true },
+            { type: "archive", id: m.id, expectedVersion: m.version, archived: true },
             {
               onSuccess: () => {
                 successHaptic();
@@ -249,7 +249,7 @@ function MemoryDetail({ id }: { id: string }) {
     ]);
   const confirm = () =>
     action.mutate(
-      { type: "confirm", id: m.id },
+      { type: "confirm", id: m.id, expectedVersion: m.version },
       {
         onSuccess: () => {
           successHaptic();
