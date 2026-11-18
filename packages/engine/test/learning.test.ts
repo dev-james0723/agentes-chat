@@ -32,7 +32,8 @@ import {
   type ToolContext,
   type ToolSource,
 } from "../src";
-import { learnTags, readsOutside, reportLearnFailure } from "../src/context/learn";
+import type { NewContextItem } from "../src/context/items";
+import { learnEventKey, learnTags, readsOutside, reportLearnFailure } from "../src/context/learn";
 import { continuationVerdict, runCalls } from "../src/continuation";
 import { createLlmJudge, judgeCallOf, withJudgeCall, withJudgeFallback } from "../src/judge";
 import { addMember, setup as baseSetup, type Fixture } from "./fixtures";
@@ -778,6 +779,53 @@ describe("agents learn on their own (ADR 0120)", () => {
 });
 
 describe("learning guards", () => {
+  test("a learn event key is one claim: another person, scope or title is another event, never a refused one", () => {
+    // No database here: nothing for the file's afterEach to close.
+    f = undefined as unknown as Fixture;
+    const claim: NewContextItem = {
+      orgId: "o",
+      kind: "preference",
+      scopeType: "person",
+      scopeId: "ana",
+      agentId: null,
+      title: "reply language",
+      content: "Prefers replies in English.",
+      createdByKind: "agent",
+      createdById: "dev",
+    };
+    const key = learnEventKey("run-1", claim);
+    expect(learnEventKey("run-1", { ...claim })).toBe(key);
+    expect(learnEventKey("run-1", { ...claim, scopeId: "bob" })).not.toBe(key);
+    expect(learnEventKey("run-1", { ...claim, title: "language" })).not.toBe(key);
+    expect(learnEventKey("run-2", claim)).not.toBe(key);
+  });
+
+  test("a retried learn job applies each claim once: no second recurrence, evidence or chat line (A15)", async () => {
+    f = await setup();
+    const { run } = await personRun("@dev remember: our deploy window is Friday 18:00");
+    learnOutput = {
+      items: [
+        {
+          kind: "fact",
+          scope: "workspace",
+          about_person: "",
+          title: "deploy window",
+          content: "The deploy window is Friday 18:00.",
+          refs: ["m1"],
+        },
+      ],
+      skill_fixes: [],
+    };
+    const first = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(first.saved).toHaveLength(1);
+    const before = await items();
+    const actions = await f.db.select().from(schema.agentActions);
+    const again = await learnRun(f.context, { orgId: f.org.id, runId: run.id });
+    expect(again.saved.map((s) => s.id)).toEqual(first.saved.map((s) => s.id));
+    expect(await items()).toEqual(before);
+    expect(await f.db.select().from(schema.agentActions)).toHaveLength(actions.length);
+  });
+
   test("a connected app's answer through the Tool Gateway makes what the run learns low trust", async () => {
     f = await setup();
     const { run } = await personRun("@dev triage issue 7");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { eq, schema } from "@agenteschat/db";
+import { eq, schema, sql } from "@agenteschat/db";
 import {
   ConflictError,
   consolidateItem,
@@ -105,12 +105,34 @@ describe("historical views keep valid time and known time apart (A07)", () => {
     const now = memoryViewAt(all, { knownAt: new Date() });
     expect(now.map((i) => i.id)).toEqual([v2.id]);
 
-    // What we know now about mid-January: the corrected row only starts in February.
-    expect(memoryViewAt(all, { knownAt: new Date(), asOf: new Date("2026-01-15T00:00:00Z") })).toEqual([]);
+    // What we know now about mid-January: Tokyo only starts in February, so Paris still holds then (A07).
+    expect(memoryViewAt(all, { knownAt: new Date(), asOf: new Date("2026-01-15T00:00:00Z") }).map((i) => i.id)).toEqual(
+      [v1.id],
+    );
+    // ...and not from February on, nor in today's view without a time.
+    expect(memoryViewAt(all, { knownAt: new Date(), asOf: new Date("2026-02-01T00:00:00Z") }).map((i) => i.id)).toEqual(
+      [v2.id],
+    );
     // What we knew then about mid-January: Paris.
     expect(
       memoryViewAt(all, { knownAt: knownBefore, asOf: new Date("2026-01-15T00:00:00Z") }).map((i) => i.id),
     ).toEqual([v1.id]);
+  });
+
+  test("a successor with no start, or one starting no later, corrects its predecessor at every time", async () => {
+    f = await setup();
+    const v1 = await insertContextItem(
+      f.db,
+      input("Orion runs in Paris.", { validFrom: new Date("2026-01-01T00:00:00Z") }),
+    );
+    await tick();
+    const v2 = await f.db.transaction((tx) => supersede(tx, v1, input("Orion runs in Lyon.")));
+    const all = await rows();
+    for (const asOf of ["2026-01-15T00:00:00Z", "2026-06-01T00:00:00Z"])
+      expect(memoryViewAt(all, { knownAt: new Date(), asOf: new Date(asOf) }).map((i) => i.id)).toEqual([v2.id]);
+    // Without its successor in the list, a replaced row stays out.
+    const alone = all.filter((i) => i.id === v1.id);
+    expect(memoryViewAt(alone, { asOf: new Date("2026-01-15T00:00:00Z") })).toEqual([]);
   });
 
   test("validity bounds are half-open and unknown bounds are unbounded", async () => {
@@ -142,6 +164,24 @@ describe("historical views keep valid time and known time apart (A07)", () => {
     const all = await rows();
     expect(memoryViewAt(all, { knownAt: old.createdAt }).map((i) => i.id)).toEqual([]);
     expect(memoryViewAt(all, { knownAt: new Date() }).map((i) => i.id)).toEqual([next.id]);
+  });
+});
+
+describe("migration 0273 backfills the supersession time of rows written before it", () => {
+  test("a legacy superseded row gets its successor's creation time and reappears in earlier known-time views", async () => {
+    f = await setup();
+    const old = await insertContextItem(f.db, input("Orion runs in Paris."));
+    await tick();
+    const next = await f.db.transaction((tx) => supersede(tx, old, input("Orion runs in Tokyo.")));
+    await f.db.update(schema.contextItems).set({ supersededAt: null }).where(eq(schema.contextItems.id, old.id));
+    const migration = await Bun.file(
+      new URL("../../db/migrations/0273_backfill_superseded_at.sql", import.meta.url),
+    ).text();
+    await f.db.execute(sql.raw(migration));
+    await f.db.execute(sql.raw(migration));
+    const [row] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, old.id));
+    expect(row?.supersededAt?.getTime()).toBe(next.createdAt.getTime());
+    expect(memoryViewAt(await rows(), { knownAt: old.createdAt }).map((i) => i.id)).toEqual([old.id]);
   });
 });
 
