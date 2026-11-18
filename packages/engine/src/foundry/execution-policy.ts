@@ -159,6 +159,15 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
     .sort((a, b) => `${a.sourceName}:${a.name}:${a.scope}`.localeCompare(`${b.sourceName}:${b.name}:${b.scope}`));
   const byRun = new Map<string, Pin>();
   const observedDynamicPins = new Set<string>();
+  // A pin is written in the transaction that enqueues its run. Within a turn, remember a successful
+  // "no pin" read (per org and run, bounded) instead of reading it for every tool; beforeBrain clears
+  // it so each turn reads afresh. Pinned runs are re-read on every check.
+  const knownUnpinned = new Set<string>();
+  const UNPINNED_LIMIT = 10_000;
+  function rememberUnpinned(key: string) {
+    if (knownUnpinned.size >= UNPINNED_LIMIT) knownUnpinned.delete(knownUnpinned.values().next().value as string);
+    knownUnpinned.add(key);
+  }
   function normalizePin(p: FoundryBuilderRunPin): Pin {
     if (
       !p ||
@@ -241,7 +250,8 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
   ): Promise<Resolution> {
     // Key by run id BEFORE comparing the organization: changing org cannot remove a pin.
     let pin = byRun.get(ctx.runId);
-    if (options.readPin) {
+    const unpinnedKey = `${ctx.orgId}:${ctx.runId}`;
+    if (options.readPin && !(pin === undefined && knownUnpinned.has(unpinnedKey))) {
       try {
         const record = await control(() => options.readPin!(ctx, transaction));
         if (record) {
@@ -253,7 +263,7 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
         } else if (observedDynamicPins.has(ctx.runId)) {
           // A missing pin cannot downgrade a run already observed as restricted.
           return { state: "denied" };
-        }
+        } else if (!pin) rememberUnpinned(unpinnedKey);
       } catch {
         return { state: "denied" };
       }
@@ -301,6 +311,8 @@ export function createFoundryExecutionPolicy(options: FoundryExecutionPolicyOpti
       return byRun.has(ctx.runId) || observedDynamicPins.has(ctx.runId);
     },
     async beforeBrain(ctx, kind) {
+      // Every turn verifies the persisted pin afresh; the checks within that turn reuse its answer.
+      knownUnpinned.delete(`${ctx.orgId}:${ctx.runId}`);
       const current = await resolve(ctx, false);
       if (current.state === "unrestricted") return allow();
       return current.state === "restricted" && kind === "model" ? allow() : deny();

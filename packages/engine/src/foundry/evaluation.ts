@@ -365,6 +365,23 @@ export function createDurableFoundryEvaluation(deps: EvaluationDependencies) {
           : await executor.reconcileEvaluation(job.waitId);
     } catch (error) {
       if (error instanceof FoundryError && error.code === "STALE_FENCE") throw error;
+      // The runtime's admission gate refused before submitting anything: put the job back to QUEUED so
+      // a later attempt submits it, and never send a cancel (its tombstone would block the job for good).
+      if (dispatch && (error as { code?: unknown } | null)?.code === "RUNTIME_BUSY") {
+        const requeued = await db.transaction(async (tx) => {
+          if (!(await lockJobClaim(tx, claim, now()))) throw new FoundryError("STALE_FENCE");
+          const [locked] = await tx.select().from(versions).where(eq(versions.id, version.id)).for("update");
+          const currentJob = locked && jobOf(locked);
+          if (!currentJob || currentJob.revision !== job!.revision || currentJob.state !== "DISPATCHED") return null;
+          const next: EvaluationJob = { ...currentJob, state: "QUEUED", revision: currentJob.revision + 1 };
+          await tx.update(versions).set({ evaluationJob: next }).where(eq(versions.id, version.id));
+          return next;
+        });
+        if (!requeued) throw new FoundryError("STALE_FENCE");
+        if (!finalAttempt && now().getTime() < Date.parse(requeued.deadline)) throw new FoundryError("RUNTIME_BUSY");
+        await finish(claim, version, requeued, ctx, "BLOCKED", "RUNTIME_BUSY");
+        return;
+      }
       receipt = {
         outcome: "UNKNOWN_OUTCOME",
         evaluatorJobRef: job.waitId,

@@ -8,7 +8,7 @@ import type {
   FoundryQualification,
 } from "./foundry-executor";
 import type { ProtectedFoundryEvidence } from "./foundry-protected-evaluator";
-import { createFoundryRpcClient } from "./foundry-rpc";
+import { createFoundryRpcClient, FoundryRuntimeBusyError } from "./foundry-rpc";
 
 /** Native server adapter; it never receives a Docker socket, host shell or
  * evaluator file path. The dedicated runtime retains its own qualification and
@@ -29,7 +29,9 @@ export function createRemoteFoundryExecutor(options: { url: string; token: strin
     async evaluate(version, job): Promise<FoundryEvaluationReceipt> {
       try {
         return (await call("evaluate", { version, job }, 115000)) as FoundryEvaluationReceipt;
-      } catch {
+      } catch (error) {
+        // Refused before submission: a cancel here would tombstone a job that never started.
+        if (error instanceof FoundryRuntimeBusyError) throw error;
         await executor.cancelEvaluation(job);
         throw new Error("Protected evaluation outcome unknown; reconcile the same job.");
       }
@@ -57,7 +59,9 @@ export function createRemoteFoundryExecutor(options: { url: string; token: strin
       abort.addEventListener("abort", cancel, { once: true });
       try {
         return (await call("execute", { request: wire }, 15000, abort)) as FoundryExecutionResult;
-      } catch {
+      } catch (error) {
+        // Refused before dispatch: nothing ran, so the caller closes the call instead of reconciling it.
+        if (error instanceof FoundryRuntimeBusyError) throw error;
         await executor.cancel(request.invocationId, request.fencingToken);
         return { outcome: "UNKNOWN_OUTCOME", receiptRef: null, reconciliationRef: request.invocationId };
       } finally {

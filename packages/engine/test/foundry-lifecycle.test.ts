@@ -493,3 +493,51 @@ describe("native Foundry recovery races (SIMULATED runner transport)", () => {
     expect(w.state.reconciliations).toBe(mutations.length + 1);
   });
 });
+
+describe("a busy runtime refuses before anything starts (SIMULATED runner transport)", () => {
+  test("the call is not spent, not UNKNOWN, and a new call runs once the runtime has room", async () => {
+    const w = await ready();
+    const a = await active(w);
+    const before = (await binding(a.binding.id)).reservedCalls;
+    w.state.beforeExecute = async () => {
+      throw Object.assign(new Error("Runtime capacity unavailable"), { code: "RUNTIME_BUSY" });
+    };
+    expect(
+      await w.lifecycle.execute(
+        { ...w.ctx, toolUseId: "busy-call" },
+        { bindingId: a.binding.id, digest: a.staged.digest, input: FRESH_INPUT },
+      ),
+    ).toMatchObject({ outcome: "CANCELLED", code: "RUNTIME_BUSY" });
+    const busy = (await invocations(a.binding.id)).find((r) => r.toolUseId === "busy-call")!;
+    expect(busy).toMatchObject({ state: "CANCELLED", reasonCode: "RUNTIME_BUSY" });
+    expect((await binding(a.binding.id)).reservedCalls).toBe(before);
+    w.state.beforeExecute = null;
+    expect(
+      await w.lifecycle.execute(
+        { ...w.ctx, toolUseId: "after-busy" },
+        { bindingId: a.binding.id, digest: a.staged.digest, input: FRESH_INPUT },
+      ),
+    ).toMatchObject({ output: FRESH_OUTPUT });
+    expect((await binding(a.binding.id)).reservedCalls).toBe(before + 1);
+  });
+
+  test("a busy canary is not a failed canary: nothing is quarantined, and the canary can run again", async () => {
+    const w = await ready();
+    const staged = await w.stage();
+    const a = await w.activate(staged);
+    w.state.beforeExecute = async () => {
+      throw Object.assign(new Error("Runtime capacity unavailable"), { code: "RUNTIME_BUSY" });
+    };
+    expect(await w.lifecycle.runCanary({ ...w.ctx, toolUseId: "busy-canary" }, a.binding.id)).toMatchObject({
+      outcome: "BUSY",
+      code: "RUNTIME_BUSY",
+      restoredBindingId: null,
+    });
+    expect(await binding(a.binding.id)).toMatchObject({ state: "CANARY", reservedCalls: 0 });
+    w.state.beforeExecute = null;
+    expect(await w.lifecycle.runCanary({ ...w.ctx, toolUseId: "canary-again" }, a.binding.id)).toMatchObject({
+      outcome: "PASS",
+    });
+    expect((await binding(a.binding.id)).state).toBe("ACTIVE");
+  });
+});

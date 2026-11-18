@@ -146,3 +146,28 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     expect(await wakes(w.ctx.runId)).toHaveLength(1);
   });
 });
+
+describe("a busy runtime refuses an evaluation before it starts (simulated isolated service)", () => {
+  test("the job goes back to queued, nothing is cancelled, and the next attempt submits it", async () => {
+    const { w, staged, claim, waitId } = await ready();
+    await w.checkpointEvaluation(w.ctx, waitId);
+    const evaluate = w.executor.evaluate;
+    let cancels = 0;
+    w.executor.cancelEvaluation = async (job) => {
+      cancels++;
+      return { outcome: "CANCELLED", evaluatorJobRef: job, receiptRef: "x", processTreeTerminated: true };
+    };
+    w.executor.evaluate = async () => {
+      throw Object.assign(new Error("Runtime capacity unavailable"), { code: "RUNTIME_BUSY" });
+    };
+    await expect(w.rawLifecycle.reconcileEvaluation(claim)).rejects.toThrow("RUNTIME_BUSY");
+    const row = await versionRow(staged.version.id);
+    expect(row.state).toBe("EVALUATING");
+    expect(row.evaluationJob).toMatchObject({ state: "QUEUED" });
+    expect(cancels).toBe(0);
+    w.executor.evaluate = evaluate;
+    await w.rawLifecycle.reconcileEvaluation(claim);
+    expect(w.state.evaluations).toBe(1);
+    expect((await versionRow(staged.version.id)).state).toBe("REVIEW_READY");
+  });
+});

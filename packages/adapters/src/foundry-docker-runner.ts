@@ -378,11 +378,29 @@ export interface FoundryDockerPlatform {
   securityOptions: string[];
 }
 
+/** Docker control commands (info, create, inspect, rm). A loaded daemon often needs more than a second;
+ * create + start (wallTimeMs - 2s) + rm must still fit the 15 s native call. */
+export const FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS = 3000;
+const FOUNDRY_CONTAINER_NAME = /^foundry-[a-f0-9]{48}$/;
+
+/** Removes a container this runtime created under its fixed name, for a create whose answer was lost
+ * (no container id is known). Safe because nothing is ever started without the acknowledged id. */
+export async function removeFoundryContainerByName(docker: FoundryDockerControl, name: string): Promise<boolean> {
+  if (!FOUNDRY_CONTAINER_NAME.test(name)) return false;
+  const r = await docker.run(["rm", "--force", name], {
+    timeoutMs: FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS,
+    stdoutBytes: 8192,
+    stderrBytes: 4096,
+  });
+  if (r.timedOut) return false;
+  return r.exitCode === 0 ? r.stdout.trim() === name : /no such container/i.test(r.stderr);
+}
+
 export async function readFoundryDockerPlatform(docker: FoundryDockerControl): Promise<FoundryDockerPlatform> {
   const format =
     '{"daemonId":{{json .ID}},"serverVersion":{{json .ServerVersion}},"kernelVersion":{{json .KernelVersion}},"architecture":{{json .Architecture}},"osType":{{json .OSType}},"cgroupVersion":{{json .CgroupVersion}},"cgroupDriver":{{json .CgroupDriver}},"securityOptions":{{json .SecurityOptions}}}';
   const result = await docker.run(["info", "--format", format], {
-    timeoutMs: 1000,
+    timeoutMs: FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS,
     stdoutBytes: 8192,
     stderrBytes: 4096,
   });
@@ -558,7 +576,8 @@ export function createDockerFoundryRunner(provided: DockerFoundryOptions): Trust
     ) as FoundryRuntimeProfile["guarantees"],
   };
   const profileDigest = hashFoundryRuntimeProfile(profile);
-  const control = (args: string[]) => docker.run(args, { timeoutMs: 1000, stdoutBytes: 8192, stderrBytes: 4096 });
+  const control = (args: string[]) =>
+    docker.run(args, { timeoutMs: FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS, stdoutBytes: 8192, stderrBytes: 4096 });
   const remove = async (id: string): Promise<boolean> => {
     if (!SHA.test(id)) return false;
     const removed = await control(["rm", "--force", id]);
@@ -684,14 +703,18 @@ export function createDockerFoundryRunner(provided: DockerFoundryOptions): Trust
           : unknown(request.invocationId);
       }
       let containerId: string | null = null;
+      const name = `foundry-${sha(`${profile.runnerId}:${request.invocationId}`).slice(0, 48)}`;
       const onAbort = (): void => {
         void cancel(request.invocationId, request.fencingToken).catch(() => undefined);
       };
       request.abort.addEventListener("abort", onAbort, { once: true });
       try {
-        const name = `foundry-${sha(`${profile.runnerId}:${request.invocationId}`).slice(0, 48)}`;
         const created = await control(foundryDockerCreateArgs(options, name));
-        if (created.exitCode !== 0 || !SHA.test(created.stdout.trim())) return unknown(request.invocationId);
+        if (created.exitCode !== 0 || !SHA.test(created.stdout.trim())) {
+          // The daemon may have created it anyway; clear it so it never lingers. Outcome stays UNKNOWN.
+          await removeFoundryContainerByName(docker, name).catch(() => false);
+          return unknown(request.invocationId);
+        }
         containerId = created.stdout.trim();
         const authorized = await options.authorize(request, admission);
         if (
@@ -756,6 +779,7 @@ export function createDockerFoundryRunner(provided: DockerFoundryOptions): Trust
         // If create/start acknowledgement was lost, never issue another start.
         // Native recovery can request cancellation; absence of a receipt is UNKNOWN.
         if (containerId) await cancel(request.invocationId, request.fencingToken).catch(() => undefined);
+        else await removeFoundryContainerByName(docker, name).catch(() => false);
         return unknown(request.invocationId);
       } finally {
         request.abort.removeEventListener("abort", onAbort);

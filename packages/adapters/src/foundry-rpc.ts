@@ -5,6 +5,14 @@ const NAME = /^[a-z][a-zA-Z]{0,48}$/;
 const TOKEN = /^[a-f0-9]{64}$/;
 const DEFAULT_LIMIT = 20 * 1024 * 1024;
 class PayloadLimit extends Error {}
+/** The runtime's admission gate refused before handing the request to any runner: nothing started. */
+export class FoundryRuntimeBusyError extends Error {
+  readonly code = "RUNTIME_BUSY";
+  constructor() {
+    super("Runtime capacity unavailable");
+    this.name = "FoundryRuntimeBusyError";
+  }
+}
 async function readBounded(body: ReadableStream<Uint8Array> | null, maximum: number): Promise<unknown> {
   if (!body) throw new Error("Missing control data");
   const reader = body.getReader();
@@ -67,8 +75,10 @@ export function createFoundryRpcHandler(options: {
       const text = JSON.stringify(result ?? null);
       if (Buffer.byteLength(text) > maximum) return answer(503, "CONTROL_UNAVAILABLE");
       return new Response(text, { headers: { "content-type": "application/json", "cache-control": "no-store" } });
-    } catch {
-      return answer(503, "CONTROL_UNAVAILABLE");
+    } catch (error) {
+      return error instanceof FoundryRuntimeBusyError
+        ? answer(429, "RUNTIME_BUSY")
+        : answer(503, "CONTROL_UNAVAILABLE");
     }
   };
 }
@@ -114,6 +124,10 @@ export function createFoundryRpcClient(options: {
       body,
       signal: signal ? AbortSignal.any([signal, abort]) : abort,
     });
+    if (response.status === 429 && !response.redirected) {
+      await response.body?.cancel();
+      throw new FoundryRuntimeBusyError();
+    }
     if (!response.ok || response.redirected) throw new Error("Private Foundry control unavailable");
     return readBounded(response.body, maximum);
   };

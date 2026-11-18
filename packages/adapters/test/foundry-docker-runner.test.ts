@@ -250,6 +250,24 @@ describe("durable Docker execution fencing", () => {
     expect(f.calls.filter((c) => c[0] === "start")).toHaveLength(1);
     f.ledger.close();
   });
+  test("a create whose answer was lost removes the container by its fixed name and never starts it", async () => {
+    const options: number[] = [];
+    const f = await fixture(async (args, o) => {
+      options.push(o.timeoutMs);
+      if (args[0] === "image") return ok(IMAGE);
+      if (args[0] === "create") return { ...ok(), exitCode: null, timedOut: true };
+      if (args[0] === "rm") return ok(args[2]);
+      throw new Error("unexpected");
+    });
+    expect((await f.runner.execute(request(), f.admission)).outcome).toBe("UNKNOWN_OUTCOME");
+    const rm = f.calls.filter((c) => c[0] === "rm");
+    expect(rm).toHaveLength(1);
+    expect(rm[0]![2]).toMatch(/^foundry-[a-f0-9]{48}$/);
+    expect(f.calls.filter((c) => c[0] === "start")).toHaveLength(0);
+    // Control commands get more than a second on a loaded daemon.
+    expect(Math.min(...options)).toBeGreaterThanOrEqual(3000);
+    f.ledger.close();
+  });
   test("changed seccomp bytes block before container creation", async () => {
     const f = await fixture();
     writeFileSync(f.seccompPath, "{}");

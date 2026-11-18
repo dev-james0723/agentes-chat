@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, lstatSync, openSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
-import { type FoundryDockerControl, foundryDockerCreateArgs } from "./foundry-docker-runner";
+import {
+  FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS,
+  type FoundryDockerControl,
+  foundryDockerCreateArgs,
+  removeFoundryContainerByName,
+} from "./foundry-docker-runner";
 import {
   type FoundryAdmission,
   type FoundryEvaluationCancellationResult,
@@ -203,7 +208,8 @@ export function createProtectedFoundryEvaluator(provided: ProtectedFoundryEvalua
     receiptRef: null,
     reconciliationRef: job,
   });
-  const control = (args: string[]) => o.docker.run(args, { timeoutMs: 1000, stdoutBytes: 8192, stderrBytes: 4096 });
+  const control = (args: string[]) =>
+    o.docker.run(args, { timeoutMs: FOUNDRY_DOCKER_CONTROL_TIMEOUT_MS, stdoutBytes: 8192, stderrBytes: 4096 });
   async function remove(id: string) {
     if (!/^[a-f0-9]{64}$/.test(id)) return false;
     const r = await control(["rm", "--force", id]);
@@ -236,7 +242,10 @@ export function createProtectedFoundryEvaluator(provided: ProtectedFoundryEvalua
     args[args.length - 1] = program;
     const created = await control(args);
     const id = created.stdout.trim();
-    if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(id)) throw new Error("Scorer create outcome unknown");
+    if (created.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(id)) {
+      await removeFoundryContainerByName(o.docker, name).catch(() => false);
+      throw new Error("Scorer create outcome unknown");
+    }
     let removed = false;
     try {
       if (!o.ledger.oracle(job, id) || !(await authorized(job)))

@@ -370,3 +370,54 @@ test("failed or malformed native policy reads never fall back to ordinary native
   const absent = fixture({ pins: [], readPin: async () => null });
   assert.equal((await absent.policy.check(ctx, tool("run_code", "sandbox:run"), "sandbox")).ok, true);
 });
+
+test("an ordinary run's absent pin is read once per turn, while a pinned run is re-read on every check", async () => {
+  let pinReads = 0;
+  const ordinary = fixture({
+    pins: [],
+    readPin: async () => {
+      pinReads++;
+      return null;
+    },
+  });
+  for (let i = 0; i < 5; i++)
+    assert.equal((await ordinary.policy.check(ctx, tool("run_code", "sandbox:run"), "sandbox")).ok, true);
+  assert.equal(pinReads, 1);
+  // A new turn reads afresh, and its tool checks reuse that read.
+  assert.equal((await ordinary.policy.beforeBrain(ctx, "codex")).ok, true);
+  assert.equal((await ordinary.policy.check(ctx, tool("run_code", "sandbox:run"), "sandbox")).ok, true);
+  assert.equal(pinReads, 2);
+  // The same run id under another org is a separate read, never the cached answer.
+  await ordinary.policy.check({ ...ctx, orgId: OTHER } as ToolContext, tool("run_code", "sandbox:run"), "sandbox");
+  assert.equal(pinReads, 3);
+
+  // A failed read is not remembered as unrestricted.
+  let fail = true;
+  let failingReads = 0;
+  const flaky = fixture({
+    pins: [],
+    readPin: async () => {
+      failingReads++;
+      if (fail) throw new Error("native row unavailable");
+      return null;
+    },
+  });
+  assert.equal((await flaky.policy.check(ctx, tool("run_code", "sandbox:run"), "sandbox")).ok, false);
+  fail = false;
+  assert.equal((await flaky.policy.check(ctx, tool("run_code", "sandbox:run"), "sandbox")).ok, true);
+  assert.equal(failingReads, 2);
+
+  let record: FoundryBuilderRunPin = fixture().pin;
+  let pinnedReads = 0;
+  const pinned = fixture({
+    pins: [],
+    readPin: async () => {
+      pinnedReads++;
+      return record;
+    },
+  });
+  assert.equal((await pinned.policy.check(ctx, tool(), "foundry")).ok, true);
+  record = { ...record, expiresAt: "2026-11-16T11:00:00.000Z" };
+  assert.equal((await pinned.policy.check(ctx, tool(), "foundry")).ok, false);
+  assert.equal(pinnedReads, 2);
+});

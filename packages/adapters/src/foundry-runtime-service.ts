@@ -10,7 +10,6 @@ import {
 } from "./foundry-docker-runner";
 import {
   createQualifiedFoundryExecutor,
-  type FoundryAdmission,
   type FoundryExecutionRequest,
   type FoundryFrozenVersion,
   type FoundryRunnerExecutionRequest,
@@ -22,7 +21,12 @@ import {
   ProtectedFoundryEvaluationLedger,
   protectedFoundryEvaluatorIdentity,
 } from "./foundry-protected-evaluator";
-import { createFoundryRpcClient, createFoundryRpcHandler, type FoundryRpcMethod } from "./foundry-rpc";
+import {
+  createFoundryRpcClient,
+  createFoundryRpcHandler,
+  type FoundryRpcMethod,
+  FoundryRuntimeBusyError,
+} from "./foundry-rpc";
 
 export interface FoundryRuntimeServiceConfig
   extends Pick<
@@ -89,18 +93,9 @@ export function createFoundryRuntimeService(
     evaluationTimeoutMs: 120000,
     controlTimeoutMs: 5000,
   });
-  let active = 0;
-  const bounded =
-    (method: FoundryRpcMethod): FoundryRpcMethod =>
-    async (input, signal) => {
-      if (active >= 2) throw new Error("Runtime capacity unavailable");
-      active++;
-      try {
-        return await method(input, signal);
-      } finally {
-        active--;
-      }
-    };
+  // Separate pools so long evaluations cannot starve calls, and one slot per workspace in each.
+  const evaluations = createFoundryAdmission({ limit: 2, perOrg: 1 });
+  const executions = createFoundryAdmission({ limit: 2, perOrg: 1 });
   // biome-ignore lint/suspicious/noControlCharactersInRegex: Reject C0 control characters at the transport trust boundary.
   const CONTROL_CHARACTERS = /[\u0000-\u001f]/;
   const text = (v: unknown) => {
@@ -114,11 +109,16 @@ export function createFoundryRuntimeService(
   };
   const methods: Record<string, FoundryRpcMethod> = {
     qualify: async () => executor.qualify(),
-    evaluate: bounded(async ({ version, job }) => executor.evaluate(version as FoundryFrozenVersion, text(job))),
+    evaluate: evaluations(
+      async ({ version, job }) => executor.evaluate(version as FoundryFrozenVersion, text(job)),
+      ({ version }) => (version as { orgId?: unknown } | null)?.orgId,
+    ),
     reconcileEvaluation: async ({ job }) => executor.reconcileEvaluation(text(job)),
     cancelEvaluation: async ({ job }) => executor.cancelEvaluation(text(job)),
-    execute: bounded(async ({ request }, signal) =>
-      executor.execute({ ...(request as Omit<FoundryExecutionRequest, "abort">), abort: signal }),
+    execute: executions(
+      async ({ request }, signal) =>
+        executor.execute({ ...(request as Omit<FoundryExecutionRequest, "abort">), abort: signal }),
+      ({ request }) => (request as { orgId?: unknown } | null)?.orgId,
     ),
     cancel: async ({ invocationId, fencingToken }) => executor.cancel(text(invocationId), fence(fencingToken)),
     reconcile: async ({ invocationId }) => executor.reconcile(text(invocationId)),
@@ -139,4 +139,28 @@ export function createFoundryRuntimeService(
       ledger.close();
     },
   };
+}
+
+/** Admission before any runner sees a request: a pool limit plus a per-workspace limit. A refusal
+ * throws FoundryRuntimeBusyError, which callers treat as "nothing started", never as unknown. */
+export function createFoundryAdmission(options: { limit: number; perOrg: number }) {
+  let active = 0;
+  const byOrg = new Map<string, number>();
+  return (method: FoundryRpcMethod, orgOf: (input: Record<string, unknown>) => unknown): FoundryRpcMethod =>
+    async (input, signal) => {
+      const org = orgOf(input);
+      if (typeof org !== "string" || !org) throw new Error("Invalid organization");
+      const mine = byOrg.get(org) ?? 0;
+      if (active >= options.limit || mine >= options.perOrg) throw new FoundryRuntimeBusyError();
+      active++;
+      byOrg.set(org, mine + 1);
+      try {
+        return await method(input, signal);
+      } finally {
+        active--;
+        const left = (byOrg.get(org) ?? 1) - 1;
+        if (left > 0) byOrg.set(org, left);
+        else byOrg.delete(org);
+      }
+    };
 }

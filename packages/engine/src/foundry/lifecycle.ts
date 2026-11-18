@@ -631,6 +631,29 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
       });
       return finish(ctx, row, result, 0);
     } catch (error) {
+      // The runtime's admission gate refuses before it hands the request to any runner, so nothing
+      // started: close the call as CANCELLED and give back its reserved call instead of UNKNOWN.
+      if ((error as { code?: unknown } | null)?.code === "RUNTIME_BUSY") {
+        await db.transaction(async (tx) => {
+          const [closed] = await tx
+            .update(invocations)
+            .set({ state: "CANCELLED", reasonCode: "RUNTIME_BUSY", completedAt: now() })
+            .where(
+              and(
+                eq(invocations.id, row.id),
+                eq(invocations.recoveryRevision, 0),
+                inArray(invocations.state, ["RESERVED", "DISPATCHED"]),
+              ),
+            )
+            .returning({ id: invocations.id });
+          if (closed)
+            await tx
+              .update(bindings)
+              .set({ reservedCalls: sql`${bindings.reservedCalls} - 1` })
+              .where(and(eq(bindings.id, bindingId), sql`${bindings.reservedCalls} > 0`));
+        });
+        return { outcome: "CANCELLED", invocationId: row.id, code: "RUNTIME_BUSY" };
+      }
       const [current] = await db.select().from(invocations).where(eq(invocations.id, row.id));
       const unknown = current?.state === "DISPATCHED";
       await db
@@ -944,6 +967,9 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
       const proof = await guard(ctx, bindingId, ["CANARY"]);
       const result = await dispatch(ctx, bindingId, proof.version.digest, proof.evidence.canary.input, true);
       if (result.outcome === "ALREADY_ATTEMPTED") return { outcome: "PENDING" as const, restoredBindingId: null };
+      // Refused before anything started: not a canary result, so nothing to quarantine or roll back.
+      if (result.outcome === "CANCELLED" && "code" in result && result.code === "RUNTIME_BUSY")
+        return { outcome: "BUSY" as const, code: "RUNTIME_BUSY" as const, restoredBindingId: null };
       const [terminal] = await db
         .select()
         .from(invocations)
