@@ -71,7 +71,7 @@ async function mentionRun(options: { askAgent?: boolean } = {}) {
   return { beforeModel, total: p.total.queries, runId: p.runId };
 }
 
-test("claim → model request stays within 19 statements; a whole mention run within 40", async () => {
+test("claim → model request stays within 19 statements; a whole mention run within 43", async () => {
   const run = await mentionRun();
   // 11 since every agent has a budget (ADR 0026): the call always reserves (one statement on the fast path).
   // 12 since the run stores the brain it runs with (ADR 0053 §10).
@@ -98,10 +98,12 @@ test("claim → model request stays within 19 statements; a whole mention run wi
   // 38 with the background work read before the model call above.
   // 39 with the app language read before the model call above.
   // 40 with the uncertain-effect hold read before the model call above.
-  expect(run.total).toBeLessThanOrEqual(40);
+  // 43 since every run's end records its outcome (feat/run-outcomes): the insert in a savepoint of its own (3), so an
+  // outcome that can't be written never undoes the run's terminal status.
+  expect(run.total).toBeLessThanOrEqual(43);
 });
 
-test("with tools, as every production run has them (find_agent among them): within 25 before the model call, 47 in all", async () => {
+test("with tools, as every production run has them (find_agent among them): within 25 before the model call, 50 in all", async () => {
   const run = await mentionRun({ askAgent: true });
   // 4 more, all for the tool list and the prompt: who is behind the run (2, the Tool Gateway's policy), the connectors
   // it lacks (1) and whether the person may talk to agents ("# Your team", 1, beside the context's other reads).
@@ -124,7 +126,8 @@ test("with tools, as every production run has them (find_agent among them): with
   // 45 with what already waits on the person, read before the model call above.
   // 46 with the agent's approvals level, read fresh where its tools are listed (ADR 0173).
   // 47 with the uncertain-effect hold read before the model call above.
-  expect(run.total).toBeLessThanOrEqual(47);
+  // 50 with the run's outcome recorded at its end, in its own savepoint (3), as above.
+  expect(run.total).toBeLessThanOrEqual(50);
 });
 
 test("the run keeps its stage profile in its transcript, for the operator's analytics, and adds no step", async () => {
