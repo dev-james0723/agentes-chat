@@ -26,6 +26,7 @@
     "i18n:apply": "bun scripts/i18n.ts apply",
     "i18n:status": "bun scripts/i18n.ts status",
     "report:autonomy": "bun --env-file=.env apps/server/scripts/autonomy-report.ts",
+    "skills:team-communication": "bun --env-file=.env apps/server/scripts/team-communication-skill.ts",
     "smoke": "bun --env-file=.env scripts/smoke.ts",
     "composio:check": "bun --env-file=.env apps/server/scripts/composio-check.ts",
     "eval:memory": "bun --env-file=.env packages/engine/eval/memory.ts",
