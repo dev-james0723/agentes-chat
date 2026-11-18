@@ -318,7 +318,11 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         const shown = hits
           .filter((h) => {
             const message = said.get(h.sourceId);
-            return h.kind !== "message" || Boolean(message && channels.includes(message.channelId));
+            // The person's own DM comes in only when `dmWithRunPerson` let it in (ADR 0017 addendum 2026-11-18).
+            return (
+              h.kind !== "message" ||
+              Boolean(message && (channels.includes(message.channelId) || message.channelId === theirDm))
+            );
           })
           // Rules come whole in "# Rules people gave you", and only those that hold for this run's person.
           .filter((h) => items.get(h.sourceId)?.kind !== "rule")
