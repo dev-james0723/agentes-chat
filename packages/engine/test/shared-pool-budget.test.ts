@@ -597,7 +597,11 @@ test("a duplicate canonical upstream pool cannot acquire a second budget ceiling
   };
   await f.db
     .update(schema.sharedBudgetPools)
-    .set({ upstreamProvider: "billing:synthetic", upstreamAccount: "acct:fixture", upstreamPool: "billing:fixture" } as never)
+    .set({
+      upstreamProvider: "billing:synthetic",
+      upstreamAccount: "acct:fixture",
+      upstreamPool: "billing:fixture",
+    } as never)
     .where(eq(schema.sharedBudgetPools.id, pool.id));
   await expect(
     f.db
@@ -650,7 +654,11 @@ test("mismatched upstream identity rejects before provider dispatch", async () =
     sharedBudgetRequired: true,
     sharedBudgetTransports: {
       anthropic: {
-        identify: async () => ({ namespace: "billing:synthetic", account: "different-account", pool: "billing:fixture" }),
+        identify: async () => ({
+          namespace: "billing:synthetic",
+          account: "different-account",
+          pool: "billing:fixture",
+        }),
         qualifies: () => true,
         bound: () => 10,
         stream: async (p, r, o) => ({ ...(await p.stream(r, o)), costNanoUsd: 1 }),
@@ -941,15 +949,21 @@ test("two execution providers mapped to one verified billing namespace share one
   expect(rejected && rejected.status === "rejected" ? String(rejected.reason) : "").toContain("shared budget");
   expect(started).toBe(1);
   // The loser must be independently admissible when capacity is free, proving that rejection was not a bad route.
-  await (results[0]?.status === "rejected" ? agentCall(gateway) : gateway.stream({
-    orgId: f.org.id, agentId: agent2.id, dataClass: "fixture", system: "sys",
-    messages: [{ role: "user", content: "hello" }], maxTokens: 10, onDelta: () => {},
-  }));
+  await (results[0]?.status === "rejected"
+    ? agentCall(gateway)
+    : gateway.stream({
+        orgId: f.org.id,
+        agentId: agent2.id,
+        dataClass: "fixture",
+        system: "sys",
+        messages: [{ role: "user", content: "hello" }],
+        maxTokens: 10,
+        onDelta: () => {},
+      }));
   expect(started).toBe(2);
   const [after] = await f.db.select().from(schema.sharedBudgetPools).where(eq(schema.sharedBudgetPools.id, pool.id));
   expect(after).toMatchObject({ spentNanoUsd: 0, heldNanoUsd: 0 });
 });
-
 
 test("admission snapshots the exact request and identity lookup receives no key or callback", async () => {
   f = await setup();

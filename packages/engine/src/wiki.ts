@@ -27,7 +27,8 @@ import { cutText } from "./format";
 import { getMessage } from "./messages";
 import { can, type Membership, requireActiveMembership } from "./organizations";
 import { maySql } from "./permissions";
-import { enqueueIndex, registerDocumentBuilder, registerReindexSource, type SearchDeps, searchVisible } from "./search";
+import { enqueueIndex, type SearchDeps, searchVisible } from "./search";
+import { registerDocumentBuilder, registerReindexSource } from "./search-registry";
 import { type Audience, adminChannelSql, taskSeenSql } from "./task-access";
 import {
   pagesBySlug,

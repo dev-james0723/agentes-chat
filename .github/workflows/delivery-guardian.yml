@@ -1,0 +1,25 @@
+name: Delivery Guardian
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/delivery-guardian-20261116, feat/delivery-guardian-cross-project-v11-20261116]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: delivery-guardian-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  guard:
+    name: Delivery Guardian tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify isolated policy and Git fixtures
+        run: |
+          node --version
+          node --test scripts/delivery/*.test.mjs

@@ -64,6 +64,7 @@ import {
   createMissionRunToolSource,
   createMissionToolSource,
   createModelGateway,
+  createNativeDeliveryService,
   createPassToolSource,
   createPermissionToolSource,
   createQuotaCliQualifier,
@@ -354,6 +355,11 @@ export function buildEngine(o: EngineOptions) {
     app: () => githubApp.current(),
     http: githubHttp ?? { apiUrl: "https://api.github.com", fetch: o.http ?? fetch },
   };
+  const nativeDelivery = createNativeDeliveryService({
+    connectors: connectorDeps,
+    github: githubAppAccess,
+    pubsub: adapters.pubsub,
+  });
   const gitProxy: GitProxyDeps = {
     db,
     secret: config.AGENTES_SECRET,
@@ -494,6 +500,7 @@ export function buildEngine(o: EngineOptions) {
         log: o.log,
         judge: context.judge,
         githubApp: githubAppAccess,
+        deliveryGuard: nativeDelivery.guard,
       }),
       // People's mailboxes (ADR 0038): only when the server has a mail path (Composio, IMAP).
       createMailToolSource({

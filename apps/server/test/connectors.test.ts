@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createFakeComposioClient, createFakeErrorReporter, createFakeMailConnector } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
-import { type McpConnect, mcpPreset } from "@agenteschat/engine";
+import { type AccessTree, type McpConnect, mcpPreset } from "@agenteschat/engine";
 import { browser, createTestServer, seedOrg, signUp, type TestServer } from "./harness";
 
 let t: TestServer;
@@ -48,11 +48,12 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
   const listed = await (await owner(`/api/app/organizations/${orgId}/connectors`)).text();
   expect(listed).toContain(sentry.id);
   expect(listed).not.toContain("sntrys_secret_value");
-  // Connecting an account does not grant it to agents. The owner chooses scopes explicitly below.
-  const access = (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as {
-    connectors: { connectionId: string; state: string }[];
-  };
-  expect(access.connectors.find((c) => c.connectionId === sentry.id)?.state).toBe("off");
+  // Connecting stores the credential; access still requires an explicit agent grant.
+  const access = async () =>
+    (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as AccessTree;
+  const initial = await access();
+  expect(initial.all).toBe(false);
+  expect(initial.connectors.find((c) => c.connectionId === sentry.id)).toMatchObject({ state: "off" });
 
   const put = await owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`, {
     method: "PUT",
@@ -64,6 +65,22 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
     },
   });
   expect(put.status).toBe(200);
+  const granted = await access();
+  const selected = granted.connectors.find((c) => c.connectionId === sentry.id);
+  if (!selected) throw new Error("Sentry is missing from the access tree");
+  // A scoped grant does not turn on the whole connection or any other scope.
+  expect(selected.state).toBe("off");
+  const readScope = selected.scopes.find((s) => s.scope === "sentry:issues.read");
+  if (!readScope) throw new Error("Sentry's read scope is missing");
+  expect(readScope.state).toBe("granted");
+  expect(readScope.tools.length).toBeGreaterThan(0);
+  expect(readScope.tools.every((tool) => tool.state === "granted")).toBe(true);
+  for (const other of selected.scopes.filter((s) => s.scope !== readScope.scope)) {
+    expect(other.state).toBe("off");
+    expect(other.tools.every((tool) => tool.state === "off")).toBe(true);
+  }
+  const scopes = () => owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`);
+  const saved = await (await scopes()).json();
   expect(
     (
       await owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`, {
@@ -72,6 +89,8 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
       })
     ).status,
   ).toBe(400);
+  expect(await (await scopes()).json()).toEqual(saved);
+  expect(await access()).toEqual(granted);
 
   const start = (await (
     await owner(`/api/app/organizations/${orgId}/connectors/github/oauth/start`, { json: { returnTo: "/settings" } })
@@ -88,6 +107,10 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
     ["github", "oauth"],
     ["sentry", "api_key"],
   ]);
+  const githubAccess = (await access()).connectors.find((c) => c.connector === "github");
+  expect(githubAccess?.state).toBe("off");
+  expect(githubAccess?.scopes.find((s) => s.scope === "github:pr.merge")?.state).toBe("off");
+  expect(await (await scopes()).json()).toEqual(saved);
   // Replaying the callback (a reload, Back) fails and says why with a code: the state is used, so it lands on the start.
   const replay = await owner(`/api/app/connectors/oauth/callback?state=${url.searchParams.get("state")}&code=abc`);
   expect(replay.headers.get("location")).toBe("http://localhost:3000/?connector_error=used");
@@ -307,7 +330,7 @@ type Listed = {
   brandColor: string | null;
 };
 
-test("catalog: one list of our connectors and the one-click MCP servers, one entry per service, brand icons", async () => {
+test("catalog: one list of our connectors and the one-click MCP servers, one entry per service, local icons", async () => {
   t = await createTestServer();
   const owner = browser(t);
   await signUp(owner, "owner@example.com");
@@ -343,9 +366,10 @@ test("catalog: one list of our connectors and the one-click MCP servers, one ent
   expect(byId("square")).toMatchObject({ iconUrl: "/connectors/square.svg", brandColor: null });
   expect(byId("paypal")).toMatchObject({ iconUrl: "/brands/paypal.svg", brandColor: null });
   expect(byId("canva")).toMatchObject({ iconUrl: "/brands/canva.svg", brandColor: null });
-  // A preset that declares the product's neutral plug icon does not invent a vendor mark.
-  expect(byId("stitch")).toMatchObject({ iconUrl: "/connectors/plug.svg", brandColor: null });
-  // Every connector in the catalog has its mark, a file in the web app: none is left a monogram.
+  // Stitch's preset deliberately uses our generic connector glyph, not another service's brand mark.
+  expect(mcpPreset("stitch")?.icon).toBe("plug");
+  expect(byId("stitch")).toMatchObject({ kind: "remote_mcp", iconUrl: "/connectors/plug.svg", brandColor: null });
+  // Every connector still resolves to an actual icon file in the web app; none is left a monogram.
   const publicDir = new URL("../../web/public", import.meta.url).pathname;
   for (const c of connectors) {
     expect([c.id, c.iconUrl !== null && existsSync(`${publicDir}${c.iconUrl}`)]).toEqual([c.id, true]);
@@ -465,7 +489,7 @@ test("connector tools API: classified on listing (judge for ambiguous names), se
   await signUp(owner, "owner@example.com");
   const { orgId } = await seedOrg(owner);
   const res = await owner(`/api/app/organizations/${orgId}/connectors/custom`, {
-    json: { serverUrl: "https://ads.example.com/mcp", apiKey: "synthetic", label: "Ads" },
+    json: { serverUrl: "https://ads.example.com/mcp", apiKey: "ads_secret_12345", label: "Ads" },
   });
   expect(res.status).toBe(200);
   const started = (await res.json()) as {
@@ -621,12 +645,13 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
         servers: { id: string; label: string; accountLabel: string | null }[];
       }
     ).servers;
-  const levels = async () =>
-    (
-      (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as {
-        connectors: { label: string; state: string }[];
-      }
-    ).connectors.map((c) => [c.label, c.state]);
+  const access = async () =>
+    (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as AccessTree;
+  const levels = async () => (await access()).connectors.map((c) => [c.label, c.state]);
+  const scopes = async () =>
+    (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`)).json()) as {
+      scopes: { connectionId: string | null; scope: string }[];
+    };
 
   const first = await signIn(await start(), "acme");
   const [acme] = await servers();
@@ -635,22 +660,54 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
   expect(first).toBe(
     `http://localhost:3000/settings/connectors?connected=${encodeURIComponent(`custom:${acme.id}`)}&outcome=connected`,
   );
-  // Each account starts without agent access, including another account of the same service.
+  // Another account is a separate credential; neither fresh connection grants agent access.
   expect(await signIn(await start(), "loja")).toContain("&outcome=connected");
   expect((await servers()).map((s) => s.label)).toEqual(["Stripe (Acme)", "Stripe (Loja B)"]);
   expect(await levels()).toEqual([
     ["Stripe (Acme)", "off"],
     ["Stripe (Loja B)", "off"],
   ]);
-  const granted = await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`, {
-    method: "PUT",
-    json: { all: false, connectors: { [acme.id]: true }, scopes: [], tools: { allow: [], deny: [] } },
-  });
-  expect(granted.status).toBe(200);
-  expect(await levels()).toEqual([
-    ["Stripe (Acme)", "granted"],
-    ["Stripe (Loja B)", "off"],
-  ]);
+  const loja = (await servers()).find((s) => s.id !== acme.id);
+  if (!loja) throw new Error("Loja B didn't connect");
+  const previous = await scopes();
+  const readGrant = { connectionId: acme.id, scope: `custom:${acme.id}:read` };
+  const putScopes = (grants: typeof previous.scopes) =>
+    owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`, { method: "PUT", json: { scopes: grants } });
+  expect((await putScopes([...previous.scopes, readGrant])).status).toBe(200);
+  const saved = await scopes();
+  expect(saved.scopes).toContainEqual(readGrant);
+  expect(saved.scopes.filter((s) => s.connectionId !== null)).toEqual([readGrant]);
+  const checkReadAccess = async (label = "Stripe (Acme)") => {
+    const tree = await access();
+    expect(tree.all).toBe(false);
+    const selected = tree.connectors.find((c) => c.connectionId === acme.id);
+    if (!selected) throw new Error("Acme is missing from the access tree");
+    expect(selected).toMatchObject({ label, state: "off" });
+    const readScope = selected.scopes.find((s) => s.scope === readGrant.scope);
+    if (!readScope) throw new Error("Acme's classified read scope is missing");
+    expect(readScope.state).toBe("granted");
+    expect(readScope.tools.length).toBeGreaterThan(0);
+    expect(readScope.tools.every((tool) => tool.state === "granted")).toBe(true);
+    for (const scope of selected.scopes.filter((s) => s.scope !== readGrant.scope)) {
+      expect(scope.state).toBe("off");
+      expect(scope.tools.every((tool) => tool.state === "off")).toBe(true);
+    }
+    const other = tree.connectors.find((c) => c.connectionId === loja.id);
+    if (!other) throw new Error("Loja B is missing from the access tree");
+    expect(other.state).toBe("off");
+    expect(other.scopes.flatMap((s) => s.tools).length).toBeGreaterThan(0);
+    for (const scope of other.scopes) {
+      expect(scope.state).toBe("off");
+      expect(scope.tools.every((tool) => tool.state === "off")).toBe(true);
+    }
+    expect(await scopes()).toEqual(saved);
+  };
+  await checkReadAccess();
+  // A scope belonging to the other account cannot be attached to this connection, or replace its valid grant.
+  expect(
+    (await putScopes([...previous.scopes, { connectionId: acme.id, scope: `custom:${loja.id}:read` }])).status,
+  ).toBe(400);
+  await checkReadAccess();
   // The same account again: nothing new.
   expect(await signIn(await start(), "acme")).toContain("&outcome=same_account");
   expect(await servers()).toHaveLength(2);
@@ -663,6 +720,7 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
     "http://localhost:3000/settings/connectors?connector_error=connector.account_unknown",
   );
   expect(await signIn(await start(acme.id), "acme")).toContain("&outcome=reconnected");
+  await checkReadAccess();
   // With a key: the outcome in the answer.
   const keyed = await owner(`/api/app/organizations/${orgId}/connectors/custom`, {
     json: { serverUrl: "https://mcp.stripe.com", apiKey: "rk_loja_secretkey", label: "Stripe" },
@@ -674,6 +732,7 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
   const renamed = await rename("Loja Acme");
   expect(renamed.status).toBe(200);
   expect(await renamed.json()).toMatchObject({ id: acme.id, label: "Loja Acme" });
+  await checkReadAccess("Loja Acme");
   const taken = await rename("stripe (loja b)");
   expect(taken.status).toBe(409);
   expect(((await taken.json()) as { error: { code: string } }).error.code).toBe("connector.label_taken");

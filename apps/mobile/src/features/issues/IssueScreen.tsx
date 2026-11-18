@@ -14,6 +14,7 @@ import {
   useIssueColumns,
   useTaskUnread,
 } from "@agenteschat/client";
+import { deliveryReportView } from "@agenteschat/client/lib/delivery-report";
 import { errorText } from "@agenteschat/client/lib/errors";
 import { capitalize, dueLabel, relativeTime } from "@agenteschat/client/lib/format";
 import { githubLinkLabel, isGithubLink } from "@agenteschat/client/lib/github-link";
@@ -130,6 +131,7 @@ function IssueView({ number, focusId }: { number: number; focusId: string | null
   const sheet = useSheet();
   // Out of reach since it opened (someone changed who sees it): what's on screen goes.
   const i = issue.error instanceof ApiError && issue.error.status === 404 ? undefined : issue.data;
+  const deliveryDenied = issue.error instanceof ApiError && [401, 403, 404].includes(issue.error.status);
   const openConversation = useOpenConversation();
   // A notice or a link named a message of its conversation: straight there, once.
   const focused = useRef(false);
@@ -182,6 +184,9 @@ function IssueView({ number, focusId }: { number: number; focusId: string | null
         >
           <Head issue={i} />
           <WorkCard issue={i} />
+          {i.deliveryReport && !deliveryDenied ? (
+            <DeliveryCard stored={i.deliveryReport} sourceReadFailed={issue.isError} />
+          ) : null}
           <IssueWorkLine issue={i} style={styles.section} />
           <ConversationRow issue={i} onOpen={() => openConversation(i)} />
           <Description issue={i} />
@@ -440,6 +445,69 @@ function GithubLinkForm({ issue: i }: { issue: Issue }) {
         />
       ) : null}
     </>
+  );
+}
+
+/** Time keeps advancing even when a task has no worker and a refresh fails. */
+function DeliveryCard({
+  stored,
+  sourceReadFailed,
+}: {
+  stored: NonNullable<Issue["deliveryReport"]>;
+  sourceReadFailed: boolean;
+}) {
+  const now = useNow(1_000);
+  const surface = useSurface();
+  const report = deliveryReportView(stored, now, { sourceReadFailed });
+  if (!report) return null;
+  return (
+    <View style={[styles.work, surface]}>
+      <Text variant="body" style={styles.bold}>
+        交付驗證
+      </Text>
+      <Text variant="body">{report.userVisibleOutcome}</Text>
+      <Text variant="small" tone="muted">
+        點樣用：{report.howToUse}
+      </Text>
+      {report.publicTargets.map((target) => (
+        <View key={target.label}>
+          <Text variant="body">
+            {target.label}：{target.text}
+          </Text>
+          {target.missingGates.length ? (
+            <Text variant="small" tone="muted">
+              尚欠：{target.missingGates.join("、")}
+            </Text>
+          ) : null}
+        </View>
+      ))}
+      {!report.publicTargets.length && report.missingGateLabels.length ? (
+        <Text variant="small" tone="muted">
+          尚欠：{report.missingGateLabels.join("、")}
+        </Text>
+      ) : null}
+      {report.targetsOmitted > 0 ? (
+        <Text variant="small" tone="muted">
+          另有 {report.targetsOmitted} 個目標資料未完整，需繼續核實。
+        </Text>
+      ) : null}
+      <Text variant="small" tone="muted">
+        {report.ownerStatus}
+      </Text>
+      <Text variant="small" tone="muted">
+        {report.ownerDecisionRequired === null
+          ? "是否需要負責人決定：待核實。"
+          : report.ownerDecisionRequired
+            ? "有已記錄嘅事項需要負責人決定。"
+            : "今次資料未顯示需要負責人決定。"}
+      </Text>
+      <Text variant="body">下一步：{report.nextStep}</Text>
+      {report.freshness.generatedAt ? (
+        <Text variant="small" tone="muted">
+          狀態整理時間：{new Date(report.freshness.generatedAt).toLocaleString("zh-HK")}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 

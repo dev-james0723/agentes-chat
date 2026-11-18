@@ -1,9 +1,11 @@
+import { githubAppConfig } from "@agenteschat/config";
 import {
   askAgentToImplement,
   commentIssue,
   createIssue,
   createIssueColumn,
   createIssueProject,
+  createNativeDeliveryService,
   deleteIssue,
   deleteIssueColumn,
   deleteIssueProject,
@@ -14,6 +16,8 @@ import {
   listIssueColumns,
   listIssueProjects,
   listIssues,
+  type NativeDeliveryBindingView,
+  nativeDeliveryBindingChangeSchema,
   openTaskConversation,
   PROJECT_NAME_MAX,
   ROLE_COLORS,
@@ -24,6 +28,7 @@ import {
   updateIssueProject,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
+import { reconcileDelivery, renderFounderReport } from "../../../../../scripts/delivery/reconcile.mjs";
 import {
   type AppDeps,
   body,
@@ -33,6 +38,7 @@ import {
   noContent,
   OrgParams,
   requireSession,
+  routineConnectorDeps,
   security,
 } from "./context";
 import { AudienceChoice, WorkView } from "./schemas";
@@ -80,10 +86,117 @@ const Conversation = ConversationRef.extend({
   working: z.boolean().openapi({ description: "An agent's turn is live in it." }),
 });
 
+const DeliveryBinding = z
+  .object({
+    state: z.enum(["missing", "configured", "revoked", "untrusted", "conflict"]),
+    revision: z.uuid().nullable(),
+    taskId: z.uuid(),
+    projectId: z.uuid().nullable(),
+    authorityGranted: z.literal(false),
+    reasonCodes: z.array(z.string()),
+    repository: z
+      .object({
+        id: z.string(),
+        host: z.literal("github.com"),
+        owner: z.string(),
+        repo: z.string(),
+        defaultBranch: z.string(),
+        connectionId: z.uuid(),
+        observedAt: z.string(),
+      })
+      .optional(),
+    releaseOwnerId: z.uuid().nullable().optional(),
+    targets: z
+      .array(
+        z.object({
+          id: z.string(),
+          kind: z.enum(["agent_chats_local", "macos_app"]),
+          environment: z.string(),
+          verificationState: z.literal("unknown"),
+        }),
+      )
+      .optional(),
+  })
+  .openapi("TaskDeliveryBinding");
+
+const DeliveryTargetState = z.enum(["available", "unavailable", "unknown", "stale", "not_run"]);
+const DeliveryReport = z
+  .object({
+    locale: z.literal("zh-HK"),
+    userVisibleOutcome: z.string().max(1000),
+    howToUse: z.string().max(1000),
+    currentAvailability: z.enum(["available", "partial", "unavailable", "unknown", "stale", "not_run"]),
+    publicTargets: z
+      .array(
+        z.object({
+          label: z.string().max(80),
+          state: DeliveryTargetState,
+          text: z.string().max(500),
+          missingGates: z.array(z.string().max(80)).max(10),
+        }),
+      )
+      .max(128),
+    targetsOmitted: z.number().int().min(0),
+    missingGateLabels: z.array(z.string().max(80)).max(10),
+    ownerStatus: z.string().max(200),
+    nextStep: z.string().max(1000),
+    ownerDecisionRequired: z.boolean().nullable(),
+    freshness: z.object({
+      generatedAt: z.string().datetime().nullable(),
+      result: z.enum(["pass", "fail", "unknown", "stale", "not_run", "not_applicable"]),
+      coverage: z.enum(["complete", "incomplete"]),
+    }),
+    isAuthorizationGrant: z.literal(false),
+  })
+  .openapi("IssueDeliveryReport");
+
+/** A display projection after task ACLs; a repository relation supplies no verified delivery evidence. */
+function publicDeliveryReport(binding: NativeDeliveryBindingView): z.infer<typeof DeliveryReport> {
+  const now = Date.now();
+  const projection = reconcileDelivery(
+    {
+      taskId: binding.taskId,
+      projectId: binding.projectId,
+      repositoryId: binding.repository?.id,
+      branch: binding.repository?.defaultBranch,
+      targetIds: binding.state === "configured" ? (binding.targets?.map((target) => target.id) ?? []) : [],
+    },
+    null,
+    { now },
+  );
+  const report = renderFounderReport(projection, { now });
+  // Explicit public fields only: raw IDs, owner references and technical evidence remain in native records.
+  return DeliveryReport.parse({
+    locale: report.locale,
+    userVisibleOutcome: report.userVisibleOutcome,
+    howToUse: report.howToUse,
+    currentAvailability: report.currentAvailability,
+    publicTargets: report.publicTargets,
+    targetsOmitted: report.targetsOmitted,
+    missingGateLabels: report.missingGateLabels,
+    ownerStatus: report.ownerStatus,
+    nextStep: report.nextStep,
+    ownerDecisionRequired: report.ownerDecisionRequired,
+    freshness: {
+      generatedAt: report.freshness.observedAt,
+      result: report.freshness.result,
+      coverage: report.freshness.coverage,
+    },
+    isAuthorizationGrant: false,
+  });
+}
+
 const Issue = z
   .object({
     id: z.uuid(),
     number: z.number(),
+    deliveryBinding: DeliveryBinding.optional().openapi({
+      description:
+        "Owner-configured repository relation. This is never release authority or verified runtime availability.",
+    }),
+    deliveryReport: DeliveryReport.optional().openapi({
+      description: "Public delivery display; generatedAt is calculation time, never verified runtime evidence.",
+    }),
     title: z.string(),
     description: z.string(),
     status: Status,
@@ -194,6 +307,14 @@ export function issueRoutes(deps: AppDeps) {
   app.use("/organizations/*", requireSession(deps.auth));
   const issues: IssueDeps = { db, pubsub: adapters.pubsub };
   const person = (userId: string) => ({ type: "person" as const, userId });
+  const delivery = createNativeDeliveryService({
+    connectors: routineConnectorDeps(deps),
+    pubsub: adapters.pubsub,
+    github: {
+      app: () => (deps.extras?.githubApp ? deps.extras.githubApp.current() : githubAppConfig(deps.config)),
+      http: { apiUrl: "https://api.github.com", fetch: deps.extras?.http ?? fetch },
+    },
+  });
 
   app.openapi(
     createRoute({
@@ -241,7 +362,18 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, number } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { number }), 200);
+      const actor = person(c.get("user").id);
+      const issue = await getIssueDetail(db, actor, orgId, { number });
+      const deliveryBinding = await delivery.readBinding(actor, orgId, issue.id);
+      return c.json(
+        {
+          ...issue,
+          ...(deliveryBinding.state === "missing"
+            ? {}
+            : { deliveryBinding, deliveryReport: publicDeliveryReport(deliveryBinding) }),
+        },
+        200,
+      );
     },
   );
 
@@ -257,7 +389,18 @@ export function issueRoutes(deps: AppDeps) {
     }),
     async (c) => {
       const { orgId, issueId } = c.req.valid("param");
-      return c.json(await getIssueDetail(db, person(c.get("user").id), orgId, { id: issueId }), 200);
+      const actor = person(c.get("user").id);
+      const issue = await getIssueDetail(db, actor, orgId, { id: issueId });
+      const deliveryBinding = await delivery.readBinding(actor, orgId, issueId);
+      return c.json(
+        {
+          ...issue,
+          ...(deliveryBinding.state === "missing"
+            ? {}
+            : { deliveryBinding, deliveryReport: publicDeliveryReport(deliveryBinding) }),
+        },
+        200,
+      );
     },
   );
 
@@ -316,37 +459,48 @@ export function issueRoutes(deps: AppDeps) {
       request: {
         params: IssueParams,
         body: body(
-          z.object({
-            title: z.string().min(1).max(300).optional(),
-            description: z.string().max(50_000).optional(),
-            status: Status.optional(),
-            columnId: z
-              .uuid()
-              .optional()
-              .openapi({ description: "Move to a board column; the issue takes that column's stage." }),
-            boardRank: z.number().optional().openapi({ description: "Its order inside the column (lowest first)." }),
-            priority: Priority.optional(),
-            assignee: Actor.nullable().optional(),
-            dueDate: DueDate.optional(),
-            labels: z.array(z.string().max(40)).max(20).optional(),
-            projectId: ProjectId.optional(),
-            githubUrl: GithubUrl.optional(),
-            criteria: z
-              .array(z.object({ id: z.string().optional(), text: z.string().max(500) }))
-              .max(50)
-              .optional()
-              .openapi({
-                description:
-                  "The whole list of acceptance criteria, in order: an `id` keeps that criterion (and its check), one without is new, one left out is removed.",
-              }),
-          }),
+          z
+            .object({
+              title: z.string().min(1).max(300).optional(),
+              description: z.string().max(50_000).optional(),
+              status: Status.optional(),
+              columnId: z
+                .uuid()
+                .optional()
+                .openapi({ description: "Move to a board column; the issue takes that column's stage." }),
+              boardRank: z.number().optional().openapi({ description: "Its order inside the column (lowest first)." }),
+              priority: Priority.optional(),
+              assignee: Actor.nullable().optional(),
+              dueDate: DueDate.optional(),
+              labels: z.array(z.string().max(40)).max(20).optional(),
+              projectId: ProjectId.optional(),
+              githubUrl: GithubUrl.optional(),
+              deliveryBinding: nativeDeliveryBindingChangeSchema.optional(),
+              criteria: z
+                .array(z.object({ id: z.string().optional(), text: z.string().max(500) }))
+                .max(50)
+                .optional()
+                .openapi({
+                  description:
+                    "The whole list of acceptance criteria, in order: an `id` keeps that criterion (and its check), one without is new, one left out is removed.",
+                }),
+            })
+            .refine((value) => value.deliveryBinding === undefined || Object.keys(value).length === 1, {
+              message: "Send a delivery binding change by itself so its revision comparison is atomic.",
+            }),
         ),
       },
       responses: { 200: json(Issue), ...errors },
     }),
     async (c) => {
       const { orgId, issueId } = c.req.valid("param");
-      return c.json(await updateIssue(issues, person(c.get("user").id), orgId, issueId, c.req.valid("json")), 200);
+      const actor = person(c.get("user").id);
+      const input = c.req.valid("json");
+      if (input.deliveryBinding !== undefined) {
+        const deliveryBinding = await delivery.changeBinding(actor, orgId, issueId, input.deliveryBinding);
+        return c.json({ ...(await getIssueDetail(db, actor, orgId, { id: issueId })), deliveryBinding }, 200);
+      }
+      return c.json(await updateIssue(issues, actor, orgId, issueId, input), 200);
     },
   );
 

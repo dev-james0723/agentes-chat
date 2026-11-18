@@ -25,6 +25,7 @@ import { fedByRoutine, type RunAuthority, runAuthorityById, UUID } from "../auth
 import { type CostKind, costlyGate, costlyKind, LONG_STEPS, unrequested } from "../brakes";
 import { countToolCall } from "../connector-usage";
 import { actionLevel, nameWords, openEnded } from "../connectors/classify";
+import { createDeliveryApprovalHandoff } from "../connectors/delivery-guard";
 import { missingConnectors, type ServerCatalog } from "../connectors/listing";
 import { answersAgentsOnly, consultationOrigin } from "../consultations";
 import { recordOutcome } from "../context/outcomes";
@@ -962,7 +963,13 @@ export function createToolGateway(deps: {
       params: approval.params,
     });
     const tool = (await allTools(ctx)).get(approval.tool);
+    const approvalCtx: ToolContext = { ...ctx, toolUseId };
+    const deliveryHandoff = tool ? createDeliveryApprovalHandoff(approvalCtx, tool, approval) : undefined;
+    const checkCtx: ToolContext = deliveryHandoff
+      ? { ...approvalCtx, deliveryApproval: deliveryHandoff.checking }
+      : ctx;
     // Why the approved action can't run any more; null = it may.
+    let refusalData: Record<string, unknown> | undefined;
     const refusal = async (): Promise<string | null> => {
       if (expected !== approval.actionHash) return "Approval does not match the action";
       if (!tool || tool.scope !== approval.scope || (tool.connectionId ?? null) !== approval.connectionId)
@@ -971,79 +978,100 @@ export function createToolGateway(deps: {
       if (!isAllowed(access.state))
         return `Not allowed: this agent lost the scope ${access.of.scope} since the approval. An admin can give it back on the agent's page in Tools and access (in Portuguese, Ferramentas e acesso); then asking again runs it`;
       // Rules about the arguments again: a repository or recipient may have been removed while waiting.
-      const check = await checkToolCall(tool, approval.params, ctx);
+      const check = await checkToolCall(tool, approval.params, checkCtx);
+      if (!check.ok) refusalData = check.data;
       return check.ok ? null : check.message;
     };
     let output: ToolOutput;
     let outside = false;
-    const refused = await refusal();
-    if (refused || !tool) output = { content: refused ?? "Not allowed", isError: true };
-    else {
-      // Claim the execution first: a retried job never runs the action twice. One approved ahead may have been
-      // withdrawn or lapsed since it was read: only a row still approved runs.
-      const claimed = await ctx.db
-        .update(approvals)
-        .set({ executedAt: now() })
-        .where(
-          sql`${approvals.id} = ${approval.id} and ${approvals.executedAt} is null
-            and (${approvals.runAt} is null or ${approvals.status} = 'approved')`,
-        )
-        .returning({ id: approvals.id });
-      if (claimed.length === 0) {
-        const [row] = await ctx.db
-          .select({ result: approvals.result, status: approvals.status })
-          .from(approvals)
-          .where(sql`${approvals.id} = ${approval.id}`);
-        if (approval.runAt && row?.status !== "approved") {
-          return { content: "This action was not approved", isError: true };
-        }
-        return ranBefore(row ?? approval);
-      }
-      const runCtx: ToolContext = { ...ctx, toolUseId, approved: true };
-      if (
-        deps.nativeSkillReads &&
-        (await nativeSkillReadTargeted(runCtx, tool, approval.params, deps.nativeSkillReads))
-      ) {
-        const [step] = await ctx.db
-          .select({ id: schema.agentRunSteps.id })
-          .from(schema.agentRunSteps)
+    let refused: string | null = null;
+    try {
+      refused = await refusal();
+      if (refused || !tool)
+        output = { content: refused ?? "Not allowed", isError: true, ...(refusalData ? { data: refusalData } : {}) };
+      else {
+        // Claim the execution first: a retried job never runs the action twice. One approved ahead may have been
+        // withdrawn or lapsed since it was read: only a row still approved runs.
+        const claimed = await ctx.db
+          .update(approvals)
+          .set({ executedAt: now() })
           .where(
-            and(
-              eq(schema.agentRunSteps.orgId, ctx.orgId),
-              eq(schema.agentRunSteps.runId, ctx.runId),
-              eq(schema.agentRunSteps.kind, "tool_call"),
-              sql`${schema.agentRunSteps.data}->>'toolUseId' = ${toolUseId}`,
-              sql`${schema.agentRunSteps.data}->>'name' = ${tool.name}`,
-            ),
+            sql`${approvals.id} = ${approval.id} and ${approvals.executedAt} is null
+            and (${approvals.runAt} is null or ${approvals.status} = 'approved')`,
           )
-          .orderBy(schema.agentRunSteps.seq)
-          .limit(1);
-        const nativeCall = await beginNativeSkillRead(
-          runCtx,
-          tool,
-          step?.id,
-          approval.params,
-          deps.nativeSkillReads,
-          await authorityOf(runCtx),
-        );
-        output = nativeCall
-          ? await completeNativeSkillRead(runCtx, nativeCall, await run(tool, approval.params, runCtx, 1))
-          : refuseNativeSkillRead(runCtx);
-      } else output = await run(tool, approval.params, runCtx, 1);
-      outside = readsOutsideText(tool, output);
-      // Team actions (ADR 0064): what a person approved and went out is the team's too.
-      if (isOutsideTool(tool) && !output.isError) {
-        await recordTeamAction(ctx.db, {
-          orgId: ctx.orgId,
-          agentId: ctx.agentId,
-          runId: ctx.runId || null,
-          channelId: approval.channelId,
-          source: "approval",
-          tool: tool.name,
-          summary: summarizeCall(tool, approval.params),
-          targets: callTargets(approval.params, output.data),
-        });
+          .returning({ id: approvals.id, executedAt: approvals.executedAt });
+        const claim = claimed[0];
+        if (!claim) {
+          const [row] = await ctx.db
+            .select({ result: approvals.result, status: approvals.status })
+            .from(approvals)
+            .where(sql`${approvals.id} = ${approval.id}`);
+          if (approval.runAt && row?.status !== "approved") {
+            return { content: "This action was not approved", isError: true };
+          }
+          return ranBefore(row ?? approval);
+        }
+        if (deliveryHandoff && !claim.executedAt)
+          return {
+            content: "The native approval execution claim could not be verified. The provider was not called.",
+            isError: true,
+            data: {
+              deliveryGuardian: {
+                status: "blocked",
+                reasonCodes: ["native_approval_claim_missing"],
+                isAuthorizationGrant: false,
+              },
+            },
+          };
+        const runCtx: ToolContext = { ...ctx, toolUseId, approved: true };
+        if (deliveryHandoff && claim.executedAt) runCtx.deliveryApproval = deliveryHandoff.claim(claim.executedAt);
+        if (
+          deps.nativeSkillReads &&
+          (await nativeSkillReadTargeted(runCtx, tool, approval.params, deps.nativeSkillReads))
+        ) {
+          const [step] = await ctx.db
+            .select({ id: schema.agentRunSteps.id })
+            .from(schema.agentRunSteps)
+            .where(
+              and(
+                eq(schema.agentRunSteps.orgId, ctx.orgId),
+                eq(schema.agentRunSteps.runId, ctx.runId),
+                eq(schema.agentRunSteps.kind, "tool_call"),
+                sql`${schema.agentRunSteps.data}->>'toolUseId' = ${toolUseId}`,
+                sql`${schema.agentRunSteps.data}->>'name' = ${tool.name}`,
+              ),
+            )
+            .orderBy(schema.agentRunSteps.seq)
+            .limit(1);
+          const nativeCall = await beginNativeSkillRead(
+            runCtx,
+            tool,
+            step?.id,
+            approval.params,
+            deps.nativeSkillReads,
+            await authorityOf(runCtx),
+          );
+          output = nativeCall
+            ? await completeNativeSkillRead(runCtx, nativeCall, await run(tool, approval.params, runCtx, 1))
+            : refuseNativeSkillRead(runCtx);
+        } else output = await run(tool, approval.params, runCtx, 1);
+        outside = readsOutsideText(tool, output);
+        // Team actions (ADR 0064): what a person approved and went out is the team's too.
+        if (isOutsideTool(tool) && !output.isError) {
+          await recordTeamAction(ctx.db, {
+            orgId: ctx.orgId,
+            agentId: ctx.agentId,
+            runId: ctx.runId || null,
+            channelId: approval.channelId,
+            source: "approval",
+            tool: tool.name,
+            summary: summarizeCall(tool, approval.params),
+            targets: callTargets(approval.params, output.data),
+          });
+        }
       }
+    } finally {
+      deliveryHandoff?.close();
     }
     await ctx.db
       .update(approvals)

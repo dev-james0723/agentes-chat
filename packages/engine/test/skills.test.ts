@@ -343,6 +343,98 @@ describe("import", () => {
     expect(v2.pendingUpdate).toBeNull();
   });
 
+  test("optional skill content-version CAS refuses stale edits without changing resources or assignments", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "upload",
+      files: [{ path: "guide.md", data: new TextEncoder().encode("Preserve these exact bytes.") }],
+    });
+    await setAgentSkills(f.db, f.owner.id, f.org.id, f.agent.id, [{ skillId: original.id, enabled: true }]);
+    await f.db
+      .update(schema.skills)
+      .set({ locked: true, agentsImprove: false, defaultForNewAgents: true })
+      .where(eq(schema.skills.id, original.id));
+    const current = await updateSkill(deps, f.owner.id, f.org.id, original.id, { body: "# Current revision" });
+    expect(current).toMatchObject({ version: 2, locked: true, agentsImprove: false });
+    const before = await loadSkill(f.db, f.org.id, original.id);
+    const files = await f.db.select().from(schema.skillFiles);
+    const assignments = await f.db.select().from(schema.agentSkills);
+    const scopes = await f.db.select().from(schema.agentScopes);
+    const audits = await f.db.select().from(schema.auditLog);
+    const stale = { expectedVersion: original.version, body: "# Stale replacement", defaultForNewAgents: false };
+
+    await expect(updateSkill(deps, f.owner.id, f.org.id, original.id, stale)).rejects.toMatchObject({
+      code: "skill.version_conflict",
+    });
+    expect(await loadSkill(f.db, f.org.id, original.id)).toEqual(before);
+    expect(await f.db.select().from(schema.skillFiles)).toEqual(files);
+    expect(await f.db.select().from(schema.agentSkills)).toEqual(assignments);
+    expect(await f.db.select().from(schema.agentScopes)).toEqual(scopes);
+    expect(await f.db.select().from(schema.auditLog)).toEqual(audits);
+
+    const accepted = { expectedVersion: current.version, body: "# Guarded edit" };
+    const next = await updateSkill(deps, f.owner.id, f.org.id, original.id, accepted);
+    expect(next).toMatchObject({
+      version: 3,
+      body: "# Guarded edit",
+      locked: true,
+      agentsImprove: false,
+      defaultForNewAgents: true,
+      files: current.files,
+    });
+    expect((await getSkillFile(deps, f.owner.id, f.org.id, original.id, "guide.md")).content).toBe(
+      "Preserve these exact bytes.",
+    );
+    expect(await f.db.select().from(schema.agentSkills)).toEqual(assignments);
+    expect(await f.db.select().from(schema.agentScopes)).toEqual(scopes);
+  });
+
+  test("concurrent skill engine edits with the same expectedVersion have one winner", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "manual",
+    });
+    const a = { expectedVersion: original.version, body: "# Writer A" };
+    const b = { expectedVersion: original.version, body: "# Writer B" };
+    const attempts = await Promise.allSettled([
+      updateSkill(deps, f.owner.id, f.org.id, original.id, a),
+      updateSkill(deps, f.owner.id, f.org.id, original.id, b),
+    ]);
+    expect(attempts.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    const rejected = attempts.filter((x) => x.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: "skill.version_conflict" });
+    const current = await getSkill(f.db, f.owner.id, f.org.id, original.id);
+    expect(current.version).toBe(2);
+    expect(["# Writer A", "# Writer B"]).toContain(current.body);
+  });
+
+  test("skill engine expectedVersion validates its input and cannot revive a deleted skill", async () => {
+    f = await setup();
+    const deps = skillDeps();
+    const original = await saveSkill(deps, f.owner.id, f.org.id, {
+      ...parseSkillMarkdown(SKILL_MD),
+      source: "manual",
+    });
+    for (const expectedVersion of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const invalid = { expectedVersion, body: "# Invalid revision" };
+      await expect(updateSkill(deps, f.owner.id, f.org.id, original.id, invalid)).rejects.toBeInstanceOf(
+        ValidationError,
+      );
+      expect(await getSkill(f.db, f.owner.id, f.org.id, original.id)).toEqual(original);
+    }
+    await deleteSkill(f.db, f.owner.id, f.org.id, original.id);
+    const deleted = { expectedVersion: original.version, body: "# Must not restore" };
+    await expect(updateSkill(deps, f.owner.id, f.org.id, original.id, deleted)).rejects.toBeInstanceOf(NotFoundError);
+    const [row] = await f.db.select().from(schema.skills).where(eq(schema.skills.id, original.id));
+    expect(row).toMatchObject({ version: original.version, body: original.body });
+    expect(row?.deletedAt).toBeInstanceOf(Date);
+  });
+
   test("a manual edit waits for a concurrent full version and preserves its replacement resources", async () => {
     f = await setup();
     const deps = skillDeps();

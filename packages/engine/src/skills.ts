@@ -1387,7 +1387,7 @@ export async function updateSkill(
   actorId: string,
   orgId: string,
   id: string,
-  input: { description?: string; body?: string; defaultForNewAgents?: boolean },
+  input: { description?: string; body?: string; defaultForNewAgents?: boolean; expectedVersion?: number },
 ) {
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
   return deps.db.transaction(async (tx) => {
@@ -1398,6 +1398,15 @@ export async function updateSkill(
       .where(and(eq(skills.id, id), eq(skills.orgId, orgId), isNull(skills.deletedAt)))
       .for("update");
     if (!s) throw new NotFoundError("Skill not found");
+    if (input.expectedVersion !== undefined) {
+      if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1)
+        throw new ValidationError("Expected skill version must be a positive safe integer.");
+      if (s.version !== input.expectedVersion)
+        throw new ConflictError(
+          "The skill changed. Read its current version before editing.",
+          "skill.version_conflict",
+        );
+    }
     if (input.description === undefined && input.body === undefined && input.defaultForNewAgents !== undefined) {
       const [row] = await db
         .update(skills)

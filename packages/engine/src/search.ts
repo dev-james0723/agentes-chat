@@ -35,6 +35,7 @@ import { isQuietNotice } from "./notices";
 import { can, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
 import { isRoutineRoomKey } from "./routine-brief";
+import { builders, extraSources, registerDocumentBuilder } from "./search-registry";
 import { openOrg } from "./standing";
 import { adminChannelSql, fileSeenSql, fileSharedSql, taskSeenSql } from "./task-access";
 import { visibleWikiPageIds } from "./wiki-links";
@@ -47,30 +48,8 @@ export interface SearchDeps {
   gateway: Pick<ModelGateway, "embed">;
 }
 
-/** Builds the search document of one source, or null when it should not be in the index. */
-export type DocumentBuilder = (db: Database, orgId: string, sourceId: string) => Promise<SearchDocument | null>;
-
-type Registry = {
-  builders: Map<SearchKind, DocumentBuilder>;
-  /** Lists the source ids of other kinds for reindexing (registered by their modules). */
-  extraSources: Map<SearchKind, (db: Database, orgId: string) => Promise<string[]>>;
-};
-
-/**
- * The registries sit behind a hoisted function, never a top-level `const`: a module that registers can run before
- * this file's body does (wiki.ts is reached from here through messages → works → missions), and a `const` read then
- * throws "Cannot access before initialization".
- */
-function registry(): Registry {
-  const self = registry as typeof registry & { value?: Registry };
-  self.value ??= { builders: new Map(), extraSources: new Map() };
-  return self.value;
-}
-
-/** Registers how a kind of source becomes a search document (messages, context items, issues, files). */
-export function registerDocumentBuilder(kind: SearchKind, builder: DocumentBuilder) {
-  registry().builders.set(kind, builder);
-}
+// Modules may register builders during an ESM import cycle; the leaf registry is initialized independently.
+export { type DocumentBuilder, registerDocumentBuilder, registerReindexSource } from "./search-registry";
 
 registerDocumentBuilder("message", async (db, orgId, id) => {
   const [m] = await db
@@ -116,7 +95,7 @@ export async function enqueueIndex(tx: Executor, input: { orgId: string; kind: S
 
 /** Job `search.index`: builds the document (or removes it), embeds it if possible, upserts. */
 export async function indexSource(deps: SearchDeps, input: { orgId: string; kind: SearchKind; sourceId: string }) {
-  const builder = registry().builders.get(input.kind);
+  const builder = builders.get(input.kind);
   if (!builder) return;
   const index = await deps.search.forOrg(input.orgId);
   const doc = await builder(deps.db, input.orgId, input.sourceId);
@@ -184,7 +163,7 @@ export async function reindexOrg(
     const docs: SearchDocument[] = [];
     for (const r of rows) {
       if (r.id === cursorId) continue;
-      const doc = await registry().builders.get("message")?.(deps.db, orgId, r.id);
+      const doc = await builders.get("message")?.(deps.db, orgId, r.id);
       if (doc) docs.push(doc);
     }
     await upsertWithEmbeddings(deps, orgId, docs);
@@ -204,15 +183,15 @@ export async function reindexOrg(
   for (let i = 0; i < items.length; i += page) {
     const docs: SearchDocument[] = [];
     for (const it of items.slice(i, i + page)) {
-      const doc = await registry().builders.get("context_item")?.(deps.db, orgId, it.id);
+      const doc = await builders.get("context_item")?.(deps.db, orgId, it.id);
       if (doc) docs.push(doc);
     }
     await upsertWithEmbeddings(deps, orgId, docs);
     indexed += docs.length;
   }
-  for (const [kind, builder] of registry().builders) {
+  for (const [kind, builder] of builders) {
     if (kind === "message" || kind === "context_item" || !wanted(kind)) continue;
-    for (const id of (await registry().extraSources.get(kind)?.(deps.db, orgId)) ?? []) {
+    for (const id of (await extraSources.get(kind)?.(deps.db, orgId)) ?? []) {
       const doc = await builder(deps.db, orgId, id);
       if (doc) {
         await upsertWithEmbeddings(deps, orgId, [doc]);
@@ -221,10 +200,6 @@ export async function reindexOrg(
     }
   }
   return indexed;
-}
-
-export function registerReindexSource(kind: SearchKind, list: (db: Database, orgId: string) => Promise<string[]>) {
-  registry().extraSources.set(kind, list);
 }
 
 /**

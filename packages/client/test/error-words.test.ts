@@ -600,3 +600,20 @@ describe("every refusal has words", () => {
     expect([...PLAIN_LINE].filter((code) => !codes.includes(code) || hasWordsFor(code))).toEqual([]);
   });
 });
+
+test("delivery and imported-routine refusals use existing localized reason families, never raw server fields", () => {
+  const cases = [
+    [403, "delivery_binding.owner_required", "common.notAllowed"],
+    [409, "delivery_binding.revision_conflict", "errors.said.changed"],
+    [409, "skill.version_conflict", "errors.said.changed"],
+    [400, "delivery_binding.project_required", "errors.said.fillIn"],
+    [403, "paperclip.disabled", "errors.said.offHere"],
+    [400, "paperclip.prompt_limit", "errors.said.tooLong"],
+    [409, "paperclip.slot_busy", "errors.said.conflict"],
+  ] as const;
+  for (const t of [pt, en]) {
+    for (const [status, code, key] of cases) {
+      expect(errorText(t, new ApiError(status, code, "private-internal-observation"))).toBe(key);
+    }
+  }
+});

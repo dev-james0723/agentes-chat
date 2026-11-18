@@ -40,21 +40,16 @@ test.each(["done", "error"] as const)(
     const gh = fakeGithub();
     fixture = await setup({ toolSources: [gh.source], reply: () => ({ chunks: ["fallback"] }) });
     await grantScopes(fixture.db, fixture.org.id, fixture.agent.id, ALL_GITHUB_SCOPES);
-    const paired = await pairMachine(
-      { db: fixture.db, pubsub: fixture.pubsub },
-      fixture.owner.id,
-      fixture.org.id,
-      {
-        name: "MacBook",
-        hostname: "mac",
-        os: "darwin",
-        arch: "arm64",
-        version: "0.8.0",
-        protocol: MACHINE_PROTOCOL_VERSION,
-        workspace: "/Users/w/agentes",
-        exec: true,
-      },
-    );
+    const paired = await pairMachine({ db: fixture.db, pubsub: fixture.pubsub }, fixture.owner.id, fixture.org.id, {
+      name: "MacBook",
+      hostname: "mac",
+      os: "darwin",
+      arch: "arm64",
+      version: "0.8.0",
+      protocol: MACHINE_PROTOCOL_VERSION,
+      workspace: "/Users/w/agentes",
+      exec: true,
+    });
     await fixture.db
       .update(schema.agents)
       .set({ machineId: paired.machineId, brain: "claude_code" })

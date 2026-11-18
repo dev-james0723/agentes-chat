@@ -9,6 +9,7 @@ import {
   useIssueColumns,
 } from "@agenteschat/client";
 import { canTalk } from "@agenteschat/client/lib/audience";
+import { deliveryReportView } from "@agenteschat/client/lib/delivery-report";
 import { relativeTime, whenAt } from "@agenteschat/client/lib/format";
 import { githubLinkLabel, isGithubLink } from "@agenteschat/client/lib/github-link";
 import { agentGrammar } from "@agenteschat/client/lib/grammar";
@@ -40,9 +41,10 @@ import {
   TabPanel,
   Tabs,
   useAutoGrow,
+  useNow,
   WorkSweep,
 } from "@agenteschat/ui";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
@@ -111,7 +113,15 @@ export function IssuePage({ number }: { number: number }) {
             )}
           </div>
           {issue.isError && <Alert>{t("issues.notFound")}</Alert>}
-          {i && <IssueDetails issue={i} variant="page" onConversation={() => setTalk(true)} />}
+          {i && (
+            <IssueDetails
+              issue={i}
+              variant="page"
+              onConversation={() => setTalk(true)}
+              deliveryReadFailed={issue.isError}
+              deliveryDenied={isDeniedDeliveryRead(issue.error)}
+            />
+          )}
         </div>
         {talk && i && (
           <SidePanel className="issue-page__talk" label={t("issues.conversation.title")} onClose={() => setTalk(false)}>
@@ -270,11 +280,16 @@ export function IssueDetails({
   issue: i,
   variant,
   onConversation,
+  deliveryReadFailed = false,
+  deliveryDenied = false,
 }: {
   issue: Issue;
   variant: "page" | "dialog";
   /** Opens its conversation beside the details (ADR 0145). */
   onConversation: () => void;
+  /** Current detail-read state affects only the optional delivery display. */
+  deliveryReadFailed?: boolean;
+  deliveryDenied?: boolean;
 }) {
   const { t } = useTranslation();
   const { org } = useOrg();
@@ -302,6 +317,11 @@ export function IssueDetails({
         {variant === "page" && <IssueTitle issue={i} onSaved={flashSaved} />}
       </header>
       <PropsLine issue={i} />
+      {deliveryDenied ? null : variant === "dialog" ? (
+        <DialogDeliveryCard issue={i} />
+      ) : i.deliveryReport ? (
+        <DeliveryCard stored={i.deliveryReport} sourceReadFailed={deliveryReadFailed} />
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={setTab}
@@ -340,6 +360,74 @@ export function IssueDetails({
         </TabPanel>
       </Tabs>
     </div>
+  );
+}
+
+/** A denied read must not leave the previously cached delivery report visible. */
+function isDeniedDeliveryRead(error: unknown) {
+  return error instanceof ApiError && [401, 403, 404].includes(error.status);
+}
+
+/** Board rows omit the delivery projection: read the existing detail on opening, without a polling loop. */
+function DialogDeliveryCard({ issue }: { issue: Issue }) {
+  const api = useApi();
+  const { org } = useOrg();
+  const detail = useQuery({
+    queryKey: keys.issue(org.id, issue.number),
+    queryFn: () => api.issues.get(org.id, issue.number),
+    retry: false,
+    refetchInterval: false,
+  });
+  const stored = isDeniedDeliveryRead(detail.error)
+    ? undefined
+    : detail.data?.id === issue.id
+      ? detail.data.deliveryReport
+      : undefined;
+  return stored ? <DeliveryCard stored={stored} sourceReadFailed={detail.isError} /> : null;
+}
+
+/** The same public report on both web task surfaces; its clock advances independently of task workers or HTTP. */
+function DeliveryCard({
+  stored,
+  sourceReadFailed,
+}: {
+  stored: NonNullable<Issue["deliveryReport"]>;
+  sourceReadFailed: boolean;
+}) {
+  const now = useNow(1_000);
+  const report = deliveryReportView(stored, now, { sourceReadFailed });
+  if (!report) return null;
+  return (
+    <DetailsSection title="交付驗證">
+      <p>{report.userVisibleOutcome}</p>
+      <p className="small muted">點樣用：{report.howToUse}</p>
+      {report.publicTargets.map((target) => (
+        <div key={target.label}>
+          <p>
+            {target.label}：{target.text}
+          </p>
+          {target.missingGates.length ? <p className="small muted">尚欠：{target.missingGates.join("、")}</p> : null}
+        </div>
+      ))}
+      {!report.publicTargets.length && report.missingGateLabels.length ? (
+        <p className="small muted">尚欠：{report.missingGateLabels.join("、")}</p>
+      ) : null}
+      {report.targetsOmitted > 0 ? (
+        <p className="small muted">另有 {report.targetsOmitted} 個目標資料未完整，需繼續核實。</p>
+      ) : null}
+      <p className="small muted">{report.ownerStatus}</p>
+      <p className="small muted">
+        {report.ownerDecisionRequired === null
+          ? "是否需要負責人決定：待核實。"
+          : report.ownerDecisionRequired
+            ? "有已記錄嘅事項需要負責人決定。"
+            : "今次資料未顯示需要負責人決定。"}
+      </p>
+      <p>下一步：{report.nextStep}</p>
+      {report.freshness.generatedAt ? (
+        <p className="small muted">狀態整理時間：{new Date(report.freshness.generatedAt).toLocaleString("zh-HK")}</p>
+      ) : null}
+    </DetailsSection>
   );
 }
 
