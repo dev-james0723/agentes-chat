@@ -153,7 +153,9 @@ function runStep(id, step, { root, out, env }) {
   });
 }
 
-export async function runFull({ root, sha, repository, remote, branch, out, dockerHost, only }) {
+// `minFreeBytes` lowers the disk floor for a partial run only (`only`), so a test can run one step on a small
+// temporary disk; a full run, the only kind a status can come from, always needs MIN_FREE_BYTES.
+export async function runFull({ root, sha, repository, remote, branch, out, dockerHost, only, minFreeBytes }) {
   assertStepTable();
   if (!SHA.test(sha ?? "")) throw Error("invalid_sha");
   if (!REPO.test(repository ?? "")) throw Error("invalid_repository");
@@ -178,7 +180,8 @@ export async function runFull({ root, sha, repository, remote, branch, out, dock
     steps: [],
     review: null,
   };
-  if (!source.ok || freeBytes < MIN_FREE_BYTES) {
+  const floor = only && Number.isSafeInteger(minFreeBytes) && minFreeBytes >= 0 ? minFreeBytes : MIN_FREE_BYTES;
+  if (!source.ok || freeBytes < floor) {
     receipt.finishedAt = new Date().toISOString();
     receipt.blocked = !source.ok ? "source_unverified" : "insufficient_disk";
     writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);

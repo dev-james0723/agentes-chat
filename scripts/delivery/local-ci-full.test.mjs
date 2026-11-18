@@ -91,6 +91,8 @@ test("a step's failure is recorded as failed with its exit code and log hash, an
     branch: "candidate",
     out,
     only: ["shellcheck"],
+    // The temp dir may sit on a small disk (a CI sandbox's tmpfs): the 30 GiB floor is a full run's, not this test's.
+    minFreeBytes: 0,
   });
   assert.equal(r.mode, "partial");
   assert.equal(r.steps.length, 1);
