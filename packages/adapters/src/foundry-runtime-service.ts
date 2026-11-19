@@ -1,5 +1,10 @@
 import { join } from "node:path";
 import {
+  createHostCapabilitySync,
+  type FoundryCapabilityExport,
+  type FoundryCapabilityLookup,
+} from "./foundry-capability-sync";
+import {
   createDockerFoundryRunner,
   createFoundryDockerCli,
   type DockerFoundryOptions,
@@ -40,6 +45,8 @@ export interface FoundryRuntimeServiceConfig
   runtimeToken: string;
   nativeControlUrl: string;
   nativeControlToken: string;
+  /** Optional: James's skills repository clone and its `sync-skill` script, on this host only (SF-19). */
+  skillsSync?: { script: string; repoDir: string };
 }
 /** Dedicated trusted executor transport, not a scheduler/orchestrator. Work is
  * admitted only by the existing native outbox/task/approval records. */
@@ -107,6 +114,27 @@ export function createFoundryRuntimeService(
     if (!Number.isSafeInteger(v) || (v as number) < 1) throw new Error("Invalid fence");
     return v as number;
   };
+  const skills = config.skillsSync ? createHostCapabilitySync(config.skillsSync) : null;
+  const prose = (v: unknown) => {
+    if (typeof v !== "string" || !v.trim() || v.length > 2000) throw new Error("Invalid capability text");
+    return v;
+  };
+  const lookupOf = (v: unknown): FoundryCapabilityLookup => {
+    const q = (v ?? {}) as Record<string, unknown>;
+    if (q.kind !== "skill" && q.kind !== "tool") throw new Error("Invalid capability kind");
+    return { digest: text(q.digest), name: text(q.name), kind: q.kind };
+  };
+  const exported = (v: unknown): FoundryCapabilityExport => {
+    const c = (v ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(c.files) || c.files.length < 1 || c.files.length > 64)
+      throw new Error("Invalid capability files");
+    const files = c.files.map((file) => {
+      const f = (file ?? {}) as Record<string, unknown>;
+      if (typeof f.base64 !== "string" || f.base64.length > 8 * 1024 * 1024) throw new Error("Invalid capability file");
+      return { path: text(f.path), base64: f.base64 };
+    });
+    return { ...lookupOf(c), agent: prose(c.agent), why: prose(c.why), use: prose(c.use), files };
+  };
   const methods: Record<string, FoundryRpcMethod> = {
     qualify: async () => executor.qualify(),
     evaluate: evaluations(
@@ -123,6 +151,12 @@ export function createFoundryRuntimeService(
     cancel: async ({ invocationId, fencingToken }) => executor.cancel(text(invocationId), fence(fencingToken)),
     reconcile: async ({ invocationId }) => executor.reconcile(text(invocationId)),
     resolveEvidence: async ({ orgId, receiptRef }) => evaluator.resolveEvidence(text(orgId), text(receiptRef)),
+    ...(skills
+      ? {
+          syncCapability: async ({ capability }) => skills.sync(exported(capability)),
+          lookupCapability: async ({ query }) => skills.lookup(lookupOf(query)),
+        }
+      : {}),
   };
   const fetch = createFoundryRpcHandler({ token: config.runtimeToken, methods });
   return {

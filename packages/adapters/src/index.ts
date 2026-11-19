@@ -100,6 +100,15 @@ export interface Adapters {
   vaultSources?: VaultSources | null;
 }
 
+export {
+  createHostCapabilitySync,
+  createRemoteCapabilitySync,
+  FOUNDRY_VERSION_FILE,
+  type FoundryCapabilityExport,
+  type FoundryCapabilityLookup,
+  type FoundryCapabilitySyncPort,
+  type FoundryCapabilitySyncResult,
+} from "./foundry-capability-sync";
 export { createRemoteFoundryExecutor } from "./foundry-remote-executor";
 export {
   createFoundryRpcClient,

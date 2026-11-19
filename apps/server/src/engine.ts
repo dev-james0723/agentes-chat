@@ -1,6 +1,7 @@
 import {
   type Adapters,
   type BrainTurnRequest,
+  createRemoteCapabilitySync,
   createRemoteFoundryExecutor,
   type ErrorReporter,
   type S3Fetch,
@@ -404,7 +405,14 @@ export function buildEngine(o: EngineOptions) {
   setWorkOrgCap(config.AGENT_WORK_MAX_PER_ORG);
   const foundryRemote =
     config.FOUNDRY_RUNTIME_URL && config.FOUNDRY_RUNTIME_TOKEN && config.FOUNDRY_CONTROL_TOKEN
-      ? createRemoteFoundryExecutor({ url: config.FOUNDRY_RUNTIME_URL, token: config.FOUNDRY_RUNTIME_TOKEN })
+      ? {
+          ...createRemoteFoundryExecutor({ url: config.FOUNDRY_RUNTIME_URL, token: config.FOUNDRY_RUNTIME_TOKEN }),
+          // The skills repository clone and its git credentials stay with the runtime service on the host (SF-19).
+          capabilitySync: createRemoteCapabilitySync({
+            url: config.FOUNDRY_RUNTIME_URL,
+            token: config.FOUNDRY_RUNTIME_TOKEN,
+          }),
+        }
       : undefined;
   const foundry = createNativeFoundryIntegration({
     db,
