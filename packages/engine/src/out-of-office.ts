@@ -1,8 +1,10 @@
 import type { PlanUsage } from "@agenteschat/adapters";
 import { and, type Database, eq, inArray, schema } from "@agenteschat/db";
+import { isAutoModel } from "@agenteschat/providers";
+import { claudeCodeModel, planOf } from "@agenteschat/providers/plans";
 import type { Agent } from "./agents";
 import { brainOf } from "./brain-settings";
-import { planLimitOf } from "./brains/select";
+import { brainModelFor, planLimitOf } from "./brains/select";
 import { isComputerBrain } from "./brains/types";
 import { monthStartUtc, orgDefaultAgentBudget } from "./usage";
 import { nextMonthStart } from "./usage-pause";
@@ -24,6 +26,7 @@ export type OutOfOfficeAgent = Pick<
   | "model"
   | "credentialId"
   | "brain"
+  | "brainModel"
   | "brainFallback"
   | "brainAccountId"
   | "machineId"
@@ -76,7 +79,10 @@ export async function outOfOffice(
     const account = a.brainAccountId ? accounts.get(a.brainAccountId) : undefined;
     const usable = account && account.machineId === a.machineId && account.kind === kind ? account : undefined;
     const usage = usable ? usable.usage : (machines.get(a.machineId)?.[kind] ?? null);
-    const limited = planLimitOf(a.machineId, kind, usable?.id, usage, ms);
+    const chosen = brainModelFor(kind, a);
+    const model =
+      kind === "claude_code" && !isAutoModel(chosen) ? claudeCodeModel(planOf(usable?.provider), chosen) : chosen;
+    const limited = planLimitOf(a.machineId, kind, usable?.id, usage, ms, model, usable?.provider);
     if (!limited) continue;
     const plan: OutOfOffice = { reason: "plan", until: limited.until !== null ? new Date(limited.until) : null };
     // A conversation falls back to the model brain (ADR 0032 §5): out only when that can't answer either.
@@ -96,6 +102,7 @@ interface AccountUsage {
   id: string;
   machineId: string;
   kind: string;
+  provider: string | null;
   usage: PlanUsage | null;
 }
 
@@ -108,6 +115,7 @@ async function accountUsages(db: Database, orgId: string, list: OutOfOfficeAgent
       id: machineAccounts.id,
       machineId: machineAccounts.machineId,
       kind: machineAccounts.kind,
+      provider: machineAccounts.provider,
       usage: machineAccounts.usage,
     })
     .from(machineAccounts)
@@ -167,6 +175,7 @@ export async function outOfOfficeIds(
       model: agents.model,
       credentialId: agents.credentialId,
       brain: agents.brain,
+      brainModel: agents.brainModel,
       brainFallback: agents.brainFallback,
       brainAccountId: agents.brainAccountId,
       machineId: agents.machineId,
