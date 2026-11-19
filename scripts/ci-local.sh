@@ -29,6 +29,11 @@ need bun "https://bun.sh"
 need shellcheck "brew install shellcheck, or apt-get install shellcheck"
 need gitleaks "brew install gitleaks, or https://github.com/gitleaks/gitleaks/releases"
 
+# One full run at a time on this computer (scripts/ci-lock.sh): runs side by side time each other's tests out.
+# shellcheck source=scripts/ci-lock.sh
+. scripts/ci-lock.sh
+ci_lock "ci-local $(git rev-parse --short HEAD)" || exit 2
+
 echo "local CI on $(git rev-parse --short HEAD), log: $log"
 step "install" "bun install --frozen-lockfile"
 step "lint and format" "bun run lint"
