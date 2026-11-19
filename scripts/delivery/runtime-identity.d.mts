@@ -16,7 +16,7 @@ export type RuntimeCheck =
   | { status: "unknown"; reason: string; revision: string; url: string; expected: SourceIdentity; running: null };
 
 export function inSourceScope(path: string): boolean;
-export function revisionIdentity(root: string, revision: string): SourceIdentity;
+export function revisionIdentity(root: string, revision: string): SourceIdentity & { commit: string };
 export function checkRuntime(
   root: string,
   revision: string,

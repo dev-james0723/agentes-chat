@@ -128,7 +128,7 @@ export async function observeRuntime(o, runtimeUrl, options = {}) {
   try {
     deployment = await checkRuntime(o.worktree, o.head, runtimeUrl, options);
   } catch {
-    deployment = { status: "unknown", reason: "runtime_check_failed" };
+    deployment = { status: "unknown", reason: "runtime_check_failed", url: runtimeUrl };
   }
   const errors = [...o.errors];
   if (deployment.status === "mismatch") errors.push("runtime_mismatch");
@@ -154,6 +154,8 @@ export function founderSummary(o) {
     lines.push(
       `伺服器源碼：同本機 commit 唔一樣（運行中 ${o.deployment.running.digest.slice(0, 19)}，預期 ${o.deployment.expected.digest.slice(0, 19)}）。`,
     );
+  else if (o.deployment.url)
+    lines.push(`伺服器源碼：未能核實（${o.deployment.reason ?? "unknown"}）；commit 或 push 不代表部署完成。`);
   else lines.push("正式版及執行器：未核實；commit 或 push 不代表部署完成。");
   if (o.errors.length) lines.push(`需要處理：${o.errors.join("、")}`);
   if (!o.stable) lines.push("檢查期間程式碼有變，請重新核對。");

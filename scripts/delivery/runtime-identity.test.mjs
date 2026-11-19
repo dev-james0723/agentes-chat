@@ -58,7 +58,7 @@ function expectedDigest(files) {
 
 const health =
   (body, status = 200) =>
-  async () => ({ status, ok: status === 200, json: async () => body });
+  async () => ({ status, ok: status === 200, text: async () => JSON.stringify(body) });
 
 test("the scope is the server's: sources, runner, migrations and manifests; never tests or build output", () => {
   for (const p of [
@@ -84,10 +84,10 @@ test("the scope is the server's: sources, runner, migrations and manifests; neve
 
 test("a revision's identity comes from its tree alone, as the server computes it from its files", (t) => {
   const { root, files, head } = fixture(t);
-  assert.deepEqual(revisionIdentity(root, head), expectedDigest(files));
+  assert.deepEqual(revisionIdentity(root, head), { commit: head, ...expectedDigest(files) });
   // An uncommitted edit changes nothing: the identity is the revision's, not the work tree's.
   writeFileSync(join(root, "apps/server/src/app.ts"), "export const changed = 1\n");
-  assert.deepEqual(revisionIdentity(root, head), expectedDigest(files));
+  assert.deepEqual(revisionIdentity(root, head), { commit: head, ...expectedDigest(files) });
 });
 
 test("a revision that does not exist is refused, never treated as empty", (t) => {
@@ -129,7 +129,7 @@ test("no identity to compare is unknown with its reason, never match", async (t)
       },
       "unreachable",
     ],
-    [async () => ({ status: 200, ok: true, json: async () => JSON.parse("not json") }), "unreachable"],
+    [async () => ({ status: 200, ok: true, text: async () => "not json" }), "unreachable"],
   ];
   for (const [fetch, reason] of cases) {
     const d = await checkRuntime(root, head, "http://127.0.0.1:3000", { fetch });
@@ -143,7 +143,7 @@ test("only an http(s) base address is read, and only its health endpoint", async
   const seen = [];
   const fetch = async (url, init) => {
     seen.push([url, init?.method ?? "GET", init?.redirect]);
-    return { status: 200, ok: true, json: async () => ({ source: expectedDigest(files) }) };
+    return { status: 200, ok: true, text: async () => JSON.stringify({ source: expectedDigest(files) }) };
   };
   await checkRuntime(root, head, "https://agentes.example/", { fetch });
   assert.deepEqual(seen, [["https://agentes.example/api/health", "GET", "error"]]);
@@ -230,4 +230,68 @@ test("the text summary says verified only on a match, and still asks for runner 
   const mismatched = await run("--runtime-url", url, "--text");
   assert.match(mismatched.out, /同本機 commit 唔一樣/);
   assert.equal(mismatched.code, 1);
+});
+
+test("no files is no evidence: an empty identity on either side is unknown, never a match", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "runtime-identity-empty-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "t@example.com");
+  git(root, "config", "user.name", "t");
+  writeFileSync(join(root, "README.md"), "nothing in scope\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "empty scope");
+  const head = git(root, "rev-parse", "HEAD").trim();
+  const empty = revisionIdentity(root, head);
+  assert.equal(empty.files, 0);
+  // A server whose root is wrong hashes to the same empty digest: that is not proof of anything.
+  const d = await checkRuntime(root, head, "http://127.0.0.1:3000", { fetch: health({ source: empty }) });
+  assert.equal(d.status, "unknown");
+  assert.equal(d.reason, "empty_source_identity");
+  // And a server that reports no files against a real revision is unknown too.
+  const { root: r2, head: h2 } = fixture(t);
+  const d2 = await checkRuntime(r2, h2, "http://127.0.0.1:3000", { fetch: health({ source: empty }) });
+  assert.equal(d2.status, "unknown");
+  assert.equal(d2.reason, "empty_source_identity");
+});
+
+test("a base address with a query or fragment is refused, so the health asked is the one meant", async (t) => {
+  const { root, head } = fixture(t);
+  const fetch = health({});
+  for (const bad of ["http://h/staging?x=1", "http://h/staging#top", "https://h/?a"])
+    await assert.rejects(() => checkRuntime(root, head, bad, { fetch }), /runtime URL/);
+  const seen = [];
+  await checkRuntime(root, head, "http://h/staging", {
+    fetch: async (url) => {
+      seen.push(url);
+      return { status: 200, ok: true, text: async () => "{}" };
+    },
+  });
+  assert.deepEqual(seen, ["http://h/staging/api/health"]);
+});
+
+test("a health body over 64 KiB is not read whole: unknown, too_large", async (t) => {
+  const { root, head } = fixture(t);
+  const big = "x".repeat(70 * 1024);
+  const d = await checkRuntime(root, head, "http://127.0.0.1:3000", {
+    fetch: async () => ({ status: 200, ok: true, text: async () => big }),
+  });
+  assert.equal(d.status, "unknown");
+  assert.equal(d.reason, "too_large");
+});
+
+test("the commit compared is the one the identity was computed from, resolved once", async (t) => {
+  const { root, files } = fixture(t);
+  const id = expectedDigest(files);
+  const head = git(root, "rev-parse", "HEAD").trim();
+  const d = await checkRuntime(root, "main", "http://127.0.0.1:3000", { fetch: health({ source: id }) });
+  assert.equal(d.revision, head);
+  assert.equal(revisionIdentity(root, "main").commit, head);
+});
+
+test("the text summary says why the server's source is unverified", async (t) => {
+  const { run } = await guardianAgainst(t);
+  const unreachable = await run("--runtime-url", "http://127.0.0.1:9", "--text");
+  assert.match(unreachable.out, /伺服器源碼：未能核實（unreachable）/);
+  assert.equal(unreachable.code, 1);
 });
