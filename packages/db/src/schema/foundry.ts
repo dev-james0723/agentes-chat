@@ -61,6 +61,12 @@ export const foundryVersions = pgTable(
     evaluationJob: jsonb().$type<Record<string, unknown>>(),
     runtimeDigest: text(),
     profileDigest: text(),
+    /** Skills repository copy (SF-19): null until ACTIVE, then PENDING, UNKNOWN, SYNCED, REFUSED or FAILED. */
+    syncState: text(),
+    syncCommit: text(),
+    syncReason: text(),
+    /** When the creating agent told the approver; set once, with the report message, in one transaction. */
+    syncReportedAt: timestamp({ withTimezone: true }),
     retiredAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
