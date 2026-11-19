@@ -11199,6 +11199,40 @@
   },
   "storage": {
     "title": "存储",
+    "clean": {
+      "title": "清理工作区",
+      "intro": "已结束的任务在智能体电脑上留下的内容。交付物、证据和用途不明的文件都会保留。由你选择要清理哪些临时文件。",
+      "computers": "电脑磁盘",
+      "level": {
+        "ok": "可用 {{free}} GB",
+        "low": "空间不足：可用 {{free}} GB",
+        "critical": "几乎已满：可用 {{free}} GB。新的截图和录屏已暂停。",
+        "unknown": "尚未测量"
+      },
+      "none": "自智能体开始登记文件以来，还没有任务结束。",
+      "task": "任务",
+      "mission": "使命",
+      "ended": {
+        "done": "已完成",
+        "canceled": "已取消"
+      },
+      "kept_other": "保留 {{count}} 个",
+      "candidates_other": "{{count}} 个临时文件，{{size}}",
+      "duplicates_other": "{{count}} 个完全相同的副本",
+      "restorable": "证据：{{restorable}} 个可从 Drive 恢复，{{manifestOnly}} 个仅列出",
+      "approve": "清理临时文件",
+      "approved_other": "已批准 {{count}} 个文件：每个文件删除前都会在其电脑上再次检查。",
+      "status": {
+        "approved": "等待其电脑",
+        "done": "已删除",
+        "skipped": "已不存在",
+        "blocked": "已保留：{{reason}}",
+        "unknown": "尚不确定：稍后再次检查"
+      },
+      "freed": "电脑可用空间：之前 {{before}}，之后 {{after}}",
+      "show": "显示文件",
+      "hide": "隐藏文件"
+    },
     "options": "文件存放位置",
     "agentes": "agentes.chat 存储",
     "agentesText": "你的文件保存在我们的存储中，每个工作区彼此隔离。",

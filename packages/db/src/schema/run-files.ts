@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { bigint, check, foreignKey, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents";
+import { machines } from "./machines";
 import { agentRuns } from "./runtime";
 import { organizations } from "./tenancy";
 
@@ -22,6 +23,8 @@ export const runFiles = pgTable(
     runId: uuid()
       .notNull()
       .references(() => agentRuns.id, { onDelete: "cascade" }),
+    /** The computer the run worked on (ADR 0200). Rows from before it have none and are never cleaned. */
+    machineId: uuid().references(() => machines.id, { onDelete: "set null" }),
     /** Workspace-relative path on the computer, as the agent wrote it. */
     path: text().notNull(),
     /** `image`, `video`, `html`, `markdown`, `log`, `build` or `other`. */
@@ -69,5 +72,48 @@ export const retentionReports = pgTable(
     unique().on(t.orgId, t.subjectType, t.subjectId),
     check("retention_reports_subject", sql`${t.subjectType} in ('issue', 'mission')`),
     check("retention_reports_outcome", sql`${t.outcome} in ('done', 'canceled')`),
+  ],
+);
+
+/**
+ * One file a person approved for cleanup out of a retention report, and what happened to it (ADR 0200): the
+ * approval names the exact file, the job checks it again on the computer before it removes anything, and the row
+ * keeps the receipt (the file's identity, the outcome and its reason, free space before and after). A file is
+ * approved at most once: approving it again changes nothing.
+ */
+export const fileCleanups = pgTable(
+  "file_cleanups",
+  {
+    id: uuid()
+      .primaryKey()
+      .$defaultFn(() => Bun.randomUUIDv7()),
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    reportId: uuid()
+      .notNull()
+      .references(() => retentionReports.id, { onDelete: "cascade" }),
+    /** The registration it came from; kept as a receipt when the row goes (the path and computer stay here). */
+    runFileId: uuid().references(() => runFiles.id, { onDelete: "set null" }),
+    agentId: uuid().notNull(),
+    machineId: uuid(),
+    path: text().notNull(),
+    /** `approved` (waiting for the job), `done`, `skipped` (already gone), `blocked` (a check refused) or `unknown`. */
+    status: text().notNull().default("approved"),
+    /** Why it was blocked or skipped, in words. */
+    reason: text(),
+    /** What the computer saw: device, inode, size, mtime, sha256 when known. */
+    identity: jsonb().$type<Record<string, unknown>>(),
+    bytes: bigint({ mode: "number" }),
+    freeBefore: bigint({ mode: "number" }),
+    freeAfter: bigint({ mode: "number" }),
+    approvedByUserId: text().notNull(),
+    approvedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    executedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    unique().on(t.reportId, t.path, t.agentId),
+    index().on(t.orgId, t.status),
+    check("file_cleanups_status", sql`${t.status} in ('approved', 'done', 'skipped', 'blocked', 'unknown')`),
   ],
 );

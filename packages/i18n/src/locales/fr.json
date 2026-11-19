@@ -12016,6 +12016,48 @@
   },
   "storage": {
     "title": "Stockage",
+    "clean": {
+      "title": "Nettoyer l’espace de travail",
+      "intro": "Ce que les tâches terminées ont laissé sur les ordinateurs des agents. Les livrables, les preuves et tout ce qui n’est pas expliqué restent. Vous choisissez quels fichiers temporaires nettoyer.",
+      "computers": "Disques des ordinateurs",
+      "level": {
+        "ok": "{{free}} Go libres",
+        "low": "Peu d’espace : {{free}} Go libres",
+        "critical": "Presque plein : {{free}} Go libres. Les nouvelles captures et enregistrements sont en pause.",
+        "unknown": "Pas encore mesuré"
+      },
+      "none": "Aucune tâche ne s’est terminée depuis que les agents enregistrent leurs fichiers.",
+      "task": "Tâche",
+      "mission": "Mission",
+      "ended": {
+        "done": "Terminée",
+        "canceled": "Annulée"
+      },
+      "kept_one": "{{count}} conservé",
+      "kept_many": "{{count}} conservés",
+      "kept_other": "{{count}} conservés",
+      "candidates_one": "{{count}} fichier temporaire, {{size}}",
+      "candidates_many": "{{count}} fichiers temporaires, {{size}}",
+      "candidates_other": "{{count}} fichiers temporaires, {{size}}",
+      "duplicates_one": "{{count}} copie exacte",
+      "duplicates_many": "{{count}} copies exactes",
+      "duplicates_other": "{{count}} copies exactes",
+      "restorable": "Preuves : {{restorable}} restaurables depuis le Drive, {{manifestOnly}} seulement listées",
+      "approve": "Nettoyer les fichiers temporaires",
+      "approved_one": "{{count}} fichier approuvé : il est revérifié sur son ordinateur avant d’être supprimé.",
+      "approved_many": "{{count}} fichiers approuvés : chacun est revérifié sur son ordinateur avant d’être supprimé.",
+      "approved_other": "{{count}} fichiers approuvés : chacun est revérifié sur son ordinateur avant d’être supprimé.",
+      "status": {
+        "approved": "En attente de son ordinateur",
+        "done": "Supprimé",
+        "skipped": "Déjà absent",
+        "blocked": "Conservé : {{reason}}",
+        "unknown": "Pas encore sûr : revérifié plus tard"
+      },
+      "freed": "Espace libre sur l’ordinateur : {{before}} avant, {{after}} après",
+      "show": "Voir les fichiers",
+      "hide": "Masquer les fichiers"
+    },
     "options": "Où conserver les fichiers",
     "agentes": "Stockage agentes.chat",
     "agentesText": "Vos fichiers restent dans notre stockage, séparés par espace de travail.",

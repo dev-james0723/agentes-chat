@@ -533,6 +533,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "fr": [
+      "storage.clean.mission",
       "channel.tooLong.fileName",
       "calendar.moreRuns",
       "devices.cpus",
@@ -945,6 +946,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "de": [
+      "storage.clean.mission",
       "devices.iphone.steps.account",
       "devices.workspace",
       "devices.cpus",

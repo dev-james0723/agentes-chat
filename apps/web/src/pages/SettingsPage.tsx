@@ -75,6 +75,7 @@ import { usePlanHold } from "@/components/ai/ConnectAiSteps";
 import { EndpointForm } from "@/components/ai/EndpointForm";
 import { WhoPicksSection } from "@/components/ai/Jev";
 import { BillingLinkButton } from "@/components/BillingLinkButton";
+import { CleanWorkspaceSection } from "@/components/CleanWorkspace";
 import { ConnectorsSection } from "@/components/Connectors";
 import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import type { ConnectStart } from "@/components/devices/ConnectDialog";
@@ -253,7 +254,12 @@ function Settings({
         <ConnectorsSection connected={connected} outcome={outcome} review={review} mail={mail} account={account} />
       )}
       {current === "skills" && <SkillsSection install={install} connected={connected} skill={skill} agent={agent} />}
-      {current === "storage" && <StorageSection />}
+      {current === "storage" && (
+        <>
+          <StorageSection />
+          <CleanWorkspaceSection />
+        </>
+      )}
       {current === "devices" && (device ? <DevicePage path={device} /> : <DevicesSection start={connect} />)}
       {current === "usage" && (
         <>

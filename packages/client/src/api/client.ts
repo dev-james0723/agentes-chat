@@ -363,6 +363,54 @@ export interface OpenedWorkspace {
   me?: Me;
 }
 
+/** The Clean workspace card (ADR 0200): each computer's disk, and what ended tasks left with its cleanup receipts. */
+export interface CleanWorkspaceItem {
+  where: "drive" | "computer";
+  path: string;
+  kind: string;
+  role: string;
+  size: number | null;
+  decision: "keep" | "candidate";
+  why: string;
+  sha256?: string | null;
+  sameAs?: string;
+}
+export interface CleanWorkspaceReceipt {
+  path: string;
+  status: "approved" | "done" | "skipped" | "blocked" | "unknown";
+  reason: string | null;
+  bytes: number | null;
+  freeBefore: number | null;
+  freeAfter: number | null;
+  executedAt: string | null;
+}
+export interface CleanWorkspaceReport {
+  id: string;
+  subjectType: "issue" | "mission";
+  subjectId: string;
+  outcome: "done" | "canceled";
+  createdAt: string;
+  kept: number;
+  candidates: number;
+  candidateBytes: number;
+  duplicates: number;
+  snapshot: { restorable: number; manifestOnly: number } | null;
+  items: CleanWorkspaceItem[];
+  cleanups: CleanWorkspaceReceipt[];
+  removedBytes: number;
+}
+export interface CleanWorkspace {
+  computers: {
+    id: string;
+    name: string;
+    level: "ok" | "low" | "critical" | "unknown";
+    freeGb: number | null;
+    use: number | null;
+  }[];
+  pending: number;
+  reports: CleanWorkspaceReport[];
+}
+
 export interface ApiClient {
   system: {
     health(): Promise<Health>;
@@ -1743,6 +1791,11 @@ export interface ApiClient {
     restore(orgId: string, id: string): Promise<ArtifactDetail | undefined>;
     /** Out of the trash for good, now. */
     purge(orgId: string, id: string): Promise<void>;
+  };
+  cleanWorkspace: {
+    get(orgId: string): Promise<CleanWorkspace>;
+    /** Approves cleaning a report's candidates (all, or the paths given); each is checked again on its computer. */
+    approve(orgId: string, reportId: string, paths?: string[]): Promise<{ approved: number; notOnAComputer: number }>;
   };
   storage: {
     get(orgId: string): Promise<StorageConfig>;
