@@ -72,6 +72,7 @@ import { FOLLOW_UP_JOB, wakeFollowUp } from "./follow-through";
 import { cutText } from "./format";
 import { FOUNDRY_EVALUATE_JOB } from "./foundry/evaluation";
 import { createFoundryLifecycle, FOUNDRY_RECONCILE_JOB, type FoundryLifecycleDependencies } from "./foundry/lifecycle";
+import { createFoundryCapabilitySync, FOUNDRY_SYNC_JOB } from "./foundry/sync";
 import type { GitHubAppAccess } from "./git/github-call";
 import { GITHUB_EVENT_JOB, type GitHubAppEvent, handleGitHubAppEvent } from "./git/github-events";
 import { FILE_JOIN_REQUEST_JOB, fileJoinRequest } from "./invite-requests";
@@ -163,7 +164,7 @@ async function maybeEnqueueReflection(deps: JobDeps, orgId: string, threadId: st
 
 export interface JobDeps extends RunExecutorDeps {
   /** Qualified server dependencies only; absent means unavailable, never the connected-computer sandbox. */
-  foundry?: Pick<FoundryLifecycleDependencies, "executor" | "evaluations" | "now" | "builderPolicy">;
+  foundry?: Pick<FoundryLifecycleDependencies, "executor" | "evaluations" | "now" | "builderPolicy" | "capabilitySync">;
   /** Migrated Paperclip receipts cannot start when the installation opt-in is absent. */
   paperclipCompatibilityEnabled?: boolean;
   maxHops: number;
@@ -580,6 +581,14 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
         id,
         ctx.owned,
       );
+    },
+    [FOUNDRY_SYNC_JOB]: async (job, ctx) => {
+      if (!deps.artifacts) throw new PermanentJobError("Capability artifacts are unavailable");
+      await createFoundryCapabilitySync({
+        db: deps.db,
+        blobs: deps.artifacts.blobs,
+        capabilitySync: deps.foundry?.capabilitySync,
+      }).run(orgOf(job), job.payload, { finalAttempt: ctx.finalAttempt });
     },
     // A wake the brakes deferred (its agent at its cap of unrequested work, or its computer full) looks again.
     [LATER_JOB]: async (job) => {

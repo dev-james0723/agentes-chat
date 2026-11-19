@@ -21,6 +21,7 @@
     "sync:unavailable": "bun scripts/unavailable-page.ts",
     "ci:local": "bash scripts/ci-local.sh",
     "db:generate": "cd packages/db && bunx drizzle-kit generate --name",
+    "db:regenerate": "bun scripts/regenerate-migrations.ts",
     "docs:env": "bun run --filter '@agenteschat/config' docs",
     "i18n:missing": "bun scripts/i18n.ts missing",
     "i18n:apply": "bun scripts/i18n.ts apply",

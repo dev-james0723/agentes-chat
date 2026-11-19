@@ -1,6 +1,7 @@
 import {
   createUnavailableFoundryExecutor,
   type FoundryAdmission,
+  type FoundryCapabilitySyncPort,
   type FoundryExecutionResult,
   type FoundryExecutor,
   type FoundryQualification,
@@ -28,6 +29,7 @@ import {
   loadFoundryBundle,
   ownedCandidate,
 } from "./service";
+import { FOUNDRY_SYNC_JOB } from "./sync";
 
 export const FOUNDRY_ACTIVATE_TOOL = "activate_foundry_capability";
 export const FOUNDRY_RECONCILE_JOB = "foundry.reconcile";
@@ -81,6 +83,8 @@ export interface FoundryActivationInput {
 }
 export interface FoundryLifecycleDependencies extends FoundryDependencies {
   executor?: FoundryExecutor;
+  /** The skills repository (SF-19), reached through the runtime service; absent means "not connected". */
+  capabilitySync?: FoundryCapabilitySyncPort;
   builderPolicy?: FoundryExecutionPolicy;
   evaluations?: TrustedFoundryEvaluationStore;
   now?: () => Date;
@@ -814,6 +818,18 @@ export function createFoundryLifecycle(deps: FoundryLifecycleDependencies) {
         invocationId: row.id,
         digest: row.digest,
         state: "ACTIVE",
+      });
+      // Usable now: save this exact version to the skills repository and tell the approver (SF-19). The job
+      // carries only the version reference; the sync itself never blocks or undoes activation.
+      await tx
+        .update(schema.foundryVersions)
+        .set({ syncState: "PENDING" })
+        .where(and(eq(schema.foundryVersions.id, proof.version.id), isNull(schema.foundryVersions.syncState)));
+      await enqueue(tx, {
+        orgId: ctx.orgId,
+        kind: FOUNDRY_SYNC_JOB,
+        payload: { versionId: proof.version.id },
+        dedupeKey: `foundry:sync:${ctx.orgId}:${proof.version.id}`,
       });
       return { outcome: "PASS" as const, restoredBindingId: null };
     });
