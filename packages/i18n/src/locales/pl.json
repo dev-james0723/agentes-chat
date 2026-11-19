@@ -17390,6 +17390,10 @@
       "label": "Utwórz plik",
       "description": "Tworzy dokument, tabelę, diff, diagram lub stronę."
     },
+    "register_files": {
+      "label": "Zarejestruj pliki",
+      "description": "Zapisuje, jakie pliki utworzył na swoim komputerze do zadania i do czego służy każdy z nich. Niczego nie usuwa."
+    },
     "update_artifact": {
       "label": "Zaktualizuj plik",
       "description": "Zapisuje nową wersję pliku."

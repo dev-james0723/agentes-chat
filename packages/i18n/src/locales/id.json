@@ -15876,6 +15876,10 @@
       "label": "Buat file",
       "description": "Membuat dokumen, tabel, diff, diagram, atau halaman."
     },
+    "register_files": {
+      "label": "Daftarkan file",
+      "description": "Mencatat file yang dibuat di komputernya untuk sebuah tugas dan kegunaan masing-masing. Tidak menghapus apa pun."
+    },
     "update_artifact": {
       "label": "Perbarui file",
       "description": "Menyimpan versi baru sebuah file."
