@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGitReader } from "./git-read.mjs";
 import { checkCheckpoint, checkRelease, safePath } from "./policy.mjs";
+import { checkRuntime } from "./runtime-identity.mjs";
 
 const records = (text) => {
   if (text === "") return [];
@@ -117,6 +118,23 @@ export function observe(inputRoot, { remote = "origin", network = false } = {}) 
     deployment: { status: "unknown", reason: "Server image, runner and user-path evidence must be checked separately" },
   };
 }
+/**
+ * The observation with what a running server is made of, compared with the observed HEAD (`--runtime-url`, opt-in
+ * like `--network`). Only `match` is verified: a mismatch, or no identity to compare, is a blocker. The runner and
+ * real user paths still need their own evidence.
+ */
+export async function observeRuntime(o, runtimeUrl, options = {}) {
+  let deployment;
+  try {
+    deployment = await checkRuntime(o.worktree, o.head, runtimeUrl, options);
+  } catch {
+    deployment = { status: "unknown", reason: "runtime_check_failed", url: runtimeUrl };
+  }
+  const errors = [...o.errors];
+  if (deployment.status === "mismatch") errors.push("runtime_mismatch");
+  else if (deployment.status !== "match") errors.push("runtime_unverified");
+  return { ...o, errors, deployment };
+}
 export function founderSummary(o) {
   const lines = [
     `檢查時間：${o.observedAt}`,
@@ -128,7 +146,17 @@ export function founderSummary(o) {
       ? "GitHub 分支：已核對與本機 commit 相同"
       : `GitHub 分支：未核實與本機相同（${o.remote.status}）`,
   );
-  lines.push("正式版及執行器：未核實；commit 或 push 不代表部署完成。");
+  if (o.deployment.status === "match")
+    lines.push(
+      `伺服器源碼：已核實同本機 commit 一樣（${o.deployment.running.digest.slice(0, 19)}，${o.deployment.running.files} 個檔）；執行器同用戶流程仍然要另外核實。`,
+    );
+  else if (o.deployment.status === "mismatch")
+    lines.push(
+      `伺服器源碼：同本機 commit 唔一樣（運行中 ${o.deployment.running.digest.slice(0, 19)}，預期 ${o.deployment.expected.digest.slice(0, 19)}）。`,
+    );
+  else if (o.deployment.url)
+    lines.push(`伺服器源碼：未能核實（${o.deployment.reason ?? "unknown"}）；commit 或 push 不代表部署完成。`);
+  else lines.push("正式版及執行器：未核實；commit 或 push 不代表部署完成。");
   if (o.errors.length) lines.push(`需要處理：${o.errors.join("、")}`);
   if (!o.stable) lines.push("檢查期間程式碼有變，請重新核對。");
   return lines.join("\n");
@@ -140,14 +168,14 @@ function argsOf(argv) {
     if (["--network", "--text"].includes(flag)) {
       if (args[flag]) throw new Error("Duplicate flag");
       args[flag] = true;
-    } else if (["--root", "--remote", "--scope", "--evidence"].includes(flag)) {
+    } else if (["--root", "--remote", "--scope", "--evidence", "--runtime-url"].includes(flag)) {
       if (args[flag] || !argv[i + 1] || argv[i + 1].startsWith("--")) throw new Error("Missing or duplicate argument");
       args[flag] = argv[++i];
     } else throw new Error("Unknown argument");
   }
   return args;
 }
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), options = {}) {
   const [command, ...rest] = argv;
   if (!["observe", "check-checkpoint", "check-release"].includes(command))
     throw new Error("Usage: guardian.mjs observe|check-checkpoint|check-release (read-only; never commits or deploys)");
@@ -155,7 +183,7 @@ export function main(argv = process.argv.slice(2)) {
   let value;
   let observationFailed = false;
   if (command === "check-release") {
-    if (!a["--evidence"] || a["--root"] || a["--scope"] || a["--network"] || a["--text"])
+    if (!a["--evidence"] || a["--root"] || a["--scope"] || a["--network"] || a["--text"] || a["--runtime-url"])
       throw new Error("check-release requires --evidence only");
     const supplied = JSON.parse(readFileSync(a["--evidence"], "utf8"));
     value = {
@@ -165,7 +193,9 @@ export function main(argv = process.argv.slice(2)) {
     };
   } else {
     if (!a["--root"] || a["--evidence"]) throw new Error("Select --root");
-    const o = observe(a["--root"], { remote: a["--remote"] ?? "origin", network: a["--network"] ?? false });
+    if (a["--runtime-url"] && command !== "observe") throw new Error("--runtime-url is for observe only");
+    let o = observe(a["--root"], { remote: a["--remote"] ?? "origin", network: a["--network"] ?? false });
+    if (a["--runtime-url"]) o = await observeRuntime(o, a["--runtime-url"], options);
     observationFailed = o.errors.length > 0 || o.stable !== true;
     if (command === "check-checkpoint") {
       if (!a["--scope"] || a["--text"]) throw new Error("check-checkpoint requires --scope");
@@ -180,10 +210,13 @@ export function main(argv = process.argv.slice(2)) {
   return 0;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    process.exitCode = main();
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : "Delivery observation failed");
-    process.exitCode = 2;
-  }
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error) => {
+      console.error(error instanceof Error ? error.message : "Delivery observation failed");
+      process.exitCode = 2;
+    },
+  );
 }

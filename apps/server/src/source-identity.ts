@@ -95,7 +95,8 @@ export function gitSourceEntries(repo: string, revision: string): SourceEntry[] 
   if (r.exitCode !== 0) throw new Error(`git ls-tree ${revision}: ${r.stderr.toString().trim()}`);
   const out: SourceEntry[] = [];
   for (const line of r.stdout.toString().split("\0")) {
-    const m = /^(\d+) blob ([0-9a-f]+)\t(.+)$/.exec(line);
+    // `s`: a path may hold a newline (records are NUL-separated); the disk scan counts such a file, so this must too.
+    const m = /^(\d+) blob ([0-9a-f]+)\t(.+)$/s.exec(line);
     if (m && (m[1] === "100644" || m[1] === "100755")) out.push({ path: m[3] as string, blob: m[2] as string });
   }
   return out;
