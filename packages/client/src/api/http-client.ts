@@ -107,6 +107,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GitHubAppInfo,
@@ -1522,6 +1523,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         }),
       activity: async (orgId, id) =>
         (await request<{ activity: IssueActivity[] }>(`${org(orgId)}/issues/${enc(id)}/activity`)).activity,
+      founderStatus: (orgId, id) => request<FounderStatus>(`${org(orgId)}/issues/${enc(id)}/founder-status`),
       comment: (orgId, id, text, attachmentIds) =>
         request<IssueActivity>(`${org(orgId)}/issues/${enc(id)}/comments`, {
           json: { text, ...(attachmentIds?.length ? { attachmentIds } : {}) },

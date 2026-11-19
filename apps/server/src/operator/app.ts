@@ -8,6 +8,7 @@ import type { Logger } from "../logger";
 import { registerOperatorAccess } from "./access";
 import { registerOperatorAnalytics } from "./analytics";
 import { registerOperatorClaudeAuth } from "./claude-auth";
+import { registerOperatorDeploys } from "./deploys";
 import { registerOperatorEvents } from "./events";
 import { registerOperatorLimits } from "./limits";
 import { registerOperatorMachines } from "./machines";
@@ -35,6 +36,8 @@ export interface OperatorDeps {
   humanCheck?: HumanCheck | null;
   /** Screened sessions (ADR 0076), read through the review door; absent: none, so every one is a 404. */
   sessions?: Pick<SessionScreening, "segment"> | null;
+  /** This process's own source identity: a deploy record is written only for the source it runs (ADR 0204). */
+  sourceIdentity?: () => Promise<{ digest: string; files: number }>;
 }
 
 /**
@@ -64,13 +67,14 @@ export function createOperatorApp(deps: OperatorDeps, token: string) {
   registerOperatorAccess(api, deps);
   registerOperatorAnalytics(api, deps);
   registerOperatorClaudeAuth(api, deps);
+  registerOperatorDeploys(api, deps);
   api.doc31("/openapi.json", {
     openapi: "3.1.0",
     info: {
       title: "agentes.chat operator API",
       version: deps.version,
       description:
-        "Workspace and account lookups, workspace standing, billing holds and limits (ADR 0079), the events feed and review blocks, the workspaces' computers from an external provisioner, who may sign up (the waiting list and early-access invitations, ADR 0078), how new Claude sign-ins for all agents are made (ADR 0150), and how connectors are used (ADR 0103), for the people who run this instance (ADR 0056).",
+        "Workspace and account lookups, workspace standing, billing holds and limits (ADR 0079), the events feed and review blocks, the workspaces' computers from an external provisioner, who may sign up (the waiting list and early-access invitations, ADR 0078), how new Claude sign-ins for all agents are made (ADR 0150), how connectors are used (ADR 0103), and deploy records checked against this server's own source (ADR 0204), for the people who run this instance (ADR 0056).",
     },
     servers: [{ url: OPERATOR_API_PREFIX }],
     security: [{ operator: [] }],

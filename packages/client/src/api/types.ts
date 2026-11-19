@@ -3673,6 +3673,59 @@ export interface IssueConversation extends IssueConversationRef {
   working: boolean;
 }
 
+/**
+ * A task's status from stored evidence only (ADR 0204), in Hong Kong Traditional Chinese: what changed, whether this
+ * server runs it, what is verified, blockers, the next step and its owner, and whether the reader must decide.
+ */
+export interface FounderStatus {
+  issueId: string;
+  number: number;
+  observedAt: string;
+  changed: { title: string; pullRequests: { number: number; url: string }[]; why: string | null; text: string };
+  delivery: {
+    state:
+      | "not_merged"
+      | "reverted"
+      | "merge_commit_unknown"
+      | "merged_not_deployed"
+      | "rolled_back"
+      | "deployed_not_running"
+      | "runtime_unknown"
+      | "available";
+    available: boolean;
+    merge: { subject: string; commit: string | null; at: string } | null;
+    deploy: { commit: string; digest: string; at: string } | null;
+    running: { digest: string; files: number } | null;
+    text: string;
+  };
+  verification: {
+    state: "verified" | "done_unverified" | "unverified" | "no_criteria";
+    verified: boolean;
+    criteria: { total: number; checkedByPerson: number };
+    checks: { kind: string; positive: boolean; at: string }[];
+    text: string;
+  };
+  blockers: { reason: string; since: string; text: string }[];
+  next: {
+    action: string;
+    owner: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    text: string;
+  };
+  needsMe: {
+    needed: boolean;
+    decisions: {
+      approvalId: string;
+      title: string;
+      channelId: string;
+      threadId: string | null;
+      messageId: string | null;
+      expiresAt: string;
+    }[];
+    text: string;
+  };
+  summary: string;
+}
+
 export interface IssueActivity {
   id: string;
   kind: "comment" | "event";

@@ -142,6 +142,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GifQuery,
@@ -1333,6 +1334,8 @@ export interface ApiClient {
     /** Who sees it (ADR 0151): anyone who can edit it changes it. */
     setAudience(orgId: string, id: string, audience: AudienceChoice): Promise<Issue>;
     activity(orgId: string, id: string): Promise<IssueActivity[]>;
+    /** Its status from stored evidence only, in Hong Kong Chinese (ADR 0204). */
+    founderStatus(orgId: string, id: string): Promise<FounderStatus>;
     comment(orgId: string, id: string, text: string, attachmentIds?: string[]): Promise<IssueActivity>;
     /** "Pedir à Ada para implementar": assigns the agent and starts its work in the task's conversation. */
     askAgent(orgId: string, id: string, agentId: string): Promise<Issue>;
