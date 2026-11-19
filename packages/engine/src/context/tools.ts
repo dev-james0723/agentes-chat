@@ -1761,8 +1761,12 @@ export async function retrieveForRun(
     personsOwnWords(db, input.orgId, people, candidates),
   ]);
   const fromDm = dm ? await Promise.all(candidates.map((i) => dm.item(i))) : null;
+  // A claim whose validity ended, or has not begun, is not current: it never comes in as what holds now (A14).
+  const now = Date.now();
+  const validNow = (i: ContextItem) =>
+    (!i.validFrom || i.validFrom.getTime() <= now) && (!i.validTo || i.validTo.getTime() > now);
   const eligible = candidates.filter(
-    (item, i) => (sourceVisible.has(item.id) || ownWords.has(item.id)) && fromDm?.[i] !== false,
+    (item, i) => (sourceVisible.has(item.id) || ownWords.has(item.id)) && fromDm?.[i] !== false && validNow(item),
   );
   // Accepted requirements use exact identity only: similarity must not erase a negation or another constraint.
   const requirements = [...new Map(eligible.filter(isAcceptedRequirement).map((item) => [item.id, item])).values()];
@@ -1786,7 +1790,7 @@ export async function retrieveForRun(
   }));
   const pickedIds = new Set([...picked, ...requirements].map((item) => item.id));
   const rest = (dm ? await filterAsync(often, (i) => dm.item(i)) : often)
-    .filter((i) => sourceVisible.has(i.id) && !pickedIds.has(i.id))
+    .filter((i) => sourceVisible.has(i.id) && !pickedIds.has(i.id) && validNow(i))
     .slice(0, ALSO_SHOWN);
   if (rest.length)
     entries.push({
