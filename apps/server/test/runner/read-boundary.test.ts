@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { CODEX_READ_PROFILE, codexFolderPermissions, codexTurnArgs } from "../../runner/brain-codex";
 import { grokTurnArgs } from "../../runner/brain-grok";
-import { normalizeStored } from "../../runner/config";
+import { foldersEnforced, normalizeStored } from "../../runner/config";
 import { configFromGrant } from "../../runner/daemon";
 import { claudePermissionSettings } from "../../runner/mcp";
 
@@ -11,6 +11,8 @@ test("config: readsOnlyInFolders is kept only when true, and survives pairing ag
   expect(normalizeStored({ readsOnlyInFolders: true })).toEqual({ readsOnlyInFolders: true });
   expect(normalizeStored({ readsOnlyInFolders: "yes" })).toEqual({});
   expect(normalizeStored({})).toEqual({});
+  // ADR 0205: the owner's explicit `false` is kept too (the one way to turn the allow-list off).
+  expect(normalizeStored({ readsOnlyInFolders: false })).toEqual({ readsOnlyInFolders: false });
   const again = configFromGrant(
     { readsOnlyInFolders: true },
     {
@@ -26,6 +28,37 @@ test("config: readsOnlyInFolders is kept only when true, and survives pairing ag
     },
   );
   expect(again.readsOnlyInFolders).toBe(true);
+  const off = configFromGrant(
+    { readsOnlyInFolders: false },
+    {
+      server: "https://example.test",
+      grant: { machineId: "m1", token: "agm_x", org: { id: "o1", name: "O" } } as unknown as Parameters<
+        typeof configFromGrant
+      >[1]["grant"],
+      workspace: "/w",
+      tools: { claude: true, codex: true, commands: true },
+      desktop: false,
+    },
+  );
+  expect(off.readsOnlyInFolders).toBe(false);
+});
+
+test("ADR 0205: the allow-list is in force unless the owner turned it off", () => {
+  expect(foldersEnforced({})).toBe(true);
+  expect(foldersEnforced({ readsOnlyInFolders: true })).toBe(true);
+  expect(foldersEnforced({ readsOnlyInFolders: false })).toBe(false);
+});
+
+test("Claude Code: with the allow-list, its file tools also refuse writes outside its working directories", () => {
+  for (const mode of ["work", "plan"] as const) {
+    const on = claudePermissionSettings(mode, [], undefined, { promptReads: true, readsOnlyInFolders: true });
+    expect(on.permissions).toMatchObject({
+      blockReadsOutsideWorkingDirectories: true,
+      blockWritesOutsideWorkingDirectories: true,
+    });
+    const off = claudePermissionSettings(mode, [], undefined, { promptReads: true });
+    expect("blockWritesOutsideWorkingDirectories" in off.permissions).toBe(false);
+  }
 });
 
 test("Claude Code: file-tool reads outside the working directories are blocked only when asked", () => {
