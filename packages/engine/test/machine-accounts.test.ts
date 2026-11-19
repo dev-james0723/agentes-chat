@@ -51,9 +51,11 @@ import {
   setAgentBrain,
   setAgentComputerTarget,
   setClaudeAuthPolicy,
+  storeOwnUsage,
   syncMachineAccounts,
   ValidationError,
 } from "../src";
+import { usageWaitKey } from "../src/usage-pause";
 import { addMember, addUser, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 
@@ -2203,3 +2205,219 @@ test("hello keeps what a new Claude sign-in for all agents can use on the comput
   await runner.hello([], CLAUDE_AUTH_PROTOCOL - 1, { executors: { claude: { version: "2.1.304" } } });
   expect((await executors())?.claudeLoginMethods).toBeUndefined();
 });
+
+test.each(["account", "own"] as const)(
+  "Claude quota reconciles unchanged fresh probes for %s sign-in",
+  async (signIn) => {
+    f = await setup();
+    const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-a" });
+    hubs.push(hub);
+    const { machineId, token } = await ownedMachine(PLAN_USAGE_PROTOCOL);
+    const runner = connectedRunner(hub, token);
+    const now = Date.now();
+    const reset = new Date(now + 3 * 86_400_000).toISOString();
+    const reading = (at: number): PlanUsage => ({
+      windows: [
+        { kind: "seven_day", usedPercent: 81, resetsAt: reset },
+        { kind: "other", label: "Fable", usedPercent: 100, resetsAt: reset },
+      ],
+      source: "probe",
+      at: new Date(at).toISOString(),
+    });
+    const account = (usage: PlanUsage): RunnerAccountInfo => ({
+      id: CLAUDE_ID,
+      kind: "claude_code",
+      loggedIn: true,
+      email: "ana@example.com",
+      plan: "ultra",
+      usage,
+    });
+    const initial = reading(now - 120_000);
+    await runner.hello(
+      signIn === "account" ? [account(initial)] : [],
+      PLAN_USAGE_PROTOCOL,
+      signIn === "own"
+        ? { executors: { claude: { version: "2.1.310", loggedIn: true } }, ownUsage: { claude_code: initial } }
+        : {},
+    );
+    const key = usageWaitKey({
+      code: "plan_limit",
+      machineId,
+      kind: "claude_code",
+      ...(signIn === "account" ? { accountId: CLAUDE_ID } : {}),
+    });
+    const trigger = crypto.randomUUID();
+    const waitId = crypto.randomUUID();
+    const [run] = await f.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        channelId: f.general.id,
+        threadRootId: trigger,
+        triggerMessageId: trigger,
+        trigger: "mention",
+        hop: 1,
+        status: "waiting_input",
+        transcript: {
+          waitingForBrain: {
+            kind: "claude_code",
+            machineId,
+            model: "sonnet",
+            code: "plan_limit",
+            waitId,
+            waitKey: key,
+            until: reset,
+          },
+          usageWait: { since: now - 60_000, step: 0, parkedAt: now - 60_000 },
+        } as never,
+      })
+      .returning({ id: schema.agentRuns.id });
+    if (!run) throw new Error("missing parked run");
+    const events = accountEvents();
+    const report = (u: PlanUsage) =>
+      runner.changed(signIn === "account" ? [account(u)] : [], signIn === "own" ? { claude_code: u } : undefined);
+    const fresh = reading(now);
+    await report(fresh);
+    const jobs = await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"));
+    expect(jobs.map((j) => j.payload)).toEqual([{ runId: run.id, wait: waitId }]);
+    expect(events).toHaveLength(0);
+    await report(fresh);
+    expect(await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"))).toHaveLength(1);
+    // A delayed older report cannot roll back the reading that made this decision.
+    await report(reading(now - 1000));
+    const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+    const stored =
+      signIn === "account" ? (await accountRow(CLAUDE_ID))?.usage : machine?.executors.ownUsage?.claude_code;
+    expect(stored?.at).toBe(fresh.at);
+  },
+);
+
+test.each(["account", "own"] as const)(
+  "Claude quota preserves a newer interleaved report for %s sign-in",
+  async (signIn) => {
+    f = await setup();
+    const { machineId } = await ownedMachine(PLAN_USAGE_PROTOCOL);
+    const now = Date.now();
+    const reset = new Date(now + 3 * 86_400_000).toISOString();
+    const reading = (at: number, usedPercent: number): PlanUsage => ({
+      windows: [{ kind: "seven_day", usedPercent, resetsAt: reset }],
+      source: "probe",
+      at: new Date(at).toISOString(),
+    });
+    const initial = reading(now - 120_000, 70);
+    const room = reading(now - 60_000, 82);
+    const newest = reading(now, 100);
+    const other = reading(now, 37);
+    const account = (usage: PlanUsage): RunnerAccountInfo => ({
+      id: CLAUDE_ID,
+      kind: "claude_code",
+      loggedIn: true,
+      email: "ana@example.com",
+      plan: "ultra",
+      usage,
+    });
+    if (signIn === "own") {
+      await storeOwnUsage({ db: f.db, pubsub: f.pubsub }, f.org.id, machineId, { claude_code: initial });
+    } else {
+      await syncMachineAccounts({ db: f.db, pubsub: f.pubsub }, f.org.id, machineId, [account(initial)]);
+    }
+    const key = usageWaitKey({
+      code: "plan_limit",
+      machineId,
+      kind: "claude_code",
+      ...(signIn === "account" ? { accountId: CLAUDE_ID } : {}),
+    });
+    const trigger = crypto.randomUUID();
+    await f.db.insert(schema.agentRuns).values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: trigger,
+      triggerMessageId: trigger,
+      trigger: "mention",
+      hop: 1,
+      status: "waiting_input",
+      transcript: {
+        waitingForBrain: {
+          kind: "claude_code",
+          machineId,
+          model: "sonnet",
+          code: "plan_limit",
+          waitId: crypto.randomUUID(),
+          waitKey: key,
+          until: reset,
+        },
+        usageWait: { since: now - 90_000, step: 0, parkedAt: now - 90_000 },
+      } as never,
+    });
+    // PGlite has one connection. Insert a real newer database write after the old SELECT's
+    // result was captured, reproducing the stale snapshot seen by overlapping PostgreSQL writers.
+    type Client = {
+      query: (text: string, ...args: unknown[]) => Promise<unknown>;
+      transaction: (callback: (tx: Client) => Promise<unknown>, ...args: unknown[]) => Promise<unknown>;
+    };
+    const client = (f.db as unknown as { $client: Client }).$client;
+    const transaction = client.transaction;
+    let injected = false;
+    const install = (connection: Client) => {
+      const query = connection.query;
+      connection.query = async (text, ...args) => {
+        const result = await query.call(connection, text, ...args);
+        const match =
+          signIn === "own"
+            ? text.includes('from "machines"') && text.includes('select "executors"')
+            : text.includes('from "machine_accounts"') && text.includes('"machine_accounts"."id" =');
+        if (!injected && text.startsWith("select") && match) {
+          injected = true;
+          if (signIn === "own") {
+            await query.call(connection, "update machines set executors = executors || $1::jsonb where id = $2::uuid", [
+              JSON.stringify({ ownUsage: { claude_code: newest, codex: other } }),
+              machineId,
+            ]);
+          } else {
+            await query.call(connection, "update machine_accounts set usage = $1::jsonb where id = $2::uuid", [
+              JSON.stringify(newest),
+              CLAUDE_ID,
+            ]);
+          }
+        }
+        return result;
+      };
+      return () => {
+        connection.query = query;
+      };
+    };
+    const restore = install(client);
+    client.transaction = (callback, ...args) =>
+      transaction.call(
+        client,
+        async (tx) => {
+          const restoreTransaction = install(tx);
+          try {
+            return await callback(tx);
+          } finally {
+            restoreTransaction();
+          }
+        },
+        ...args,
+      );
+    try {
+      if (signIn === "own") {
+        await storeOwnUsage({ db: f.db, pubsub: f.pubsub }, f.org.id, machineId, { claude_code: room });
+      } else {
+        await syncMachineAccounts({ db: f.db, pubsub: f.pubsub }, f.org.id, machineId, [account(room)]);
+      }
+    } finally {
+      restore();
+      client.transaction = transaction;
+    }
+    if (!injected) throw new Error("The concurrent update fixture did not reach its interleaving point");
+    const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+    const stored =
+      signIn === "account" ? (await accountRow(CLAUDE_ID))?.usage : machine?.executors.ownUsage?.claude_code;
+    expect(stored).toEqual(newest);
+    if (signIn === "own") expect(machine?.executors.ownUsage?.codex).toEqual(other);
+    expect(await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"))).toHaveLength(0);
+  },
+);
