@@ -58,6 +58,8 @@ export const EMBEDDING_CATALOG: Record<string, EmbeddingModel> = {
     queryPrefix: QWEN3_QUERY,
     asksDimensions: true,
   },
+  // Ollama's tag for Qwen3-Embedding-0.6B: the same model run locally, so the same query prompt; nothing to pay.
+  "qwen3-embedding:0.6b": { provider: "openai", pricePerToken: 0, dimensions: 1024, queryPrefix: QWEN3_QUERY },
   "BAAI/bge-m3": { provider: "openai", pricePerToken: 10, dimensions: 1024 },
   "ibm-granite/granite-embedding-311m-multilingual-r2": { provider: "openai", pricePerToken: 0, dimensions: 768 },
   "fake-embed": { provider: "fake", pricePerToken: 0, dimensions: 1024 },
@@ -68,6 +70,19 @@ export const DEFAULT_OPENAI_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B";
 
 export const embeddingCostNanoUsd = (model: string, tokens: number) =>
   (EMBEDDING_CATALOG[model]?.pricePerToken ?? 0) * tokens;
+
+/** Each input must have exactly one vector; sorting alone can silently attach a vector to the wrong text. */
+function orderedEmbeddings(data: unknown, count: number): { embedding: number[]; index: number }[] {
+  if (!Array.isArray(data) || data.length !== count)
+    throw new ProviderError(
+      `the embeddings server returned ${Array.isArray(data) ? data.length : 0} vectors for ${count} texts`,
+      false,
+    );
+  const ordered = [...data].sort((a, b) => (a?.index ?? -1) - (b?.index ?? -1));
+  if (ordered.some((entry, index) => entry?.index !== index))
+    throw new ProviderError("the embeddings server returned invalid or duplicate vector indices", false);
+  return ordered;
+}
 
 /** Voyage AI embeddings over its REST API (no SDK needed). Optional: enabled by env. */
 export function createVoyageEmbeddings(
@@ -101,7 +116,7 @@ export function createVoyageEmbeddings(
         data: { embedding: number[]; index: number }[];
         usage?: { total_tokens?: number };
       };
-      const vectors = [...body.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
+      const vectors = orderedEmbeddings(body.data, texts.length).map((d) => d.embedding);
       return { vectors, tokens: body.usage?.total_tokens ?? 0, model };
     },
   };
@@ -163,13 +178,7 @@ export function createOpenAIEmbeddings(options: {
           data?: { embedding: number[]; index: number }[];
           usage?: { prompt_tokens?: number; total_tokens?: number };
         };
-        const data = [...(body.data ?? [])].sort((a, b) => a.index - b.index);
-        if (data.length !== input.length) {
-          throw new ProviderError(
-            `the embeddings server returned ${data.length} vectors for ${input.length} texts`,
-            false,
-          );
-        }
+        const data = orderedEmbeddings(body.data, input.length);
         for (const { embedding } of data) {
           if (embedding.length > EMBEDDING_DIMENSIONS) {
             throw new ProviderError(

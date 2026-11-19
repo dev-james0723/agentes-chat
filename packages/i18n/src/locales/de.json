@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Freigabe eines privaten Entwurfs prüfen",
     "destination": "Ziel: Skill-Bibliothek der Organisation",
@@ -10,9 +13,6 @@
     "body": "Vollständiger Skill-Text",
     "review": "Privaten Entwurf prüfen",
     "withdraw": "Freigabe zurückziehen"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Schließen",
@@ -8045,11 +8045,11 @@
       "issue": {
         "created": "Aufgabe in agentes erstellt"
       },
-      "deploy": {
-        "succeeded": "Deploy abgeschlossen"
-      },
       "paperclip": {
         "received": "Paperclip-Anfrage eingegangen"
+      },
+      "deploy": {
+        "succeeded": "Deploy abgeschlossen"
       }
     },
     "when": {
@@ -12631,6 +12631,7 @@
     "agentSub": "Nach Konnektor und Thema. Standardmäßig fragen sensible Aktionen nach Freigabe."
   },
   "connectFlow": {
+    "accessRequired": "Neue Verbindungen geben Agenten keinen zusätzlichen Zugriff. Prüfe den Zugriff unter Anpassen. Bestehende Berechtigungen für alle Tools gelten weiter.",
     "steps": "Schritte",
     "step": {
       "0": "Verbinden",
@@ -12704,6 +12705,8 @@
     "saved_other": "{{name}}: {{count}} Agenten können ihn nutzen.",
     "done": {
       "title": "{{name}} verbunden",
+      "accessRequired": "Neue Verbindungen geben Agenten keinen zusätzlichen Zugriff. Prüfe den Zugriff unter Anpassen. Bestehende Berechtigungen für alle Tools gelten weiter.",
+      "accessPending": "Prüfe die Tools und wähle dann unter Anpassen, welche Agenten Zugriff bekommen. Bestehende Berechtigungen für alle Tools gelten weiter.",
       "everyone": "Jeder Agent kann ihn nutzen.",
       "waiting": "Agenten bekommen die Tools erst, wenn du fortfährst, mit den Stufen, die wir vorschlagen.",
       "asks_one": "{{count}} Aktion fragt im Chat nach Freigabe.",
@@ -16360,6 +16363,10 @@
     "create_artifact": {
       "label": "Datei erstellen",
       "description": "Erstellt ein Dokument, eine Tabelle, einen Diff, ein Diagramm oder eine Seite."
+    },
+    "register_files": {
+      "label": "Dateien erfassen",
+      "description": "Hält fest, welche Dateien es auf seinem Computer für eine Aufgabe erstellt hat und wozu jede dient. Löscht nichts."
     },
     "update_artifact": {
       "label": "Datei aktualisieren",

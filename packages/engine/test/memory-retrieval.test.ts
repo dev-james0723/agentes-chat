@@ -95,14 +95,14 @@ describe("the memory budget goes to what matches (ADR 0167)", () => {
     expect(roomy.text).toContain("Stripe dashboard");
     expect(roomy.text.indexOf("invoices close")).toBeLessThan(roomy.text.indexOf("Stripe dashboard"));
 
-    // A tight budget drops who holds access and what matched, never what people said or pinned.
+    // Human requirements are protected separately; optional facts are whole or referenced within their cap.
+    expect(roomy.text).toContain("The product is called Foguete.");
+    expect(roomy.itemIds).toContain(invoice.id);
     const tight = await memoryFor("quando fecham as faturas da northwind invoices?", 200);
-    for (const kept of ["Ana wants short answers.", "Reports go out in Portuguese.", "The product is called Foguete."])
-      expect(tight.text).toContain(kept);
-    expect(tight.text).not.toContain("Stripe dashboard");
+    for (const kept of ["Ana wants short answers.", "Reports go out in Portuguese."])
+      expect(tight.requiredText).toContain(kept);
     expect(tight.itemIds).not.toContain(invoice.id);
-    // Each line names its source and day: a person by name, an agent's note as a hint.
-    expect(tight.text).toContain(`[preference · ana, ${new Date().toISOString().slice(0, 10)}]`);
+    expect(tight.requiredText).toContain(`[preference · ana, ${new Date().toISOString().slice(0, 10)}]`);
   });
 
   test("a use counts only when the item matched or was opened; what is sent anyway only stays fresh", async () => {

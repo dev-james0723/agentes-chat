@@ -7,7 +7,7 @@ import type { BrainKind } from "./brains/types";
 import { caches } from "./cache";
 import { usableCredentialRow } from "./credentials";
 import { cutText } from "./format";
-import type { Judge } from "./judge";
+import type { Judge, JudgeAnswer, JudgeQuestion, JudgeRequest } from "./judge";
 import { missionOfThread } from "./missions";
 import { orgModelProvider } from "./router";
 
@@ -82,76 +82,102 @@ const TIER_REASON: Record<ModelTier, string> = {
 
 const percent = (p: number | undefined) => (typeof p === "number" ? ` (${Math.round(p * 100)}%)` : "");
 
+/** What `chooseAutoModel` reads about a run. */
+export interface AutoInput {
+  orgId: string;
+  agentId?: string;
+  runId?: string;
+  agent: { name: string; role: string; instructions: string };
+  message: string;
+  /** The latest messages where it answers, oldest first ("person: text"). */
+  recent: string[];
+  /** Started by a routine (background work, nobody waiting on the answer). */
+  routine: boolean;
+  /** Part of a mission (its main session works through a plan). */
+  mission: boolean;
+  /** Thinks on a computer (Claude Code, Codex), with files and a shell. */
+  computer: boolean;
+  /** It has tools beyond the conversation. */
+  tools: boolean;
+  timeoutMs?: number;
+}
+
+/**
+ * Questions about the same run asked in the same request as the tier and the effort (the run's status, ADR 0084
+ * §8–9): one judge call instead of two, the run's state sent once. Their answers come back whole, without the
+ * tier's wait; ids must not be `tier` or `effort`.
+ */
+export interface AutoAlongside {
+  questions: Record<string, JudgeQuestion>;
+  /** Called once with the shared request's answers (rejected when it failed). */
+  answers(answers: Promise<Record<string, JudgeAnswer>>): void;
+}
+
+function autoRequest(input: AutoInput): JudgeRequest {
+  const about =
+    "An AI agent of a team (`agent`) is about to work on `message` (`recent` is what was said before it; `run` says whether a routine started it in the background, whether it is part of a mission, whether it works on a computer with files and a shell, and whether it has tools). Missions and code work usually need more; greetings and quick questions the least.";
+  return {
+    orgId: input.orgId,
+    agentId: input.agentId,
+    runId: input.runId,
+    kind: "auto_model",
+    state: {
+      agent: {
+        name: input.agent.name,
+        role: input.agent.role,
+        instructions: cutText(input.agent.instructions, 1500),
+      },
+      message: cutText(input.message, 2000),
+      recent: input.recent.map((m) => cutText(m, 400)).join("\n"),
+      run: {
+        started_by_a_routine: input.routine,
+        part_of_a_mission: input.mission,
+        works_on_a_computer: input.computer,
+        has_tools: input.tools,
+      },
+    },
+    questions: {
+      tier: {
+        type: "choice",
+        instructions: `${about} How capable a model does this task need?`,
+        criteria: TIER_CRITERIA,
+      },
+      effort: {
+        type: "choice",
+        instructions: `${about} How hard should it think before and while answering?`,
+        criteria: EFFORT_CRITERIA,
+      },
+    },
+  };
+}
+
 /**
  * The tier and effort for a run, in one judge request. Inputs: what the run
  * answers, the last messages, the agent's role, and what kind of run it is (a
  * routine's background work, a mission, a computer brain with code tools).
  * Never throws: without an answer in time it is the medium tier, medium effort.
+ * With `alongside`, its questions ride in the same request (calibrated, since
+ * the status needs Jev's probabilities); if that request fails, the tier and
+ * effort are asked again alone, as before.
  */
-export async function chooseAutoModel(
-  judge: Judge,
-  input: {
-    orgId: string;
-    agentId?: string;
-    runId?: string;
-    agent: { name: string; role: string; instructions: string };
-    message: string;
-    /** The latest messages where it answers, oldest first ("person: text"). */
-    recent: string[];
-    /** Started by a routine (background work, nobody waiting on the answer). */
-    routine: boolean;
-    /** Part of a mission (its main session works through a plan). */
-    mission: boolean;
-    /** Thinks on a computer (Claude Code, Codex), with files and a shell. */
-    computer: boolean;
-    /** It has tools beyond the conversation. */
-    tools: boolean;
-    timeoutMs?: number;
-  },
-): Promise<AutoChoice> {
-  const about =
-    "An AI agent of a team (`agent`) is about to work on `message` (`recent` is what was said before it; `run` says whether a routine started it in the background, whether it is part of a mission, whether it works on a computer with files and a shell, and whether it has tools). Missions and code work usually need more; greetings and quick questions the least.";
+export async function chooseAutoModel(judge: Judge, input: AutoInput, alongside?: AutoAlongside): Promise<AutoChoice> {
+  const request = autoRequest(input);
+  let asked: Promise<Record<string, JudgeAnswer>>;
+  if (alongside) {
+    const shared = judge.ask({
+      ...request,
+      calibrated: true,
+      questions: { ...alongside.questions, ...request.questions },
+    });
+    alongside.answers(shared);
+    asked = shared.catch(() => judge.ask(request));
+  } else asked = judge.ask(request);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<"timeout">((resolve) => {
     timer = setTimeout(() => resolve("timeout"), input.timeoutMs ?? AUTO_MODEL_TIMEOUT_MS);
   });
   try {
-    const answers = await Promise.race([
-      judge.ask({
-        orgId: input.orgId,
-        agentId: input.agentId,
-        runId: input.runId,
-        kind: "auto_model",
-        state: {
-          agent: {
-            name: input.agent.name,
-            role: input.agent.role,
-            instructions: cutText(input.agent.instructions, 1500),
-          },
-          message: cutText(input.message, 2000),
-          recent: input.recent.map((m) => cutText(m, 400)).join("\n"),
-          run: {
-            started_by_a_routine: input.routine,
-            part_of_a_mission: input.mission,
-            works_on_a_computer: input.computer,
-            has_tools: input.tools,
-          },
-        },
-        questions: {
-          tier: {
-            type: "choice",
-            instructions: `${about} How capable a model does this task need?`,
-            criteria: TIER_CRITERIA,
-          },
-          effort: {
-            type: "choice",
-            instructions: `${about} How hard should it think before and while answering?`,
-            criteria: EFFORT_CRITERIA,
-          },
-        },
-      }),
-      timeout,
-    ]);
+    const answers = await Promise.race([asked, timeout]);
     if (answers === "timeout") return fallbackChoice("timeout");
     const tier = answers.tier?.choice as ModelTier | undefined;
     const effort = answers.effort?.choice as AutoEffort | undefined;
@@ -166,6 +192,7 @@ export async function chooseAutoModel(
     return fallbackChoice("error");
   } finally {
     clearTimeout(timer);
+    asked.catch(() => {});
   }
 }
 

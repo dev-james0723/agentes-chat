@@ -83,7 +83,11 @@ describe("secret requests (ADR 0027)", () => {
     expect(field.type).toBe("password");
     await type(field, "npm_live_abc123");
     await click(within(card).getByRole("button", { name: "Enviar" }));
-    await settle(6);
+    // The value is sealed (WebCrypto, off the JS thread) before it is sent: no number of ticks waits for that.
+    await waitFor(() => expect(state.calls.some((c) => c.method === "secrets.deliver")).toBe(true), {
+      timeout: 10_000,
+    });
+    await settle(2);
 
     const call = state.calls.find((c) => c.method === "secrets.deliver");
     expect(call?.args.slice(0, 2)).toEqual([ORG_ID, secretRequest.id]);
@@ -116,7 +120,10 @@ describe("secret requests (ADR 0027)", () => {
     expect(card.textContent).not.toContain("variável");
     await type(within(card).getByLabelText("Senha de shop.example.com"), "hunter2-for-real");
     await click(within(card).getByRole("button", { name: "Enviar" }));
-    await settle(6);
+    // The value is sealed (WebCrypto, off the JS thread) before it is sent: no number of ticks waits for that.
+    await waitFor(() => expect(state.calls.some((c) => c.method === "secrets.deliver")).toBe(true), {
+      timeout: 10_000,
+    });
     const box = state.calls.find((c) => c.method === "secrets.deliver")?.args[2] as SecretBox;
     const aad = (target: SecretTarget) =>
       secretAad({ requestId: secretRequest.id, orgId: ORG_ID, name: "SHOP_PASSWORD", target });
@@ -244,7 +251,10 @@ describe("secret requests (ADR 0027)", () => {
     const kept = state.messages.find((m) => m.id === "msg-s")?.meta?.secretRequest as SecretRequest;
     Object.assign(kept, { ...secretRequest, status: "canceled", endReason: "withdrawn", publicKey: null });
     await click(within(card).getByRole("button", { name: "Enviar" }));
-    await settle(6);
+    // The value is sealed (WebCrypto, off the JS thread) before it is sent: no number of ticks waits for that.
+    await waitFor(() => expect(document.body.textContent).toContain("Ada não precisa mais disso."), {
+      timeout: 10_000,
+    });
     const done = screen().getByRole("group", { name: "Pedido de segredo de Ada" });
     expect(done.textContent).toContain("Ada não precisa mais disso.");
     expect(within(done).queryByLabelText(KEY_LABEL)).toBeNull();
@@ -262,7 +272,10 @@ describe("secret requests (ADR 0027)", () => {
     const card = screen().getByRole("group", { name: "Pedido de segredo de Ada" });
     await type(within(card).getByLabelText(KEY_LABEL), "npm_live_abc123");
     await click(within(card).getByRole("button", { name: "Enviar" }));
-    await settle(6);
+    // The value is sealed (WebCrypto, off the JS thread) before it is sent: no number of ticks waits for that.
+    await waitFor(() => expect(document.body.textContent).toContain("o computador que pediu mudou"), {
+      timeout: 10_000,
+    });
     const done = screen().getByRole("group", { name: "Pedido de segredo de Ada" });
     expect(done.textContent).toContain("o computador que pediu mudou");
     expect(done.textContent).not.toContain("fechou antes da resposta");
@@ -276,8 +289,10 @@ describe("secret requests (ADR 0027)", () => {
     const field = within(card).getByLabelText(KEY_LABEL) as HTMLInputElement;
     await type(field, "npm_live_abc123");
     await click(within(card).getByRole("button", { name: "Enviar" }));
-    await settle(6);
-    expect(card.textContent).toContain("Este pedido mudou enquanto você respondia.");
+    // The value is sealed (WebCrypto, off the JS thread) before it is sent: no number of ticks waits for that.
+    await waitFor(() => expect(card.textContent).toContain("Este pedido mudou enquanto você respondia."), {
+      timeout: 10_000,
+    });
     expect(field.value).toBe("npm_live_abc123");
   });
 

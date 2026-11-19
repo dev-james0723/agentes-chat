@@ -36,6 +36,12 @@ export interface RunnerConfig {
   exec: boolean;
   /** This runner must not discover or access phones. Applied at startup. */
   phonesDisabled?: true;
+  /**
+   * Brain turns' CLIs read only the agent's folders and the folders allowed it (`access.folders`), where the CLI
+   * itself can enforce that: Claude Code (`blockReadsOutsideWorkingDirectories`), Codex (a permission profile),
+   * Grok Build (`--sandbox strict`). Applied at startup. Absent: off.
+   */
+  readsOnlyInFolders?: true;
   /** Background tasks at once on this computer (default 3). */
   maxConcurrentTasks?: number;
   /** A background task is stopped after this many seconds (default 4 h). */
@@ -227,6 +233,7 @@ export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
     ...(typeof raw.exec === "boolean" ? { exec: raw.exec } : {}),
     ...(hostMcp ? { hostMcp: hostMcp as HostMcpConfig } : {}),
     ...(raw.phonesDisabled === true ? { phonesDisabled: true as const } : {}),
+    ...(raw.readsOnlyInFolders === true ? { readsOnlyInFolders: true as const } : {}),
     ...(positive(raw.maxConcurrentTasks) ? { maxConcurrentTasks: positive(raw.maxConcurrentTasks) } : {}),
     ...(positive(raw.taskMaxSeconds) ? { taskMaxSeconds: positive(raw.taskMaxSeconds) } : {}),
     ...(positive(raw.brainIdleMinutes) ? { brainIdleMinutes: positive(raw.brainIdleMinutes) } : {}),

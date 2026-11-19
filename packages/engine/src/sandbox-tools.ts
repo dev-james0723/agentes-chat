@@ -89,6 +89,7 @@ import {
 import { missionOfRun, type RunMission, runActsForMission } from "./mission-context";
 import { recordTaskFinished } from "./operator-events";
 import { routineKeysAllowed } from "./routine-keys";
+import { registerFilesTool } from "./run-files";
 import { runnerUpdateWay } from "./runner-update";
 import { replyThreadOf } from "./runs";
 import {
@@ -1016,6 +1017,7 @@ export function createSandboxToolSource(
       name: "read_file",
       description: "Read a text file from your computer's workspace.",
       scope: SANDBOX_SCOPE,
+      readOnly: true,
       readsOutside: true,
       inputSchema: {
         type: "object",
@@ -1062,6 +1064,7 @@ export function createSandboxToolSource(
       name: "list_files",
       description: "List files in your computer's workspace (or a folder of it); they persist across conversations.",
       scope: SANDBOX_SCOPE,
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { path: { type: "string", maxLength: 300 }, ...computerProp(devices) },
@@ -1880,9 +1883,11 @@ export function createSandboxToolSource(
       const holds = keepsRunning(computer)
         ? await holdsText({ db: ctx.db, ...(deps.pubsub ? { pubsub: deps.pubsub } : {}) }, ctx.orgId, ctx.agentId)
         : "";
-      const tools = keep(
-        build(settings.requireApproval, settings.execTimeoutSeconds, computer, ctx.threadRootId, devices, holds),
-      );
+      const tools = keep([
+        ...build(settings.requireApproval, settings.execTimeoutSeconds, computer, ctx.threadRootId, devices, holds),
+        // What the agent made on its computer and what for (ADR 0197): only where there is a computer.
+        ...(computer.kind === "none" ? [] : [registerFilesTool(ctx.db)]),
+      ]);
       if (!mission) return tools;
       return tools.map((t) => ({
         ...t,

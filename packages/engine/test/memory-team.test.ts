@@ -120,7 +120,7 @@ describe("team memory every agent reads (ADR 0167)", () => {
       channelId: f.general.id,
       text: "",
     });
-    expect(memory.text).toContain("In #general, answers stay short.");
+    expect((memory.requiredText ?? "") + memory.text).toContain("In #general, answers stay short.");
   });
 
   test("a member's team save waits as a card for who reviews memory", async () => {

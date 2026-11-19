@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Tinjau pembagian draf pribadi",
     "destination": "Tujuan: pustaka keterampilan organisasi",
@@ -10,9 +13,6 @@
     "body": "Isi lengkap keterampilan",
     "review": "Tinjau draf pribadi",
     "withdraw": "Tarik persetujuan berbagi"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Tutup",
@@ -7821,11 +7821,11 @@
       "issue": {
         "created": "Tugas dibuat di agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy selesai"
-      },
       "paperclip": {
         "received": "Permintaan Paperclip diterima"
+      },
+      "deploy": {
+        "succeeded": "Deploy selesai"
       }
     },
     "when": {
@@ -12202,6 +12202,7 @@
     "agentSub": "Per konektor dan topik. Secara default, tindakan sensitif minta persetujuan."
   },
   "connectFlow": {
+    "accessRequired": "Koneksi baru tidak memberi agen akses tambahan. Periksa akses di Sesuaikan. Izin Semua alat yang sudah ada tetap berlaku.",
     "steps": "Langkah",
     "step": {
       "0": "Hubungkan",
@@ -12272,6 +12273,8 @@
     "saved_other": "{{name}}: {{count}} agen bisa memakainya.",
     "done": {
       "title": "{{name}} terhubung",
+      "accessRequired": "Koneksi baru tidak memberi agen akses tambahan. Periksa akses di Sesuaikan. Izin Semua alat yang sudah ada tetap berlaku.",
+      "accessPending": "Periksa alatnya, lalu pilih akses agen di Sesuaikan. Izin Semua alat yang sudah ada tetap berlaku.",
       "everyone": "Semua agen bisa memakainya.",
       "waiting": "Agen baru mendapat alat-alatnya setelah kamu melanjutkan, dengan level yang kami sarankan.",
       "asks_other": "{{count}} tindakan meminta persetujuan di chat.",
@@ -15872,6 +15875,10 @@
     "create_artifact": {
       "label": "Buat file",
       "description": "Membuat dokumen, tabel, diff, diagram, atau halaman."
+    },
+    "register_files": {
+      "label": "Daftarkan file",
+      "description": "Mencatat file yang dibuat di komputernya untuk sebuah tugas dan kegunaan masing-masing. Tidak menghapus apa pun."
     },
     "update_artifact": {
       "label": "Perbarui file",

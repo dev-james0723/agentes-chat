@@ -2,13 +2,9 @@ import { and, type Executor, eq, isNull, ne, or, schema } from "@agenteschat/db"
 import { decidesAgentApprovals } from "../approval-rules";
 import { type AuthorityRun, type RunAuthority, runAuthority } from "../authority";
 import { caches, rulesPresenceKey } from "../cache";
-import { cutText } from "../format";
 import { routineCreatorOf } from "../requester";
 
 const { contextItems, users } = schema;
-
-/** One rule's text in the prompt, at most (characters). */
-const RULE_CHARS = 600;
 
 /**
  * Whose rules a run follows: the person it acts for (the trigger's chain, `runAuthority`), else the creator of the
@@ -95,8 +91,7 @@ export async function rulesForRun(
   });
   if (rules.length === 0) return { text: "", itemIds: [] };
   const lines = rules.map(
-    (r) =>
-      `- ${r.name ?? "A person"}, ${r.at.toISOString().slice(0, 10)}: ${cutText(r.content.replace(/\s+/g, " "), RULE_CHARS)} (id ${r.id})`,
+    (r) => `- ${r.name ?? "A person"}, ${r.at.toISOString().slice(0, 10)}: ${r.content} (id ${r.id})`,
   );
   return {
     text: [

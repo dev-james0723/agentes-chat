@@ -48,11 +48,11 @@ test("connectors API: catalog, API-key connection (masked), agent scopes, OAuth 
   const listed = await (await owner(`/api/app/organizations/${orgId}/connectors`)).text();
   expect(listed).toContain(sentry.id);
   expect(listed).not.toContain("sntrys_secret_value");
-  // Connected without the web's dialog (the API, the phone): every agent has it whole, as the dialog starts.
+  // Connected without the web's dialog (the API, the phone): no agent has it until it is given (connector default-deny).
   const access = (await (await owner(`/api/app/organizations/${orgId}/agents/${agentId}/access`)).json()) as {
     connectors: { connectionId: string; state: string }[];
   };
-  expect(access.connectors.find((c) => c.connectionId === sentry.id)?.state).toBe("granted");
+  expect(access.connectors.find((c) => c.connectionId === sentry.id)?.state).toBe("off");
 
   const put = await owner(`/api/app/organizations/${orgId}/agents/${agentId}/scopes`, {
     method: "PUT",
@@ -633,12 +633,12 @@ test("connector accounts: another Stripe account, the outcome back from OAuth, R
   expect(first).toBe(
     `http://localhost:3000/settings/connectors?connected=${encodeURIComponent(`custom:${acme.id}`)}&outcome=connected`,
   );
-  // Another account: a row of its own, every agent's as the first.
+  // Another account: a row of its own, no agent's until given, as the first.
   expect(await signIn(await start(), "loja")).toContain("&outcome=connected");
   expect((await servers()).map((s) => s.label)).toEqual(["Stripe (Acme)", "Stripe (Loja B)"]);
   expect(await levels()).toEqual([
-    ["Stripe (Acme)", "granted"],
-    ["Stripe (Loja B)", "granted"],
+    ["Stripe (Acme)", "off"],
+    ["Stripe (Loja B)", "off"],
   ]);
   // The same account again: nothing new.
   expect(await signIn(await start(), "acme")).toContain("&outcome=same_account");

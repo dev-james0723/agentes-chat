@@ -97,6 +97,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
       description:
         "Search the organization's wiki (the team's documented knowledge: processes, decisions, guides). Returns pages with their [[link]] to cite.",
       scope: "wiki:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { query: { type: "string", minLength: 1, maxLength: 300 } },
@@ -130,6 +131,7 @@ export function createWikiToolSource(deps: Omit<WikiDeps, "db">): ToolSource {
       name: "read_wiki_page",
       description: "Read a wiki page in full (by title or slug), with its version and what links to it.",
       scope: "wiki:read",
+      readOnly: true,
       inputSchema: {
         type: "object",
         properties: { page: pageRef },

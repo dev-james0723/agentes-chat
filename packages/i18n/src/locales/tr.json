@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Özel taslağın paylaşımını incele",
     "destination": "Hedef: kuruluşun beceri kitaplığı",
@@ -10,9 +13,6 @@
     "body": "Becerinin tam metni",
     "review": "Özel taslağı incele",
     "withdraw": "Paylaşım onayını geri çek"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Kapat",
@@ -8002,11 +8002,11 @@
       "issue": {
         "created": "agentes'te görev oluşturuldu"
       },
-      "deploy": {
-        "succeeded": "Dağıtım tamamlandı"
-      },
       "paperclip": {
         "received": "Paperclip isteği alındı"
+      },
+      "deploy": {
+        "succeeded": "Dağıtım tamamlandı"
       }
     },
     "when": {
@@ -12566,6 +12566,7 @@
     "agentSub": "Bağlayıcıya ve konuya göre. Varsayılan olarak hassas eylemler onay ister."
   },
   "connectFlow": {
+    "accessRequired": "Yeni bağlantılar ajanlara ek erişim vermez. Erişimi Ayarla'dan gözden geçir. Mevcut Tüm araçlar izinleri geçerli kalır.",
     "steps": "Adımlar",
     "step": {
       "0": "Bağla",
@@ -12639,6 +12640,8 @@
     "saved_other": "{{name}}: {{count}} ajan kullanabilir.",
     "done": {
       "title": "{{name}} bağlandı",
+      "accessRequired": "Yeni bağlantılar ajanlara ek erişim vermez. Erişimi Ayarla'dan gözden geçir. Mevcut Tüm araçlar izinleri geçerli kalır.",
+      "accessPending": "Araçları gözden geçir, sonra Ayarla'dan ajanların erişimini seç. Mevcut Tüm araçlar izinleri geçerli kalır.",
       "everyone": "Her ajan kullanabilir.",
       "waiting": "Ajanlar araçları ancak siz devam ettiğinizde, önerdiğimiz seviyelerle alır.",
       "asks_one": "{{count}} işlem sohbette onay ister.",
@@ -16289,6 +16292,10 @@
     "create_artifact": {
       "label": "Dosya oluştur",
       "description": "Belge, tablo, fark, diyagram veya sayfa oluşturur."
+    },
+    "register_files": {
+      "label": "Dosyaları kaydet",
+      "description": "Bir görev için bilgisayarında oluşturduğu dosyaları ve her birinin ne işe yaradığını not eder. Hiçbir şeyi silmez."
     },
     "update_artifact": {
       "label": "Dosyayı güncelle",

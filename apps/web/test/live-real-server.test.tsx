@@ -52,7 +52,7 @@ setupDom();
 import { createHttpApi, UNREAD_REFRESH_MS } from "@agenteschat/client";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { DESKTOP_QUERY } from "@/components/NavDrawer";
-import { renderApp, settle } from "./render";
+import { renderApp, settle, showIn } from "./render";
 
 type SocketFactory = NonNullable<Parameters<typeof renderApp>[1]["createSocket"]>;
 
@@ -127,7 +127,10 @@ async function openApp(b: Browser, path: string, { socketOpens, api, onFrame }: 
   };
   api?.(http);
   const createSocket = (socketOpens ? slowSocket(dial, socketOpens) : dial) as unknown as SocketFactory;
-  return renderApp(path, { api: http, createSocket });
+  const app = await renderApp(path, { api: http, createSocket });
+  // This integration fixture asserts English labels; never inherit the previous test file's language.
+  await showIn(app.services, "en");
+  return app;
 }
 
 /** Another socket of `b`'s (the phone, another tab), open once the server says it's ready. */
@@ -457,5 +460,5 @@ describe("a conversation shown again after another page", () => {
     await live();
     expect(again.textContent).toContain("resposta enquanto eu aprovava");
     expect(again.querySelector(".thread-head__meta")?.textContent).toMatch(/2 replies/i);
-  });
+  }, 20_000); // Two real reconnect/refetch waits exceed the default 5 s when this is not the first file.
 });

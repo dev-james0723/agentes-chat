@@ -687,6 +687,8 @@ export function knownBridgeResult(output: Pick<ToolOutput, "content" | "isError"
       typeof output.data?.exitCode === "number" ||
       // The tool's own failure result says an access or validation check refused it (`refusalData`), whatever its code.
       typeof output.data?.refusedByCheck === "string" ||
+      // Our own tool that only reads failed (`noEffectOnError`): nothing it could have changed.
+      output.data?.noEffect === "read" ||
       [
         "tool.invalid_input",
         "tool.unknown",

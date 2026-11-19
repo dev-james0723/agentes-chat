@@ -149,6 +149,29 @@ describe("estimate", () => {
 });
 
 describe("fitContextWindow", () => {
+  test("compacts old tool results without changing protected system or long raw user instructions", async () => {
+    const protectedText = `PROTECTED_SYSTEM_START\n${"Keep every accepted human rule in force.\n".repeat(80)}PROTECTED_SYSTEM_END`;
+    const rawUser = `RAW_USER_START\n${"請保留全部內容。\n".repeat(400)}RAW_USER_END`;
+    const messages = three();
+    messages[0] = { role: "user", content: rawUser };
+    const protectedSystem = [{ text: protectedText }];
+    const request = { ...input(messages), system: protectedSystem };
+    const before = JSON.stringify(request);
+    expect(rawUser.length).toBeGreaterThan(3000);
+    const fitted = await fitContextWindow(null, request);
+    expect(fitted).not.toBeNull();
+    expect(removed(fitted?.messages ?? [])).toEqual(["a"]);
+    expect(fitted?.report).toMatchObject({ removed: 1, source: "none", fits: true });
+    expect(fitted?.report.estimatedTokens).toBeGreaterThan(fitted?.report.budgetTokens ?? 0);
+    expect(fitted?.report.afterTokens).toBeLessThanOrEqual(fitted?.report.budgetTokens ?? 0);
+    expect(fitted?.messages[0]).toBe(messages[0]);
+    expect(fitted?.messages[0]?.content).toBe(rawUser);
+    expect(request.system).toBe(protectedSystem);
+    expect(request.system).toEqual([{ text: protectedText }]);
+    expect(JSON.stringify(request)).toBe(before);
+    expect(results(fitted?.messages ?? []).find((block) => block.toolUseId === "c")?.content).toBe(big("c", 30_000));
+  });
+
   test("under budget: nothing changes and the judge isn't asked", async () => {
     const judge = createFakeJudge(() => 0.5);
     expect(await fitContextWindow(judge, input(three(), 200_000))).toBeNull();

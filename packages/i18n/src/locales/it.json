@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "Verifica la condivisione di una bozza privata",
     "destination": "Destinazione: raccolta delle competenze dell’organizzazione",
@@ -10,9 +13,6 @@
     "body": "Testo completo della competenza",
     "review": "Verifica la bozza privata",
     "withdraw": "Ritira l’approvazione alla condivisione"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "Chiudi",
@@ -8309,11 +8309,11 @@
       "issue": {
         "created": "Attività creata in agentes"
       },
-      "deploy": {
-        "succeeded": "Deploy completato"
-      },
       "paperclip": {
         "received": "Richiesta Paperclip ricevuta"
+      },
+      "deploy": {
+        "succeeded": "Deploy completato"
       }
     },
     "when": {
@@ -13089,6 +13089,7 @@
     "agentSub": "Per connettore e argomento. Di norma le azioni sensibili chiedono l'approvazione."
   },
   "connectFlow": {
+    "accessRequired": "Le nuove connessioni non danno agli agenti alcun accesso in più. Controlla l'accesso in Regola. I permessi Tutti gli strumenti già dati restano validi.",
     "steps": "Passaggi",
     "step": {
       "0": "Collega",
@@ -13165,6 +13166,8 @@
     "saved_other": "{{name}}: {{count}} agenti possono usarlo.",
     "done": {
       "title": "{{name}} connesso",
+      "accessRequired": "Le nuove connessioni non danno agli agenti alcun accesso in più. Controlla l'accesso in Regola. I permessi Tutti gli strumenti già dati restano validi.",
+      "accessPending": "Controlla gli strumenti, poi scegli l'accesso degli agenti in Regola. I permessi Tutti gli strumenti già dati restano validi.",
       "everyone": "Ogni agente può usarlo.",
       "waiting": "Gli agenti ricevono gli strumenti solo quando continui, ai livelli che suggeriamo.",
       "asks_one": "{{count}} azione chiede l'approvazione in chat.",
@@ -16883,6 +16886,10 @@
     "create_artifact": {
       "label": "Crea file",
       "description": "Crea un documento, una tabella, un diff, un diagramma o una pagina."
+    },
+    "register_files": {
+      "label": "Registra file",
+      "description": "Annota quali file ha creato sul suo computer per un'attività e a cosa serve ciascuno. Non elimina nulla."
     },
     "update_artifact": {
       "label": "Aggiorna file",

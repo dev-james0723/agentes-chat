@@ -1,4 +1,4 @@
-import { createFcmPushSender } from "@agenteschat/adapters";
+import { createFcmPushSender, createFoundryRpcHandler } from "@agenteschat/adapters";
 import { MisconfiguredError, requestLocale } from "@agenteschat/engine";
 import { helpDocsUrl } from "@agenteschat/i18n/help";
 import { appLocale } from "@agenteschat/i18n/locale";
@@ -40,6 +40,7 @@ import { desktopRoutes } from "./routes/app/desktop";
 import { deviceWaitRoutes } from "./routes/app/device-waits";
 import { dmRoutes } from "./routes/app/dms";
 import { feedbackRoutes, registerFeedbackFiles, registerFeedbackInbox } from "./routes/app/feedback";
+import { foundryRoutes } from "./routes/app/foundry";
 import { gifKeyRoutes } from "./routes/app/gif-key";
 import { gifRoutes } from "./routes/app/gifs";
 import { inviteRoutes } from "./routes/app/invites";
@@ -176,6 +177,16 @@ export function createApp(options: AppOptions) {
       return res;
     });
     const deps: AppDeps = { log, ...options.services };
+    // Separate server-to-runtime capability, not a session route. No CORS,
+    // redirects, model-selected URL or general command execution exists here.
+    if (config.FOUNDRY_CONTROL_TOKEN && deps.extras?.foundry) {
+      const foundryControl = createFoundryRpcHandler({
+        token: config.FOUNDRY_CONTROL_TOKEN,
+        methods: deps.extras.foundry.controls,
+      });
+      api.all("/internal/foundry/*", (c) => foundryControl(c.req.raw));
+    }
+
     registerInstance(api, deps, version);
     registerFeedbackFiles(api, deps);
     registerFeedbackInbox(api, deps);
@@ -214,6 +225,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", billingRoutes(deps));
     api.route("/app", artifactRoutes(deps));
     api.route("/app", issueRoutes(deps));
+    api.route("/app", foundryRoutes(deps));
     api.route("/app", threadRoutes(deps));
     api.route("/app", missionRoutes(deps));
     api.route("/app", wikiRoutes(deps));

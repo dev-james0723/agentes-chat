@@ -1891,6 +1891,62 @@
       "when": 1794745400009,
       "tag": "0271_usage_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 272,
+      "version": "7",
+      "when": 1794984794760,
+      "tag": "0272_memory_validity_and_event_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 273,
+      "version": "7",
+      "when": 1795030834054,
+      "tag": "0273_backfill_superseded_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1795034502802,
+      "tag": "0274_native_capability_foundry",
+      "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1795034503802,
+      "tag": "0275_foundry_recovery_revision",
+      "breakpoints": true
+    },
+    {
+      "idx": 276,
+      "version": "7",
+      "when": 1795034504802,
+      "tag": "0276_foundry_evaluation_checkpoint",
+      "breakpoints": true
+    },
+    {
+      "idx": 277,
+      "version": "7",
+      "when": 1795034505802,
+      "tag": "0277_foundry_run_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 278,
+      "version": "7",
+      "when": 1795048192262,
+      "tag": "0278_foundry_capability_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 279,
+      "version": "7",
+      "when": 1795065708601,
+      "tag": "0279_run_files",
+      "breakpoints": true
     }
   ]
 }

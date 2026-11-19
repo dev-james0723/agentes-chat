@@ -78,6 +78,7 @@ export const BUILTIN_TOOLS: Record<string, string[]> = {
   ],
   "sandbox:run": [
     "run_code",
+    "register_files",
     "write_file",
     "read_file",
     "list_files",
@@ -159,6 +160,10 @@ export const BUILTIN_TOOL_INFO: Record<string, { label: string; description: str
       "Brings into the conversation a file it made in another one (such as a DM), if the person asking has access.",
   },
   create_artifact: { label: "Create file", description: "Creates a document, table, diff, diagram or page." },
+  register_files: {
+    label: "Register files",
+    description: "Notes which files on its computer it made for a task and what each is for. Deletes nothing.",
+  },
   update_artifact: { label: "Update file", description: "Saves a new version of a file." },
   list_issues: { label: "View issues", description: "Lists and opens issues." },
   create_issue: { label: "Create issue", description: "Creates an issue with acceptance criteria." },

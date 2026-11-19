@@ -1,0 +1,1 @@
+ALTER TABLE "foundry_versions" ADD COLUMN "evaluation_job" jsonb;

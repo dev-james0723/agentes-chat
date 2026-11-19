@@ -2,7 +2,7 @@ import type { PubSub } from "@agenteschat/adapters";
 import { and, type Database, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { publishOrgEvent } from "./events";
 import { cutText } from "./format";
-import type { Judge } from "./judge";
+import type { Judge, JudgeAnswer } from "./judge";
 import { requirePermission } from "./organizations";
 import { type OutOfOffice, type OutOfOfficeOptions, outOfOffice } from "./out-of-office";
 import { routineSeer } from "./routines";
@@ -667,6 +667,11 @@ export async function askRunStatus(
     },
     questions: statusQuestions(input.candidates),
   });
+  return statusPickOf(answers);
+}
+
+/** Jev's pick read from its answers to `statusQuestions` (asked alone, or beside Automático's tier and effort). */
+export function statusPickOf(answers: Record<string, JudgeAnswer>): StatusPick {
   const line = answers.status_line?.choice;
   const picked = line && line !== "none" ? line : null;
   const weight = answers.status_weight;

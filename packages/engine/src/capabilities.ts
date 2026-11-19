@@ -170,6 +170,7 @@ export function describeCapabilities(
         '- Requests for a PDF (or Word file): create a document with `create_artifact` (kind `document`); the file\'s card offers "Download PDF".',
       );
     }
+    if (!noComputer && loaded.has("register_files")) lines.push(FILES_GUIDANCE);
     if (loaded.has("run_code")) {
       lines.push(
         "- If a command fails because of the network (DNS, connection refused), say exactly what the tool says about it; don't blame permissions.",
@@ -251,6 +252,13 @@ export function describeCapabilities(
   lines.push(CAPABILITIES_LIMIT);
   return lines.join("\n");
 }
+
+/**
+ * How an agent with a computer keeps its files (ADR 0197): the short version every such agent reads; the rules
+ * behind it are the retention report's, never the prompt's.
+ */
+export const FILES_GUIDANCE =
+  "- Files on your computer: put deliverables where the task asks and temporary files in a scratch folder. Take a screenshot only at a meaningful change or a check; before recording, set a length and size limit. When you hand off, list the files you made with `register_files` (deliverable, evidence, scratch or rebuildable). It deletes nothing; files you don't register are kept.";
 
 /**
  * GitHub work (ADR 0016, amended 2026-11-03): the workspace's GitHub connection and our git proxy, never the person's

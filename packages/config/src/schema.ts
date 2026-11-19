@@ -373,6 +373,41 @@ export const envVars = {
       "Jev model for judgments over images (an agent finding a target on a screenshot of its browser or desktop). Needs a release that takes images.",
     section: "Agents",
   },
+  FOUNDRY_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    description:
+      "Enable task-scoped capability drafts and native review tools. Off by default. Execution additionally requires an independently qualified server adapter and protected evaluator; this flag grants no execution authority.",
+    section: "Agents",
+  },
+  FOUNDRY_RUNTIME_URL: {
+    schema: z.url().optional(),
+    description:
+      "Operator-configured private protected-runtime control URL. Unset: fail closed; never use the host as a fallback. HTTPS or the explicit local loopback/VM-host endpoint only.",
+    section: "Operator",
+  },
+  FOUNDRY_RUNTIME_TOKEN: {
+    schema: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    description:
+      "Separate 256-bit bearer credential for the protected Foundry runtime. Not an agent credential and never sent to the browser.",
+    section: "Operator",
+    secret: true,
+  },
+  FOUNDRY_CONTROL_TOKEN: {
+    schema: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    description:
+      "Different 256-bit runtime-to-native callback credential. It authorizes only exact Foundry control methods, not a user session, approval or shell.",
+    section: "Operator",
+    secret: true,
+  },
   SKILL_READ_CANARY: {
     schema: z
       .string()

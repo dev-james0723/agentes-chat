@@ -1,4 +1,7 @@
 {
+  "app": {
+    "name": "agentes"
+  },
   "privatePublication": {
     "title": "비공개 초안 공유 검토",
     "destination": "공유 대상: 조직 스킬 라이브러리",
@@ -10,9 +13,6 @@
     "body": "스킬 전체 본문",
     "review": "비공개 초안 검토",
     "withdraw": "공유 승인 철회"
-  },
-  "app": {
-    "name": "agentes"
   },
   "common": {
     "close": "닫기",
@@ -7781,11 +7781,11 @@
       "issue": {
         "created": "agentes에서 작업 생성됨"
       },
-      "deploy": {
-        "succeeded": "배포 완료"
-      },
       "paperclip": {
         "received": "Paperclip 요청 수신"
+      },
+      "deploy": {
+        "succeeded": "배포 완료"
       }
     },
     "when": {
@@ -12142,6 +12142,7 @@
     "agentSub": "커넥터와 주제별이에요. 기본적으로 민감한 작업은 승인을 요청해요."
   },
   "connectFlow": {
+    "accessRequired": "새 연결은 에이전트에게 추가 접근 권한을 주지 않아요. 접근 권한은 조정에서 확인하세요. 기존 모든 도구 권한은 그대로 적용돼요.",
     "steps": "단계",
     "step": {
       "0": "연결",
@@ -12212,6 +12213,8 @@
     "saved_other": "{{name}}: 에이전트 {{count}}명이 사용할 수 있어요.",
     "done": {
       "title": "{{name}} 연결됨",
+      "accessRequired": "새 연결은 에이전트에게 추가 접근 권한을 주지 않아요. 접근 권한은 조정에서 확인하세요. 기존 모든 도구 권한은 그대로 적용돼요.",
+      "accessPending": "도구를 확인한 다음 조정에서 에이전트 접근 권한을 고르세요. 기존 모든 도구 권한은 그대로 적용돼요.",
       "everyone": "모든 에이전트가 사용할 수 있어요.",
       "waiting": "계속해야 에이전트가 도구를 받아요. 저희가 제안한 수준이 적용돼요.",
       "asks_other": "작업 {{count}}개는 채팅에서 승인을 요청해요.",
@@ -15810,6 +15813,10 @@
     "create_artifact": {
       "label": "파일 만들기",
       "description": "문서, 표, diff, 다이어그램, 페이지를 만들어요."
+    },
+    "register_files": {
+      "label": "파일 등록",
+      "description": "작업을 위해 컴퓨터에서 만든 파일과 각 파일의 용도를 기록합니다. 아무것도 삭제하지 않습니다."
     },
     "update_artifact": {
       "label": "파일 업데이트",

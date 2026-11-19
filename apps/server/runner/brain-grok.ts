@@ -162,6 +162,12 @@ export function grokTurnArgs(input: {
   profile?: CommandProfile;
   /** The team's right hand: the meta-tools alone. */
   locked?: boolean;
+  /**
+   * The runner's `readsOnlyInFolders`: `strict` reads the working folder, system paths and `GROK_HOME` only. Grok
+   * Build 1.0.70 refuses `--add-dir` under it and takes custom profiles only from `sandbox.toml` files, so the agent's
+   * other allowed folders stay unreadable too (stricter than the allow-list).
+   */
+  readsOnlyInFolders?: boolean;
 }): string[] {
   const ours = `MCPTool(${CODEX_MCP_SERVER}__*)`;
   const effort = grokEffort(input.effort);
@@ -172,7 +178,7 @@ export function grokTurnArgs(input: {
     "streaming-messages-json",
     "--include-partial-messages",
     "--sandbox",
-    "workspace",
+    input.readsOnlyInFolders ? "strict" : "workspace",
     ...(input.locked
       ? [
           "--tools",
@@ -286,6 +292,8 @@ export interface GrokTurnInput {
   profile?: CommandProfile;
   /** The team's right hand (`cwd` its empty `chatFolder`): killed at a tool of Grok's own. */
   chat?: boolean;
+  /** The runner's `readsOnlyInFolders` (`grokTurnArgs`). */
+  readsOnlyInFolders?: boolean;
 }
 
 export interface GrokTurnOptions {
@@ -320,7 +328,8 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
   } catch (err) {
     return fail("grok_failed", `Couldn't set up the agent's tools for Grok: ${(err as Error).message}`, true);
   }
-  const chatKey = codexThreadKey(input.sessionId, input.account.id);
+  // A chat keeps the sandbox it started with (Grok refuses another on resume): the strict one is a chat of its own.
+  const chatKey = `${codexThreadKey(input.sessionId, input.account.id)}${input.readsOnlyInFolders ? ":strict" : ""}`;
   const base: NodeJS.ProcessEnv = {
     ...withoutContainers(input.chat ? withoutSignIns(process.env) : process.env),
     ...(opts.env ?? {}),
@@ -343,6 +352,7 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
       ...(input.effort ? { effort: input.effort } : {}),
       profile: input.profile ?? "work",
       ...(input.chat ? { locked: true } : {}),
+      ...(input.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
     });
     const parser = new ClaudeStreamParser();
     parser.beginTurn();
@@ -567,6 +577,8 @@ export interface GrokBrainContext {
   chats?: CodexThreads;
   bin?: string;
   grants?: string[];
+  /** The runner's `readsOnlyInFolders` (`grokTurnArgs`). */
+  readsOnlyInFolders?: boolean;
   accounts?: { accountDir(kind: "grok", id: string): string | null };
   spawn?: Spawn;
 }
@@ -632,6 +644,7 @@ export async function handleGrokBrainTurn(
       account: { id: accountId, home },
       profile: codexProfileOf(req),
       ...(chat ? { chat } : {}),
+      ...(ctx.readsOnlyInFolders && !chat ? { readsOnlyInFolders: true } : {}),
     },
     {
       chats,

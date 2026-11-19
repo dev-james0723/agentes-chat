@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chooseDelegate, type DelegateCandidate } from "../src/delegation-choice";
+import { chooseDelegate, type DelegateCandidate, MAX_DELEGATE_CANDIDATES } from "../src/delegation-choice";
 import type { Judge, JudgeRequest } from "../src/judge";
 import { withJudgeFallback } from "../src/judge";
 
@@ -143,11 +143,32 @@ test("duplicate/reserved candidate IDs and over-wide shortlists do not reach Jud
   for (const pool of [
     [...candidates, first],
     [{ ...first, id: "none" }],
-    Array.from({ length: 9 }, (_, n) => ({ ...first, id: `candidate-${n}` })),
+    Array.from({ length: MAX_DELEGATE_CANDIDATES + 1 }, (_, n) => ({ ...first, id: `candidate-${n}` })),
   ]) {
     expect((await chooseDelegate(judge, ids, "bounded task", pool, "implementer")).decisionCalls).toBe(0);
   }
   expect(calls).toBe(0);
+});
+
+test("the declared shortlist maximum is accepted in exactly one advisory decision", async () => {
+  const first = candidates[0];
+  if (!first) throw Error("fixture missing");
+  const pool = Array.from({ length: MAX_DELEGATE_CANDIDATES }, (_, n) => ({ ...first, id: `candidate-${n}` }));
+  let calls = 0;
+  const judge: Judge = {
+    name: "offline",
+    ask: async (request) => {
+      calls++;
+      expect(request.state.candidates).toHaveLength(MAX_DELEGATE_CANDIDATES);
+      return { delegate: { choice: "candidate-0" } };
+    },
+  };
+  expect(await chooseDelegate(judge, ids, "bounded task", pool, "implementer")).toMatchObject({
+    status: "recommended",
+    agentId: "candidate-0",
+    decisionCalls: 1,
+  });
+  expect(calls).toBe(1);
 });
 
 test("stalled accounting cannot hold an advisory decision beyond its local six-second settlement budget", async () => {

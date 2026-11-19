@@ -132,7 +132,12 @@ describe("one reason, `why`", () => {
         },
       ],
     });
-    await createApiKeyConnection(deps(), f.owner.id, f.org.id, { connector: "github", apiKey: "ghp_secret_123456" });
+    const github = await createApiKeyConnection(deps(), f.owner.id, f.org.id, {
+      connector: "github",
+      apiKey: "ghp_secret_123456",
+    });
+    // A connection is no agent's until it is granted (connector default-deny); this agent is given it whole.
+    await grantScopes(f.db, f.org.id, f.agent.id, [{ connectionId: github.id, scope: "connector:*" }]);
     await f.db.insert(schema.agentScopes).values({
       orgId: f.org.id,
       agentId: f.agent.id,

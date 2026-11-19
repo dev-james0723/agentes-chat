@@ -525,6 +525,7 @@ async function boot(
       adapters,
       wakeWorkers: workers.wakeAll,
       extras: {
+        foundry: engine.foundry,
         internalDatabaseTargets,
         embed: engine.gateway.embed,
         storage: engine.storage,

@@ -634,6 +634,7 @@ const LABELS: Record<string, readonly [en: string, ptBR: string]> = {
   request_review: ["Ask for a review", "Pedir uma revisão"],
   request_folder_access: ["Ask for a folder", "Pedir acesso a uma pasta"],
   create_artifact: ["Create file in Drive", "Criar arquivo no Drive"],
+  register_files: ["Register files", "Registrar arquivos"],
   update_artifact: ["Change file in Drive", "Alterar arquivo no Drive"],
   read_artifact: ["Read file in Drive", "Ler arquivo do Drive"],
   list_artifacts: ["List Drive files", "Listar arquivos do Drive"],

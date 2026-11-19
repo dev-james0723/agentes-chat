@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "1.0",
+  "name": "receipt-normalizer",
+  "version": "0.1.0",
+  "kind": "pure_tool",
+  "description": "Normalize bounded synthetic task or run receipts while preserving unknown and unverified counts. Draft candidate; execution protocol and qualified runtime are pending.",
+  "applicability": {
+    "useFor": ["Normalize or aggregate explicit synthetic task/run receipts under receipt-normalizer/v1."],
+    "doNotUseFor": [
+      "Expense receipts, invoices, payments, sales, tax or billing records.",
+      "Explaining receipts or unrelated tasks without explicit synthetic task/run normalization intent."
+    ]
+  },
+  "scopeRequest": {
+    "level": "task",
+    "purpose": "One native task-scoped receipt-normalizer evaluation and canary after independent evidence and exact authorization."
+  },
+  "effects": {
+    "network": "none",
+    "secrets": "none",
+    "filesystem": "none",
+    "externalActions": [],
+    "nestedCapabilities": []
+  },
+  "contracts": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records"],
+      "properties": {
+        "records": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "tokens"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["succeeded", "failed", "cancelled", "unknown", "unverified"]
+              },
+              "tokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            }
+          }
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "counts", "tokens"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["succeeded", "failed", "cancelled", "unknown", "unverified"],
+          "properties": {
+            "succeeded": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "cancelled": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "unknown": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "unverified": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            }
+          }
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000000
+        }
+      }
+    }
+  },
+  "dependencies": [],
+  "runtimeRequest": {
+    "profile": "pure-offline-v1",
+    "wallTimeMs": 10000,
+    "memoryMiB": 256,
+    "scratchMiB": 32,
+    "processes": 1,
+    "logBytesPerStream": 65536,
+    "inputBytes": 1048576,
+    "resultBytes": 1048576
+  },
+  "provenance": {
+    "origin": "generated",
+    "sourceRefs": [
+      "repository:packages/engine/src/foundry/receipt-contract.ts#sha256=091113f7a25fc5fff2346150207b99eb2867f14025545611d36a25ffcf245aa8",
+      "repository:packages/engine/src/foundry/packages.ts#sha256=3ec45469395c31fdccbea380de18f5fd59a20e7af27e20a4e67855cf62904418"
+    ],
+    "licenseDisposition": "original_internal",
+    "containsPrivateData": false
+  },
+  "developmentTests": ["README.md"],
+  "rollback": {
+    "onFailure": "quarantine_and_revalidate_previous",
+    "previousNativeVersion": null
+  }
+}
