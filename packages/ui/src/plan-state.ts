@@ -129,8 +129,7 @@ export function planState(
 ): { state: PlanState; until: string | null; used: number } {
   const rows = planWindows(usage, now).filter((w) => windowHolds(w, model));
   const full = rows.filter((w) => w.used >= 100);
-  const refused =
-    usage.limited === true && !usage.windows.some((w) => w.usedPercent >= 100 && windowHolds(w, model));
+  const refused = usage.limited === true && !usage.windows.some((w) => w.usedPercent >= 100 && windowHolds(w, model));
   const used = rows[0]?.used ?? 0;
   if (full.length === 0 && !refused) return { state: used >= PLAN_ALMOST ? "almost" : "ok", until: null, used };
   const resets = full.flatMap((w) => (w.resetsAt ? [w.resetsAt] : []));
