@@ -174,3 +174,59 @@ describe("A19: a restore from an older backup deletes again what people deleted 
     expect(await reapplyMemoryDeletions(f.db)).toBe(0);
   });
 });
+
+describe("A03: a fresh run picks the work up from memory, not from the old conversation", () => {
+  test("a new run in the task's channel receives the accepted decision with its source, and not the replaced one", async () => {
+    f = await setup();
+    const deps = { db: f.db, pubsub: f.pubsub };
+    const said = await postPersonMessage(deps, f.owner.id, f.org.id, f.general.id, {
+      body: "Decision: Kestrel ships from Osaka, release code KT-7731.",
+    });
+    const old = await insertContextItem(f.db, {
+      orgId: f.org.id,
+      kind: "decision",
+      scopeType: "agent",
+      scopeId: f.agent.id,
+      agentId: f.agent.id,
+      subject: "Kestrel release",
+      content: "Kestrel ships from Frankfurt.",
+      sourceIds: [said.id],
+      channelIds: [f.general.id],
+      trust: "high",
+      evidence: [{ type: "human", ref: said.id, at: new Date().toISOString() }],
+      createdByKind: "person",
+      createdById: f.owner.id,
+    });
+    const { supersede } = await import("../src/context/items");
+    const current = await f.db.transaction((tx) =>
+      supersede(tx, old, {
+        orgId: f.org.id,
+        kind: "decision",
+        scopeType: "agent",
+        scopeId: f.agent.id,
+        agentId: f.agent.id,
+        subject: "Kestrel release",
+        content: "Kestrel ships from Osaka, release code KT-7731.",
+        sourceIds: [said.id],
+        channelIds: [f.general.id],
+        trust: "high",
+        evidence: [{ type: "human", ref: said.id, at: new Date().toISOString() }],
+        createdByKind: "person",
+        createdById: f.owner.id,
+      }),
+    );
+    await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: current.id });
+    await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: old.id });
+
+    // A fresh run: no transcript carried over, only what memory gives it.
+    const fresh = await run(
+      f.general.id,
+      "Continue the Kestrel release: where does it ship from and what is the code?",
+    );
+    const text = fresh.text + (fresh.requiredText ?? "");
+    expect(fresh.itemIds).toContain(current.id);
+    expect(fresh.itemIds).not.toContain(old.id);
+    expect(text).toContain("KT-7731");
+    expect(text).not.toContain("Frankfurt");
+  });
+});
