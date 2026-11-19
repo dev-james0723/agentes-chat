@@ -39,7 +39,7 @@ export function MemoryGraph({
   };
   return (
     <section className="sm-graph" aria-labelledby="sm-graph-title">
-      <div className="sm-section-head">
+      <div className="sm-section-head ac-actline">
         <div>
           <h2 id="sm-graph-title">{t("sharedMemory.graphTitle")}</h2>
           <p className="small muted">{t("sharedMemory.graphHelp")}</p>
@@ -59,20 +59,21 @@ export function MemoryGraph({
             placeholder={t("sharedMemory.graphSearch")}
           />
         }
-      >
-        <Select
-          size="sm"
-          aria-label={t("sharedMemory.graphFilter")}
-          value={kind}
-          onValueChange={setKind}
-          options={[
-            { value: "all", label: t("sharedMemory.graphAll") },
-            { value: "entry", label: t("sharedMemory.graphEntries") },
-            { value: "source", label: t("sharedMemory.graphSources") },
-            { value: "workspace", label: t("sharedMemory.graphWorkspaces") },
-          ]}
-        />
-      </Toolbar>
+        actions={
+          <Select
+            size="sm"
+            aria-label={t("sharedMemory.graphFilter")}
+            value={kind}
+            onValueChange={setKind}
+            options={[
+              { value: "all", label: t("sharedMemory.graphAll") },
+              { value: "entry", label: t("sharedMemory.graphEntries") },
+              { value: "source", label: t("sharedMemory.graphSources") },
+              { value: "workspace", label: t("sharedMemory.graphWorkspaces") },
+            ]}
+          />
+        }
+      />
       <div className="sm-graph__bar">
         <span className="small muted" role="status">
           {t("sharedMemory.graphNodes", { nodes: shown.nodes.length, edges: shown.edges.length })}
@@ -227,7 +228,7 @@ export function MemoryGraph({
                 )}
               </>
             ) : (
-              <div className="sm-graph__select">
+              <div className="sm-graph__select ac-iconline">
                 <Icon name="bulb" size={20} />
                 <p>{t("sharedMemory.graphSelect")}</p>
               </div>

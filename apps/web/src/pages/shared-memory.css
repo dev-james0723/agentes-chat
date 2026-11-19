@@ -21,8 +21,7 @@
 }
 .sm-profile-line,
 .sm-chips,
-.sm-provider,
-.sm-entry__heading {
+.sm-provider {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -30,13 +29,8 @@
   min-width: 0;
 }
 .sm-entry__heading {
-  align-items: baseline;
-  flex-wrap: nowrap;
-}
-.sm-entry__heading > .ac-icon {
-  flex: none;
-  align-self: flex-start;
-  margin-top: var(--space-1);
+  font-size: var(--text-h3);
+  min-width: 0;
 }
 .sm-profile-line {
   padding-block: var(--space-1);
@@ -128,7 +122,7 @@
   border-top: 1px solid var(--line);
   padding-top: var(--space-4);
 }
-.sm-section-head {
+.sm-section-head:not(.ac-actline) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -136,7 +130,7 @@
   gap: var(--space-3);
   min-width: 0;
 }
-.sm-section-head > div {
+.sm-section-head:not(.ac-actline) > div {
   min-width: 0;
   flex: 1;
 }
@@ -157,16 +151,9 @@
   overflow-wrap: anywhere;
 }
 .sm-error {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
   color: var(--danger);
   margin: 0;
   overflow-wrap: anywhere;
-}
-.sm-error .ac-icon {
-  flex: none;
-  margin-top: var(--space-1);
 }
 .sm-setup {
   max-width: 48rem;
@@ -429,7 +416,7 @@ html:not([data-pointer]) .sm-graph__node:focus-visible {
 .sm-graph__inspector .sm-chips {
   align-items: flex-start;
 }
-.sm-graph__select {
+.sm-graph__select.ac-iconline {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -498,13 +485,9 @@ html:not([data-pointer]) .sm-graph__node:focus-visible {
     border-top: 1px solid var(--line2);
     max-height: none;
   }
-  .sm-graph__select {
+  .sm-graph__select.ac-iconline {
     flex-direction: row;
-    align-items: center;
     padding: 0;
-  }
-  .sm-graph__select > .ac-icon {
-    flex: none;
   }
 }
 @media (max-width: 700px) {

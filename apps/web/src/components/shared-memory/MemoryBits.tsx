@@ -66,7 +66,7 @@ export function MemoryActionError({ error }: { error: unknown }) {
   if (!error) return null;
   const stale = error instanceof ApiError && error.status === 409 && /version|stale/i.test(error.code);
   return (
-    <p role="alert" className="sm-error">
+    <p role="alert" className="sm-error ac-iconline">
       <Icon name="alert" />
       {stale ? t("sharedMemory.stale") : errorText(t, error, i18n.language)}
     </p>

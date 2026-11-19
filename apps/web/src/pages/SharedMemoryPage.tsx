@@ -166,7 +166,7 @@ function EntryCard({
   const sources = snapshot.sources.filter((source) => entry.sourceId === source.id);
   return (
     <Card padded as="article" className="sm-entry" aria-labelledby={`sm-entry-${entry.id}`}>
-      <div className="sm-entry__heading">
+      <div className="sm-entry__heading ac-iconline">
         <Icon name="bulb" />
         <h2 id={`sm-entry-${entry.id}`}>
           {entry.readable === true || entry.status === "forgotten" ? entry.title : t("sharedMemory.copyStates.blocked")}
@@ -491,21 +491,22 @@ export function SharedMemoryPage({
                     placeholder={t("sharedMemory.searchPlaceholder")}
                   />
                 }
-              >
-                <Select
-                  value={scope}
-                  onValueChange={setScope}
-                  size="sm"
-                  aria-label={t("sharedMemory.filter")}
-                  options={[
-                    { value: "all", label: t("sharedMemory.all") },
-                    ...(["personal", "workspace", "sensitive"] as const).map((value) => ({
-                      value,
-                      label: t(`sharedMemory.sensitivity.${value}`),
-                    })),
-                  ]}
-                />
-              </Toolbar>
+                actions={
+                  <Select
+                    value={scope}
+                    onValueChange={setScope}
+                    size="sm"
+                    aria-label={t("sharedMemory.filter")}
+                    options={[
+                      { value: "all", label: t("sharedMemory.all") },
+                      ...(["personal", "workspace", "sensitive"] as const).map((value) => ({
+                        value,
+                        label: t(`sharedMemory.sensitivity.${value}`),
+                      })),
+                    ]}
+                  />
+                }
+              />
             )}
             <TabPanel value="current">{showEntries(current, "empty")}</TabPanel>
             <TabPanel value="candidates">
