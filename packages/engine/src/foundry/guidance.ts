@@ -40,6 +40,6 @@ export function foundryDraftGuidance() {
       developmentTests: ["development.json"],
       rollback: { onFailure: "quarantine_and_revalidate_previous", previousNativeVersion: null },
     },
-    next: "Use stage_foundry_package with the exact candidate revision, JSON.stringify(manifestTemplate), and base64 file bytes for tool.mjs and development.json, following the stage tool schema exactly. Then evaluate_foundry_capability pauses and resumes this same native task. Only after REVIEW_READY, prepare_foundry_activation and submit its unchanged parameters to activate_foundry_capability for a real approval card. Run the canary only after that approval. Never treat a test PASS as ACTIVE or live verification.",
+    next: "Use stage_foundry_package with the exact candidate revision, JSON.stringify(manifestTemplate), and tool.mjs and development.json as plain text (`text`, not base64), following the stage tool schema exactly. Then evaluate_foundry_capability pauses and resumes this same native task. Only after REVIEW_READY, prepare_foundry_activation and submit its unchanged parameters to activate_foundry_capability for a real approval card. Run the canary only after that approval. Never treat a test PASS as ACTIVE or live verification.",
   };
 }
