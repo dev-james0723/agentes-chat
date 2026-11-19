@@ -70,6 +70,9 @@ import {
 } from "./feedback";
 import { FOLLOW_UP_JOB, wakeFollowUp } from "./follow-through";
 import { cutText } from "./format";
+import { FOUNDRY_EVALUATE_JOB } from "./foundry/evaluation";
+import { createFoundryLifecycle, FOUNDRY_RECONCILE_JOB, type FoundryLifecycleDependencies } from "./foundry/lifecycle";
+import { createFoundryCapabilitySync, FOUNDRY_SYNC_JOB } from "./foundry/sync";
 import type { GitHubAppAccess } from "./git/github-call";
 import { GITHUB_EVENT_JOB, type GitHubAppEvent, handleGitHubAppEvent } from "./git/github-events";
 import { FILE_JOIN_REQUEST_JOB, fileJoinRequest } from "./invite-requests";
@@ -114,10 +117,12 @@ import {
 import { createJevRouterStrategy, jevCostNanoUsd, routeChain } from "./router-jev";
 import { createPlanRouterStrategy } from "./router-plan";
 import { executeRoutineRun } from "./routines";
+import { RETENTION_REPORT_JOB, writeRetentionReport } from "./run-files";
 import { type AgentRun, NO_AI } from "./runs";
 import type { SandboxDeps } from "./sandbox";
 import { indexSource, reindexOrg } from "./search";
 import { activateDeliveredSecret, discardClosedSecret } from "./secrets";
+import { createSkillSync, SKILL_SYNC_JOB } from "./skill-sync";
 import { runSkillUpdates, SKILL_UPDATES_JOB } from "./skill-updates";
 import type { SkillDeps } from "./skills";
 import { TEAM_HELLO_JOB } from "./standing";
@@ -159,6 +164,8 @@ async function maybeEnqueueReflection(deps: JobDeps, orgId: string, threadId: st
 }
 
 export interface JobDeps extends RunExecutorDeps {
+  /** Qualified server dependencies only; absent means unavailable, never the connected-computer sandbox. */
+  foundry?: Pick<FoundryLifecycleDependencies, "executor" | "evaluations" | "now" | "builderPolicy" | "capabilitySync">;
   /** Migrated Paperclip receipts cannot start when the installation opt-in is absent. */
   paperclipCompatibilityEnabled?: boolean;
   maxHops: number;
@@ -558,6 +565,39 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
   };
 
   const handlers: JobHandlers = {
+    [FOUNDRY_EVALUATE_JOB]: async (job, ctx) => {
+      if (!deps.artifacts) throw new PermanentJobError("Capability artifacts are unavailable");
+      await createFoundryLifecycle({ db: deps.db, blobs: deps.artifacts.blobs, ...deps.foundry }).reconcileEvaluation(
+        job,
+        ctx.finalAttempt,
+      );
+    },
+    [FOUNDRY_RECONCILE_JOB]: async (job, ctx) => {
+      const orgId = orgOf(job);
+      const id = job.payload.invocationId;
+      if (!deps.artifacts || typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))
+        throw new PermanentJobError("Invalid capability reconciliation reference");
+      await createFoundryLifecycle({ db: deps.db, blobs: deps.artifacts.blobs, ...deps.foundry }).reconcile(
+        orgId,
+        id,
+        ctx.owned,
+      );
+    },
+    [FOUNDRY_SYNC_JOB]: async (job, ctx) => {
+      if (!deps.artifacts) throw new PermanentJobError("Capability artifacts are unavailable");
+      await createFoundryCapabilitySync({
+        db: deps.db,
+        blobs: deps.artifacts.blobs,
+        capabilitySync: deps.foundry?.capabilitySync,
+      }).run(orgOf(job), job.payload, { finalAttempt: ctx.finalAttempt });
+    },
+    [SKILL_SYNC_JOB]: async (job, ctx) => {
+      await createSkillSync({
+        db: deps.db,
+        blobs: deps.artifacts?.blobs,
+        capabilitySync: deps.foundry?.capabilitySync,
+      }).run(orgOf(job), job.payload, { finalAttempt: ctx.finalAttempt });
+    },
     // A wake the brakes deferred (its agent at its cap of unrequested work, or its computer full) looks again.
     [LATER_JOB]: async (job) => {
       const orgId = orgOf(job);
@@ -917,6 +957,13 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
     "issue.created.publish": async (job) => {
       if (job.orgId && typeof job.payload.issueId === "string")
         await publishDeferredIssueCreated(deps, job.orgId, job.payload.issueId);
+    },
+    // A task or mission ended: what to keep and what could be cleaned, as a dry run (ADR 0197).
+    [RETENTION_REPORT_JOB]: async (job) => {
+      const { subjectType, subjectId } = job.payload;
+      if ((subjectType !== "issue" && subjectType !== "mission") || typeof subjectId !== "string")
+        throw new PermanentJobError("bad retention report payload");
+      await writeRetentionReport(deps.db, orgOf(job), { type: subjectType, id: subjectId });
     },
     "routine.run": async (job) => {
       await executeRoutineRun(

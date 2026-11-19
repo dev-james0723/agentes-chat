@@ -15814,6 +15814,10 @@
       "label": "파일 만들기",
       "description": "문서, 표, diff, 다이어그램, 페이지를 만들어요."
     },
+    "register_files": {
+      "label": "파일 등록",
+      "description": "작업을 위해 컴퓨터에서 만든 파일과 각 파일의 용도를 기록합니다. 아무것도 삭제하지 않습니다."
+    },
     "update_artifact": {
       "label": "파일 업데이트",
       "description": "파일의 새 버전을 저장해요."

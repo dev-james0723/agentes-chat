@@ -16577,6 +16577,10 @@ export const en = {
       label: "Create file",
       description: "Creates a document, table, diff, diagram or page.",
     },
+    register_files: {
+      label: "Register files",
+      description: "Notes which files on its computer it made for a task and what each is for. Deletes nothing.",
+    },
     update_artifact: {
       label: "Update file",
       description: "Saves a new version of a file.",

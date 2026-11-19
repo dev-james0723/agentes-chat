@@ -1,0 +1,222 @@
+#!/usr/bin/env node
+// Read-only delivery observation. This utility never commits, pushes, merges or deploys.
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createGitReader } from "./git-read.mjs";
+import { checkCheckpoint, checkRelease, safePath } from "./policy.mjs";
+import { checkRuntime } from "./runtime-identity.mjs";
+
+const records = (text) => {
+  if (text === "") return [];
+  if (!text.endsWith("\0")) throw new Error("Truncated Git record");
+  return text.slice(0, -1).split("\0");
+};
+export function parseStatus(text) {
+  const parts = records(text),
+    rows = [];
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i];
+    if (entry.length < 4 || entry[2] !== " " || !/^[ MADRCU?!]{2}$/.test(entry.slice(0, 2)))
+      throw new Error("Invalid Git status record");
+    const row = { index: entry[0], worktree: entry[1], path: entry.slice(3) };
+    if (/[RC]/.test(entry.slice(0, 2))) {
+      if (!parts[i + 1]) throw new Error("Truncated Git rename status");
+      row.originalPath = parts[++i];
+    }
+    row.conflict = entry.slice(0, 2).includes("U") || ["AA", "DD"].includes(entry.slice(0, 2));
+    rows.push(row);
+  }
+  return rows;
+}
+function pathInfo(root, relative) {
+  if (!safePath(relative)) return { pathSafe: false, symlink: false };
+  let current = root;
+  for (const part of relative.split("/")) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return { pathSafe: false, symlink: true };
+    } catch (error) {
+      if (error.code === "ENOENT") return { pathSafe: true, symlink: false };
+      throw error;
+    }
+  }
+  return { pathSafe: true, symlink: false };
+}
+function repoFromUrl(url) {
+  const match = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(url);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+export function observe(inputRoot, { remote = "origin", network = false } = {}) {
+  if (typeof remote !== "string" || !/^[A-Za-z0-9_.-]+$/.test(remote) || remote.startsWith("-"))
+    throw new Error("Invalid remote name");
+  const root = realpathSync(inputRoot);
+  const reader = createGitReader(root);
+  // macOS APFS may expose the same directory as /Volumes/Data and /Volumes/Macintosh HD.
+  // Compare filesystem identity, not differing display paths. Nested directories remain rejected.
+  const top = reader.read(["rev-parse", "--show-toplevel"]).trim();
+  const currentStat = statSync(root);
+  const topStat = statSync(top);
+  if (currentStat.dev !== topStat.dev || currentStat.ino !== topStat.ino)
+    throw new Error("Select the exact repository root");
+  const startHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const before = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const errors = reader.filtersSuppressed ? ["content_filters_unverified"] : [];
+  let repository = null;
+  try {
+    const fetchUrls = reader.read(["remote", "get-url", "--all", remote]).trim().split("\n");
+    const pushUrls = reader.read(["remote", "get-url", "--push", "--all", remote]).trim().split("\n");
+    if (fetchUrls.length !== 1 || pushUrls.length !== 1) errors.push("ambiguous_remote");
+    repository = repoFromUrl(fetchUrls[0]);
+    if (!repository) errors.push("unsupported_remote");
+    if (repoFromUrl(pushUrls[0]) !== repository) errors.push("push_remote_mismatch");
+  } catch {
+    errors.push("remote_unavailable");
+  }
+  const changes = parseStatus(before).map((row) => ({ ...row, ...pathInfo(root, row.path) }));
+  const staged = records(
+    reader.read(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z"]),
+  );
+  const trackedCount = records(reader.read(["ls-files", "-z"])).length;
+  const branch = reader.read(["branch", "--show-current"]).trim();
+  const deletedPaths = [...new Set(changes.filter((c) => c.index === "D" || c.worktree === "D").map((c) => c.path))];
+  const remoteState = { name: remote, status: "not_requested", head: null };
+  if (network) {
+    if (errors.length || !branch) remoteState.status = "blocked";
+    else {
+      try {
+        const lines = reader.read(["ls-remote", "--heads", remote, `refs/heads/${branch}`]).trim();
+        if (!lines) remoteState.status = "branch_absent";
+        else {
+          const match = /^([a-f0-9]{40,64})\t([^\r\n]+)$/.exec(lines);
+          if (!match || match[2] !== `refs/heads/${branch}`) throw new Error("Invalid remote result");
+          remoteState.head = match[1];
+          remoteState.status = match[1] === startHead ? "matches" : "differs";
+        }
+      } catch {
+        remoteState.status = "unknown";
+        errors.push("remote_observation_failed");
+      }
+    }
+  }
+  const endHead = reader.read(["rev-parse", "HEAD"]).trim();
+  const after = reader.read(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  return {
+    schema: "delivery-observation/v1",
+    repository,
+    worktree: root,
+    branch,
+    head: startHead,
+    observedAt: new Date().toISOString(),
+    stable: startHead === endHead && before === after,
+    errors,
+    trackedCount,
+    changes,
+    staged,
+    deletedPaths,
+    remote: remoteState,
+    deployment: { status: "unknown", reason: "Server image, runner and user-path evidence must be checked separately" },
+  };
+}
+/**
+ * The observation with what a running server is made of, compared with the observed HEAD (`--runtime-url`, opt-in
+ * like `--network`). Only `match` is verified: a mismatch, or no identity to compare, is a blocker. The runner and
+ * real user paths still need their own evidence.
+ */
+export async function observeRuntime(o, runtimeUrl, options = {}) {
+  let deployment;
+  try {
+    deployment = await checkRuntime(o.worktree, o.head, runtimeUrl, options);
+  } catch {
+    deployment = { status: "unknown", reason: "runtime_check_failed", url: runtimeUrl };
+  }
+  const errors = [...o.errors];
+  if (deployment.status === "mismatch") errors.push("runtime_mismatch");
+  else if (deployment.status !== "match") errors.push("runtime_unverified");
+  return { ...o, errors, deployment };
+}
+export function founderSummary(o) {
+  const lines = [
+    `檢查時間：${o.observedAt}`,
+    `程式碼：${o.repository ?? "未核實"} · ${o.branch || "未選分支"} · ${o.head.slice(0, 9)}`,
+    `未提交改動：${o.changes.length}；已暫存：${o.staged.length}`,
+  ];
+  lines.push(
+    o.remote.status === "matches"
+      ? "GitHub 分支：已核對與本機 commit 相同"
+      : `GitHub 分支：未核實與本機相同（${o.remote.status}）`,
+  );
+  if (o.deployment.status === "match")
+    lines.push(
+      `伺服器源碼：已核實同本機 commit 一樣（${o.deployment.running.digest.slice(0, 19)}，${o.deployment.running.files} 個檔）；執行器同用戶流程仍然要另外核實。`,
+    );
+  else if (o.deployment.status === "mismatch")
+    lines.push(
+      `伺服器源碼：同本機 commit 唔一樣（運行中 ${o.deployment.running.digest.slice(0, 19)}，預期 ${o.deployment.expected.digest.slice(0, 19)}）。`,
+    );
+  else if (o.deployment.url)
+    lines.push(`伺服器源碼：未能核實（${o.deployment.reason ?? "unknown"}）；commit 或 push 不代表部署完成。`);
+  else lines.push("正式版及執行器：未核實；commit 或 push 不代表部署完成。");
+  if (o.errors.length) lines.push(`需要處理：${o.errors.join("、")}`);
+  if (!o.stable) lines.push("檢查期間程式碼有變，請重新核對。");
+  return lines.join("\n");
+}
+function argsOf(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i];
+    if (["--network", "--text"].includes(flag)) {
+      if (args[flag]) throw new Error("Duplicate flag");
+      args[flag] = true;
+    } else if (["--root", "--remote", "--scope", "--evidence", "--runtime-url"].includes(flag)) {
+      if (args[flag] || !argv[i + 1] || argv[i + 1].startsWith("--")) throw new Error("Missing or duplicate argument");
+      args[flag] = argv[++i];
+    } else throw new Error("Unknown argument");
+  }
+  return args;
+}
+export async function main(argv = process.argv.slice(2), options = {}) {
+  const [command, ...rest] = argv;
+  if (!["observe", "check-checkpoint", "check-release"].includes(command))
+    throw new Error("Usage: guardian.mjs observe|check-checkpoint|check-release (read-only; never commits or deploys)");
+  const a = argsOf(rest);
+  let value;
+  let observationFailed = false;
+  if (command === "check-release") {
+    if (!a["--evidence"] || a["--root"] || a["--scope"] || a["--network"] || a["--text"] || a["--runtime-url"])
+      throw new Error("check-release requires --evidence only");
+    const supplied = JSON.parse(readFileSync(a["--evidence"], "utf8"));
+    value = {
+      ...checkRelease({ ...supplied, trustedChecks: false }),
+      assessmentOnly: true,
+      proofSource: "untrusted_file",
+    };
+  } else {
+    if (!a["--root"] || a["--evidence"]) throw new Error("Select --root");
+    if (a["--runtime-url"] && command !== "observe") throw new Error("--runtime-url is for observe only");
+    let o = observe(a["--root"], { remote: a["--remote"] ?? "origin", network: a["--network"] ?? false });
+    if (a["--runtime-url"]) o = await observeRuntime(o, a["--runtime-url"], options);
+    observationFailed = o.errors.length > 0 || o.stable !== true;
+    if (command === "check-checkpoint") {
+      if (!a["--scope"] || a["--text"]) throw new Error("check-checkpoint requires --scope");
+      value = { observation: o, ...checkCheckpoint(o, JSON.parse(readFileSync(a["--scope"], "utf8"))) };
+    } else {
+      if (a["--scope"]) throw new Error("observe does not take scope");
+      value = a["--text"] ? founderSummary(o) : o;
+    }
+  }
+  console.log(typeof value === "string" ? value : JSON.stringify(value, null, 2));
+  if (observationFailed || value?.ok === false || value?.errors?.length || value?.stable === false) return 1;
+  return 0;
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error) => {
+      console.error(error instanceof Error ? error.message : "Delivery observation failed");
+      process.exitCode = 2;
+    },
+  );
+}

@@ -16364,6 +16364,10 @@
       "label": "Datei erstellen",
       "description": "Erstellt ein Dokument, eine Tabelle, einen Diff, ein Diagramm oder eine Seite."
     },
+    "register_files": {
+      "label": "Dateien erfassen",
+      "description": "Hält fest, welche Dateien es auf seinem Computer für eine Aufgabe erstellt hat und wozu jede dient. Löscht nichts."
+    },
     "update_artifact": {
       "label": "Datei aktualisieren",
       "description": "Speichert eine neue Version einer Datei."

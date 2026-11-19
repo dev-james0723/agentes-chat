@@ -215,3 +215,36 @@ export const skillReadActivations = pgTable(
     ),
   ],
 );
+
+/**
+ * A skill version an agent made or changed, saved to the skills repository and reported to a person (SF-19): one row
+ * per version. `private` versions (published from a private DM, ADR 0191) are never copied out; their report says so.
+ */
+export const skillSyncs = pgTable(
+  "skill_syncs",
+  {
+    id: uuid()
+      .primaryKey()
+      .$defaultFn(() => Bun.randomUUIDv7()),
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    skillId: uuid()
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    version: integer().notNull(),
+    agentId: uuid().references(() => agents.id, { onDelete: "set null" }),
+    /** Who hears about it: who asked for the change, who accepted it, else the agent's owner. */
+    notifyUserId: text().references(() => users.id, { onDelete: "set null" }),
+    /** `update_skill`, `proposal` or `promotion`. */
+    via: text().notNull(),
+    private: boolean().notNull().default(false),
+    /** PENDING, UNKNOWN, SYNCED, REFUSED, FAILED, PRIVATE or SUPERSEDED (a newer version came first). */
+    state: text().notNull().default("PENDING"),
+    commit: text(),
+    reason: text(),
+    reportedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.skillId, t.version), index().on(t.orgId)],
+);

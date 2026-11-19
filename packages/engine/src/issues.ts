@@ -42,6 +42,7 @@ import { enqueue } from "./outbox";
 import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
+import { queueRetentionReport } from "./run-files";
 import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
 import { AUDIENCE_MAX, type Audience, admitTaskAgents, taskSeenSql } from "./task-access";
 import {
@@ -1147,6 +1148,23 @@ const isHttpsUrl = (value: string) => {
 };
 
 /** Changes fields; each change is an event in the activity ("changed the status to In review"). */
+/** Required generated-capability evaluation is still native work, even while its model run waits. */
+async function hasPendingCapabilityWork(tx: Executor, orgId: string, taskId: string) {
+  const [pending] = await tx
+    .select({ id: schema.foundryVersions.id })
+    .from(schema.foundryVersions)
+    .innerJoin(schema.foundryCandidates, eq(schema.foundryCandidates.id, schema.foundryVersions.candidateId))
+    .where(
+      and(
+        eq(schema.foundryCandidates.orgId, orgId),
+        eq(schema.foundryCandidates.taskId, taskId),
+        eq(schema.foundryVersions.state, "EVALUATING"),
+      ),
+    )
+    .limit(1);
+  return !!pending;
+}
+
 export async function updateIssue(
   deps: IssueDeps,
   actor: IssueActor,
@@ -1294,6 +1312,11 @@ export async function updateIssue(
       });
   }
   const row = await db.transaction(async (tx) => {
+    if (set.status === "done") {
+      await tx.select({ id: issues.id }).from(issues).where(eq(issues.id, current.id)).for("update");
+      if (await hasPendingCapabilityWork(tx, orgId, current.id))
+        throw new ValidationError("This task still has a required capability evaluation in progress.");
+    }
     const [updated] = await tx.update(issues).set(set).where(eq(issues.id, current.id)).returning();
     if (!updated) throw new NotFoundError("Issue not found");
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
@@ -1305,6 +1328,9 @@ export async function updateIssue(
         details: { issueId: updated.id, from: current.status, to: updated.status, by: author },
       });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
+    // Ended: a dry-run report of its files, committed with the change (ADR 0197).
+    if (updated.status !== current.status)
+      await queueRetentionReport(tx, orgId, { type: "issue", id: updated.id }, updated.status, updated.updatedAt);
     if (set.description !== undefined && (set.description.includes("[[") || current.description.includes("[["))) {
       await syncWikiLinks(tx, orgId, { type: "issue", id: updated.id, channelId: updated.channelId }, set.description);
     }
@@ -2025,7 +2051,12 @@ export async function setWorkIssueState(
     let blocked: IssueRow["blocked"] = null;
     const ended = input.ended ?? (view.status === "live" || view.status === "queued" ? null : view.status);
     if (ended === "done") {
-      if (current.status !== "in_review" && current.criteria.every((criterion) => criterion.done)) status = "done";
+      if (
+        current.status !== "in_review" &&
+        current.criteria.every((criterion) => criterion.done) &&
+        !(await hasPendingCapabilityWork(tx, work.orgId, current.id))
+      )
+        status = "done";
     } else if (ended === "canceled") status = "todo";
     else if (ended === "failed") blocked = { reason: "failed", since: now.toISOString(), text: view.errorCode ?? "" };
     else if (view.state === "queued") status = current.status === "done" ? current.status : "todo";
@@ -2045,6 +2076,7 @@ export async function setWorkIssueState(
       .returning();
     if (!updated) return null;
     if (status !== current.status) {
+      await queueRetentionReport(tx, work.orgId, { type: "issue", id: updated.id }, status, now);
       await addActivity(tx, updated, {
         kind: "event",
         author,

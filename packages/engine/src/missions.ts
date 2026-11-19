@@ -73,6 +73,7 @@ import { recordTaskFinished } from "./operator-events";
 import { can, requirePermission } from "./organizations";
 import { enqueue } from "./outbox";
 import { maySql } from "./permissions";
+import { queueRetentionReport } from "./run-files";
 import { runnerUpdateWay } from "./runner-update";
 import type { SearchDeps } from "./search";
 import { autoThreadTitle, createThreadFromRange } from "./threads";
@@ -1366,8 +1367,11 @@ const lastMode = (t: MachineTaskRow | null) => {
   return mode === "write" || mode === "read" ? mode : null;
 };
 
-/** Whether a session's latest task still holds it (queued, running, or interrupted and may come back). */
-const isLive = isLiveTaskRow;
+/**
+ * Whether a session's latest task still holds it (queued, running, or interrupted and may come back). Read when called:
+ * through an import cycle `machine-tasks` may not be initialized yet while this module loads.
+ */
+const isLive = (t: Parameters<typeof isLiveTaskRow>[0]) => isLiveTaskRow(t);
 
 export async function queueForSession(db: Executor, mission: MissionRow, entry: schema.MissionInboxEntry) {
   await db
@@ -1876,6 +1880,9 @@ export async function concludeMission(
     },
     "mission.closed",
   );
+  // Ended: a dry-run report of its files (ADR 0197).
+  // Its status is already saved: a failed enqueue must not stop the rest of the closing.
+  await queueRetentionReport(deps.db, orgId, { type: "mission", id: mission.id }, input.outcome).catch(() => {});
   // The folder goes away once its tasks ended (a canceled write item still commits its partial work); the
   // branch stays unless the person chose to delete everything on cancel (ADR 0044).
   row = await closeMissionWorktree(deps, row, {

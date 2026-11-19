@@ -16800,6 +16800,10 @@
       "label": "Crear archivo",
       "description": "Crea un documento, tabla, diff, diagrama o página."
     },
+    "register_files": {
+      "label": "Registrar archivos",
+      "description": "Anota qué archivos hizo en su computadora para una tarea y para qué sirve cada uno. No borra nada."
+    },
     "update_artifact": {
       "label": "Actualizar archivo",
       "description": "Guarda una nueva versión de un archivo."

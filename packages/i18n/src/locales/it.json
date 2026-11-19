@@ -16887,6 +16887,10 @@
       "label": "Crea file",
       "description": "Crea un documento, una tabella, un diff, un diagramma o una pagina."
     },
+    "register_files": {
+      "label": "Registra file",
+      "description": "Annota quali file ha creato sul suo computer per un'attività e a cosa serve ciascuno. Non elimina nulla."
+    },
     "update_artifact": {
       "label": "Aggiorna file",
       "description": "Salva una nuova versione di un file."

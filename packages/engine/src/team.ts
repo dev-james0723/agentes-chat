@@ -59,8 +59,14 @@ export async function agentScopeNames(db: Database, orgId: string, agentIds: str
   }));
 }
 
-/** Granted to every new agent, but each works only where the agent's computer serves it. */
-const COMPUTER_SCOPES: ReadonlySet<string> = new Set([SANDBOX_SCOPE, BROWSER_SCOPE, DESKTOP_SCOPE]);
+/**
+ * Granted to every new agent, but each works only where the agent's computer serves it. A function, not a set made
+ * as the module loads: `sandbox` reaches back into this module through an import cycle, so its constant may not be
+ * initialized yet when this one is evaluated first.
+ */
+function isComputerScope(scope: string) {
+  return scope === SANDBOX_SCOPE || scope === BROWSER_SCOPE || scope === DESKTOP_SCOPE;
+}
 
 /**
  * Each agent's scopes as the other agents read them (the roster in a run's
@@ -111,7 +117,7 @@ export async function rosterScopeNames(
       return [agentId, new Set(scopes)] as const;
     }),
   );
-  return rows.filter((r) => !COMPUTER_SCOPES.has(r.scope) || served.get(r.agentId)?.has(r.scope));
+  return rows.filter((r) => !isComputerScope(r.scope) || served.get(r.agentId)?.has(r.scope));
 }
 
 export const FIND_AGENT_TOOL = "find_agent";

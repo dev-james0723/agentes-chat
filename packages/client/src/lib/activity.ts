@@ -176,6 +176,7 @@ const BUILTIN: Record<string, ActivityKind> = {
   write_file: "pcFiles",
   read_file: "pcFiles",
   list_files: "pcFiles",
+  register_files: "pcFiles",
   export_file: "exportingFile",
   upload_file: "exportingFile",
   import_file: "importingFile",
@@ -218,6 +219,14 @@ const BUILTIN: Record<string, ActivityKind> = {
   offer_invites: "offeringInvites",
   offer_install_skill: "offeringSkill",
   update_skill_from_source: "updatingSkills",
+  // Building a capability (Foundry): drafting and staging it, its sandboxed tests, then its approval.
+  propose_foundry_capability: "updatingSkills",
+  stage_foundry_package: "updatingSkills",
+  evaluate_foundry_capability: "runningCode",
+  prepare_foundry_activation: "updatingSkills",
+  activate_foundry_capability: "requestingApproval",
+  run_foundry_canary: "runningCode",
+  revoke_foundry_capability: "updatingSkills",
   propose_agent: "proposingAgent",
   // Another agent of the team (the consultation card says who and what it answered).
   ask_agent: "askingAgent",
