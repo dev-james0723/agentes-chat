@@ -298,6 +298,7 @@ export * from "./task-conversation";
 export * from "./task-manager";
 export * from "./team";
 export * from "./team-actions";
+export * from "./team-communication-skill";
 export * from "./team-map";
 export * from "./team-proposals";
 export * from "./team-status";
