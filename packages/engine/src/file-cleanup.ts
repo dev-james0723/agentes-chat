@@ -1,4 +1,4 @@
-import { and, type Database, eq, inArray, notInArray, schema, sql } from "@agenteschat/db";
+import { and, type Database, eq, inArray, lt, notInArray, or, schema, sql } from "@agenteschat/db";
 import { ValidationError } from "./errors";
 import type { MachineCaller } from "./machine-hub";
 import { requirePermission } from "./organizations";
@@ -11,23 +11,28 @@ import { pressureOf } from "./storage-pressure";
  *
  * A retention report (ADR 0197) lists the scratch and rebuildable files the agents registered. A person with the
  * workspace's `configure` permission approves some or all of them; each approval is a `file_cleanups` row naming
- * one file. The `files.cleanup` job then asks the agent's own computer, as that agent, to check each file again and
- * remove it only if every check passes there and then (`CLEANUP_SCRIPT`). The row keeps the receipt: what the
- * computer saw, what happened and why, and the disk's free bytes before and after.
+ * one registration (its run and path). The `files.cleanup` job then asks the agent's own computer, as that agent, to
+ * check each file again and remove it only if every check passes there and then (`CLEANUP_SCRIPT`). The row keeps
+ * the receipt: what the computer saw, what happened and why, and the disk's free bytes before and after.
  *
  * Nothing here decides on its own: a file nobody registered, one the agent called a deliverable, evidence or
- * unknown, one on no known computer, or one of a task that was reopened, is never approved or removed.
+ * unknown (in this run or any other), one used again after the task ended, one on no known computer or on a
+ * computer that is not macOS or Linux, or one of a task that was reopened, is never removed.
  */
 
 const { fileCleanups, retentionReports, runFiles, agents, agentRuns, issues, missions } = schema;
 
 export const FILE_CLEANUP_JOB = "files.cleanup";
 /** A job's budget (ADR 0200): no mass delete in one go; what is left waits for the next job. */
-export const CLEANUP_LIMITS = { files: 200, bytes: 2 * 1024 ** 3, seconds: 120 } as const;
+export const CLEANUP_LIMITS = { files: 200, bytes: 2 * 1024 ** 3, seconds: 120, scriptSeconds: 60 } as const;
 const BUSY_RUN = ["queued", "running", "waiting_approval", "waiting_input"] as const;
 const RETRY_MS = 10 * 60 * 1000;
+/** A row a job claimed and never finished (the server stopped): checked again on the computer, never assumed. */
+const STALE_CLAIM_MS = 15 * 60 * 1000;
+/** Only POSIX shells take the command as written (Windows runs `cmd.exe`, ADR 0200). */
+const CLEANUP_OSES = new Set(["darwin", "linux"]);
 
-export type CleanupStatus = "approved" | "done" | "skipped" | "blocked" | "unknown";
+export type CleanupStatus = "approved" | "running" | "done" | "skipped" | "blocked" | "unknown";
 
 async function subjectStatus(db: Database, orgId: string, type: string, id: string) {
   const table = type === "issue" ? issues : missions;
@@ -57,11 +62,14 @@ export async function approveCleanup(
   const items = ((report.report as { items?: RetentionItem[] }).items ?? []).filter(
     (i) => i.where === "computer" && i.decision === "candidate",
   );
+  if (input.paths) {
+    const listed = new Set(items.map((i) => i.path));
+    if (input.paths.some((p) => !listed.has(p)))
+      throw new ValidationError("Only files the report lists as candidates can be cleaned.");
+  }
   const wanted = input.paths ? new Set(input.paths) : null;
   const chosen = items.filter((i) => !wanted || wanted.has(i.path));
-  const approvable = chosen.filter((i) => i.agentId && i.machineId);
-  if (wanted && chosen.length < wanted.size)
-    throw new ValidationError("Only files the report lists as candidates can be cleaned.");
+  const approvable = chosen.filter((i) => i.agentId && i.machineId && i.runId);
   if (approvable.length === 0) return { approved: 0, notOnAComputer: chosen.length };
   const rows = await db
     .insert(fileCleanups)
@@ -69,6 +77,7 @@ export async function approveCleanup(
       approvable.map((i) => ({
         orgId: input.orgId,
         reportId: report.id,
+        runId: i.runId as string,
         agentId: i.agentId as string,
         machineId: i.machineId as string,
         path: i.path,
@@ -78,25 +87,26 @@ export async function approveCleanup(
     )
     .onConflictDoNothing()
     .returning({ id: fileCleanups.id });
-  // Link each row to its registration while it lasts (a receipt outlives it).
+  // Each row names its own registration: that run's, that path (a receipt outlives it).
   await db.execute(sql`
     update ${fileCleanups} c set run_file_id = f.id
     from ${runFiles} f
     where c.report_id = ${report.id} and c.run_file_id is null and f.org_id = c.org_id
-      and f.agent_id = c.agent_id and f.path = c.path and f.machine_id = c.machine_id`);
-  await enqueue(db, {
-    orgId: input.orgId,
-    kind: FILE_CLEANUP_JOB,
-    payload: { reportId: report.id },
-    dedupeKey: `${FILE_CLEANUP_JOB}:${report.id}:${Date.now()}`,
-  });
+      and f.run_id = c.run_id and f.path = c.path`);
+  if (rows.length > 0)
+    await enqueue(db, {
+      orgId: input.orgId,
+      kind: FILE_CLEANUP_JOB,
+      payload: { reportId: report.id },
+      dedupeKey: `${FILE_CLEANUP_JOB}:${report.id}:${Date.now()}`,
+    });
   return { approved: rows.length, notOnAComputer: chosen.length - approvable.length };
 }
 
-/** What the computer answers for each file. */
+/** What the computer answers for each file. `later`: over this round's byte budget, for the next job. */
 interface ScriptResult {
   path: string;
-  status: "done" | "skipped" | "blocked";
+  status: "done" | "skipped" | "blocked" | "later";
   reason?: string;
   identity?: Record<string, unknown>;
   bytes?: number;
@@ -109,27 +119,31 @@ interface ScriptOutput {
 
 /**
  * Runs on the agent's computer as the agent, in its folder (`python3 -I`, no site packages, no environment read):
- * one JSON argument `{files: [{path, size?, sha256?}]}`, one JSON line out. For each file, every check must pass:
+ * one base64 JSON argument `{files: [{path, size?, sha256?}], notAfter, maxBytes, seconds}`, one JSON line out. For
+ * each file, every check must pass:
  *
- * 1. a plain relative path, no `..`, nothing under `.git` or `node_modules`, not a database, disk
- *    image or backup by its name;
+ * 1. a plain relative path, no `..`; nothing under `.git`, `node_modules` or a folder of keys or settings (`.ssh`,
+ *    `.aws`, `.config`…); not a hidden file, nor a database, disk image, key, backup or secret by its name;
  * 2. reached one folder at a time without following a symlink, never onto another disk;
  * 3. a regular file with one link (a hard-linked copy frees nothing and may be someone else's), unchanged for ten
- *    minutes, and the size and SHA-256 the agent registered when it gave them;
+ *    minutes and since the task ended (`notAfter`), with the size and SHA-256 the agent registered when it gave them;
  * 4. not in a Git work tree unless Git ignores it and tracks nothing there (an untracked file may be someone's only
  *    copy of their work);
- * 5. no process holds it open (`lsof`; without `lsof`, Linux's `/proc`; with neither, nothing is removed);
- * 6. at the moment of removal still the very file checked (same device and inode), removed by name in the folder
- *    it was opened from.
+ * 5. no process holds it open (`lsof` on the name the folder really holds, so a different case or Unicode spelling
+ *    can't slip past; without `lsof`, Linux's `/proc`; with neither, nothing is removed);
+ * 6. at the moment of removal still the very file checked (same device, inode, size and mtime), removed by its real
+ *    name in the folder it was opened from.
  *
- * Free bytes are measured on the folder's disk before and after, once writes settle. Any doubt is `blocked`.
+ * At most `maxBytes` go in one round (a single larger file may go alone); the rest come back `later`. Free bytes
+ * are measured on the folder's disk before and after, once writes settle. Any doubt is `blocked`.
  */
 export const CLEANUP_SCRIPT = `
-import json, os, sys, stat, hashlib, subprocess, time
-req = json.loads(sys.argv[1])
+import base64, json, os, sys, stat, hashlib, subprocess, time
+req = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
 root = os.getcwd()
-DENY_PARTS = {".git", "node_modules"}
-DENY_EXT = (".sqlite", ".sqlite3", ".db", ".qcow2", ".vmdk", ".vdi", ".img", ".dmg", ".iso", ".raw", ".bak", ".backup", ".pem", ".key")
+DENY_PARTS = {".git", "node_modules", ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config", ".password-store"}
+DENY_EXT = (".sqlite", ".sqlite3", ".db", ".qcow2", ".vmdk", ".vdi", ".img", ".dmg", ".iso", ".raw", ".bak", ".backup", ".pem", ".key", ".p12", ".pfx", ".kdbx", ".keychain", ".keychain-db", ".env", ".age", ".gpg")
+DENY_WORDS = ("backup", "secret", "credential", "password", "token", "id_rsa", "id_ed25519", "id_ecdsa")
 class Refuse(Exception): pass
 def free():
     s = os.statvfs(root); return s.f_bavail * s.f_frsize
@@ -137,11 +151,13 @@ def open_paths(abspaths):
     """Which of these files a program has open: one lsof for all; without lsof, Linux's /proc; else refuse."""
     if not abspaths: return set()
     try:
-        r = subprocess.run(["lsof", "-F", "n", "--"] + abspaths, capture_output=True, text=True, timeout=60, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"})
+        r = subprocess.run(["lsof", "-F", "n", "--"] + abspaths, capture_output=True, text=True, timeout=30, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"})
         if r.returncode not in (0, 1): raise Refuse("could not check which programs have it open")
         return {l[1:] for l in r.stdout.splitlines() if l.startswith("n")}
     except FileNotFoundError:
         pass
+    except subprocess.TimeoutExpired:
+        raise Refuse("could not check which programs have it open in time")
     if not os.path.isdir("/proc"): raise Refuse("no way to check which programs have it open on this computer")
     wanted, found = set(abspaths), set()
     for pid in os.listdir("/proc"):
@@ -157,7 +173,7 @@ def open_paths(abspaths):
     return found
 def git(args, cwd):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=30, env=env)
+    return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=10, env=env)
 def in_git(dirpath):
     d = dirpath
     while True:
@@ -172,6 +188,8 @@ def check_git(dirpath, name):
         if git(["check-ignore", "-q", "--", name], dirpath).returncode != 0: raise Refuse("in a Git work tree and not ignored: it may be someone's only copy")
     except FileNotFoundError:
         raise Refuse("in a Git work tree and Git is not available to check it")
+    except subprocess.TimeoutExpired:
+        raise Refuse("Git did not answer in time")
 def sha256_fd(fd):
     h = hashlib.sha256()
     os.lseek(fd, 0, 0)
@@ -194,24 +212,36 @@ def walk(parts):
         if os.fstat(dfd).st_dev != dev:
             os.close(dfd); raise Refuse("on another disk")
     return dfd, dev
+def real_name(dfd, name, st):
+    """The name the folder really holds for this file (its case and Unicode form on disk), found by device and inode."""
+    names = os.listdir(dfd)
+    if name in names: return name
+    for n in names:
+        try:
+            o = os.stat(n, dir_fd=dfd, follow_symlinks=False)
+            if (o.st_dev, o.st_ino) == (st.st_dev, st.st_ino): return n
+        except OSError: pass
+    raise Refuse("its name on disk could not be found")
 def check(f):
     rel = f["path"]
     parts = rel.split("/")
     if rel.startswith("/") or ".." in parts or "" in parts or "." in parts: raise Refuse("not a plain path inside the folder")
-    if any(p in DENY_PARTS or p.startswith(".git") for p in parts): raise Refuse("a protected folder")
+    if any(p.lower() in DENY_PARTS or p.lower().startswith(".git") for p in parts): raise Refuse("a protected folder")
     low = parts[-1].lower()
-    if low.endswith(DENY_EXT) or "backup" in low: raise Refuse("a database, disk image, key or backup by its name")
+    if low.startswith("."): raise Refuse("a hidden file: often settings or keys")
+    if low.endswith(DENY_EXT) or any(w in low for w in DENY_WORDS): raise Refuse("a database, disk image, key, backup or secret by its name")
     dfd, dev = walk(parts)
     if dfd is None: return None
     try:
-        name = parts[-1]
-        try: st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        try: st = os.stat(parts[-1], dir_fd=dfd, follow_symlinks=False)
         except FileNotFoundError: return None
         if stat.S_ISLNK(st.st_mode): raise Refuse("a link, not a file")
         if not stat.S_ISREG(st.st_mode): raise Refuse("not a regular file")
         if st.st_dev != dev: raise Refuse("on another disk")
         if st.st_nlink != 1: raise Refuse("has other names (hard links)")
         if time.time() - st.st_mtime < 600: raise Refuse("changed in the last ten minutes")
+        if st.st_mtime > req["notAfter"]: raise Refuse("changed after the work ended: something else may use it now")
+        name = real_name(dfd, parts[-1], st)
         identity = {"dev": st.st_dev, "ino": st.st_ino, "size": st.st_size, "mtimeNs": st.st_mtime_ns}
         if f.get("size") is not None and f["size"] != st.st_size: raise Refuse("its size changed since it was registered")
         ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
@@ -226,7 +256,7 @@ def check(f):
             os.close(ffd)
         dirpath = os.path.join(root, *parts[:-1])
         check_git(dirpath, name)
-        return {"identity": identity, "abs": os.path.join(dirpath, name), "blocks": st.st_blocks}
+        return {"identity": identity, "abs": os.path.join(dirpath, name), "name": name, "blocks": st.st_blocks}
     finally:
         os.close(dfd)
 def remove(rel, seen):
@@ -234,35 +264,41 @@ def remove(rel, seen):
     dfd, _ = walk(parts)
     if dfd is None: raise Refuse("it changed while being checked")
     try:
-        again = os.stat(parts[-1], dir_fd=dfd, follow_symlinks=False)
+        again = os.stat(seen["name"], dir_fd=dfd, follow_symlinks=False)
         i = seen["identity"]
         if (again.st_dev, again.st_ino, again.st_size, again.st_mtime_ns) != (i["dev"], i["ino"], i["size"], i["mtimeNs"]):
             raise Refuse("it changed while being checked")
-        os.unlink(parts[-1], dir_fd=dfd)
+        os.unlink(seen["name"], dir_fd=dfd)
     finally:
         os.close(dfd)
 before = free()
 results, checked = [], []
-deadline = time.time() + req.get("seconds", 100)
+deadline = time.time() + req.get("seconds", 60)
 for f in req["files"]:
     if time.time() > deadline:
-        results.append({"path": f["path"], "status": "blocked", "reason": "out of time for this round"}); continue
+        results.append({"path": f["path"], "status": "later", "reason": "out of time for this round"}); continue
     try:
         seen = check(f)
         if seen is None: results.append({"path": f["path"], "status": "skipped", "reason": "already gone"})
         else: checked.append((f["path"], seen))
     except Refuse as e: results.append({"path": f["path"], "status": "blocked", "reason": str(e)})
     except Exception as e: results.append({"path": f["path"], "status": "blocked", "reason": "check failed: " + type(e).__name__})
+refusal = None
 try: held = open_paths([s["abs"] for _, s in checked])
 except Refuse as e: held, refusal = None, str(e)
+removed = 0
 for rel, seen in checked:
     if held is None:
         results.append({"path": rel, "status": "blocked", "reason": refusal}); continue
     if seen["abs"] in held:
         results.append({"path": rel, "status": "blocked", "reason": "a program has it open"}); continue
+    size = seen["blocks"] * 512
+    if removed > 0 and removed + size > req["maxBytes"]:
+        results.append({"path": rel, "status": "later", "reason": "over this round's budget"}); continue
     try:
         remove(rel, seen)
-        results.append({"path": rel, "status": "done", "identity": seen["identity"], "bytes": seen["blocks"] * 512})
+        removed += size
+        results.append({"path": rel, "status": "done", "identity": seen["identity"], "bytes": size})
     except Refuse as e: results.append({"path": rel, "status": "blocked", "reason": str(e)})
     except Exception as e: results.append({"path": rel, "status": "blocked", "reason": "removal failed: " + type(e).__name__})
 try: os.sync()
@@ -276,16 +312,26 @@ export function shellWord(s: string) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-export function cleanupCommand(files: { path: string; size?: number | null; sha256?: string | null }[]) {
+/**
+ * The command for a POSIX shell. The files go as one base64 argument: whatever a path holds (an agent chose it),
+ * the shell sees only letters, digits, `+`, `/` and `=`.
+ */
+export function cleanupCommand(
+  files: { path: string; size?: number | null; sha256?: string | null }[],
+  notAfter: Date,
+  maxBytes: number = CLEANUP_LIMITS.bytes,
+) {
   const payload = {
-    seconds: CLEANUP_LIMITS.seconds - 20,
+    seconds: CLEANUP_LIMITS.scriptSeconds,
+    notAfter: Math.floor(notAfter.getTime() / 1000),
+    maxBytes,
     files: files.map((f) => ({
       path: f.path,
       ...(typeof f.size === "number" ? { size: f.size } : {}),
       ...(f.sha256 ? { sha256: f.sha256 } : {}),
     })),
   };
-  return `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${shellWord(JSON.stringify(payload))}`;
+  return `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
 }
 
 export function parseCleanupOutput(stdout: string): ScriptOutput | null {
@@ -300,14 +346,20 @@ export function parseCleanupOutput(stdout: string): ScriptOutput | null {
   }
 }
 
-async function setRows(db: Database, ids: string[], values: Partial<typeof fileCleanups.$inferInsert>) {
-  if (ids.length) await db.update(fileCleanups).set(values).where(inArray(fileCleanups.id, ids));
+/** Writes a claimed row's outcome; a row no longer `running` (another job finished it) is left as it is. */
+async function finish(db: Database, ids: string[], values: Partial<typeof fileCleanups.$inferInsert>) {
+  if (ids.length)
+    await db
+      .update(fileCleanups)
+      .set(values)
+      .where(and(inArray(fileCleanups.id, ids), eq(fileCleanups.status, "running")));
 }
 
 /**
- * The job: works through a report's approved files, one computer and agent at a time. A computer that is offline,
- * or an agent still at work there, waits: the job comes back later. A run whose answer is unclear marks its files
- * `unknown`; the next job checks them again on the computer (a file already gone is `skipped`), never assuming.
+ * The job: works through a report's approved files, one computer and agent at a time. It claims its rows first
+ * (`running`), so two jobs never send the same file. A computer that is offline or not macOS or Linux, or an agent
+ * still at work there, waits: the job comes back later. A run whose answer is unclear marks its files `unknown`;
+ * the next job checks them again on the computer (a file already gone is `skipped`), never assuming.
  */
 export async function runFileCleanup(
   deps: { db: Database; hub: Pick<MachineCaller, "call" | "status"> | null },
@@ -320,27 +372,40 @@ export async function runFileCleanup(
     .from(retentionReports)
     .where(and(eq(retentionReports.orgId, orgId), eq(retentionReports.id, reportId)));
   if (!report) return { done: 0 };
-  const pending = await db
-    .select()
-    .from(fileCleanups)
+  const status = await subjectStatus(db, orgId, report.subjectType, report.subjectId);
+  const reopened = status !== "done" && status !== "canceled";
+  // Claim: what waits, what came back unclear, and claims a stopped server left behind.
+  const claimed = await db
+    .update(fileCleanups)
+    .set({ status: "running", executedAt: new Date() })
     .where(
       and(
         eq(fileCleanups.orgId, orgId),
         eq(fileCleanups.reportId, reportId),
-        inArray(fileCleanups.status, ["approved", "unknown"]),
+        or(
+          inArray(fileCleanups.status, ["approved", "unknown"]),
+          and(eq(fileCleanups.status, "running"), lt(fileCleanups.executedAt, new Date(Date.now() - STALE_CLAIM_MS))),
+        ),
       ),
-    );
-  if (pending.length === 0) return { done: 0 };
-  const status = await subjectStatus(db, orgId, report.subjectType, report.subjectId);
-  if (status !== "done" && status !== "canceled") {
-    await setRows(
+    )
+    .returning();
+  if (claimed.length === 0) return { done: 0 };
+  const release = (ids: string[]) =>
+    ids.length
+      ? db
+          .update(fileCleanups)
+          .set({ status: "approved" })
+          .where(and(inArray(fileCleanups.id, ids), eq(fileCleanups.status, "running")))
+      : Promise.resolve();
+  if (reopened) {
+    await finish(
       db,
-      pending.map((r) => r.id),
+      claimed.map((r) => r.id),
       { status: "blocked", reason: "The work was reopened.", executedAt: new Date() },
     );
     return { done: 0 };
   }
-  // Each file again as it is registered now: an agent may have called it evidence since (the approval no longer holds).
+  // Each registration as it stands now, and every other registration of the same file by the same agent.
   const regs = await db
     .select()
     .from(runFiles)
@@ -348,26 +413,38 @@ export async function runFileCleanup(
       and(
         eq(runFiles.orgId, orgId),
         inArray(
-          runFiles.id,
-          pending.map((r) => r.runFileId).filter((id): id is string => Boolean(id)),
+          runFiles.agentId,
+          claimed.map((r) => r.agentId),
+        ),
+        inArray(
+          runFiles.path,
+          claimed.map((r) => r.path),
         ),
       ),
     );
-  const regOf = new Map(regs.map((r) => [r.id, r]));
-  const revoked = pending.filter((r) => {
-    const reg = r.runFileId ? regOf.get(r.runFileId) : null;
-    return !reg || (reg.role !== "scratch" && reg.role !== "derived") || reg.machineId !== r.machineId;
-  });
-  await setRows(
-    db,
-    revoked.map((r) => r.id),
-    {
-      status: "blocked",
-      reason: "No longer registered as scratch or rebuildable on that computer.",
-      executedAt: new Date(),
-    },
-  );
-  const live = pending.filter((r) => !revoked.includes(r));
+  const blocked = new Map<string, string>();
+  for (const r of claimed) {
+    const same = regs.filter((g) => g.agentId === r.agentId && g.path === r.path);
+    const own = same.find((g) => g.runId === r.runId);
+    if (!own || (own.role !== "scratch" && own.role !== "derived") || own.machineId !== r.machineId) {
+      blocked.set(r.id, "No longer registered as scratch or rebuildable on that computer.");
+      continue;
+    }
+    const others = same.filter((g) => g.runId !== r.runId && (g.machineId === r.machineId || g.machineId === null));
+    const kept = others.find((g) => g.role !== "scratch" && g.role !== "derived");
+    if (kept) {
+      blocked.set(
+        r.id,
+        `Another piece of work calls the same file ${kept.role === "canonical" ? "a deliverable" : kept.role}.`,
+      );
+      continue;
+    }
+    if (others.some((g) => g.updatedAt > report.createdAt))
+      blocked.set(r.id, "Registered again after the work ended: something else may use it now.");
+  }
+  for (const [id, reason] of blocked) await finish(db, [id], { status: "blocked", reason, executedAt: new Date() });
+  const regOf = new Map(regs.map((g) => [`${g.runId}:${g.path}`, g]));
+  const live = claimed.filter((r) => !blocked.has(r.id));
   let later = false;
   let done = 0;
   const groups = new Map<string, typeof live>();
@@ -377,7 +454,9 @@ export async function runFileCleanup(
   }
   for (const rows of groups.values()) {
     const { agentId, machineId } = rows[0] as (typeof rows)[number];
+    const ids = rows.map((r) => r.id);
     if (!machineId || !deps.hub) {
+      await release(ids);
       later = true;
       continue;
     }
@@ -387,7 +466,16 @@ export async function runFileCleanup(
       .where(and(eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, agentId), inArray(agentRuns.status, [...BUSY_RUN])))
       .limit(1);
     const machine = await deps.hub.status(machineId);
+    if (machine && !CLEANUP_OSES.has(machine.os)) {
+      await finish(db, ids, {
+        status: "blocked",
+        reason: "Cleaning is only done on macOS and Linux computers.",
+        executedAt: new Date(),
+      });
+      continue;
+    }
     if (busy || !machine?.online) {
+      await release(ids);
       later = true;
       continue;
     }
@@ -396,28 +484,21 @@ export async function runFileCleanup(
       .from(agents)
       .where(and(eq(agents.orgId, orgId), eq(agents.id, agentId)));
     if (!agent) {
-      await setRows(
-        db,
-        rows.map((r) => r.id),
-        { status: "blocked", reason: "The agent is gone.", executedAt: new Date() },
-      );
+      await finish(db, ids, { status: "blocked", reason: "The agent is gone.", executedAt: new Date() });
       continue;
     }
-    // The job's budget: so many files and bytes; the rest wait for the next job.
-    let bytes = 0;
-    const batch = rows
-      .filter((r) => {
-        bytes += r.bytes ?? 0;
-        return bytes <= CLEANUP_LIMITS.bytes;
-      })
-      .slice(0, CLEANUP_LIMITS.files);
-    if (batch.length < rows.length) later = true;
-    if (batch.length === 0) continue;
+    // So many files a round; the computer itself keeps to the byte budget, measuring real sizes.
+    const batch = rows.slice(0, CLEANUP_LIMITS.files);
+    if (batch.length < rows.length) {
+      await release(rows.slice(CLEANUP_LIMITS.files).map((r) => r.id));
+      later = true;
+    }
     const command = cleanupCommand(
       batch.map((r) => {
-        const reg = r.runFileId ? regOf.get(r.runFileId) : undefined;
+        const reg = regOf.get(`${r.runId}:${r.path}`);
         return { path: r.path, size: reg?.size ?? null, sha256: reg?.sha256 ?? null };
       }),
+      report.createdAt,
     );
     let out: ScriptOutput | null = null;
     let why = "The computer's answer was unclear.";
@@ -439,7 +520,7 @@ export async function runFileCleanup(
     }
     const at = new Date();
     if (!out) {
-      await setRows(
+      await finish(
         db,
         batch.map((r) => r.id),
         { status: "unknown", reason: why, executedAt: at },
@@ -449,9 +530,14 @@ export async function runFileCleanup(
     const byPath = new Map(out.results.map((x) => [x.path, x]));
     for (const r of batch) {
       const x = byPath.get(r.path);
+      if (x?.status === "later") {
+        await release([r.id]);
+        later = true;
+        continue;
+      }
       const status: CleanupStatus = x ? x.status : "unknown";
       if (status === "done") done++;
-      await setRows(db, [r.id], {
+      await finish(db, [r.id], {
         status,
         reason: x?.reason ?? (x ? null : "The computer did not report this file."),
         identity: x?.identity ?? null,

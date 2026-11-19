@@ -34,6 +34,8 @@ export const runFiles = pgTable(
     size: bigint({ mode: "number" }),
     sha256: text(),
     note: text(),
+    /** The tool that saved it (ADR 0200: `browser_screenshot`, …), null for what the agent registered itself. Kept when the agent registers it again: it counts toward the run's capture budget. */
+    capturedBy: text(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
@@ -93,12 +95,14 @@ export const fileCleanups = pgTable(
     reportId: uuid()
       .notNull()
       .references(() => retentionReports.id, { onDelete: "cascade" }),
+    /** The run that registered it: the approval is for that registration, not for whatever has that path later. */
+    runId: uuid().notNull(),
     /** The registration it came from; kept as a receipt when the row goes (the path and computer stay here). */
     runFileId: uuid().references(() => runFiles.id, { onDelete: "set null" }),
     agentId: uuid().notNull(),
     machineId: uuid(),
     path: text().notNull(),
-    /** `approved` (waiting for the job), `done`, `skipped` (already gone), `blocked` (a check refused) or `unknown`. */
+    /** `approved` (waiting), `running` (claimed by a job), `done`, `skipped` (already gone), `blocked` (a check refused) or `unknown`. */
     status: text().notNull().default("approved"),
     /** Why it was blocked or skipped, in words. */
     reason: text(),
@@ -112,8 +116,8 @@ export const fileCleanups = pgTable(
     executedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
-    unique().on(t.reportId, t.path, t.agentId),
+    unique().on(t.reportId, t.runId, t.path),
     index().on(t.orgId, t.status),
-    check("file_cleanups_status", sql`${t.status} in ('approved', 'done', 'skipped', 'blocked', 'unknown')`),
+    check("file_cleanups_status", sql`${t.status} in ('approved', 'running', 'done', 'skipped', 'blocked', 'unknown')`),
   ],
 );

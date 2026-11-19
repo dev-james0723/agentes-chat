@@ -1902,7 +1902,12 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
           timeoutSeconds: COMMAND_SECONDS,
         });
         if (!r.ok) return { content: neutralizeUntrusted(r.text), isError: true };
-        await recordCapture(ctx.db, ctx, linked.status.machineId, { path, kind: "image", tool: "browser_screenshot" });
+        // Bookkeeping: the screenshot is saved either way.
+        await recordCapture(ctx.db, ctx, linked.status.machineId, {
+          path,
+          kind: "image",
+          tool: "browser_screenshot",
+        }).catch(() => undefined);
         const url = urlOf(r.data);
         const saved = {
           content: `Saved ${path} in your folder.${emulatedLine(linked.emulated())}${gate.warning ? ` ${gate.warning}` : ""}`,

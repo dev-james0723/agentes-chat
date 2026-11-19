@@ -555,7 +555,7 @@ export function createDesktopToolSource(deps: DesktopToolDeps): ToolSource {
             tool: "desktop_screenshot",
             size: bytes.byteLength,
             sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
-          });
+          }).catch(() => undefined);
           const saved = {
             content: `Saved ${path} in your folder: the whole screen as a JPEG (${shot.width}×${shot.height}).${gate.warning ? ` ${gate.warning}` : ""} ${
               // A computer brain (Claude Code, Codex) sees pictures with its own Read; read_file gives text only.

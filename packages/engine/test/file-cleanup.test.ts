@@ -107,11 +107,19 @@ describe("the report's snapshot and duplicates", () => {
 describe("the computer's checks (CLEANUP_SCRIPT)", () => {
   const hasPython = spawnSync("python3", ["--version"]).status === 0;
   const old = (p: string) => utimesSync(p, new Date(now - 3600_000), new Date(now - 3600_000));
-  const run = (cwd: string, files: { path: string; size?: number; sha256?: string }[]) => {
-    const r = spawnSync("python3", ["-I", "-c", CLEANUP_SCRIPT, JSON.stringify({ seconds: 60, files })], {
-      cwd,
-      encoding: "utf8",
-    });
+  const run = (
+    cwd: string,
+    files: { path: string; size?: number; sha256?: string }[],
+    options: { notAfter?: number; maxBytes?: number } = {},
+  ) => {
+    const payload = {
+      seconds: 60,
+      notAfter: options.notAfter ?? Math.floor(Date.now() / 1000),
+      maxBytes: options.maxBytes ?? 2 * 1024 ** 3,
+      files,
+    };
+    const arg = Buffer.from(JSON.stringify(payload)).toString("base64");
+    const r = spawnSync("python3", ["-I", "-c", CLEANUP_SCRIPT, arg], { cwd, encoding: "utf8" });
     const out = parseCleanupOutput(r.stdout);
     if (!out) throw new Error(`no output: ${r.stderr}`);
     return Object.fromEntries(out.results.map((x) => [x.path, x]));
@@ -141,19 +149,29 @@ describe("the computer's checks (CLEANUP_SCRIPT)", () => {
         w("scratch/state.sqlite");
         w("scratch/open.log");
         const held = openSync(join(dir, "scratch/open.log"), "r");
+        // Held open under one spelling, registered under another (a case-insensitive disk sees one file).
+        w("scratch/Shot.png");
+        const heldShot = openSync(join(dir, "scratch/Shot.png"), "r");
+        w("scratch/api-token.txt");
+        w("scratch/.settings");
         // A Git work tree: the tracked file and an untracked, not ignored one stay; an ignored build file may go.
         const repo = join(dir, "repo");
         mkdirSync(repo);
         const git = (...a: string[]) =>
           spawnSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...a], { encoding: "utf8" });
         git("init", "-q");
-        writeFileSync(join(repo, ".gitignore"), "dist/\n");
+        writeFileSync(join(repo, ".gitignore"), "dist/\n.env\n");
         w("repo/src.md");
         git("add", ".gitignore", "src.md");
         git("commit", "-qm", "x");
         w("repo/notes.md");
         w("repo/dist/app.js");
+        w("repo/.env", "KEY=1");
         const r = run(dir, [
+          { path: "scratch/shot.png" },
+          { path: "scratch/api-token.txt" },
+          { path: "scratch/.settings" },
+          { path: "repo/.env" },
           { path: "scratch/frame-1.png", size: 5 },
           { path: "scratch/fresh.png" },
           { path: "scratch/linked.png" },
@@ -170,6 +188,10 @@ describe("the computer's checks (CLEANUP_SCRIPT)", () => {
           { path: "scratch/gone.png" },
         ]);
         closeSync(held);
+        closeSync(heldShot);
+        // Never removed under the other spelling: held open (a case-insensitive disk) or simply not there.
+        expect(r["scratch/shot.png"]?.status).not.toBe("done");
+        expect(existsSync(join(dir, "scratch/Shot.png"))).toBe(true);
         expect(r["scratch/frame-1.png"]?.status).toBe("done");
         expect(existsSync(join(dir, "scratch/frame-1.png"))).toBe(false);
         expect(r["repo/dist/app.js"]?.status).toBe("done");
@@ -186,6 +208,9 @@ describe("the computer's checks (CLEANUP_SCRIPT)", () => {
           ["repo/notes.md", /not ignored/],
           ["../outside.png", /plain path/],
           ["repo/.git/config", /protected/],
+          ["scratch/api-token.txt", /secret/],
+          ["scratch/.settings", /hidden/],
+          ["repo/.env", /hidden/],
         ];
         for (const [path, why] of kept) {
           expect(r[path]?.status).toBe("blocked");
@@ -197,6 +222,7 @@ describe("the computer's checks (CLEANUP_SCRIPT)", () => {
           "repo/src.md",
           "repo/notes.md",
           "scratch/open.log",
+          "repo/.env",
         ])
           expect(existsSync(join(dir, p))).toBe(true);
       } finally {
@@ -206,11 +232,39 @@ describe("the computer's checks (CLEANUP_SCRIPT)", () => {
     60_000,
   );
 
-  test("the command is one shell line whatever the paths hold", () => {
+  test.skipIf(!hasPython)(
+    "a file changed after the work ended stays; past the byte budget the rest wait for the next round",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "cleanup-"));
+      try {
+        for (const n of ["a.bin", "b.bin", "c.bin"]) {
+          writeFileSync(join(dir, n), "x".repeat(10_000));
+          old(join(dir, n));
+        }
+        const ended = run(dir, [{ path: "a.bin" }], { notAfter: Math.floor((now - 2 * 3600_000) / 1000) });
+        expect(ended["a.bin"]).toMatchObject({
+          status: "blocked",
+          reason: expect.stringMatching(/after the work ended/),
+        });
+        const r = run(dir, [{ path: "a.bin" }, { path: "b.bin" }, { path: "c.bin" }], { maxBytes: 1 });
+        // One file alone may exceed the budget; the next ones wait.
+        expect(r["a.bin"]?.status).toBe("done");
+        expect(r["b.bin"]?.status).toBe("later");
+        expect(existsSync(join(dir, "b.bin"))).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
+  test("the shell sees only base64, whatever the paths hold", () => {
     expect(shellWord("it's")).toBe(`'it'\\''s'`);
-    const cmd = cleanupCommand([{ path: "scratch/a b'c.png", size: 3 }]);
+    const cmd = cleanupCommand([{ path: `scratch/a b'c"&calc&%x%.png`, size: 3 }], new Date(now));
     expect(cmd.startsWith("python3 -I -c '")).toBe(true);
-    expect(cmd).toContain(`a b'\\''c.png`);
+    const arg = cmd.slice(cmd.lastIndexOf(" ") + 1);
+    expect(arg).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(JSON.parse(Buffer.from(arg, "base64").toString()).files[0].path).toBe(`scratch/a b'c"&calc&%x%.png`);
   });
 });
 
@@ -328,6 +382,76 @@ describe("approving and running a cleanup", () => {
     await expect(approveFileCleanup(fx.db, fx.owner.id, fx.org.id, report.id)).rejects.toThrow(/reopened/);
   });
 
+  test("another run's evidence at the same path, or a use after the work ended, keeps the file", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    calls.length = 0;
+    const { report, run, machineId } = await endedTaskWithFiles(fx);
+    await approveFileCleanup(fx.db, fx.owner.id, fx.org.id, report.id);
+    // Later work by the same agent names the same files: one as its deliverable, one as scratch again.
+    const msg = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
+      body: "y",
+    });
+    const [next] = await fx.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: fx.org.id,
+        agentId: fx.agent.id,
+        channelId: fx.general.id,
+        threadRootId: msg.id,
+        triggerMessageId: msg.id,
+        trigger: "mention",
+        hop: 1,
+        status: "done",
+      })
+      .returning();
+    if (!next) throw new Error("no run");
+    await fx.db.update(schema.agentRuns).set({ status: "done" }).where(eq(schema.agentRuns.agentId, fx.agent.id));
+    await registerRunFiles(fx.db, { orgId: fx.org.id, agentId: fx.agent.id, runId: next.id, machineId }, [
+      { path: "scratch/frame-1.png", role: "canonical" },
+      { path: "dist/app.js", role: "derived" },
+    ]);
+    await runFileCleanup({ db: fx.db, hub: fx.machineHub }, fx.org.id, report.id);
+    expect(calls).toHaveLength(0);
+    const by = Object.fromEntries((await fx.db.select().from(schema.fileCleanups)).map((r) => [r.path, r]));
+    expect(by["scratch/frame-1.png"]).toMatchObject({
+      status: "blocked",
+      reason: expect.stringMatching(/deliverable/),
+    });
+    expect(by["dist/app.js"]).toMatchObject({
+      status: "blocked",
+      reason: expect.stringMatching(/after the work ended/),
+    });
+    expect(run.id).not.toBe(next.id);
+  });
+
+  test("two jobs at once send each file once", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    calls.length = 0;
+    const { report } = await endedTaskWithFiles(fx);
+    await approveFileCleanup(fx.db, fx.owner.id, fx.org.id, report.id);
+    await Promise.all([
+      runFileCleanup({ db: fx.db, hub: fx.machineHub }, fx.org.id, report.id),
+      runFileCleanup({ db: fx.db, hub: fx.machineHub }, fx.org.id, report.id),
+    ]);
+    expect(calls).toHaveLength(1);
+    const frame = (await fx.db.select().from(schema.fileCleanups)).find((r) => r.path === "scratch/frame-1.png");
+    expect(frame?.status).toBe("done");
+  });
+
+  test("a Windows computer is never sent a cleanup", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    calls.length = 0;
+    const { report, machineId } = await endedTaskWithFiles(fx);
+    await fx.db.update(schema.machines).set({ os: "windows" }).where(eq(schema.machines.id, machineId));
+    await approveFileCleanup(fx.db, fx.owner.id, fx.org.id, report.id);
+    await runFileCleanup({ db: fx.db, hub: fx.machineHub }, fx.org.id, report.id);
+    expect(calls).toHaveLength(0);
+    expect((await fx.db.select().from(schema.fileCleanups)).every((r) => r.status === "blocked")).toBe(true);
+  });
+
   test("captures are refused on a nearly full disk and past the run's budget", async () => {
     f = await setup({ machines: true });
     const fx = f;
@@ -380,7 +504,7 @@ describe("approving and running a cleanup", () => {
         path: `screenshots/${i}.png`,
         kind: "image",
         role: "unknown",
-        note: "captured: browser_screenshot",
+        capturedBy: "browser_screenshot",
       })),
     );
     expect(await captureGate(fx.db, { orgId: fx.org.id, runId: run.id }, paired.machineId, "screenshot")).toMatchObject(

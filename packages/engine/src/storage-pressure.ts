@@ -1,4 +1,4 @@
-import { and, type Database, eq, schema, sql } from "@agenteschat/db";
+import { and, type Database, eq, isNotNull, schema, sql } from "@agenteschat/db";
 
 type MachineLoadRecord = schema.MachineLoadRecord;
 
@@ -66,7 +66,7 @@ export async function capturesInRun(db: Database, orgId: string, runId: string, 
         eq(schema.runFiles.orgId, orgId),
         eq(schema.runFiles.runId, runId),
         eq(schema.runFiles.kind, kind),
-        sql`${schema.runFiles.note} like 'captured:%'`,
+        isNotNull(schema.runFiles.capturedBy),
       ),
     );
   return row?.n ?? 0;

@@ -134,11 +134,15 @@ export async function registerRunFiles(
  * The tool, offered by the computer's tool source only where the agent has a computer (ADR 0197): an agent that
  * only chats makes no files there to register.
  */
-export function registerFilesTool(db: Database): ToolDefinition {
+export function registerFilesTool(
+  db: Database,
+  /** The computer the files are on, as the other computer tools pick it (`computer` names another device). */
+  computerOf?: (ctx: ToolContext, computer: string | undefined) => Promise<string>,
+): ToolDefinition {
   return {
     name: "register_files",
     description:
-      "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept.",
+      "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept. Files you made on another device: name it in `computer`, one call per device.",
     // The computer's scope, written out: importing it would tie this module to the computer's whole graph.
     scope: "sandbox:run",
     inputSchema: {
@@ -162,6 +166,12 @@ export function registerFilesTool(db: Database): ToolDefinition {
             additionalProperties: false,
           },
         },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "The device the files are on, by its name as computer_status lists it. Leave it out for your own computer.",
+        },
       },
       required: ["files"],
       additionalProperties: false,
@@ -170,7 +180,8 @@ export function registerFilesTool(db: Database): ToolDefinition {
       // A mission task's bridge call has no run of its own to file these under.
       if (!ctx.runId) return refused(new ValidationError("Files are registered from a run. This call has none."));
       try {
-        const machineId = await machineOfRun(db, ctx);
+        const named = typeof input.computer === "string" && input.computer.trim() ? input.computer.trim() : undefined;
+        const machineId = computerOf ? await computerOf(ctx, named) : named ? null : await machineOfRun(db, ctx);
         const rows = await registerRunFiles(
           db,
           { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId, machineId },
@@ -209,8 +220,8 @@ export async function machineOfRun(
 
 /**
  * A screenshot or recording a tool just saved, registered for the run on its own (ADR 0200): role `unknown` (kept)
- * until the agent says what it is for, with the size and hash the tool knows. The note marks it as a capture, so a
- * run's captures can be counted against its budget.
+ * until the agent says what it is for, with the size and hash the tool knows. `captured_by` marks it as a capture
+ * (the agent naming the file again keeps the mark), so a run's captures count against its budget.
  */
 export async function recordCapture(
   db: Database,
@@ -232,11 +243,17 @@ export async function recordCapture(
       role: "unknown",
       size: file.size ?? null,
       sha256: file.sha256 ?? null,
-      note: `captured: ${file.tool}`,
+      capturedBy: file.tool,
     })
     .onConflictDoUpdate({
       target: [runFiles.runId, runFiles.path],
-      set: { size: sql`excluded.size`, sha256: sql`excluded.sha256`, updatedAt: new Date() },
+      // A new capture over the same path: its bytes now, its tool; a measure it lacks keeps the one before.
+      set: {
+        size: sql`coalesce(excluded.size, ${runFiles.size})`,
+        sha256: sql`coalesce(excluded.sha256, ${runFiles.sha256})`,
+        capturedBy: sql`excluded.captured_by`,
+        updatedAt: new Date(),
+      },
     });
 }
 
@@ -435,9 +452,19 @@ export async function buildRetentionReport(db: Database, orgId: string, subject:
       const file = { where: "computer" as const, path: f.path, role: f.role, kind: f.kind };
       // A path that holds other registered files is a folder after all: it stays.
       const holdsOthers = [...paths].some((p) => p !== f.path && p.startsWith(`${f.path}/`));
+      // The same file kept by another run of this work (a deliverable, evidence, unknown): it stays (ADR 0200).
+      const keptElsewhere = local.find(
+        (g) =>
+          g !== f &&
+          g.agentId === f.agentId &&
+          g.path === f.path &&
+          retentionDecision({ where: "computer", path: g.path, role: g.role, kind: g.kind }).decision === "keep",
+      );
       const decided = holdsOthers
         ? { decision: "keep" as const, why: "A folder holding other registered files." }
-        : retentionDecision(file);
+        : keptElsewhere
+          ? { decision: "keep" as const, why: `Another run of this work registered it as ${keptElsewhere.role}.` }
+          : retentionDecision(file);
       items.push({
         ...file,
         size: f.size,
