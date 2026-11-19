@@ -21,6 +21,7 @@ import {
   searchForUser,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
+import { appendMemoryDeletion } from "../../memory-deletion-ledger";
 import {
   type AppDeps,
   body,
@@ -380,6 +381,10 @@ export function knowledgeRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId, itemId } = c.req.valid("param");
       await deleteContextItem(db, c.get("user").id, orgId, itemId);
+      // Also outside the database, so a restore from an older backup deletes it again (A19).
+      await appendMemoryDeletion(deps.config.FILES_DIR, { itemId, orgId, deletedAt: new Date().toISOString() }).catch(
+        () => undefined,
+      );
       return c.body(null, 204);
     },
   );

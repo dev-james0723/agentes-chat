@@ -100,6 +100,7 @@ import { buildEngine } from "./engine";
 import { startFreezeWatch } from "./freeze-watch";
 import { checkHumanCheckAtBoot } from "./http/human-check";
 import { createLogger, type Logger } from "./logger";
+import { readMemoryDeletions } from "./memory-deletion-ledger";
 import { OPERATOR_API_PREFIX, serveOperatorApi } from "./operator/app";
 import { createMachineSockets } from "./realtime/machines";
 import { createStreamSockets } from "./realtime/streams";
@@ -220,7 +221,7 @@ async function boot(
   }
 
   const database = createDatabase({ url: config.DATABASE_URL, poolMax: config.DATABASE_POOL_MAX });
-  await prepareDatabase(database, log, config.RUN_MIGRATIONS_ON_BOOT);
+  await prepareDatabase(database, log, config.RUN_MIGRATIONS_ON_BOOT, config.FILES_DIR);
   // Best effort: a replica that boots before the migrations ran (RUN_MIGRATIONS_ON_BOOT=false) still starts.
   await retireHostTokens(database.db, config.HOST_COMPUTER_TOKEN).then(
     (retired) =>
@@ -702,7 +703,13 @@ async function boot(
  * migrations (unless `migrate` is false), then the upcoming `messages`
  * partitions. Exits 1 when the database's migrations don't match this build.
  */
-export async function prepareDatabase(database: DatabaseHandle, log: Logger, migrate = true) {
+export async function prepareDatabase(
+  database: DatabaseHandle,
+  log: Logger,
+  migrate = true,
+  /** The server's files folder (`FILES_DIR`), where memory deletions are also kept. */
+  filesDir?: string,
+) {
   if (migrate) {
     log.info("applying database migrations");
     try {
@@ -722,8 +729,13 @@ export async function prepareDatabase(database: DatabaseHandle, log: Logger, mig
   }
   await ensureMessagePartitions(database.db);
   // A database restored from an older backup gets the memory deletions made since then again, before serving (A19).
-  const reapplied = await reapplyMemoryDeletions(database.db);
-  if (reapplied > 0) log.info("memory deletions re-applied after a restore", { items: reapplied });
+  // Best effort, like the host-token sweep: a replica that boots before the migrations ran still starts.
+  try {
+    const reapplied = await reapplyMemoryDeletions(database.db, await readMemoryDeletions(filesDir));
+    if (reapplied > 0) log.info("memory deletions re-applied after a restore", { items: reapplied });
+  } catch (error) {
+    log.warn("memory deletions not re-applied", { error });
+  }
 }
 
 /** MillionSend (or another Resend-compatible API) when keyed, else SMTP when `SMTP_URL` is set, else only the log. */

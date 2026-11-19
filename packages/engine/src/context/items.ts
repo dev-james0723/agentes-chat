@@ -1144,18 +1144,23 @@ export async function deleteContextItem(db: Database, actorId: string, orgId: st
 }
 
 /**
- * Memory built on these sources (items or messages) goes out of use: archived and taken out of search (A17). One level;
- * reads already refuse anything further down a chain whose source is gone (`sourceVisibility`). Returns the ids.
+ * Memory derived from these sources (items or messages) goes out of use: archived (a new version) and taken out of search
+ * (A17). Never what a person wrote, pinned or set as a rule. One level; reads already refuse anything further down a
+ * chain whose source is gone (`sourceVisibility`). Returns the ids.
  */
 export async function retireDerivedMemory(tx: Executor, orgId: string, sourceIds: readonly string[]) {
   if (!sourceIds.length) return [];
   const retired = await tx
     .update(contextItems)
-    .set({ status: "archived", updatedAt: new Date() })
+    .set({ status: "archived", version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
     .where(
       and(
         eq(contextItems.orgId, orgId),
         eq(contextItems.status, "active"),
+        // What a person wrote, pinned or set as a rule stays: they decide about it, not a cascade.
+        eq(contextItems.pinned, false),
+        ne(contextItems.createdByKind, "person"),
+        ne(contextItems.kind, "rule"),
         sql`${contextItems.sourceIds} && ${`{${sourceIds.join(",")}}`}::uuid[]`,
       ),
     )
@@ -1176,11 +1181,27 @@ async function purgeContextItem(tx: Executor, orgId: string, itemId: string) {
  * After a restore from an older backup: every item a person had deleted is deleted again before it is served (A19).
  * Run on boot after migrating. Returns how many came back and were removed.
  */
-export async function reapplyMemoryDeletions(db: Database): Promise<number> {
+export async function reapplyMemoryDeletions(
+  db: Database,
+  /** Deletions also kept outside the database (the server's files folder), which a database restore can't roll back. */
+  kept: readonly { itemId: string; orgId: string }[] = [],
+): Promise<number> {
+  if (kept.length) {
+    await db
+      .insert(schema.contextItemDeletions)
+      .values(kept.map((k) => ({ itemId: k.itemId, orgId: k.orgId, reason: "deleted" })))
+      .onConflictDoNothing();
+  }
   const back = await db
     .select({ id: contextItems.id, orgId: contextItems.orgId })
     .from(contextItems)
-    .innerJoin(schema.contextItemDeletions, eq(schema.contextItemDeletions.itemId, contextItems.id));
+    .innerJoin(
+      schema.contextItemDeletions,
+      and(
+        eq(schema.contextItemDeletions.itemId, contextItems.id),
+        eq(schema.contextItemDeletions.orgId, contextItems.orgId),
+      ),
+    );
   for (const { id, orgId } of back) await db.transaction((tx) => purgeContextItem(tx, orgId, id));
   return back.length;
 }

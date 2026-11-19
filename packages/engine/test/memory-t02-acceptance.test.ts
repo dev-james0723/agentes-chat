@@ -157,21 +157,60 @@ describe("A17: a deletion takes what was derived from it out of use", () => {
 });
 
 describe("A19: a restore from an older backup deletes again what people deleted since", () => {
-  test("an item deleted after the backup comes back with the restore and is removed again on boot", async () => {
+  test("a whole-database restore brings back the item and drops the in-database record; the kept copy deletes it again", async () => {
     f = await setup();
     const item = await remember("Kestrel's acquisition price is 4.2 million.", f.general.id);
     const backup = await row(item.id);
     if (!backup) throw new Error("no row");
     await deleteContextItem(f.db, f.owner.id, f.org.id, item.id);
-    expect(await f.db.select().from(schema.contextItemDeletions)).toHaveLength(1);
 
-    // The restore brings the row back (the ledger is newer than the backup and is kept).
+    // The restore: the database as it was before the deletion, its own deletion record gone with it.
+    await f.db.delete(schema.contextItemDeletions);
     await f.db.insert(schema.contextItems).values(backup);
+    expect(await reapplyMemoryDeletions(f.db)).toBe(0);
     expect(await row(item.id)).toBeDefined();
 
-    expect(await reapplyMemoryDeletions(f.db)).toBe(1);
+    // The copy kept outside the database (the files folder) still has it.
+    expect(await reapplyMemoryDeletions(f.db, [{ itemId: item.id, orgId: f.org.id }])).toBe(1);
     expect(await row(item.id)).toBeUndefined();
-    expect(await reapplyMemoryDeletions(f.db)).toBe(0);
+    expect(await f.db.select().from(schema.contextItemDeletions)).toHaveLength(1);
+    expect(await reapplyMemoryDeletions(f.db, [{ itemId: item.id, orgId: f.org.id }])).toBe(0);
+  });
+
+  test("a kept record from another organization never deletes an item of this one", async () => {
+    f = await setup();
+    const item = await remember("Kestrel ships from Osaka.", f.general.id);
+    expect(await reapplyMemoryDeletions(f.db, [{ itemId: item.id, orgId: crypto.randomUUID() }])).toBe(0);
+    expect(await row(item.id)).toBeDefined();
+  });
+});
+
+describe("A17: a cascade never retires what a person wrote, pinned or set as a rule", () => {
+  test("only the agent's own derived memory goes; the person's, the pinned one and the rule stay", async () => {
+    f = await setup();
+    const base = await remember("Kestrel ships from Osaka.", f.general.id);
+    const agentOwn = await derivedFrom(base.id, "Kestrel's release train leaves from Osaka.");
+    const pinned = await derivedFrom(base.id, "Kestrel's ops team sits in Osaka.");
+    await f.db.update(schema.contextItems).set({ pinned: true }).where(eq(schema.contextItems.id, pinned.id));
+    const personal = await insertContextItem(f.db, {
+      orgId: f.org.id,
+      kind: "fact",
+      scopeType: "agent",
+      scopeId: f.agent.id,
+      agentId: f.agent.id,
+      channelIds: [f.general.id],
+      content: "I want Kestrel news in Osaka time.",
+      sourceIds: [base.id],
+      trust: "high",
+      createdByKind: "person",
+      createdById: f.owner.id,
+    });
+    const before = (await row(agentOwn.id))?.version ?? 0;
+    await deleteContextItem(f.db, f.owner.id, f.org.id, base.id);
+    expect((await row(agentOwn.id))?.status).toBe("archived");
+    expect((await row(agentOwn.id))?.version).toBe(before + 1);
+    expect((await row(pinned.id))?.status).toBe("active");
+    expect((await row(personal.id))?.status).toBe("active");
   });
 });
 
