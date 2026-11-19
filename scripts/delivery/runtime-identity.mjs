@@ -1,0 +1,85 @@
+// Which revision a running server is made of: its /api/health `source` against a revision's tree. Read-only.
+//
+// The same scope and digest as apps/server/src/source-identity.ts (the server's side) and scripts/runtime-identity.ts.
+// This copy is plain Node so the Guardian keeps no dependencies; a test in apps/server/test keeps the three equal.
+import { createHash } from "node:crypto";
+import { createGitReader } from "./git-read.mjs";
+
+const SKIPPED_DIRS = new Set(["node_modules", "dist", ".turbo", "coverage"]);
+const ROOT_FILES = ["package.json", "bun.lock"];
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const TIMEOUT_MS = 10_000;
+
+/** The code a server runs: each app's and package's src, the server's runner, migrations, manifests and lockfile. */
+export function inSourceScope(path) {
+  const parts = path.split("/");
+  if (parts.length === 1) return ROOT_FILES.includes(path);
+  if (parts[0] !== "apps" && parts[0] !== "packages") return false;
+  if (parts.some((p) => SKIPPED_DIRS.has(p))) return false;
+  if (parts.length === 3 && parts[2] === "package.json") return true;
+  if (parts.length < 4) return false;
+  return (
+    parts[2] === "src" ||
+    (parts[0] === "apps" && parts[1] === "server" && parts[2] === "runner") ||
+    (parts[0] === "packages" && parts[1] === "db" && parts[2] === "migrations")
+  );
+}
+
+/** `{digest, files}` of a commit's in-scope regular files, from its tree (no file is read). */
+export function revisionIdentity(root, revision) {
+  if (typeof revision !== "string" || !/^[0-9a-zA-Z][0-9a-zA-Z_./^~-]*$/.test(revision))
+    throw new Error("Invalid revision");
+  const reader = createGitReader(root);
+  const commit = reader.read(["rev-parse", "--verify", "--quiet", `${revision}^{commit}`]).trim();
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error("Unknown revision");
+  const out = reader.read(["ls-tree", "-r", "-z", "--full-tree", commit, "--", "apps", "packages", ...ROOT_FILES]);
+  const entries = [];
+  for (const line of out.split("\0")) {
+    const m = /^(\d+) blob ([0-9a-f]+)\t(.+)$/s.exec(line);
+    if (m && (m[1] === "100644" || m[1] === "100755") && inSourceScope(m[3])) entries.push({ path: m[3], blob: m[2] });
+  }
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const hash = createHash("sha256");
+  for (const e of entries) hash.update(`${e.path}\0${e.blob}\n`);
+  return { digest: `sha256:${hash.digest("hex")}`, files: entries.length };
+}
+
+function healthUrl(base) {
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new Error("Invalid runtime URL");
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+    throw new Error("Invalid runtime URL: http(s) without credentials only");
+  return new URL("api/health", url.href.endsWith("/") ? url.href : `${url.href}/`).href;
+}
+
+/**
+ * Whether the server at `base` runs `revision`: `match`, `mismatch`, or `unknown` with a reason (unreachable, no
+ * identity reported). Never `match` without both identities equal; a health response alone proves nothing.
+ */
+export async function checkRuntime(root, revision, base, { fetch = globalThis.fetch } = {}) {
+  const url = healthUrl(base);
+  const expected = revisionIdentity(root, revision);
+  const commit = createGitReader(root)
+    .read(["rev-parse", "--verify", `${revision}^{commit}`])
+    .trim();
+  const unknown = (reason) => ({ status: "unknown", reason, revision: commit, url, expected, running: null });
+  let response;
+  let body;
+  try {
+    response = await fetch(url, { method: "GET", redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (response.status !== 200) return unknown(`health_status_${response.status}`);
+    body = await response.json();
+  } catch {
+    return unknown("unreachable");
+  }
+  const source = body?.source;
+  if (!source || typeof source.digest !== "string" || !DIGEST.test(source.digest) || !Number.isInteger(source.files))
+    return unknown("no_source_identity");
+  const running = { digest: source.digest, files: source.files };
+  const same = running.digest === expected.digest && running.files === expected.files;
+  return { status: same ? "match" : "mismatch", revision: commit, url, expected, running };
+}
