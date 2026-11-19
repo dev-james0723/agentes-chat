@@ -30,7 +30,7 @@ import { enqueueIndex, userVisibleChannels } from "../search";
 import { type Plan, planConsolidation } from "./judgments";
 import { memorySourceVisibilityForUser } from "./memory-visibility";
 
-const { agentActions, agents, contextItemEvents, contextItems, messages } = schema;
+const { agentActions, agents, contextItemEvents, contextItemTombstones, contextItems, messages } = schema;
 
 export type ContextItem = typeof contextItems.$inferSelect;
 export type ContextKind = ContextItem["kind"];
@@ -1129,13 +1129,53 @@ export async function editContextItem(
   });
 }
 
-/** A person deletes an item for good (explicit; automatic jobs only archive or supersede). */
-export async function deleteContextItem(db: Database, actorId: string, orgId: string, itemId: string) {
+/** What a deletion did, without the deleted words: the row is gone now, its search document when the job runs. */
+export interface DeletionReceipt {
+  itemId: string;
+  canonical: "deleted";
+  index: "queued";
+  deletedAt: string;
+}
+
+/**
+ * A person deletes an item for good (explicit; automatic jobs only archive or supersede). A tombstone keeps who and
+ * when, so a restored backup cannot bring the words back. Items derived from it lose it as a source at read time
+ * (`memorySourceVisibility`), with no job to wait for.
+ */
+export async function deleteContextItem(
+  db: Database,
+  actorId: string,
+  orgId: string,
+  itemId: string,
+): Promise<DeletionReceipt> {
   const item = await loadItem(db, orgId, itemId);
   await requireEdit(db, actorId, item);
+  const deletedAt = new Date();
   await db.transaction(async (tx) => {
     await tx.delete(contextItems).where(eq(contextItems.id, itemId));
+    await tx
+      .insert(contextItemTombstones)
+      .values({ orgId, itemId, deletedByKind: "person", deletedById: actorId, deletedAt })
+      .onConflictDoNothing();
     await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: itemId });
+  });
+  return { itemId, canonical: "deleted", index: "queued", deletedAt: deletedAt.toISOString() };
+}
+
+/**
+ * Removes every item a tombstone names, and queues its search document's removal: after a backup restore, before the
+ * server serves anything (A19). Returns how many it removed; 0 on a database that was never restored.
+ */
+export async function reapplyMemoryTombstones(db: Database): Promise<{ removed: number }> {
+  return db.transaction(async (tx) => {
+    const gone = await tx
+      .delete(contextItems)
+      .where(
+        sql`exists (select 1 from ${contextItemTombstones} t where t.org_id = ${contextItems.orgId} and t.item_id = ${contextItems.id})`,
+      )
+      .returning({ id: contextItems.id, orgId: contextItems.orgId });
+    for (const row of gone) await enqueueIndex(tx, { orgId: row.orgId, kind: "context_item", sourceId: row.id });
+    return { removed: gone.length };
   });
 }
 
