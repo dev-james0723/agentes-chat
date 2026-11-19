@@ -57,6 +57,12 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/adapters/docker/foundry/outer-seccomp.json"],
+      "formatter": {
+        "enabled": false
+      }
     }
   ]
 }

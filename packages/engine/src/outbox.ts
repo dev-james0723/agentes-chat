@@ -93,6 +93,9 @@ export type ClaimedJob = OutboxJob & { long: boolean; background: boolean };
  * indexing, push, email) never waits behind them. Every other kind is quick. Background work is long too.
  */
 export const LONG_JOB_KINDS = [
+  "foundry.evaluate",
+  // A git fetch and push to the skills repository (SF-19): seconds, but a slow remote must not hold a quick slot.
+  "foundry.sync",
   "agent_run.execute",
   "routine.run",
   "autonomy.later",
@@ -278,6 +281,16 @@ const held = (job: OutboxJob) =>
     eq(outbox.lockedBy, job.lockedBy ?? ""),
     eq(outbox.attempts, job.attempts),
   );
+
+/** Extends a running job's lease, unless it was taken over. Returns whether it still holds the job. */
+export async function lockJobClaim(tx: Executor, job: OutboxJob, now = new Date()): Promise<boolean> {
+  const [row] = await tx
+    .select({ id: outbox.id })
+    .from(outbox)
+    .where(and(held(job), sql`${outbox.lockedUntil} > ${now}`))
+    .for("update");
+  return Boolean(row);
+}
 
 /** Extends a running job's lease, unless it was taken over. Returns whether it still holds the job. */
 export async function renewLease(
