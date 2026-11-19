@@ -66,10 +66,10 @@ import {
   checkPermissionText,
   consolidateItem,
   getContextItems,
-  itemVisibleIn,
   itemWords,
   REFUSED_CHANGE,
 } from "./items";
+import { memorySourceVisibilityForUser } from "./memory-visibility";
 
 const {
   agentRuns,
@@ -298,20 +298,16 @@ async function deciders(db: Database, p: Proposal) {
 
 /**
  * A proposal carries its items' text (the bullet in `proposedText`, the
- * evidence), so outside admins it is only for who may see every item behind
+ * evidence), so it is only for who may see every item behind
  * it, the same rule as `listContextItems`. An item that is gone counts as hidden.
  */
 async function proposalsVisible<T extends Proposal>(db: Database, actorId: string, orgId: string, rows: T[]) {
   const ids = [...new Set(rows.flatMap((r) => r.itemIds))];
   if (ids.length === 0) return rows;
   const visible = await userVisibleChannels(db, orgId, actorId);
-  const items = new Map((await getContextItems(db, orgId, ids)).map((i) => [i.id, i]));
-  return rows.filter((r) =>
-    r.itemIds.every((id) => {
-      const item = items.get(id);
-      return item !== undefined && itemVisibleIn(item, visible);
-    }),
-  );
+  const items = await getContextItems(db, orgId, ids);
+  const readable = await memorySourceVisibilityForUser(db, orgId, actorId, visible, items);
+  return rows.filter((r) => r.itemIds.every((id) => readable.has(id)));
 }
 
 /**
@@ -354,6 +350,7 @@ async function unsentHidden(db: Database, actorId: string, p: Proposal) {
 
 async function mayDecide(db: Database, actorId: string, p: Proposal, known?: Membership) {
   const membership = known ?? (await requirePermission(db, actorId, p.orgId, "read"));
+  if (!(await proposalsVisible(db, actorId, p.orgId, [p])).length) return false;
   if (p.target === "agent_settings") return !(await unsentHidden(db, actorId, p)) && maySettle(db, actorId, p);
   if (isAgentSetting(p)) {
     if (can(membership, "manage_agents")) return true;
@@ -393,7 +390,7 @@ export async function listProposals(
     .orderBy(desc(sql`${contextProposals.status} = 'pending'`), desc(contextProposals.createdAt))
     .limit(200);
   const shown = await proposalsShown(db, actorId, membership, all);
-  const rows = can(membership, "review_memory") ? shown : await proposalsVisible(db, actorId, orgId, shown);
+  const rows = await proposalsVisible(db, actorId, orgId, shown);
   const outdated = await outdatedIds(db, orgId, rows);
   const out: (Proposal & { canDecide: boolean })[] = [];
   for (const r of rows) {

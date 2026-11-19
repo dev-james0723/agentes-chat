@@ -1,4 +1,5 @@
 import type { LocaleStrings } from "./plurals";
+import { sharedMemoryPt } from "./shared-memory";
 
 /**
  * Português do Brasil. English (`en.ts`) is the source: `test/locales.test.ts` checks this file holds every key,
@@ -7,6 +8,7 @@ import type { LocaleStrings } from "./plurals";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const ptBR = {
+  sharedMemory: sharedMemoryPt,
   app: { name: "agentes" },
   privatePublication: {
     title: "Revisar compartilhamento de rascunho privado",

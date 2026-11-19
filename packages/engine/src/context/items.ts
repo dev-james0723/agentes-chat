@@ -3,6 +3,7 @@ import {
   and,
   arrayContained,
   arrayContains,
+  asc,
   type Database,
   desc,
   type Executor,
@@ -27,6 +28,7 @@ import { InvalidJudgeAnswerError } from "../judge-answer";
 import { can, getMembership, type Membership, requirePermission } from "../organizations";
 import { hasContact } from "../outside";
 import { enqueueIndex, userVisibleChannels } from "../search";
+import { assertSharedMemoryNotForgotten, trackSharedMemoryWrite, unmanagedMemorySql } from "../shared-memory-store";
 import { type Plan, planConsolidation } from "./judgments";
 import { memorySourceVisibilityForUser } from "./memory-visibility";
 
@@ -370,11 +372,14 @@ export interface NewContextItem {
   sourceRevision?: string | null;
   /** The producer event this write applies: the same key in the same organization applies once (consolidateItem). */
   eventKey?: string;
+  /** Internal producer authority, never accepted from an app payload. */
+  sharedMemory?: { skipCapture?: boolean; actorId?: string; directOwner?: boolean };
 }
 
 /** Inserts an item (content checked) and enqueues its indexing, in the caller's transaction. */
 export async function insertContextItem(tx: Executor, input: NewContextItem): Promise<ContextItem> {
   checkContent(`${input.title ?? ""}\n${input.content}`);
+  await assertSharedMemoryNotForgotten(tx, input);
   if (input.validFrom && input.validTo && input.validTo.getTime() <= input.validFrom.getTime())
     throw new ValidationError("A memory's validity must end after it starts", "memory.validity_order");
   if ((input.sourceRevision?.length ?? 0) > 200)
@@ -415,6 +420,7 @@ export async function insertContextItem(tx: Executor, input: NewContextItem): Pr
   await enqueueIndex(tx, { orgId: input.orgId, kind: "context_item", sourceId: row.id });
   caches.contextPresence.delete(`${input.orgId}:`);
   if (row.kind === "rule" && row.agentId) caches.contextPresence.delete(rulesPresenceKey(row.orgId, row.agentId));
+  if (!input.sharedMemory?.skipCapture) await trackSharedMemoryWrite(tx, row, input.sharedMemory);
   return row;
 }
 
@@ -474,7 +480,7 @@ export async function supersede(tx: Executor, old: ContextItem, next: NewContext
     .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)))
     .for("update");
   if (!current || current.supersededBy || !memoryRevisionMatches(current, old)) throw changedMemory();
-  const row = await insertContextItem(tx, next);
+  const row = await insertContextItem(tx, { ...next, sharedMemory: { ...next.sharedMemory, skipCapture: true } });
   await tx
     .update(contextItems)
     .set({ version: current.version + 1 })
@@ -484,6 +490,11 @@ export async function supersede(tx: Executor, old: ContextItem, next: NewContext
     .set({ supersededBy: row.id, supersededAt: sql`now()`, status: "archived", updatedAt: new Date() })
     .where(and(eq(contextItems.orgId, old.orgId), eq(contextItems.id, old.id)));
   await enqueueIndex(tx, { orgId: old.orgId, kind: "context_item", sourceId: old.id });
+  await trackSharedMemoryWrite(
+    tx,
+    { ...row, version: current.version + 1 },
+    { ...next.sharedMemory, previous: current },
+  );
   return { ...row, version: current.version + 1 };
 }
 
@@ -662,6 +673,7 @@ async function consolidateByWords(
         and(
           eq(contextItems.orgId, input.orgId),
           eq(contextItems.kind, input.kind),
+          unmanagedMemorySql(),
           eq(contextItems.status, "active"),
           isNull(contextItems.supersededBy),
           input.agentId ? eq(contextItems.agentId, input.agentId) : isNull(contextItems.agentId),
@@ -894,6 +906,46 @@ export async function listContextItems(
   return rows.filter((i) => sourceVisible.has(i.id) && (!isPlaybook(i) || seen.playbook.has(i.agentId ?? "")));
 }
 
+/** Stable-ID pagination for complete native reconciliation; unreadable candidates never terminate the scan early. */
+export async function listContextItemsPage(
+  db: Database,
+  actorId: string,
+  orgId: string,
+  filter: Parameters<typeof listContextItems>[3] & { cursor?: string } = {},
+) {
+  const membership = await requirePermission(db, actorId, orgId, "read");
+  if (filter.cursor && !/^[0-9a-f-]{36}$/i.test(filter.cursor)) throw new ValidationError("Invalid memory cursor");
+  const [visible, seen] = await Promise.all([
+    userVisibleChannels(db, orgId, actorId),
+    agentIdsSeen(db, actorId, orgId),
+  ]);
+  const limit = Math.max(1, Math.min(filter.limit ?? 100, 500));
+  const rows = await db
+    .select()
+    .from(contextItems)
+    .where(
+      and(
+        eq(contextItems.orgId, orgId),
+        or(isNull(contextItems.agentId), inArray(contextItems.agentId, [...seen.details])),
+        preferencesSeenBy(membership, actorId),
+        filter.cursor ? gt(contextItems.id, filter.cursor) : undefined,
+        filter.createdBy?.length ? inArray(contextItems.createdByKind, filter.createdBy) : undefined,
+        filter.agentId ? eq(contextItems.agentId, filter.agentId) : undefined,
+        filter.kinds?.length ? inArray(contextItems.kind, filter.kinds) : undefined,
+        filter.includeArchived ? undefined : eq(contextItems.status, "active"),
+        arrayContained(contextItems.channelIds, visible),
+      ),
+    )
+    .orderBy(asc(contextItems.id))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit);
+  const readable = await memorySourceVisibilityForUser(db, orgId, actorId, visible, page);
+  return {
+    items: page.filter((i) => readable.has(i.id) && (!isPlaybook(i) || seen.playbook.has(i.agentId ?? ""))),
+    nextCursor: rows.length > limit ? page.at(-1)!.id : null,
+  };
+}
+
 /** Whether someone who reads `visible` may see an item: every channel it came from (org-wide ones too). */
 export const itemVisibleIn = (item: Pick<ContextItem, "channelIds">, visible: readonly string[]) =>
   item.channelIds.every((c) => visible.includes(c));
@@ -1091,6 +1143,7 @@ export async function editContextItem(
         createdByKind: "person",
         createdById:
           locked.kind === "rule" && locked.createdByKind === "person" ? (locked.createdById ?? actorId) : actorId,
+        sharedMemory: { actorId, directOwner: true },
       });
     }
     const confirms =
@@ -1124,6 +1177,8 @@ export async function editContextItem(
       if (!row) throw changedMemory();
       current = row;
       await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: current.id });
+      if (current.id === locked.id || input.archived !== undefined)
+        await trackSharedMemoryWrite(tx, current, { previous: locked, actorId, directOwner: true });
     }
     return current;
   });
@@ -1133,7 +1188,17 @@ export async function editContextItem(
 export async function deleteContextItem(db: Database, actorId: string, orgId: string, itemId: string) {
   const item = await loadItem(db, orgId, itemId);
   await requireEdit(db, actorId, item);
+  await requireMutationSourceRead(db, actorId, item);
   await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, itemId)))
+      .for("update");
+    if (!current) throw new NotFoundError("Item not found");
+    await requireEdit(tx as Database, actorId, current);
+    await requireMutationSourceRead(tx as Database, actorId, current);
+    await trackSharedMemoryWrite(tx, current, { actorId, forget: true });
     await tx.delete(contextItems).where(eq(contextItems.id, itemId));
     await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: itemId });
   });
@@ -1178,6 +1243,7 @@ export async function addContextItemByPerson(
       confidence: input.viaApp ? 0.8 : 0.95,
       createdByKind: "person",
       createdById: actorId,
+      sharedMemory: { actorId, directOwner: !input.viaApp },
     }),
   );
 }
@@ -1503,6 +1569,7 @@ export async function revertMemoryChange(
     }
     for (const id of new Set([item.id, restored.id]))
       await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: id });
+    await trackSharedMemoryWrite(tx, restored, { previous: item, actorId, directOwner: true });
     return restored;
   });
 }

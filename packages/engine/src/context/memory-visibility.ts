@@ -8,6 +8,7 @@ import { can, requirePermission } from "../organizations";
 import { privatePublicationSql } from "../private-skill-publication";
 import { isRoutineRoomKey } from "../routine-brief";
 import { routineReportChannel } from "../search";
+import { sharedMemoryVisibleIds } from "../shared-memory-store";
 import type { ContextItem } from "./items";
 
 type MemoryReader = {
@@ -126,11 +127,18 @@ export async function memorySourceVisibility(
   allowed: readonly string[],
   items: readonly ContextItem[],
 ): Promise<Set<string>> {
+  const managed = await sharedMemoryVisibleIds(
+    db,
+    input.orgId,
+    items.map((i) => i.id),
+    input.personIds?.[0],
+    { agent: true },
+  );
   return sourceVisibility(
     db,
     input,
     allowed,
-    items,
+    items.filter((i) => managed.has(i.id)),
     (item) =>
       item.orgId === input.orgId &&
       item.channelIds.every((id) => allowed.includes(id)) &&
@@ -165,6 +173,13 @@ export async function personsOwnWords(
       i.sourceIds.length > 0,
   );
   if (!own.length) return new Set();
+  const managed = await sharedMemoryVisibleIds(
+    db,
+    orgId,
+    own.map((i) => i.id),
+    people[0],
+    { agent: true },
+  );
   const { messages } = schema;
   const rows = await db
     .select({
@@ -178,11 +193,13 @@ export async function personsOwnWords(
   const byId = new Map(rows.map((row) => [row.id, row]));
   return new Set(
     own
-      .filter((i) =>
-        i.sourceIds.every((id) => {
-          const m = byId.get(id);
-          return Boolean(m && !m.deletedAt && m.authorType === "person" && m.authorUserId === i.scopeId);
-        }),
+      .filter(
+        (i) =>
+          managed.has(i.id) &&
+          i.sourceIds.every((id) => {
+            const m = byId.get(id);
+            return Boolean(m && !m.deletedAt && m.authorType === "person" && m.authorUserId === i.scopeId);
+          }),
       )
       .map((i) => i.id),
   );
@@ -190,6 +207,29 @@ export async function personsOwnWords(
 
 /** Human inspector/search uses the same source closure, but native human/agent-detail permissions. */
 export async function memorySourceVisibilityForUser(
+  db: Database,
+  orgId: string,
+  userId: string,
+  visible: readonly string[],
+  items: readonly ContextItem[],
+): Promise<Set<string>> {
+  const managed = await sharedMemoryVisibleIds(
+    db,
+    orgId,
+    items.map((i) => i.id),
+    userId,
+  );
+  return memorySourceProvenanceForUser(
+    db,
+    orgId,
+    userId,
+    visible,
+    items.filter((i) => managed.has(i.id)),
+  );
+}
+
+/** Source-closure proof only, never permission to return these root bodies. Nested native sources retain their guards. */
+export async function memorySourceProvenanceForUser(
   db: Database,
   orgId: string,
   userId: string,
@@ -296,7 +336,14 @@ async function sourceVisibility(
     ]);
     for (const row of ms) sourceMessages.set(row.id, row);
     for (const row of os) sourceOutcomes.set(row.id, row);
-    for (const row of cs) sourceItems.set(row.id, row);
+    const managed = await sharedMemoryVisibleIds(
+      db,
+      input.orgId,
+      cs.map((row) => row.id),
+      input.personIds?.[0],
+      { agent: Boolean(input.agentId), provenanceOnly: true },
+    );
+    for (const row of cs) if (managed.has(row.id)) sourceItems.set(row.id, row);
     for (const row of rs) sourceRuns.set(row.id, row);
     for (const row of aps) sourceApprovals.set(row.id, row);
     pending = [

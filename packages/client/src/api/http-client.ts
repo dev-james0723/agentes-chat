@@ -6,6 +6,7 @@ import { CLOUD_SERVER } from "../lib/server";
 import type { TeamWeekPrefs } from "../lib/team-week";
 import { consultSeeds } from "../realtime/consults";
 import { steerStore } from "../realtime/steer";
+import { createSharedMemoryApi } from "../shared-memory/api";
 import type {
   VaultConnection,
   VaultImportResult,
@@ -1567,6 +1568,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         request<ThreadInfo>(`${org(orgId)}/threads/${enc(threadId)}/${action}`, { json: {} }),
     },
     dashboards: createDashboardsApi(request),
+    sharedMemory: createSharedMemoryApi(request),
     missions: ((): HttpApi["missions"] => {
       const one = (orgId: string, missionId: string) => `${org(orgId)}/missions/${enc(missionId)}`;
       return {

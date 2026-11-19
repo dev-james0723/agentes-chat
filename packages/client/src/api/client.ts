@@ -364,6 +364,8 @@ export interface OpenedWorkspace {
 }
 
 export interface ApiClient {
+  /** Owner-controlled memory. Optional while older clients and test fakes migrate. */
+  sharedMemory?: import("../shared-memory/api").SharedMemoryApi;
   system: {
     health(): Promise<Health>;
     instance(): Promise<Instance>;

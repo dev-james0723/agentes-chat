@@ -44,8 +44,11 @@ test("knowledge API: search, context items (add, pin, edit), reactions, correcti
   const item = (await created.json()) as { id: string; verified: boolean; evidence: { type: string }[] };
   expect(item.evidence.map((e) => e.type)).toEqual(["human"]);
   expect(
-    (await api("/context-items", { json: { kind: "fact", content: "token: ghp_abcdefghijklmnopqrstuvwxyz12" } }))
-      .status,
+    (
+      await api("/context-items", {
+        json: { kind: "fact", content: `token: ${["ghp", "abcdefghijklmnopqrstuvwxyz12"].join("_")}` },
+      })
+    ).status,
   ).toBe(400);
   const edited = (await (
     await api(`/context-items/${item.id}`, { method: "PATCH", json: { content: "Our CI is Buildkite (since May)" } })
@@ -309,12 +312,13 @@ test("the server's own lessons reach people without their template, a proposal's
   };
   expect(memories.memories).toMatchObject([{ text: "Remover o sistema antigo.", how: "refused" }]);
 
-  // Its memory gone: the code, never the line written for the logs.
+  // A missing source withholds the whole card, even from reviewers: its proposed text and diff can quote
+  // that source. Rendering an empty evidence list would not establish permission to read the rest.
   await t.db
     .update(schema.contextProposals)
     .set({ itemIds: [crypto.randomUUID()] })
     .where(eq(schema.contextProposals.id, row?.id ?? ""));
-  expect(await reasons()).toMatchObject([{ why: "", whyCode: "seen", evidence: [] }]);
+  expect(await reasons()).toEqual([]);
 });
 
 test("the team week's reasons reach people as codes, and the list ends an inbox row with nothing left to decide", async () => {

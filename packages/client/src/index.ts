@@ -28,6 +28,7 @@ export * from "./realtime/receipts";
 export * from "./realtime/steer";
 export * from "./realtime/streams";
 export * from "./realtime/typing";
+export * from "./shared-memory";
 export * from "./vault/hooks";
 export * from "./vault/types";
 
