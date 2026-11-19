@@ -111,9 +111,13 @@ export function notePlanLimit(
   });
 }
 
-/** A turn on this plan went through: the limit seen here no longer holds. */
-export function forgetPlanLimit(machineId: string, kind: BrainKind, accountId?: string) {
-  planLimits.delete(limitKey(machineId, kind, accountId));
+/** A successful turn, or a reading strictly newer than the cached refusal, can clear that refusal. */
+export function forgetPlanLimit(machineId: string, kind: BrainKind, accountId?: string, before?: number): boolean {
+  const key = limitKey(machineId, kind, accountId);
+  const seen = planLimits.get(key);
+  if (before !== undefined && seen && !(seen.seen < before)) return false;
+  planLimits.delete(key);
+  return true;
 }
 
 /** Tests: forget the plan limits seen. */

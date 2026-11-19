@@ -54,6 +54,7 @@ import {
   syncMachineAccounts,
   ValidationError,
 } from "../src";
+import { usageWaitKey } from "../src/usage-pause";
 import { addMember, addUser, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 
@@ -2203,3 +2204,90 @@ test("hello keeps what a new Claude sign-in for all agents can use on the comput
   await runner.hello([], CLAUDE_AUTH_PROTOCOL - 1, { executors: { claude: { version: "2.1.304" } } });
   expect((await executors())?.claudeLoginMethods).toBeUndefined();
 });
+
+test.each(["account", "own"] as const)(
+  "Claude quota reconciles unchanged fresh probes for %s sign-in",
+  async (signIn) => {
+    f = await setup();
+    const hub = createMachineHub({ db: f.db, pubsub: f.pubsub, replicaId: "replica-a" });
+    hubs.push(hub);
+    const { machineId, token } = await ownedMachine(PLAN_USAGE_PROTOCOL);
+    const runner = connectedRunner(hub, token);
+    const now = Date.now();
+    const reset = new Date(now + 3 * 86_400_000).toISOString();
+    const reading = (at: number): PlanUsage => ({
+      windows: [
+        { kind: "seven_day", usedPercent: 81, resetsAt: reset },
+        { kind: "other", label: "Fable", usedPercent: 100, resetsAt: reset },
+      ],
+      source: "probe",
+      at: new Date(at).toISOString(),
+    });
+    const account = (usage: PlanUsage): RunnerAccountInfo => ({
+      id: CLAUDE_ID,
+      kind: "claude_code",
+      loggedIn: true,
+      email: "ana@example.com",
+      plan: "ultra",
+      usage,
+    });
+    const initial = reading(now - 120_000);
+    await runner.hello(
+      signIn === "account" ? [account(initial)] : [],
+      PLAN_USAGE_PROTOCOL,
+      signIn === "own"
+        ? { executors: { claude: { version: "2.1.310", loggedIn: true } }, ownUsage: { claude_code: initial } }
+        : {},
+    );
+    const key = usageWaitKey({
+      code: "plan_limit",
+      machineId,
+      kind: "claude_code",
+      ...(signIn === "account" ? { accountId: CLAUDE_ID } : {}),
+    });
+    const trigger = crypto.randomUUID();
+    const waitId = crypto.randomUUID();
+    const [run] = await f.db
+      .insert(schema.agentRuns)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        channelId: f.general.id,
+        threadRootId: trigger,
+        triggerMessageId: trigger,
+        trigger: "mention",
+        hop: 1,
+        status: "waiting_input",
+        transcript: {
+          waitingForBrain: {
+            kind: "claude_code",
+            machineId,
+            model: "sonnet",
+            code: "plan_limit",
+            waitId,
+            waitKey: key,
+            until: reset,
+          },
+          usageWait: { since: now - 60_000, step: 0, parkedAt: now - 60_000 },
+        } as never,
+      })
+      .returning({ id: schema.agentRuns.id });
+    if (!run) throw new Error("missing parked run");
+    const events = accountEvents();
+    const report = (u: PlanUsage) =>
+      runner.changed(signIn === "account" ? [account(u)] : [], signIn === "own" ? { claude_code: u } : undefined);
+    const fresh = reading(now);
+    await report(fresh);
+    const jobs = await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"));
+    expect(jobs.map((j) => j.payload)).toEqual([{ runId: run.id, wait: waitId }]);
+    expect(events).toHaveLength(0);
+    await report(fresh);
+    expect(await f.db.select().from(schema.outbox).where(eq(schema.outbox.kind, "agent_run.execute"))).toHaveLength(1);
+    // A delayed older report cannot roll back the reading that made this decision.
+    await report(reading(now - 1000));
+    const [machine] = await f.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
+    const stored =
+      signIn === "account" ? (await accountRow(CLAUDE_ID))?.usage : machine?.executors.ownUsage?.claude_code;
+    expect(stored?.at).toBe(fresh.at);
+  },
+);

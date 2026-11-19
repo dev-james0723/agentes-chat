@@ -48,7 +48,10 @@ test.each(["fable", "claude-fable-5", "FABLE"])("Fable's full week still refuses
 });
 
 test("a shared full week refuses Sonnet even when a different model is full too", () => {
-  const full: PlanUsage = { ...usage, windows: [{ ...usage.windows[0]!, usedPercent: 100 }, usage.windows[1]!] };
+  const full: PlanUsage = {
+    ...usage,
+    windows: usage.windows.map((w) => (w.kind === "seven_day" ? { ...w, usedPercent: 100 } : w)),
+  };
   expect(unavailable(full, "sonnet")).toMatchObject({ code: "plan_limit", resetsAt: weeklyReset });
 });
 
@@ -60,7 +63,10 @@ test("a refusal without model attribution is retained after unrelated windows ar
 });
 
 test("the chosen model's wait reset and presence do not inherit Fable's later reset", () => {
-  const full: PlanUsage = { ...usage, windows: [{ ...usage.windows[0]!, usedPercent: 100 }, usage.windows[1]!] };
+  const full: PlanUsage = {
+    ...usage,
+    windows: usage.windows.map((w) => (w.kind === "seven_day" ? { ...w, usedPercent: 100 } : w)),
+  };
   expect(storedPlanLimit(usage, now, "sonnet")).toBeNull();
   expect(bindingReset(full, now, "sonnet")).toBe(Date.parse(weeklyReset));
   expect(planLimitOf("m1", "claude_code", undefined, usage, now, "sonnet")).toBeNull();
@@ -79,4 +85,17 @@ test("Claude CLI accounts of other providers retain their account-wide windows",
   expect(planLimitOf("m1", "claude_code", "account", usage, now, "sonnet", "opencode")).toEqual({
     until: Date.parse(fableReset),
   });
+});
+
+test("an unrelated expired model window cannot clear a recent unattributed refusal", () => {
+  const refused: PlanUsage = {
+    source: "turn",
+    at: new Date(now - 10_000).toISOString(),
+    limited: true,
+    windows: [
+      { kind: "seven_day", usedPercent: 81 },
+      { kind: "other", label: "Fable", usedPercent: 100, resetsAt: new Date(now - 1000).toISOString() },
+    ],
+  };
+  expect(storedPlanLimit(refused, now, "sonnet")).toEqual({ until: null });
 });

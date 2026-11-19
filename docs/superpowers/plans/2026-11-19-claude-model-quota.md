@@ -24,21 +24,21 @@
 ### Task1: Scope admission, resets and presence
 **Files:** packages/ui/src/plan-state.ts; packages/engine/src/brains/select.ts; packages/engine/src/executor.ts; packages/engine/src/out-of-office.ts; relevant engine presence projections; new packages/ui/test/plan-model-scope.test.ts; engine-brains/out-of-office/usage-pause regression tests.
 **Interfaces:** pure planWindowAppliesToModel(window,model):boolean and planUsageForModel<T extends PlanMeterUsage>(usage:T,model?:string|null):T; optional model on bindingReset/storedPlanLimit/planLimitOf; existing brainModelFor resolves defaults.
-- [ ] Add failing exact81/Fable100 tests and full shared/refusal/alias/reset tests; run in isolated Bun container, expect existing admission mismatch.
-- [ ] Implement the pure filter without mutating usage or clearing limited:true; reuse applicability in planBinding while preserving its non-model exclusions.
-- [ ] Thread selected/effective Claude model through gate, wait reset and presence; preserve other-provider behavior and actual cache refusal.
-- [ ] Run focused tests, expect pass.
-- [ ] Commit coherent admission fix.
+- [x] Add failing exact81/Fable100 tests and full shared/refusal/alias/reset tests; run in isolated Bun container, expect existing admission mismatch.
+- [x] Implement the pure filter without mutating usage or clearing limited:true; reuse applicability in planBinding while preserving its non-model exclusions.
+- [x] Thread selected/effective Claude model through gate, wait reset and presence; preserve other-provider behavior and actual cache refusal.
+- [x] Run focused tests, expect pass.
+- [x] Commit coherent admission fix.
 
 ### Task2: Reconcile waiting work safely
 **Files:** packages/engine/src/usage-pause.ts; packages/engine/src/machine-accounts.ts; packages/engine/src/brains/select.ts cache-clear timestamp; packages/engine/test/usage-pause.test.ts; machine-accounts tests as needed.
 **Interfaces:** wakePlanWaits room includes optional kind; model applicability helper fromTask1; forgetPlanLimit accepts optional not-newer-than timestamp.
-- [ ] Add failing same-probe Sonnet/Fable wait and stale-cache cases, plus crowded waiting queue case.
-- [ ] Fresh Claude probes without shared/unknown refusal may reconcile per-model waits. Preserve scoped refusals and existing fencing, dedupe, stagger and steady behavior.
-- [ ] Paginate candidate waits before selecting eligible rows; resolve legacy model from agent/default.
-- [ ] Invoke reconciliation for fresh readings even if usageMoved reports no display change; reject stale/newer-cache clearing.
-- [ ] Run usage-pause, long-work-pause, engine-brains and relevant account/presence tests; expect pass.
-- [ ] Commit coherent queue fix and reviewed plan updates.
+- [x] Add failing same-probe Sonnet/Fable wait and stale-cache cases, plus crowded waiting queue case.
+- [x] Fresh Claude probes without shared/unknown refusal may reconcile per-model waits. Preserve scoped refusals and existing fencing, dedupe, stagger and steady behavior.
+- [x] Paginate candidate waits before selecting eligible rows; resolve legacy model from agent/default.
+- [x] Invoke reconciliation for fresh readings even if usageMoved reports no display change; reject stale/newer-cache clearing.
+- [x] Run usage-pause, long-work-pause, engine-brains and relevant account/presence tests; expect pass.
+- [x] Commit coherent queue fix and reviewed plan updates.
 
 ### Task3: Verify, review and deploy
 **Files:** relevant ADR0059/0118 addendum if needed; private release receipt and overlay Dockerfile outside public source.
