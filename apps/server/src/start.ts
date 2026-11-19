@@ -77,6 +77,7 @@ import {
   parseInternalDatabaseTargets,
   publicHttpsFetch,
   queueEmbeddingBackfill,
+  reapplyMemoryTombstones,
   relayCredentials,
   resolveHostDns,
   retireHostTokens,
@@ -720,6 +721,9 @@ export async function prepareDatabase(database: DatabaseHandle, log: Logger, mig
     }
   }
   await ensureMessagePartitions(database.db);
+  // A backup restored from before a memory's deletion holds it again: remove it before anything is served (A19).
+  const { removed } = await reapplyMemoryTombstones(database.db);
+  if (removed) log.info("removed deleted memories a restore brought back", { removed });
 }
 
 /** MillionSend (or another Resend-compatible API) when keyed, else SMTP when `SMTP_URL` is set, else only the log. */

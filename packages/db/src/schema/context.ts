@@ -192,6 +192,25 @@ export const contextItemEvents = pgTable(
   (t) => [primaryKey({ columns: [t.orgId, t.eventKey] })],
 );
 
+/**
+ * A memory a person deleted: who, when, never what it said. A backup restored from before the deletion holds the row
+ * again; `reapplyMemoryTombstones` removes it before the server serves anything (A19).
+ */
+export const contextItemTombstones = pgTable(
+  "context_item_tombstones",
+  {
+    orgId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** No foreign key: the item is gone. */
+    itemId: uuid().notNull(),
+    deletedByKind: text().notNull(),
+    deletedById: text(),
+    deletedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.itemId] }), index().on(t.itemId)],
+);
+
 /** Which items a run's context included: feeds relevance (and feedback). */
 export const contextUsage = pgTable(
   "context_usage",
