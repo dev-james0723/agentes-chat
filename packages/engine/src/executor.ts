@@ -4522,7 +4522,7 @@ async function executeRunInner(
     // The account's windows say nothing about when a model's own limit resets.
     if (!budget && !scope && !(at > now) && machineId) {
       const stored = await storedPlanUsage(db, run.orgId, machineId, plan.kind, plan.account?.id).catch(() => null);
-      at = bindingReset(stored, now) ?? Number.NaN;
+      at = bindingReset(stored, now, plan.model) ?? Number.NaN;
     }
     const known = at > now;
     // An unknown reset: only the head of the line asks the plan again (one re-check an hour per plan, not one per

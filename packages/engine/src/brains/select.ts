@@ -126,9 +126,13 @@ export function clearPlanLimits() {
  * known only from its words, no window full) the first window reset after the reading, while it is still ahead.
  * Later windows didn't refuse anything: once that first reset passed, a turn asks the plan again. Null: none known.
  */
-export function bindingReset(usage: PlanUsage | null | undefined, now = Date.now()): number | null {
+export function bindingReset(
+  usage: PlanUsage | null | undefined,
+  now = Date.now(),
+  model?: string | null,
+): number | null {
   if (!usage) return null;
-  const { until } = planState(usage, now);
+  const { until } = planState(usage, now, model);
   if (until) return Date.parse(until);
   const at = Date.parse(usage.at);
   const first = Math.min(
@@ -140,13 +144,15 @@ export function bindingReset(usage: PlanUsage | null | undefined, now = Date.now
 /**
  * Whether a stored reading says the plan is at its limit now (`planState`), and until when (null: unknown).
  * A limit with no known reset holds for `UNKNOWN_LIMIT_MS` after its reading, and never past a window's reset.
+ * `model`: the run's; another model's own full week doesn't hold it (`windowHolds`).
  */
 export function storedPlanLimit(
   usage: PlanUsage | null | undefined,
   now = Date.now(),
+  model?: string | null,
 ): { until: number | null } | null {
-  if (!usage || planState(usage, now).state !== "limited") return null;
-  const until = bindingReset(usage, now);
+  if (!usage || planState(usage, now, model).state !== "limited") return null;
+  const until = bindingReset(usage, now, model);
   if (until !== null) return { until };
   const at = Date.parse(usage.at);
   const resetSince = usage.windows.some(
@@ -156,10 +162,11 @@ export function storedPlanLimit(
 }
 
 /** The plan limit of this sign-in now, from this process's cache or the stored reading. */
-function planLimitNow(key: string, usage: PlanUsage | null | undefined, now: number) {
+function planLimitNow(key: string, usage: PlanUsage | null | undefined, now: number, model?: string | null) {
+  // A refusal seen here (`notePlanLimit`) doesn't say whose model it was: it holds every model.
   const seen = planLimits.get(key);
   const cached = seen && (seen.until !== null ? seen.until > now : now - seen.seen < UNKNOWN_LIMIT_MS) ? seen : null;
-  const stored = storedPlanLimit(usage, now);
+  const stored = storedPlanLimit(usage, now, model);
   if (!cached && !stored) return null;
   return { until: cached?.until ?? stored?.until ?? null };
 }
@@ -368,7 +375,7 @@ export function computerBrainUnavailable(
       message: `${name}${status ? ` on ${status.name}` : ""} would think with a plan that isn't the agent's owner's.`,
     };
   }
-  const limited = planLimitNow(limitKey(machineId, kind, account?.id), usage, now);
+  const limited = planLimitNow(limitKey(machineId, kind, account?.id), usage, now, model);
   if (limited) {
     return {
       code: "plan_limit",
