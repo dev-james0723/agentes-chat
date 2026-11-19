@@ -193,6 +193,17 @@ import {
   verdictRecord,
 } from "./continuation";
 import { modelInfoFor } from "./credentials";
+import {
+  CREDIT_PROOF_MAX_MS,
+  type CreditProof,
+  type CreditQualification,
+  CreditRouteRefusal,
+  creditOutcomeOf,
+  creditRouteEndedNotice,
+  creditRouteNotice,
+  creditRouteUnknownNotice,
+  endsCreditRoute,
+} from "./credit-route";
 import { sha256 } from "./crypto";
 import { widgetRunWaitChanged } from "./dashboards/refresh-fire";
 import { WIDGET_FAILURES } from "./dashboards/types";
@@ -280,7 +291,7 @@ import {
   quotaContinuityValue,
   readQuotaContinuity,
 } from "./quota-continuity";
-import { planAccountFor } from "./quota-qualifier";
+import { hasCredentialText, planAccountFor } from "./quota-qualifier";
 import {
   endsWithSentinel,
   isSentinelOnly,
@@ -686,6 +697,20 @@ export interface EngineDeps {
     /** Routes to try, in preference order for ties (default Claude Code, Grok, Codex). */
     targets?: readonly QuotaHandoffKind[];
   };
+  /**
+   * Credit routes (ADR 0200): when a Claude subscription reaches its limit, a verified Claude API route may take the
+   * run before any other model. Absent: the feature is off and nothing changes.
+   */
+  creditRoute?: {
+    qualify(input: {
+      orgId: string;
+      runId: string;
+      agentId: string;
+      need: { tools: boolean; promptBytes: number };
+      /** The route a run already moved to: it is qualified again, never another. */
+      routeId?: string;
+    }): Promise<CreditQualification>;
+  };
   paperclipCompatibilityEnabled?: boolean;
   /** Reads a live block's parts (`blockSpecAt`): the agent reads what its blocks show (ADR 0113). */
   blockSpec?: BlockSpecReader;
@@ -963,6 +988,23 @@ export interface Transcript {
     evidence: string;
     observedAt: number;
     validUntil: number;
+  };
+  /**
+   * The run's Claude subscription reached its limit and it continues on a credit route (ADR 0200): the exact route and
+   * credential version it was qualified on, and where it came from. `ended` says why it left the route.
+   */
+  creditRoute?: {
+    schema: "credit-route/1";
+    routeId: string;
+    poolId: string;
+    credentialId: string;
+    credentialVersion: string;
+    model: string;
+    sourceKind: BrainKind;
+    sourceSessionId: string | null;
+    evidenceRef: string;
+    selectedAt: number;
+    ended?: string;
   };
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
   fallback?: { from: BrainKind; code: string; message: string; resetsAt?: string };
@@ -3388,6 +3430,73 @@ async function executeRunInner(
   if (brainPlan.kind !== "model" && run.brain === "model" && transcript.fallback) {
     brainPlan = { kind: "model", ...(brainPlan.missionId ? { missionId: brainPlan.missionId } : {}) };
   }
+  /**
+   * Credit routes (ADR 0200). A run that left its Claude subscription goes back to a new session of it with the whole
+   * conversation as portable context, never into the old session, which has not seen the turns the route made.
+   */
+  const returnToSource = async (source: BrainPlan, reason: string): Promise<BrainPlan> => {
+    const t = transcript as Transcript;
+    if (t.creditRoute) t.creditRoute.ended = reason;
+    const workLog = await runWorkDigest(db, run.id).catch(() => "");
+    const conversation = await conversationDigest(db, run).catch(() => "");
+    const content = portableMessages(t.messages, workLog, conversation);
+    t.system = [
+      ...t.system,
+      {
+        turn: true,
+        found: true,
+        text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+      } as ContextBlock,
+    ];
+    t.continued = { prompt: QUOTA_HANDOFF_RESUME_PROMPT };
+    const fresh = Bun.randomUUIDv7();
+    if (options.owned && !(await options.owned()))
+      throw new PermanentJobError("lost run ownership leaving credit route");
+    const [moved] = await db
+      .update(agentRuns)
+      .set({ brain: source.kind, brainSessionId: fresh, transcript: storedTranscript(t), updatedAt: new Date() })
+      .where(
+        and(
+          eq(agentRuns.id, run.id),
+          eq(agentRuns.status, "running"),
+          sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+        ),
+      )
+      .returning();
+    if (!moved) throw new PermanentJobError("run changed while leaving credit route");
+    await addRunStep(db, moved, "context", { creditRoute: { state: "ended", reason } });
+    run = moved;
+    return { ...source, ...(source.session ? { session: { ...source.session, id: fresh, resume: false } } : {}) };
+  };
+  let creditSource: { plan: BrainPlan; thinker: Agent } | null = null;
+  let creditResumed: CreditProof | null = null;
+  const savedCredit = transcript.creditRoute;
+  if (savedCredit && !savedCredit.ended && run.brain === "model") {
+    if (brainPlan.kind === "claude_code" && !brainPlan.missionId && deps.creditRoute) {
+      // Only exactly the route it was qualified on, qualified again now: a rotated key, expired evidence or an
+      // exhausted pool sends it back to where it came from, and nothing is sent to the API on the old proof.
+      const again = await deps.creditRoute
+        .qualify({
+          orgId: run.orgId,
+          runId: run.id,
+          agentId: agent.id,
+          need: { tools: true, promptBytes: 0 },
+          routeId: savedCredit.routeId,
+        })
+        .catch((): CreditQualification => ({ ok: false, reason: "disabled" }));
+      if (
+        again.ok &&
+        again.proof.credentialId === savedCredit.credentialId &&
+        again.proof.credentialVersion === savedCredit.credentialVersion &&
+        again.proof.model === savedCredit.model
+      ) {
+        creditResumed = again.proof;
+        creditSource = { plan: brainPlan, thinker: agent };
+        brainPlan = { kind: "model" };
+      } else brainPlan = await returnToSource(brainPlan, again.ok ? "credential_changed" : again.reason);
+    } else if (brainPlan.kind === "claude_code") brainPlan = await returnToSource(brainPlan, "disabled");
+    else savedCredit.ended = "agent_changed";
+  }
   if (brainPlan.kind !== "claude_code") onDemandForOtherBrain(transcript);
   // The run's effective brain (ADR 0053 §10): shared code reads it, never the agent's stored brain.
   if (run.brain !== brainPlan.kind) {
@@ -3451,6 +3560,7 @@ async function executeRunInner(
       later(() => saveTranscript(db, t));
     }
   }
+  if (creditResumed) thinker = { ...thinker, model: creditResumed.model, credentialId: creditResumed.credentialId };
   // The context budget reads the model's window: an OpenRouter model's comes with its list.
   await modelInfoFor(db, thinker.model, run.orgId);
   let plan: BrainPlan = brainPlan;
@@ -3766,6 +3876,153 @@ async function executeRunInner(
       if (view) await publishMessageCreated(deps.pubsub, view);
     }
   };
+  /**
+   * Credit routes (ADR 0200): one line to the people, once for each thing that happens in a run, naming no balance.
+   */
+  const creditNote = async (body: string, kind: "selected" | "ended" | "unknown") => {
+    const [said] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.orgId, run.orgId),
+          eq(messages.channelId, run.channelId),
+          sql`${messages.meta}->'creditRoute'->>'kind' = ${kind}`,
+          sql`${messages.meta}->'creditRoute'->>'runId' = ${run.id}`,
+        ),
+      )
+      .limit(1);
+    if (said) return;
+    const note = await db.transaction((tx) =>
+      post(tx, replyThreadId, body, { creditRoute: { kind, runId: run.id } }, undefined, true),
+    );
+    (transcript as Transcript).postedCount++;
+    if (note) {
+      const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+      if (view) await publishMessageCreated(deps.pubsub, view);
+    }
+  };
+  /**
+   * The subscription reached its limit (account-wide, not one model's, not a reserve warning) and a verified credit
+   * route may take the run, before any other model. Only at a turn boundary with no tool of unknown outcome: the
+   * same rules as a move to another subscription. False leaves everything as it was.
+   */
+  const moveToCreditRoute = async (): Promise<boolean> => {
+    const credit = deps.creditRoute;
+    const t = transcript as Transcript;
+    if (!credit) return false;
+    const skipped = async (reason: string) => {
+      await addRunStep(db, run, "context", { creditRoute: { state: "skipped", reason } }).catch(() => {});
+      return false;
+    };
+    const body = JSON.stringify({ system: t.system, messages: t.messages });
+    const promptBytes = new TextEncoder().encode(body).length;
+    if (promptBytes > PORTABLE_CONTEXT_MAX_BYTES) return skipped("context_too_large");
+    if (hasCredentialText(body)) return skipped("credential_in_context");
+    const q = await credit
+      .qualify({ orgId: run.orgId, runId: run.id, agentId: agent.id, need: { tools: tools.length > 0, promptBytes } })
+      .catch((): CreditQualification => ({ ok: false, reason: "disabled" }));
+    // No route at all is the feature being off here: said nowhere.
+    if (!q.ok) return q.reason === "disabled" ? false : skipped(q.reason);
+    const { proof } = q;
+    const at = Date.now();
+    if (
+      !SAFE_ID.test(proof.model) ||
+      !SAFE_ID.test(proof.evidenceRef) ||
+      !Number.isSafeInteger(proof.observedAt) ||
+      !Number.isSafeInteger(proof.validUntil) ||
+      proof.observedAt > at + 5_000 ||
+      proof.validUntil <= at ||
+      proof.validUntil > proof.observedAt + CREDIT_PROOF_MAX_MS
+    )
+      return skipped("proof_invalid");
+    // Mid-run the model starts from the portable record, as a new harness would: what was asked, what was done.
+    const next = { system: t.system, messages: structuredClone(t.messages) };
+    if (computerTurns > 0 || run.turns > 0) {
+      const workLog = await runWorkDigest(db, run.id).catch(() => "");
+      const conversation = await conversationDigest(db, run).catch(() => "");
+      const content = portableMessages(t.messages, workLog, conversation);
+      if (hasCredentialText(JSON.stringify(content))) return skipped("credential_in_context");
+      next.system = [
+        ...t.system,
+        {
+          turn: true,
+          found: true,
+          text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+        } as ContextBlock,
+      ];
+      appendUserText(next, QUOTA_HANDOFF_RESUME_PROMPT);
+    }
+    const route: NonNullable<Transcript["creditRoute"]> = {
+      schema: "credit-route/1",
+      routeId: proof.routeId,
+      poolId: proof.poolId,
+      credentialId: proof.credentialId,
+      credentialVersion: proof.credentialVersion,
+      model: proof.model,
+      sourceKind: plan.kind,
+      sourceSessionId: plan.session?.id ?? null,
+      evidenceRef: proof.evidenceRef,
+      selectedAt: at,
+    };
+    if (options.owned && !(await options.owned()))
+      throw new PermanentJobError("lost run ownership before credit route");
+    const stored = { ...t, system: next.system, messages: next.messages, creditRoute: route };
+    const moved = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: "model", transcript: storedTranscript(stored), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+            sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+          ),
+        )
+        .returning();
+      if (!row) return null;
+      await addRunStep(tx, row, "context", {
+        creditRoute: {
+          state: "selected",
+          from: plan.kind,
+          why: "plan_limit",
+          model: proof.model,
+          pool: proof.pool,
+          eligibilityVerified: true,
+        },
+      });
+      return row;
+    });
+    if (!moved) return skipped("run_changed");
+    run = moved;
+    t.system = next.system;
+    t.messages = next.messages;
+    t.creditRoute = route;
+    creditSource = { plan, thinker };
+    await leaveLine();
+    plan = { kind: "model" };
+    thinker = { ...thinker, model: proof.model, credentialId: proof.credentialId };
+    await modelInfoFor(db, thinker.model, run.orgId);
+    onDemandForOtherBrain(t);
+    brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
+    await creditNote(creditRouteNotice(proof.model), "selected").catch(() => {});
+    return true;
+  };
+  /**
+   * The route cannot go on (a refusal before anything was sent, or a provider refusal that charged nothing): the run
+   * goes back to a new session of the subscription it came from, carrying the whole conversation, and the usual
+   * choices follow: another subscription, or the wait for the reset. It never comes back to the route in this run.
+   */
+  const leaveCreditRoute = async (reason: string) => {
+    const source = creditSource;
+    if (!source) return "no" as const;
+    plan = await returnToSource(source.plan, reason);
+    thinker = source.thinker;
+    brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
+    await creditNote(creditRouteEndedNotice(), "ended").catch(() => {});
+    return brainUnavailable({ code: "plan_limit", message: "The Claude subscription is still at its limit." });
+  };
   const brainUnavailable = async (
     u: BrainUnavailability & { queued?: boolean; retryAt?: number; quotaReserve?: boolean },
     look?: "first" | "again",
@@ -3804,6 +4061,26 @@ async function executeRunInner(
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
     const onlyThisComputer = (t.interruptedTurn?.executed.length ?? 0) > 0 || t.interruptedTurn?.cause === "plan_limit";
+    // Credit routes (ADR 0200): a Claude subscription at its real, account-wide limit tries a verified Claude API
+    // credit route first. Never for a reserve warning, a model's own limit, a right hand, a mission, an agent that may
+    // not fall back, a run that already tried a route, or a turn with tools of unknown outcome.
+    if (
+      deps.creditRoute &&
+      from === "claude_code" &&
+      u.code === "plan_limit" &&
+      !u.scope &&
+      u.quotaReserve !== true &&
+      !t.creditRoute &&
+      !plan.missionId &&
+      mayFallBack(agent, run) &&
+      !onlyThisComputer &&
+      !t.pending &&
+      !t.effectUncertain &&
+      !t.hostAcpUncertain &&
+      !t.continuityCheckpoint &&
+      (await moveToCreditRoute())
+    )
+      return "fallback";
     // Owner policy (2026-11-14): a plan near or at its limit hands the same agent and run, at a turn boundary, to
     // the least used qualified subscription route on the same computer (Claude Code, Grok, Codex), never importing
     // the source vendor's session. Missing capability, billing or data-policy evidence keeps the wait; with no cloud
@@ -6116,6 +6393,28 @@ async function executeRunInner(
             return interruptedAfterTools(turnPlan.kind, failure, names, deltas.lastText());
           }
         }
+        // A turn on a credit route that failed (ADR 0200). A refusal before anything was sent, or a provider's refusal
+        // that charged nothing and ends the route, sends the run back to its subscription's choices. A call that went
+        // out and whose outcome nobody knows is never sent again: it may have been charged.
+        const onCredit = turnPlan.kind === "model" && (transcript as Transcript).creditRoute;
+        if (onCredit && !onCredit.ended) {
+          const outcome = creditOutcomeOf(error);
+          if (outcome && outcome.hold === "unknown") {
+            await addRunStep(db, run, "error", {
+              reason: "credit_reconciliation_required",
+              attempt: outcome.attemptId,
+            });
+            await creditNote(creditRouteUnknownNotice(), "unknown").catch(() => {});
+            return fail(creditRouteUnknownNotice());
+          }
+          if (error instanceof CreditRouteRefusal || (outcome && endsCreditRoute(outcome.class))) {
+            const left = await leaveCreditRoute(
+              error instanceof CreditRouteRefusal ? error.reason : (outcome?.class ?? "ended"),
+            );
+            if (left === "fallback") continue;
+            if (left === "waited" || left === "failed") return;
+          }
+        }
         // A computer brain that can't answer now (offline, not logged in, plan limit, a retryable failure):
         // the model brain retries the turn, or the run waits for the computer.
         if (
@@ -6966,6 +7265,13 @@ function createUnboundBrain(
     },
     // Where it answers, as a computer brain's session counts it: its thread, or the channel it answers in.
     session: brainSessionId(agent.id, replyThreadOf(run) ?? run.channelId, "model"),
+    // A run on a credit route (ADR 0200): read at each call, so a run that left the route stops asking for it.
+    credit: () => {
+      const c = transcript().creditRoute;
+      return c && !c.ended
+        ? { routeId: c.routeId, credentialId: c.credentialId, credentialVersion: c.credentialVersion }
+        : undefined;
+    },
   });
 }
 
