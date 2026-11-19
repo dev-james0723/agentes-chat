@@ -1,5 +1,5 @@
 import type { Agent, Memory, MemoryKind } from "@agenteschat/client";
-import { useMemory, useMemoryAction, useProposals } from "@agenteschat/client";
+import { useMemory, useMemoryAction, useProposals, useRevertMemory } from "@agenteschat/client";
 import { daysBetween, relativeTime } from "@agenteschat/client/lib/format";
 import { agentGrammar } from "@agenteschat/client/lib/grammar";
 import { memoryLine } from "@agenteschat/client/lib/proposals";
@@ -29,6 +29,7 @@ import { useTranslation } from "react-i18next";
 import { AskAgentButton } from "@/components/AskAgentButton";
 import { HelpLink } from "@/components/HelpLink";
 import { ErrorState, LoadingPage } from "@/components/Loading";
+import { MemoryFacts, MemoryHistoryPanel, RevertMemoryDialog } from "@/components/MemoryInspector";
 import { useOrg } from "@/components/org-context";
 import { useDirectory } from "@/hooks/useDirectory";
 import { useLandOn } from "@/lib/land-on";
@@ -163,6 +164,9 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
   const [picked, setTab] = useState<MemoryTab | null>(null);
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<Memory | null>(null);
+  const [reverting, setReverting] = useState<Memory | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
+  const revert = useRevertMemory(org.id, agent.id);
   const all = memory.data ?? [];
   // The memory a link named: its tab shows until the person picks one, and it is landed on.
   const linked = all.find((m) => m.id === item);
@@ -254,6 +258,7 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
                 {t("memory.supersedes")} <span className="struck">{m.supersedes}</span>
               </p>
             )}
+            <MemoryFacts m={m} />
             <div className="row">
               <span className="memory-item__source small muted">
                 {m.editedByUserId === me.user.id
@@ -272,9 +277,21 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
                     {t("memory.confirm")}
                   </Button>
                 )}
+                <Button
+                  variant="link"
+                  aria-expanded={opened === m.id}
+                  onClick={() => setOpened(opened === m.id ? null : m.id)}
+                >
+                  {t("memory.inspect.toggle")}
+                </Button>
                 <Button variant="link" onClick={() => setEditing(m)}>
                   {t("memory.edit")}
                 </Button>
+                {m.supersedes && !m.archived && (
+                  <Button variant="link" onClick={() => setReverting(m)}>
+                    {t("memory.inspect.revert")}
+                  </Button>
+                )}
                 <Button
                   variant="link"
                   onClick={() =>
@@ -293,6 +310,7 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
                 </Button>
               </div>
             </div>
+            {opened === m.id && <MemoryHistoryPanel id={m.id} />}
           </article>
         ))}
         {memory.isError && !memory.data && <ErrorState error={memory.error} onRetry={() => void memory.refetch()} />}
@@ -304,6 +322,12 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
         <HelpLink slug="memory">{t("memory.how")}</HelpLink>
       </p>
 
+      <RevertMemoryDialog
+        memory={reverting}
+        pending={revert.isPending}
+        onClose={() => setReverting(null)}
+        onRevert={(m) => revert.mutate(m.id, { onSuccess: () => setReverting(null) })}
+      />
       <EditMemoryDialog
         memory={editing}
         onClose={() => setEditing(null)}
