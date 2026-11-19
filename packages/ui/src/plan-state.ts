@@ -88,18 +88,48 @@ export function planWindows<W extends PlanMeterWindow>(usage: { windows: readonl
     .sort((a, b) => b.used - a.used || KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
 }
 
+/** Claude's model names, as a run's model and a model's own week (`model_scoped`'s `display_name`) say them. */
+const CLAUDE_MODELS = ["fable", "opus", "sonnet", "haiku"];
+
+/**
+ * Whether window `w` holds back a run on `model`. A model's own week (`seven_day_opus`, `seven_day_sonnet`, Claude's
+ * `model_scoped` stored as `other` with the model's name) holds back that model only, once the run's model names a
+ * Claude model; every other window is the account's and holds back every model. No model, or one that names no
+ * Claude model ("auto", "default"): every window, as the plan's own state.
+ */
+export function windowHolds(w: Pick<PlanMeterWindow, "kind" | "label">, model?: string | null): boolean {
+  // `opusplan` plans with Opus and works with Sonnet: both weeks hold it.
+  const m = (model ?? "").toLowerCase().replace("opusplan", "opusplan sonnet");
+  if (!CLAUDE_MODELS.some((name) => m.includes(name))) return true;
+  // Antigravity's groups of models ("Claude and GPT models · 5h") are no one model's.
+  const label =
+    w.kind === "other" && w.label && !NOT_A_MODEL.has(w.label) && !w.label.includes("·") ? w.label.toLowerCase() : null;
+  const own =
+    w.kind === "seven_day_opus"
+      ? "opus"
+      : w.kind === "seven_day_sonnet"
+        ? "sonnet"
+        : label
+          ? (CLAUDE_MODELS.find((name) => label.includes(name)) ?? label)
+          : null;
+  return own === null || m.includes(own);
+}
+
 /**
  * Where the plan stands: at its limit (a window is full, or it refused a
  * request and no full window has reset since), almost (`PLAN_ALMOST`), or fine.
  * `until`: when every full window has reset; `used`: the tightest window's.
+ * `model`: for a run on that model, only the windows that hold it back (`windowHolds`): another model's full week
+ * leaves it free, while a refusal no window of its own explains still holds it.
  */
 export function planState(
   usage: PlanMeterUsage,
   now = Date.now(),
+  model?: string | null,
 ): { state: PlanState; until: string | null; used: number } {
-  const rows = planWindows(usage, now);
+  const rows = planWindows(usage, now).filter((w) => windowHolds(w, model));
   const full = rows.filter((w) => w.used >= 100);
-  const refused = usage.limited === true && !usage.windows.some((w) => w.usedPercent >= 100);
+  const refused = usage.limited === true && !usage.windows.some((w) => w.usedPercent >= 100 && windowHolds(w, model));
   const used = rows[0]?.used ?? 0;
   if (full.length === 0 && !refused) return { state: used >= PLAN_ALMOST ? "almost" : "ok", until: null, used };
   const resets = full.flatMap((w) => (w.resetsAt ? [w.resetsAt] : []));
