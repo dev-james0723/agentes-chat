@@ -9,6 +9,8 @@
 
 mod cover;
 mod deep_link;
+mod command_deck;
+mod command_deck_links;
 mod discover;
 mod dock;
 mod host_sync;
@@ -87,7 +89,7 @@ fn is_help_page(url: &str) -> bool {
 
 /// The windows that make the app "open" like any other: while one is showing, the app has a Dock icon
 /// (with the open-window dot, clickable), even when the person took it out of the Dock.
-const APP_WINDOWS: &[&str] = &["welcome", "prefs", main_window::LABEL];
+const APP_WINDOWS: &[&str] = &["welcome", "prefs", main_window::LABEL, command_deck::LABEL];
 
 /// The Dock icon: always, like Slack's (dock.rs), or, when the person turned that off, only while an app
 /// window is visible (macOS).
@@ -343,7 +345,7 @@ fn begin_quit(app: AppHandle) {
     if let Some(window) = app.get_window(main_window::LABEL) {
         window_state::remember(&window, false);
     }
-    for name in WINDOWS.iter().chain([&main_window::LABEL, &notch::LABEL]) {
+    for name in WINDOWS.iter().chain([&main_window::LABEL, &notch::LABEL, &command_deck::LABEL]) {
         if let Some(window) = app.get_window(name) {
             let _ = window.hide();
         }
@@ -787,16 +789,16 @@ pub fn run() {
             // Every server's workspaces, for the site's menu and Preferences (ADR 0154).
             workspaces::start(&handle);
             main_window::stop_from_notices(&handle);
-            deep_link::setup(&handle);
+            let navigation_at_launch = deep_link::setup(&handle);
             // Started at login: in the background (the popover, the tray). Opened by hand: the main window on
             // the server open now, or the first run while there is none. Opened again by macOS in the middle of a
             // setup (the "Quit & Reopen" after a permission): the main window on the page it showed, and the setup's
             // window over it.
             let at_login = std::env::args().any(|a| a == AUTOSTART_ARG);
             let resume = prepare::resume(&handle, at_login);
-            if servers::current(&handle).is_none() {
+            if !navigation_at_launch && servers::current(&handle).is_none() {
                 let _ = present(&handle, "welcome");
-            } else if !at_login {
+            } else if !navigation_at_launch && !at_login {
                 let _ = main_window::open(&handle, resume.as_ref().and_then(|r| r.page.clone()));
             }
             if let Some(resume) = resume {
