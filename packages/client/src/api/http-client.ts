@@ -782,6 +782,10 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
     },
     agents: {
       list: async (orgId) => (await request<{ agents: Agent[] }>(`${org(orgId)}/agents`)).agents,
+      setAgentAvatar: (orgId, agentId, input) =>
+        request<{ avatarUrl: string }>(`${org(orgId)}/agents/${enc(agentId)}/avatar`, { method: "PUT", json: input }),
+      removeAgentAvatar: (orgId, agentId) =>
+        request<void>(`${org(orgId)}/agents/${enc(agentId)}/avatar`, { method: "DELETE" }),
       planUsage: (orgId, agentId) => request<AgentPlanUsage>(`${org(orgId)}/agents/${enc(agentId)}/usage`),
       team: (orgId) => request<Team>(`${org(orgId)}/team`),
       setLines: (orgId, changes) =>

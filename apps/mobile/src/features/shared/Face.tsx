@@ -112,7 +112,8 @@ export function AgentFace({
   bodyless?: boolean | undefined;
 }) {
   const dir = useDirectory();
-  const look = agentLook(agentId ? dir.anyAgent(agentId) : undefined);
+  const agent = agentId ? dir.anyAgent(agentId) : undefined;
+  const look = { ...agentLook(agent), avatarUrl: agent?.avatarUrl };
   const moment = { gaze, expression, bodyless };
   if (presence && agentId)
     return (
@@ -183,7 +184,7 @@ function PresentAgentFace({
  * (the tiny faces, the big hero), at its body's (`agentLayout`), narrower than the box.
  */
 export function agentBadgeInset(look: AgentLookInput, size: number, framed?: boolean): number {
-  if (framed ?? framedByDefault(size)) return 0;
+  if (look.avatarUrl || (framed ?? framedByDefault(size))) return 0;
   const accessory = Boolean(look.accessory && look.accessory !== "none");
   return Math.round((size - agentLayout(size, accessory).inner) / 2);
 }

@@ -2,7 +2,7 @@ import type { AppNotification } from "@agenteschat/client";
 import { appCreatedLine } from "@agenteschat/client/lib/apps";
 import { formatUsd } from "@agenteschat/client/lib/format";
 import { agentGrammar } from "@agenteschat/client/lib/grammar";
-import { restrictionOf, workspaceHeadline } from "@agenteschat/client/lib/notifications";
+import { notificationSourceLabel, restrictionOf, workspaceHeadline } from "@agenteschat/client/lib/notifications";
 import { useTranslation } from "react-i18next";
 import { useOrg } from "@/providers/org";
 import { isDashboardNotice } from "../dashboards/logic";
@@ -22,12 +22,13 @@ const NAMES = "⁣names⁣";
 export function useNoticeTitle(n: AppNotification) {
   const { t, i18n } = useTranslation();
   const dir = useDirectory();
+  const sourceLabel = notificationSourceLabel(n, (id) => dir.anyAgent(id)?.name);
   // A restriction on agentes.chat Cloud: its whole line under the headline, and a held agent's name heads it.
   const restriction = restrictionOf(n);
   const held = restriction?.code === "agent.paused";
   const who = whoOf(n.actors, (a) => dir.nameOf({ type: a.type === "agent" ? "agent" : "person", id: a.id }));
   const names = held
-    ? (n.source.label ?? "")
+    ? (sourceLabel ?? "")
     : who.second
       ? who.more > 0
         ? t("mobile.names.more", { first: who.first, second: who.second, count: who.more })
@@ -78,7 +79,7 @@ export function useNoticeTitle(n: AppNotification) {
                 percent: Math.round(n.latest.percent ?? 0),
                 // `desktop_taken`: whose computer, said with its name's gender; `plan_lent`: the agent given the plan.
                 ...(n.kind === "desktop_taken" || n.kind === "plan_lent"
-                  ? { agent: n.source.label ?? "", context: agentGrammar(n.source.label ?? "").context }
+                  ? { agent: sourceLabel ?? "", context: agentGrammar(sourceLabel ?? "").context }
                   : {}),
                 // `admin_ask`: the agent to add and where, or the service whose webhook.
                 ...(n.kind === "admin_ask"
@@ -94,5 +95,5 @@ export function useNoticeTitle(n: AppNotification) {
   const failed = runFailedLines(t, n, (id) => dir.nameOf({ type: "agent", id }));
   const parts = failed ? [failed.title] : template.split(NAMES);
   const title = parts.join(names);
-  return { parts, names, title, restriction, failed };
+  return { parts, names, title, restriction, failed, sourceLabel };
 }

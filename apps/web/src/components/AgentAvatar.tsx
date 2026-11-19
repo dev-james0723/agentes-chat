@@ -24,7 +24,7 @@ type AgentAvatarProps = Omit<AvatarProps, "kind" | "running" | "state" | "appear
   /** A real agent: its look from the directory, its live state from the run store. */
   agentId?: string;
   /** An agent object at hand (an onboarding preset, the customizer's draft). */
-  agent?: { id?: string; appearance?: unknown } | null;
+  agent?: { id?: string; appearance?: unknown; avatarUrl?: string | null } | null;
   /** Overrides the look (the customizer's preview and choices). */
   appearance?: AgentAppearance;
   channelId?: string;
@@ -41,7 +41,7 @@ type AgentAvatarProps = Omit<AvatarProps, "kind" | "running" | "state" | "appear
 };
 
 /**
- * The only way `apps/web` draws an agent: the living symbol with the agent's
+ * The only way `apps/web` draws an agent: its saved photo or living pixel
  * appearance (color, eyes, accessory) and, for a real agent, the live run
  * state (looks around while it thinks, dash eyes while words arrive).
  * `channelId` limits the state to one conversation; `state` overrides it.
@@ -51,11 +51,23 @@ export function AgentAvatar(props: AgentAvatarProps) {
   if (id && props.presence === true) return <PresentAgentAvatar {...props} agentId={id} />;
   const given = typeof props.presence === "string" ? props.presence : null;
   if (id) return <LiveAgentAvatar {...props} presence={given} agentId={id} />;
-  const { agent, appearance, state, running, asleep: _s, channelId: _c, agentId: _a, presence: _p, ...rest } = props;
+  const {
+    agent,
+    appearance,
+    imageUrl,
+    state,
+    running,
+    asleep: _s,
+    channelId: _c,
+    agentId: _a,
+    presence: _p,
+    ...rest
+  } = props;
   return (
     <Avatar
       kind="agent"
       appearance={appearance ?? lookOf(agent)}
+      imageUrl={imageUrl === undefined ? agent?.avatarUrl : imageUrl}
       state={state ?? (running ? "thinking" : undefined)}
       presence={given}
       {...rest}
@@ -164,6 +176,7 @@ function LiveAgentAvatar({
   agentId,
   agent,
   appearance,
+  imageUrl,
   channelId,
   state,
   running,
@@ -181,6 +194,7 @@ function LiveAgentAvatar({
       kind="agent"
       state={state ?? (live === "idle" ? idle : live)}
       appearance={appearance ?? lookOf(known ?? agent)}
+      imageUrl={imageUrl === undefined ? (known ? known.avatarUrl : agent?.avatarUrl) : imageUrl}
       initials={dir.agentInitials(agentId)}
       presence={presence}
       {...rest}

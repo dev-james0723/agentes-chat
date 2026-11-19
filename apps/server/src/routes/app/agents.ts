@@ -2,6 +2,7 @@ import {
   type AgentBrainSummary,
   type Agent as AgentRow,
   adjustTeamAgent,
+  agentAvatarFile,
   agentBrainLines,
   agentBudgetsThisMonth,
   agentStatuses,
@@ -59,6 +60,7 @@ import {
   proposeChannelMove,
   publishAgentsChanged,
   publishMachineAgentsChanged,
+  removeAgentAvatar,
   requirePermission,
   revokeCredential,
   rightHandWidgetsReady,
@@ -66,6 +68,7 @@ import {
   seesAgentDetails,
   setAgentAppearance,
   setAgentAudience,
+  setAgentAvatar,
   setAgentBrain,
   setReportsTo,
   speakerOf,
@@ -83,6 +86,8 @@ import {
 import { contextWindowOf, nanoUsdToUsd, pricesAt, usdToNanoUsd } from "@agenteschat/providers";
 import { learnedPlanModels } from "@agenteschat/providers/plans";
 import { createRoute, z } from "@hono/zod-openapi";
+import { apiError, errorResponse } from "../../http/errors";
+import { imageFile } from "../../http/image-file";
 import {
   type AppDeps,
   aiStatusDeps,
@@ -388,6 +393,7 @@ export function agentRoutes(deps: AppDeps) {
   const app = createAppRouter(deps);
   app.use("/organizations/*", requireSession(deps.auth));
   app.use("/models", requireSession(deps.auth));
+  app.use("/agent-avatars/*", requireSession(deps.auth));
 
   app.openapi(
     createRoute({
@@ -850,6 +856,7 @@ export function agentRoutes(deps: AppDeps) {
     handle: z.string(),
     role: z.string(),
     appearance: AgentAppearance.nullable(),
+    avatarUrl: z.string().nullable(),
     ownerUserId: z.string().nullable(),
     reportsToAgentId: z.uuid().nullable().openapi({ description: "Responde a: the agent it reports to, if any." }),
     capabilities: z.array(z.string()).openapi({
@@ -1359,6 +1366,76 @@ export function agentRoutes(deps: AppDeps) {
   });
 
   const AgentParams = OrgParams.extend({ agentId: z.uuid() });
+
+  const AvatarUpload = z.object({
+    data: z.string().min(1).max(3_000_000).openapi({ description: "Image bytes as base64; a data URL is accepted." }),
+    contentType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  });
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/organizations/{orgId}/agents/{agentId}/avatar",
+      tags,
+      security,
+      summary: "Set an agent's portrait (owner or admin; up to 2 MB, metadata removed)",
+      request: { params: AgentParams, body: body(AvatarUpload) },
+      responses: {
+        200: json(z.object({ avatarUrl: z.string() })),
+        429: errorResponse("Too many portrait changes"),
+        ...errors,
+      },
+    }),
+    async (c) => {
+      const { orgId, agentId } = c.req.valid("param");
+      const actorId = c.get("user").id;
+      await requirePermission(db, actorId, orgId, "read");
+      const limit = await adapters.rateLimiter.consume(`agent-avatar:${orgId}:${agentId}:${actorId}`, {
+        limit: 10,
+        windowMs: 3600_000,
+      });
+      if (!limit.allowed) return apiError(c, 429, "rate_limited", "Too many portrait changes. Try again later.");
+      const result = await setAgentAvatar(
+        { db, blobs: adapters.platformBlobs, pubsub: adapters.pubsub },
+        actorId,
+        orgId,
+        agentId,
+        c.req.valid("json"),
+      );
+      return c.json(result, 200);
+    },
+  );
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/organizations/{orgId}/agents/{agentId}/avatar",
+      tags,
+      security,
+      summary: "Remove an agent's portrait and keep its existing pixel appearance",
+      request: { params: AgentParams },
+      responses: { 204: noContent[204], ...errors },
+    }),
+    async (c) => {
+      const { orgId, agentId } = c.req.valid("param");
+      await removeAgentAvatar(
+        { db, blobs: adapters.platformBlobs, pubsub: adapters.pubsub },
+        c.get("user").id,
+        orgId,
+        agentId,
+      );
+      return c.body(null, 204);
+    },
+  );
+  app.get("/agent-avatars/:orgId/:agentId/:file", async (c) =>
+    imageFile(
+      await agentAvatarFile(
+        { db, blobs: adapters.platformBlobs },
+        c.get("user").id,
+        c.req.param("orgId"),
+        c.req.param("agentId"),
+        c.req.param("file"),
+      ),
+    ),
+  );
 
   const UsageQueueRow = z.object({
     runId: z.uuid(),

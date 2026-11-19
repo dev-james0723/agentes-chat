@@ -126,7 +126,8 @@ export function subtitleOf(
 }
 
 /** Where it happened ("#produto", the thread's title, the mission's name); a device's notice names it already. */
-export const placeOf = (n: AppNotification) => (isDeviceNotice(n.kind) ? "" : (n.source.label ?? ""));
+export const placeOf = (n: AppNotification, sourceLabel = n.source.label) =>
+  isDeviceNotice(n.kind) ? "" : (sourceLabel ?? "");
 
 /** Emojis a reaction card shows (at most 5, from the server). */
 export const emojisOf = (n: AppNotification) => (n.kind === "reaction" ? (n.latest.emojis ?? []).slice(0, 5) : []);

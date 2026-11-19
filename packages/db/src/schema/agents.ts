@@ -172,6 +172,8 @@ export const agents = pgTable(
     mergeRepos: jsonb().$type<string[]>().notNull().default([]),
     /** Its look in the app (color, eyes, accessory from a fixed allow-list). Null = the default look. */
     appearance: jsonb().$type<{ color: string; eyes: string; accessory: string }>(),
+    /** Uploaded portrait in the platform store; null keeps the pixel look as the default and fallback. */
+    avatarUrl: text(),
     /**
      * The setup checklist at the top of its chat (ADR 0155 §2): the ready-made role it started from (null: from
      * scratch or made elsewhere) and the steps a person confirmed. Null = made before the checklist: none shows.
