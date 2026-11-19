@@ -1,0 +1,176 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { and, eq, schema } from "@agenteschat/db";
+import {
+  addChannelMember,
+  createChannel,
+  createThreadFromRange,
+  deleteContextItem,
+  deleteThread,
+  indexSource,
+  insertContextItem,
+  postPersonMessage,
+  reapplyMemoryDeletions,
+  retrieveForRun,
+} from "../src";
+import { caches, enableCaches } from "../src/cache";
+import { removeMember } from "../src/organizations";
+import { addMember, type Fixture, setup } from "./fixtures";
+
+/** Acceptance A18 of the long-term memory plan (T02): a revocation reaches a run with the caches warm, as on a server. */
+let f: Fixture;
+afterEach(async () => {
+  enableCaches(false);
+  const current = f;
+  f = undefined as unknown as Fixture;
+  await current?.close();
+});
+
+async function remember(content: string, channelId: string) {
+  const item = await insertContextItem(f.db, {
+    orgId: f.org.id,
+    kind: "fact",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    agentId: f.agent.id,
+    channelIds: [channelId],
+    content,
+    trust: "high",
+    evidence: [{ type: "human", ref: f.owner.id, at: new Date().toISOString() }],
+    createdByKind: "person",
+    createdById: f.owner.id,
+  });
+  await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: item.id });
+  return item;
+}
+
+const run = (channelId: string, text: string) =>
+  retrieveForRun(f.context, { orgId: f.org.id, agentId: f.agent.id, channelId, text, personIds: [f.owner.id] });
+
+describe("A18: a revoked channel stops reaching runs at once, with every cache warm", () => {
+  test("the agent removed from a private channel behind the caches' back: its memory stays out of the next run", async () => {
+    f = await setup();
+    enableCaches();
+    const secret = await createChannel(f.db, f.owner.id, f.org.id, { name: "revoked-kestrel", visibility: "private" });
+    await addChannelMember(f.db, f.owner.id, f.org.id, secret.id, { agentId: f.agent.id });
+    const hidden = await remember("Kestrel's acquisition price is 4.2 million.", secret.id);
+    const control = await remember("Kestrel ships from the Osaka region.", f.general.id);
+
+    // Warm: the scope, presence and member caches now hold the agent's access to the channel.
+    expect((await run(secret.id, "Kestrel acquisition price and region")).itemIds).toContain(hidden.id);
+    expect((caches.scopes as unknown as { entries: Map<string, unknown> }).entries.size).toBeGreaterThan(0);
+
+    // Revoked in the database with no invalidation at all: only a fresh check can catch it.
+    await f.db
+      .delete(schema.channelMembers)
+      .where(
+        and(
+          eq(schema.channelMembers.orgId, f.org.id),
+          eq(schema.channelMembers.agentId, f.agent.id),
+          eq(schema.channelMembers.channelId, secret.id),
+        ),
+      );
+    const fromGeneral = await run(f.general.id, "Kestrel acquisition price and region");
+    expect(fromGeneral.itemIds).not.toContain(hidden.id);
+    expect(fromGeneral.text).not.toContain("4.2 million");
+    expect(fromGeneral.itemIds).toContain(control.id);
+    const fromSecret = await run(secret.id, "Kestrel acquisition price and region");
+    expect(fromSecret.itemIds).not.toContain(hidden.id);
+    expect(fromSecret.text).not.toContain("4.2 million");
+  });
+
+  test("a person removed from the organization: every cached member list of their channels is dropped at once", async () => {
+    f = await setup();
+    enableCaches();
+    const bob = await addMember(f.db, f.org.id, "member", "bob");
+    const room = await createChannel(f.db, f.owner.id, f.org.id, { name: "bob-room", visibility: "private" });
+    await addChannelMember(f.db, f.owner.id, f.org.id, room.id, { userId: bob.id });
+    await addChannelMember(f.db, f.owner.id, f.org.id, f.general.id, { userId: bob.id }).catch(() => undefined);
+    caches.channelMembers.set(`${f.org.id}:${room.id}`, ["cached with bob"]);
+    caches.channelMembers.set(`${f.org.id}:${f.general.id}`, ["cached with bob"]);
+
+    await removeMember(f.db, f.owner.id, f.org.id, bob.id);
+
+    expect(caches.channelMembers.get(`${f.org.id}:${room.id}`)).toBeUndefined();
+    expect(caches.channelMembers.get(`${f.org.id}:${f.general.id}`)).toBeUndefined();
+  });
+});
+
+const derivedFrom = async (sourceId: string, content: string) => {
+  const item = await insertContextItem(f.db, {
+    orgId: f.org.id,
+    kind: "fact",
+    scopeType: "agent",
+    scopeId: f.agent.id,
+    agentId: f.agent.id,
+    channelIds: [f.general.id],
+    content,
+    sourceIds: [sourceId],
+    trust: "high",
+    createdByKind: "agent",
+    createdById: f.agent.id,
+  });
+  await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: item.id });
+  return item;
+};
+const row = async (id: string) =>
+  (await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, id)))[0];
+const indexed = async (id: string) =>
+  (await f.db.select().from(schema.searchDocuments).where(eq(schema.searchDocuments.sourceId, id))).length;
+
+describe("A17: a deletion takes what was derived from it out of use", () => {
+  test("deleting a memory removes its use records, its search entry and the memory built on it", async () => {
+    f = await setup();
+    const base = await remember("Kestrel ships from the Osaka region.", f.general.id);
+    const derived = await derivedFrom(base.id, "Kestrel's release train leaves from Osaka every Friday.");
+    await f.db.insert(schema.contextUsage).values({ orgId: f.org.id, runId: crypto.randomUUID(), itemId: base.id });
+    expect(await indexed(base.id)).toBe(1);
+
+    await deleteContextItem(f.db, f.owner.id, f.org.id, base.id);
+    await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: base.id });
+    await indexSource(f.context, { orgId: f.org.id, kind: "context_item", sourceId: derived.id });
+
+    expect(await row(base.id)).toBeUndefined();
+    expect(await f.db.select().from(schema.contextUsage).where(eq(schema.contextUsage.itemId, base.id))).toEqual([]);
+    expect(await indexed(base.id)).toBe(0);
+    expect((await row(derived.id))?.status).toBe("archived");
+    expect(await indexed(derived.id)).toBe(0);
+    const pack = await run(f.general.id, "Kestrel Osaka release");
+    expect(pack.itemIds).not.toContain(base.id);
+    expect(pack.itemIds).not.toContain(derived.id);
+  });
+
+  test("deleting a thread takes the memory drawn from its message out of use", async () => {
+    f = await setup();
+    const deps = { db: f.db, pubsub: f.pubsub };
+    const a = await postPersonMessage(deps, f.owner.id, f.org.id, f.general.id, { body: "Kestrel moves to Osaka" });
+    const b = await postPersonMessage(deps, f.owner.id, f.org.id, f.general.id, { body: "Confirmed for Friday" });
+    const thread = await createThreadFromRange(deps, f.owner.id, {
+      orgId: f.org.id,
+      channelId: f.general.id,
+      firstMessageId: a.id,
+      lastMessageId: b.id,
+    });
+    const drawn = await derivedFrom(thread.id, "Kestrel moves to Osaka on Friday.");
+    await deleteThread(deps, f.owner.id, f.org.id, thread.id);
+    expect((await row(drawn.id))?.status).toBe("archived");
+  });
+});
+
+describe("A19: a restore from an older backup deletes again what people deleted since", () => {
+  test("an item deleted after the backup comes back with the restore and is removed again on boot", async () => {
+    f = await setup();
+    const item = await remember("Kestrel's acquisition price is 4.2 million.", f.general.id);
+    const backup = await row(item.id);
+    if (!backup) throw new Error("no row");
+    await deleteContextItem(f.db, f.owner.id, f.org.id, item.id);
+    expect(await f.db.select().from(schema.contextItemDeletions)).toHaveLength(1);
+
+    // The restore brings the row back (the ledger is newer than the backup and is kept).
+    await f.db.insert(schema.contextItems).values(backup);
+    expect(await row(item.id)).toBeDefined();
+
+    expect(await reapplyMemoryDeletions(f.db)).toBe(1);
+    expect(await row(item.id)).toBeUndefined();
+    expect(await reapplyMemoryDeletions(f.db)).toBe(0);
+  });
+});

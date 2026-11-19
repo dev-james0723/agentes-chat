@@ -1134,9 +1134,55 @@ export async function deleteContextItem(db: Database, actorId: string, orgId: st
   const item = await loadItem(db, orgId, itemId);
   await requireEdit(db, actorId, item);
   await db.transaction(async (tx) => {
-    await tx.delete(contextItems).where(eq(contextItems.id, itemId));
-    await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: itemId });
+    // Recorded apart from the row, so a restore from an older backup deletes it again (A19).
+    await tx
+      .insert(schema.contextItemDeletions)
+      .values({ itemId, orgId, deletedBy: actorId, reason: "deleted" })
+      .onConflictDoNothing();
+    await purgeContextItem(tx, orgId, itemId);
   });
+}
+
+/**
+ * Memory built on these sources (items or messages) goes out of use: archived and taken out of search (A17). One level;
+ * reads already refuse anything further down a chain whose source is gone (`sourceVisibility`). Returns the ids.
+ */
+export async function retireDerivedMemory(tx: Executor, orgId: string, sourceIds: readonly string[]) {
+  if (!sourceIds.length) return [];
+  const retired = await tx
+    .update(contextItems)
+    .set({ status: "archived", updatedAt: new Date() })
+    .where(
+      and(
+        eq(contextItems.orgId, orgId),
+        eq(contextItems.status, "active"),
+        sql`${contextItems.sourceIds} && ${`{${sourceIds.join(",")}}`}::uuid[]`,
+      ),
+    )
+    .returning({ id: contextItems.id });
+  for (const { id } of retired) await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: id });
+  return retired.map((r) => r.id);
+}
+
+/** Removes a deleted item and everything that still points at it: its use records, its search entry, what it derived. */
+async function purgeContextItem(tx: Executor, orgId: string, itemId: string) {
+  await tx.delete(schema.contextUsage).where(eq(schema.contextUsage.itemId, itemId));
+  await retireDerivedMemory(tx, orgId, [itemId]);
+  await tx.delete(contextItems).where(and(eq(contextItems.id, itemId), eq(contextItems.orgId, orgId)));
+  await enqueueIndex(tx, { orgId, kind: "context_item", sourceId: itemId });
+}
+
+/**
+ * After a restore from an older backup: every item a person had deleted is deleted again before it is served (A19).
+ * Run on boot after migrating. Returns how many came back and were removed.
+ */
+export async function reapplyMemoryDeletions(db: Database): Promise<number> {
+  const back = await db
+    .select({ id: contextItems.id, orgId: contextItems.orgId })
+    .from(contextItems)
+    .innerJoin(schema.contextItemDeletions, eq(schema.contextItemDeletions.itemId, contextItems.id));
+  for (const { id, orgId } of back) await db.transaction((tx) => purgeContextItem(tx, orgId, id));
+  return back.length;
 }
 
 /**

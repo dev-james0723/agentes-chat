@@ -77,6 +77,7 @@ import {
   parseInternalDatabaseTargets,
   publicHttpsFetch,
   queueEmbeddingBackfill,
+  reapplyMemoryDeletions,
   relayCredentials,
   resolveHostDns,
   retireHostTokens,
@@ -720,6 +721,9 @@ export async function prepareDatabase(database: DatabaseHandle, log: Logger, mig
     }
   }
   await ensureMessagePartitions(database.db);
+  // A database restored from an older backup gets the memory deletions made since then again, before serving (A19).
+  const reapplied = await reapplyMemoryDeletions(database.db);
+  if (reapplied > 0) log.info("memory deletions re-applied after a restore", { items: reapplied });
 }
 
 /** MillionSend (or another Resend-compatible API) when keyed, else SMTP when `SMTP_URL` is set, else only the log. */

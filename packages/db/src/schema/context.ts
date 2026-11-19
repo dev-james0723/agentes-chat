@@ -192,6 +192,22 @@ export const contextItemEvents = pgTable(
   (t) => [primaryKey({ columns: [t.orgId, t.eventKey] })],
 );
 
+/**
+ * Memory a person deleted for good (A17/A19). No foreign keys: the record outlives the item, and a database restored
+ * from an older backup re-applies these deletions on boot before serving (`reapplyMemoryDeletions`).
+ */
+export const contextItemDeletions = pgTable(
+  "context_item_deletions",
+  {
+    itemId: uuid().primaryKey(),
+    orgId: uuid().notNull(),
+    deletedBy: text(),
+    reason: text().notNull(),
+    deletedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId)],
+);
+
 /** Which items a run's context included: feeds relevance (and feedback). */
 export const contextUsage = pgTable(
   "context_usage",

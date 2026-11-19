@@ -765,6 +765,8 @@ export async function deleteThread(deps: ThreadDeps, actorId: string, orgId: str
   if (Number(replies?.n ?? 0) > 0) {
     throw new ConflictError("Someone already replied in this thread", "thread.has_replies");
   }
+  // Loaded here: memory builds on this module.
+  const { retireDerivedMemory } = await import("./context/items");
   const back = await db.transaction(async (tx) => {
     const ids = await returnMoved(tx, row);
     await tx
@@ -772,6 +774,8 @@ export async function deleteThread(deps: ThreadDeps, actorId: string, orgId: str
       .set({ deletedAt: new Date() })
       .where(and(eq(messages.id, root.id), eq(messages.orgId, orgId)));
     await tx.delete(threads).where(eq(threads.id, row.id));
+    // Memory drawn from the deleted message goes out of use with it (A17).
+    await retireDerivedMemory(tx, orgId, [root.id]);
     await recordAudit(tx, {
       orgId,
       actor: { type: "person", id: actorId },
