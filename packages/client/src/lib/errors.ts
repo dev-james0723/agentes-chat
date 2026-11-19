@@ -40,6 +40,8 @@ const KNOWN = {
   "memory.source_revision": "errors.said.tooLong",
   "memory.validity_order": "errors.said.checkDate",
   "context.private_publication_required": "common.notAllowed",
+  // An agent's portrait that is animated, cut short or past 8192 px: the profile photo's own "choose an image" line.
+  "avatar.invalid": "photo.notImage",
   "brain.config_cas_unsupported": "errors.said.input",
   "brain.invalid_config_hash": "errors.said.input",
   "connector.key_invalid": "errors.said.input",
