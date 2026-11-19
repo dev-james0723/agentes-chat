@@ -16564,6 +16564,10 @@ export const ptBR = {
       label: "Criar arquivo",
       description: "Cria documento, tabela, diff, diagrama ou página.",
     },
+    register_files: {
+      label: "Registrar arquivos",
+      description: "Anota quais arquivos fez no computador para uma tarefa e para que serve cada um. Não apaga nada.",
+    },
     update_artifact: {
       label: "Atualizar arquivo",
       description: "Salva uma nova versão de um arquivo.",

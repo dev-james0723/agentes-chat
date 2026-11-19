@@ -42,6 +42,7 @@ import { enqueue } from "./outbox";
 import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
+import { queueRetentionReport } from "./run-files";
 import { agentSearchChannels, enqueueIndex, registerDocumentBuilder } from "./search";
 import { AUDIENCE_MAX, type Audience, admitTaskAgents, taskSeenSql } from "./task-access";
 import {
@@ -1327,6 +1328,9 @@ export async function updateIssue(
         details: { issueId: updated.id, from: current.status, to: updated.status, by: author },
       });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
+    // Ended: a dry-run report of its files, committed with the change (ADR 0197).
+    if (updated.status !== current.status)
+      await queueRetentionReport(tx, orgId, { type: "issue", id: updated.id }, updated.status, updated.updatedAt);
     if (set.description !== undefined && (set.description.includes("[[") || current.description.includes("[["))) {
       await syncWikiLinks(tx, orgId, { type: "issue", id: updated.id, channelId: updated.channelId }, set.description);
     }
@@ -2072,6 +2076,7 @@ export async function setWorkIssueState(
       .returning();
     if (!updated) return null;
     if (status !== current.status) {
+      await queueRetentionReport(tx, work.orgId, { type: "issue", id: updated.id }, status, now);
       await addActivity(tx, updated, {
         kind: "event",
         author,

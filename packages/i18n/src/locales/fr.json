@@ -16883,6 +16883,10 @@
       "label": "Créer un fichier",
       "description": "Crée un document, un tableau, un diff, un diagramme ou une page."
     },
+    "register_files": {
+      "label": "Enregistrer des fichiers",
+      "description": "Note les fichiers créés sur son ordinateur pour une tâche et à quoi sert chacun. Ne supprime rien."
+    },
     "update_artifact": {
       "label": "Mettre à jour un fichier",
       "description": "Enregistre une nouvelle version d'un fichier."

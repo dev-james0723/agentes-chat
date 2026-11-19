@@ -117,6 +117,7 @@ import {
 import { createJevRouterStrategy, jevCostNanoUsd, routeChain } from "./router-jev";
 import { createPlanRouterStrategy } from "./router-plan";
 import { executeRoutineRun } from "./routines";
+import { RETENTION_REPORT_JOB, writeRetentionReport } from "./run-files";
 import { type AgentRun, NO_AI } from "./runs";
 import type { SandboxDeps } from "./sandbox";
 import { indexSource, reindexOrg } from "./search";
@@ -948,6 +949,13 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
     "issue.created.publish": async (job) => {
       if (job.orgId && typeof job.payload.issueId === "string")
         await publishDeferredIssueCreated(deps, job.orgId, job.payload.issueId);
+    },
+    // A task or mission ended: what to keep and what could be cleaned, as a dry run (ADR 0197).
+    [RETENTION_REPORT_JOB]: async (job) => {
+      const { subjectType, subjectId } = job.payload;
+      if ((subjectType !== "issue" && subjectType !== "mission") || typeof subjectId !== "string")
+        throw new PermanentJobError("bad retention report payload");
+      await writeRetentionReport(deps.db, orgOf(job), { type: subjectType, id: subjectId });
     },
     "routine.run": async (job) => {
       await executeRoutineRun(

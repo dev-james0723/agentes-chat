@@ -16293,6 +16293,10 @@
       "label": "Dosya oluştur",
       "description": "Belge, tablo, fark, diyagram veya sayfa oluşturur."
     },
+    "register_files": {
+      "label": "Dosyaları kaydet",
+      "description": "Bir görev için bilgisayarında oluşturduğu dosyaları ve her birinin ne işe yaradığını not eder. Hiçbir şeyi silmez."
+    },
     "update_artifact": {
       "label": "Dosyayı güncelle",
       "description": "Bir dosyanın yeni sürümünü kaydeder."

@@ -39956,6 +39956,12 @@
   "builtinTools.create_artifact.description": {
     "value": "Creates a document, table, diff, diagram or page."
   },
+  "builtinTools.register_files.label": {
+    "value": "Register files"
+  },
+  "builtinTools.register_files.description": {
+    "value": "Notes which files on its computer it made for a task and what each is for. Deletes nothing."
+  },
   "builtinTools.update_artifact.label": {
     "value": "Update file"
   },

@@ -176,6 +176,7 @@ const BUILTIN: Record<string, ActivityKind> = {
   write_file: "pcFiles",
   read_file: "pcFiles",
   list_files: "pcFiles",
+  register_files: "pcFiles",
   export_file: "exportingFile",
   upload_file: "exportingFile",
   import_file: "importingFile",
