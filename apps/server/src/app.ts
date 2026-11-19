@@ -88,6 +88,7 @@ import { type AppsRouteOptions, registerAppsRoot, registerOauthRoutes } from "./
 import { pushRelayRoutes } from "./routes/push-relay";
 import { registerWaitlist } from "./routes/waitlist";
 import { registerRoutineHooks, registerWebhookReceiver, webhookAdminRoutes } from "./routes/webhooks";
+import type { SourceIdentity } from "./source-identity";
 
 export interface AppOptions {
   edition: Edition;
@@ -97,6 +98,8 @@ export interface AppOptions {
   pingDatabase: () => Promise<void>;
   /** True once the server is shutting down: `/api/health` answers 503. */
   draining?: () => boolean;
+  /** The running source's identity for `/api/health` (`runningSourceIdentity`). */
+  sourceIdentity?: () => Promise<SourceIdentity>;
   /** Needed when modules register routes. */
   moduleContext?: ModuleContext;
   /** Database, auth and adapters. Without them only system routes are mounted (some tests). */
@@ -157,6 +160,7 @@ export function createApp(options: AppOptions) {
     modules: options.modules.map((m) => m.name),
     pingDatabase: options.pingDatabase,
     draining: options.draining,
+    sourceIdentity: options.sourceIdentity,
   });
 
   if (options.services) {

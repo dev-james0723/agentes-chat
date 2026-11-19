@@ -104,6 +104,7 @@ import { createMachineSockets } from "./realtime/machines";
 import { createStreamSockets } from "./realtime/streams";
 import { createRealtime, type SocketData } from "./realtime/ws";
 import { workerHealth } from "./routes/health";
+import { runningSourceIdentity } from "./source-identity";
 import { startTelemetry } from "./telemetry";
 import { releaseOf, version } from "./version";
 import { startWorkers } from "./workers";
@@ -503,12 +504,19 @@ async function boot(
     humanCheck: adapters.humanCheck,
     pubsub: adapters.pubsub,
   });
+  // Read once at start, so the log and every health answer name the source this process runs.
+  const sourceIdentity = runningSourceIdentity();
+  sourceIdentity().then(
+    (source) => log.info("source identity", { ...source }),
+    (err) => log.warn("source identity unknown", { error: String(err) }),
+  );
   let stopping = false;
   const app = createApp({
     edition,
     version,
     modules,
     draining: () => stopping,
+    sourceIdentity,
     moduleContext: ctx,
     services: {
       db: database.db,
@@ -581,6 +589,7 @@ async function boot(
           modules: modules.map((m) => m.name),
           pingDatabase: database.ping,
           draining: () => stopping,
+          sourceIdentity,
         }),
       })
     : Bun.serve<SocketData>({
