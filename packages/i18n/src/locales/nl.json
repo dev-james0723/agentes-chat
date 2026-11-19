@@ -16432,6 +16432,10 @@
       "label": "Bestand maken",
       "description": "Maakt een document, tabel, diff, diagram of pagina."
     },
+    "register_files": {
+      "label": "Bestanden registreren",
+      "description": "Noteert welke bestanden het op zijn computer voor een taak heeft gemaakt en waarvoor elk dient. Verwijdert niets."
+    },
     "update_artifact": {
       "label": "Bestand bijwerken",
       "description": "Slaat een nieuwe versie van een bestand op."
