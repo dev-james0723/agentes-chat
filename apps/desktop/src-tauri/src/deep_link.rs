@@ -33,7 +33,8 @@ pub struct PendingLink(Mutex<Option<String>>);
 
 /// One of ours, of a size a link can be.
 pub fn accept(url: &Url) -> bool {
-    url.scheme() == SCHEME && url.as_str().len() <= MAX_LINK
+    let limit = if url.host_str() == Some("navigate") { crate::command_deck_links::MAX_NAVIGATION_LINK } else { MAX_LINK };
+    url.scheme() == SCHEME && url.as_str().len() <= limit
 }
 
 /// A connector's sign-in that the browser handed back (apps/server connectors.ts `oauth/callback`).
@@ -260,6 +261,21 @@ mod tests {
         assert!(!accept(&long));
         assert!(in_args(&["/usr/bin/agentes".into(), "agenteschat://connect?server=x".into()]));
         assert!(!in_args(&["/usr/bin/agentes".into(), "--autostart".into()]));
+    }
+
+    #[test]
+    fn accepts_a_full_length_cjk_navigation_without_expanding_setup_limits() {
+        let mut page = Url::parse("https://app.agentes.chat/").unwrap();
+        page.set_path(&format!("/org/b221b439-4343-459b-bd26-f2abd0dfe764/dm/person/{}", "張".repeat(160)));
+        let mut navigation = Url::parse("agenteschat://navigate").unwrap();
+        navigation.query_pairs_mut().append_pair("url", page.as_str());
+        assert!(navigation.as_str().len() > MAX_LINK);
+        assert!(accept(&navigation));
+        assert!(crate::command_deck_links::navigation_link(&navigation, &["https://app.agentes.chat".into()]).is_some());
+        let oversized: Url = format!("agenteschat://navigate?url={}", "a".repeat(crate::command_deck_links::MAX_NAVIGATION_LINK)).parse().unwrap();
+        assert!(!accept(&oversized));
+        let setup: Url = format!("agenteschat://connect?server=x&pad={}", "a".repeat(MAX_LINK)).parse().unwrap();
+        assert!(!accept(&setup));
     }
 
     #[test]

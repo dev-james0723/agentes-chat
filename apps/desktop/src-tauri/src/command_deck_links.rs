@@ -8,6 +8,8 @@ use tauri::Url;
 pub const PANEL_ORIGIN: &str = "http://127.0.0.1:17374";
 const MAX_LINK: usize = 2048;
 const MAX_TARGET: usize = 4096;
+// encodeURIComponent may triple the target's bytes; setup/pair/panel keep 2048.
+pub const MAX_NAVIGATION_LINK: usize = 3 * MAX_TARGET + 128;
 
 fn uuid(value: &str) -> bool {
     value.len() == 36
@@ -26,6 +28,7 @@ fn uuid(value: &str) -> bool {
 }
 
 fn field(url: &Url, host: &str, name: &str) -> Option<String> {
+    let limit = if host == "navigate" { MAX_NAVIGATION_LINK } else { MAX_LINK };
     if url.scheme() != "agenteschat"
         || url.host_str() != Some(host)
         || !matches!(url.path(), "" | "/")
@@ -33,7 +36,7 @@ fn field(url: &Url, host: &str, name: &str) -> Option<String> {
         || url.password().is_some()
         || url.port().is_some()
         || url.fragment().is_some()
-        || url.as_str().len() > MAX_LINK
+        || url.as_str().len() > limit
     {
         return None;
     }
@@ -248,6 +251,18 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn full_length_cjk_person_id_survives_nested_uri_encoding() {
+        let mut page = Url::parse(&target("home")).unwrap();
+        page.set_path(&format!("/org/{ORG}/dm/person/{}", "張".repeat(160)));
+        let outer = link(page.as_str());
+        assert!(outer.as_str().len() > 2048);
+        assert!(outer.as_str().len() <= MAX_NAVIGATION_LINK);
+        assert_eq!(navigation_link(&outer, &servers()).unwrap(), page);
+        let oversized = link(&format!("{}{}", target("dm/person/"), "a".repeat(MAX_TARGET)));
+        assert!(navigation_link(&oversized, &servers()).is_none());
     }
 
     #[test]
