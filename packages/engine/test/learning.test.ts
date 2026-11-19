@@ -11,6 +11,7 @@ import {
   consolidateOrg,
   createAgent,
   createChannel,
+  decideProposal,
   drainOutbox,
   editContextItem,
   insertMessage,
@@ -381,6 +382,10 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(on.map((a) => [a.agentId, a.enabled])).toEqual([[f.agent.id, true]]);
     expect((await items())[0]?.status).toBe("archived");
     expect((await receipts()).map((r) => r.kind)).toContain("skill.created");
+    // SF-19: the new skill is queued for the skills repository, its owner to be told.
+    expect(
+      (await f.db.select().from(schema.skillSyncs)).map((r) => [r.skillId, r.version, r.via, r.agentId, r.private]),
+    ).toEqual([[skill?.id ?? "", 1, "promotion", f.agent.id, false]]);
   });
 
   test("a negative outcome on a run that used the how-to keeps it from becoming a skill", async () => {
@@ -752,6 +757,18 @@ describe("agents learn on their own (ADR 0120)", () => {
       body: "# handbook\n1. Another step.",
     });
     expect(proposed.content).toContain("Agents don't change this skill by themselves here");
+    // SF-19: each change an agent made is queued once for the skills repository; a proposal waits for its decision.
+    const synced = async () =>
+      (await f.db.select().from(schema.skillSyncs).orderBy(schema.skillSyncs.createdAt)).map((r) => [
+        r.version,
+        r.via,
+        r.notifyUserId,
+        r.private,
+      ]);
+    expect(await synced()).toEqual([
+      [2, "update_skill", f.owner.id, false],
+      [2, "update_skill", f.owner.id, false],
+    ]);
     const [proposal] = await f.db.select().from(schema.contextProposals);
     expect([proposal?.target, proposal?.access?.[0]?.label, proposal?.proposedText]).toEqual([
       "skill",
@@ -761,6 +778,9 @@ describe("agents learn on their own (ADR 0120)", () => {
     expect(
       (await receipts()).filter((r) => r.kind === "skill.updated").map((r) => (r.before as { body: string }).body),
     ).toEqual(["# mine", "# handbook"]);
+    // Accepted, the proposal's version is queued too, and who accepted it is the one told.
+    await decideProposal(f.db, f.owner.id, f.org.id, proposal?.id ?? "", "accept");
+    expect((await synced()).at(-1)).toEqual([3, "proposal", f.owner.id, false]);
 
     // Another agent's skill.
     const other = await createAgent(

@@ -1940,6 +1940,13 @@
       "when": 1795048192262,
       "tag": "0278_foundry_capability_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 279,
+      "version": "7",
+      "when": 1795057022407,
+      "tag": "0279_skill_syncs",
+      "breakpoints": true
     }
   ]
 }

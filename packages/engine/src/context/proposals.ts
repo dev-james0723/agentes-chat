@@ -56,6 +56,7 @@ import {
   settingsRows,
   type WantedLine,
 } from "../settings-proposals";
+import { queueSkillSync } from "../skill-sync";
 import { editedByAgents, pinBlobs, runsCode, skillFolderFiles, writeSkillBody, writeSkillChange } from "../skills";
 import { ALL_TOOLS } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
@@ -486,6 +487,7 @@ export async function decideProposal(
     let status: Proposal["status"] = decision === "accept" ? "accepted" : "rejected";
     if (decision === "accept" && p.target === "skill") {
       if (!(await appliedToSkill({ db: as, blobs }, p))) status = "stale";
+      else await queueAcceptedSkill(as, p, actorId);
     } else if (decision === "accept" && p.target === "org_context") {
       const [org] = await tx.select().from(organizations).where(eq(organizations.id, orgId)).for("update");
       if (!org || sha256(org.context) !== p.baseHash) status = "stale";
@@ -762,6 +764,25 @@ export async function proposeSkillChange(
   if (!proposal) return null;
   await announce(deps, [proposal]);
   return proposal;
+}
+
+/** SF-19: an agent's accepted change to a skill is saved to the skills repository, and who accepted it told. */
+async function queueAcceptedSkill(db: Database, p: Proposal, actorId: string) {
+  const id = proposalSkillId(p);
+  if (!id) return;
+  const [skill] = await db
+    .select({ id: schema.skills.id, version: schema.skills.version })
+    .from(schema.skills)
+    .where(and(eq(schema.skills.id, id), eq(schema.skills.orgId, p.orgId)));
+  if (!skill) return;
+  await queueSkillSync(db, {
+    orgId: p.orgId,
+    skillId: skill.id,
+    version: skill.version,
+    agentId: p.proposedByAgentId ?? null,
+    notifyUserId: actorId,
+    via: "proposal",
+  });
 }
 
 async function appliedToSkill(deps: { db: Database; blobs?: BlobStoreResolver }, p: Proposal) {
