@@ -28,7 +28,9 @@ describe("agent photos", () => {
         />,
       );
       const avatar = getByRole("img", { name: "Elliott | Inbox and Correspondence" });
-      expect(avatar.querySelector("img")?.getAttribute("src")).toBe(portrait);
+      expect(avatar.querySelector(".ac-avatar__photo-frame > img")?.getAttribute("src")).toBe(portrait);
+      expect(avatar.querySelector(".ac-avatar__photo-frame")?.parentElement).toBe(avatar);
+      expect(avatar.querySelector(".ac-avatar__badge")?.parentElement).toBe(avatar);
       expect(avatar.querySelector("canvas")).toBeNull();
       expect(avatar.classList.contains("ac-avatar--photo")).toBe(true);
       expect(avatar.classList.contains("ac-avatar--running")).toBe(true);

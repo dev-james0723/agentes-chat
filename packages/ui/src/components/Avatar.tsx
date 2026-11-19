@@ -178,13 +178,15 @@ export function Avatar({
       {...rest}
     >
       {photo ? (
-        <img
-          key={imageUrl}
-          src={imageUrl ?? undefined}
-          alt=""
-          draggable={false}
-          onError={() => setFailedImage(imageUrl ?? null)}
-        />
+        <span className="ac-avatar__photo-frame">
+          <img
+            key={imageUrl}
+            src={imageUrl ?? undefined}
+            alt=""
+            draggable={false}
+            onError={() => setFailedImage(imageUrl ?? null)}
+          />
+        </span>
       ) : agent ? (
         <AgentBody
           appearance={appearance}
