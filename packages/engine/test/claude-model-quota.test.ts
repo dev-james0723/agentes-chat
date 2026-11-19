@@ -14,7 +14,6 @@ const now = Date.parse("2026-11-19T20:00:00Z");
 const weeklyReset = "2026-11-25T05:00:00.000Z";
 const fableReset = "2026-11-26T05:00:00.000Z";
 const usage: PlanUsage = {
-  plan: "ultra",
   source: "probe",
   at: new Date(now).toISOString(),
   windows: [

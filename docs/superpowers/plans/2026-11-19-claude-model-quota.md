@@ -11,7 +11,7 @@
 - No new dependencies, migrations, credentials or paid fallback.
 - Keep80/90/95 thresholds.
 - Unknown actual provider refusals remain restrictive; do not infer rejection scope from a coincident full Fable meter.
-- Use isolated branch based on97dae0412; preserve live runtime overlays and unrelated work.
+- Use the isolated branch initially based on97dae0412 and rebased onto currentmain bd7f72945; preserve live runtime overlays and unrelated work.
 - Test with fake providers/PGlite and no production environment values.
 
 ## Review Focus
@@ -42,10 +42,22 @@
 
 ### Task3: Verify, review and deploy
 **Files:** relevant ADR0059/0118 addendum if needed; private release receipt and overlay Dockerfile outside public source.
-- [ ] Run lint, typecheck, boundaries, existing runner warning/refusal tests and isolated build. Inspect every result.
-- [ ] Independent whole-branch review, address substantive findings with targeted tests.
+- [x] Run lint, typecheck, boundaries, existing runner warning/refusal tests and isolated build. Inspect every result.
+- [x] Independent whole-branch review, address substantive findings with targeted tests.
 - [ ] Push fix branch and integrate via normal repository strategy with fresh main check; never force-push another branch.
 - [ ] Build a pinned overlay of the exact existing runtime with only verified changed source; retain unrelated mobile/web overlays. Record base identity and rollback image.
 - [ ] Confirm current runtime still matches baseline, then normal compose app-only graceful replacement; no database/runner reset.
 - [ ] Verify health/source identity, fresh usage, scoped admission and queue recovery; switch Oliver back to authorized Sonnet with compare-and-swap and execute a bounded real smoke.
 - [ ] Record concrete outcome and remaining gates; no UI layout changes so viewport/layout gates are not applicable.
+
+
+## Independent review and final verification
+
+The fresh whole-branch review (bd7f72945..5a5c85dac) found two Important issues and no Critical or Minor issues. Both were fixed in one pass without a second review:
+
+1. Concurrent usage writers could overwrite a newer reading. Account and own-sign-in updates now compare their observed JSON snapshot in the database and retry on conflict. Real PGlite writes injected between the read and update reproduce the old failure for both paths; the tests also retain a concurrent other-brain reading and prevent stale wakeups.
+2. A JavaScript Date cursor lost PostgreSQL microseconds. Wait pagination now selects and compares the exact timestamp text plus UUID. A bounded mixed-eligibility fixture reproduces duplicate selection in the old implementation and passes after the fix.
+
+The complete ten related test files passed after these fixes:454pass,1pre-existing skip,0fail. All15workspace typechecks passed using native Node because the isolated Docker VM could not hold the TypeScript compiler's heap. Whole repository lint exited0 with existing warnings; changed files have only the two pre-existing executor warnings. Full1569-file monorepo testing is deferred for this urgent bounded repair; these results do not claim that unrun integration tests pass.
+
+Production deployment and the live provider check are separate acceptance gates below; a running HTTP server alone is not proof of the correct source or a successful Claude request.

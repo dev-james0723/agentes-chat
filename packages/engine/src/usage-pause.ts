@@ -232,10 +232,11 @@ export async function wakePlanWaits(
     );
   const reading = room?.usage;
   const nativeClaude = room?.kind === "claude_code" && !room.provider;
-  const page = (code: string, after?: { createdAt: Date; id: string }) =>
+  const page = (code: string, after?: { cursorAt: string; id: string }) =>
     db
       .select({
         ...fields,
+        cursorAt: sql<string>`${agentRuns.createdAt}::text`,
         waitModel: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'model'`,
         agentBrain: agents.brain,
         agentModel: agents.brainModel,
@@ -246,14 +247,16 @@ export async function wakePlanWaits(
       .where(
         and(
           parked(sql`${agentRuns.transcript}->'waitingForBrain'->>'code' = ${code}`),
-          after ? sql`(${agentRuns.createdAt}, ${agentRuns.id}) > (${after.createdAt}, ${after.id}::uuid)` : undefined,
+          after
+            ? sql`(${agentRuns.createdAt}, ${agentRuns.id}) > (${after.cursorAt}::timestamptz, ${after.id}::uuid)`
+            : undefined,
         ),
       )
       .orderBy(agentRuns.createdAt, agentRuns.id)
       .limit(100);
   const eligible = async (code: "plan_limit" | "usage_pause") => {
     const rows: Awaited<ReturnType<typeof page>> = [];
-    let after: { createdAt: Date; id: string } | undefined;
+    let after: { cursorAt: string; id: string } | undefined;
     for (;;) {
       const batch = await page(code, after);
       for (const r of batch) {
