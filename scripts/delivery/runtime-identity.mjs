@@ -55,7 +55,8 @@ function healthUrl(base) {
   }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash)
     throw new Error("Invalid runtime URL: http(s) without credentials, query or fragment only");
-  return new URL("api/health", url.href.endsWith("/") ? url.href : `${url.href}/`).href;
+  // From the origin and path alone: an empty `?` or `#` left in the address must not drop its path.
+  return new URL(`${url.pathname.replace(/\/?$/, "/")}api/health`, url.origin).href;
 }
 
 /** The response's text, refused past `MAX_BODY` bytes. */

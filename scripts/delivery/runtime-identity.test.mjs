@@ -295,3 +295,37 @@ test("the text summary says why the server's source is unverified", async (t) =>
   assert.match(unreachable.out, /伺服器源碼：未能核實（unreachable）/);
   assert.equal(unreachable.code, 1);
 });
+
+test("an empty ? or # never drops the base path", async (t) => {
+  const { root, head } = fixture(t);
+  const seen = [];
+  const fetch = async (url) => {
+    seen.push(url);
+    return { status: 200, ok: true, text: async () => "{}" };
+  };
+  for (const base of ["http://h/staging?", "http://h/staging#", "http://h/staging/"])
+    await checkRuntime(root, head, base, { fetch });
+  assert.deepEqual(seen, ["http://h/staging/api/health", "http://h/staging/api/health", "http://h/staging/api/health"]);
+});
+
+test("a streamed body past 64 KiB is cut off and cancelled: unknown, too_large", async (t) => {
+  const { root, head } = fixture(t);
+  let pulled = 0;
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      pulled++;
+      controller.enqueue(new Uint8Array(16 * 1024).fill(0x20));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const d = await checkRuntime(root, head, "http://127.0.0.1:3000", {
+    fetch: async () => ({ status: 200, ok: true, body, text: async () => assert.fail("text() must not be used") }),
+  });
+  assert.equal(d.status, "unknown");
+  assert.equal(d.reason, "too_large");
+  assert.equal(cancelled, true);
+  assert.ok(pulled <= 6, `read ${pulled} chunks`);
+});
