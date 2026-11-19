@@ -42,6 +42,7 @@ import {
   createCoAuthorToolSource,
   createConnectorToolSource,
   createContextToolSource,
+  createCreditRouteQualifier,
   createDashboardToolSource,
   createDatabaseToolSource,
   createDesktopControl,
@@ -232,6 +233,8 @@ export function buildEngine(o: EngineOptions) {
     },
     embeddings,
     errors: o.errors,
+    // Credit routes (ADR 0200): off unless the operator turns them on, and then only for routes they registered.
+    creditRoutes: config.CREDIT_FALLBACK_ENABLED,
   });
   const context: ContextDeps = {
     db,
@@ -833,6 +836,8 @@ export function buildEngine(o: EngineOptions) {
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
     quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
     quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
+    // A Claude subscription at its limit may continue on a verified Claude API credit route first (ADR 0200).
+    ...(config.CREDIT_FALLBACK_ENABLED ? { creditRoute: createCreditRouteQualifier(db) } : {}),
     // Owner policy 2026-11-14: a plan at its limit continues on the least used qualified subscription route.
     ...(config.QUOTA_HANDOFF_ENABLED
       ? {

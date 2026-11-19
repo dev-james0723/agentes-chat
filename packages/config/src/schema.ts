@@ -527,6 +527,15 @@ export const envVars = {
     description: "Claude Code model a quota handoff runs on.",
     section: "Agents",
   },
+  CREDIT_FALLBACK_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "Lets a Claude subscription at its usage limit continue on a Claude API credit route an operator registered and verified (ADR 0200). Off by default: with no registered route it changes nothing.",
+    section: "Agents",
+  },
   QUOTA_RESERVE_MAX_AGE_MS: {
     schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
     description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",
