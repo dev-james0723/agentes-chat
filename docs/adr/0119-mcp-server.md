@@ -88,3 +88,46 @@ Copying an export prompt into another app and pasting its reply back breaks on e
 ## Addendum (2026-11-06): changing what was imported
 
 The second pass of a migration is changing what came over. `update_skill` (a skill's body and description, as a new version, through `updateSkill`) and `update_agent` (role, name and look, through `updateAgent` and `setAgentAppearance`) join `manage`, audited as `apps.updated` and limited like the creations. Every permission stays the person's, and `create_skill` still never overwrites.
+
+## Addendum (2026-11-19): read-only control surfaces
+
+`get_command_deck_snapshot` is a read-scope MCP tool for a local command deck or other display client. It acts as the authenticated principal in exactly one workspace. Its strict input accepts only `notification_cursor?: string` (up to 400 characters) and `limit?: integer` (1–100, default 100). A caller cannot select a different person or workspace.
+
+The tool reuses `getTeam`, `listAgentGroups`, `listChannels`, `listDms` and `listNotifications(filter: "all")`. All retain their own read and visibility checks. Agents expose only their directory fields; teams contain their real `agentIds`; private agent configuration, audience rules and credentials are absent. Channels preserve membership, admin visibility and source unread counts; a nonmember private channel visible to an administrator has no message preview. DMs are only the person's existing conversations. Reading the snapshot creates no conversation, sends no message, invokes no model and changes no channel or notification read state.
+
+The structured result has this contract (timestamps are ISO strings):
+
+- `schemaVersion: 1`, `viewerId` (the authenticated person's ID), `observedAt`.
+- `workspace: { id, name, origin, url }`; `origin` is the configured public URL's origin and `url` is its workspace team page.
+- `agents[]: { id, name, handle, role, appearance, reportsToAgentId, busy, channelIds }`.
+- `teams[]: { id, name, agentIds, color, icon }`.
+- `channels[]: { id, name, visibility, categoryId, position, isMember, seenAsAdmin, unreadCount, mentionCount, lastReadAt, muted, lastMessage }`. The last message is null or `{ id, authorType, authorId, authorName, preview, mediaKind, createdAt }`.
+- `dms[]: { channelId, with: { type, id, name, handle }, unread, lastReadAt, everRead, openedAt, lastMessage }`. The last message is null or `{ id, authorType, createdAt }`; no DM body or raw message metadata is included.
+- `notifications: { items, counts: { all, mentions, waiting, unread, reactions }, nextCursor }`, exactly the engine inbox view. Each item retains `id, kind, waiting, actors, count, source, latest, readAt, doneAt, snoozedUntil, createdAt, updatedAt`. `source.messageId` identifies its target message; `latest` contains the existing bounded summary and kind-specific display metadata, not a separate message ID.
+- `coverage: { directoryComplete: true, notificationsComplete: nextCursor === null }`.
+
+All directory arrays are complete for the person's current visibility. Notification counts describe the whole visible inbox, independently of the page; channel unread counts retain the channel service's cap. Done items, future snoozes and approvals the person cannot decide remain excluded by the inbox service. Clients accumulate pages until `nextCursor` is null and use `origin + workspace.id + viewerId` to separate caches. A successful final page does not imply earlier pages were fetched. The cursor is a page position, not an event stream checkpoint; concurrent updates can move a notification between pages. `observedAt` is the completed read time, not an atomic database snapshot.
+
+The same notification ID may merge new events, so delivery tracking accounts for source/message identity and the latest content/count. Opening or displaying a deck notification does not mark it read; the app's normal read behavior remains authoritative. Exact browser links use the same routes as the client inbox's `openTarget` helper, including DM counterpart, thread and message identities. This tool introduces no native URL scheme.
+
+The snapshot keeps source field names in `structuredContent` and includes a content notice. Its entire textual JSON is enclosed in the existing nonce message fences, with embedded fence markers broken and hidden characters removed from that text representation. This preserves machine-readable display fields while treating names and previews as content written by other people or agents. Other MCP tools keep their existing `untrusted_text` serialization.
+
+### Conversation updates between snapshots
+
+`get_command_deck_events` is a companion read-scope tool for committed agent messages in the person's joined named channels and existing DMs. It includes unmentioned thread replies, which need not appear in the personal notification inbox or a channel's top-level last-message preview. It does not create a second notification inbox or change its counts.
+
+Its strict input is `{ cursor?: string, limit?: integer, tracked_message_ids?: string[] }`: cursor length at most 400; limit 1–100, default 100; up to 100 UUID message IDs. The output is `{ schemaVersion: 1, observedAt, viewerId, workspace: { id, origin }, seeded, events, trackedEvents, cursor, hasMore }`, plus the same untrusted-content notice as the snapshot. Each event has:
+
+- `id` and `messageId` (the message ID), `kind: "message.created"`, `channelId`, nullable `threadId`.
+- `agentId`, `agentName`, `agentHandle`, and the chat's readable preview capped at 280 characters.
+- `createdAt` (the message's visible placement) and `postedAt` (the UUIDv7 insertion clock), as ISO strings.
+- `url`: the configured origin's exact channel, DM counterpart or thread route with `?m=<messageId>`. Thread IDs are message UUIDs, not constrained to a UUID version in client URL allowlists.
+- `unread` from current source read rules, `lastReadAt` and `threadLastReadAt` (ISO or null). Named channels use the read watermark or joining time. Thread replies additionally need a mention/follow and an unread thread watermark to count unread there. DMs retain their channel-read rule. A newly observed, unmentioned thread reply can therefore be an update with `unread: false`.
+
+Without a cursor, `seeded: true` returns no new events and a current checkpoint: historical posts do not become fresh alerts. Later pages are ascending UUIDv7 insertion order, up to `limit`, with `hasMore` for backlog. The always-present cursor advances only to the last returned event, and stays unchanged on an empty incremental page. The cursor is versioned and bound to configured origin, workspace and person; it is a position, never an authorization grant. Every query repeats the authenticated person's current read and membership checks.
+
+`trackedEvents` independently revalidates only the supplied IDs through the same scoped query and reads current watermarks. Unknown, deleted, inaccessible, muted or explicitly unfollowed items are omitted. Clients replace their tracked view with these results and drop omissions; this query never advances the event cursor or caps its backlog. It is valid during a cold seed, allowing a client to retain only a bounded set of IDs and its cursor locally instead of message bodies.
+
+Only current direct membership subscribes a person to this feed, including for administrators who can discover private channels without joining. Other people's DMs, task rooms, archived/deleted channels, deleted messages, quiet internal notices and silent follow-up media are excluded. A muted channel or explicit `following: false` excludes its updates even when mentioned. The absence of a follow choice does not exclude an unmentioned reply; it affects only the authoritative unread flag. No read/done/follow state is changed.
+
+This is a bounded keyset query of committed message rows using the existing ten-minute message placement bound. It is not a durable delivery log: tokens, edits, deletes and reactions are outside its coverage, and an in-flight transaction or clock race that commits behind an advanced UUIDv7 cursor is not guaranteed replay. Polls and tracked refreshes are current reads, not one atomic database snapshot. Clients retain official notification counts from the snapshot, label other rows as recent conversation updates, deduplicate by message identity, and never mark source content read merely because a deck delivered or opened it.
