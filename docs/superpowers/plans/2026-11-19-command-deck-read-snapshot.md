@@ -56,3 +56,20 @@ The implemented contract is documented in ADR 0119. `viewerId` identifies the au
 Validation before the scoped commit: 33 MCP integration tests passed (429 assertions), including seven snapshot tests; all workspace typechecks and the boundary check passed; web and server production builds passed. The three changed TypeScript files pass Biome. Running repository lint in the implementation worktree also scans locally installed TokenPilot assets and fails there; this is not a clean-candidate lint receipt. Full release checks run separately in a fresh exact-commit worktree with no local lifecycle files copied.
 
 Release ownership remains with the coordinating task. No push, runtime restart or deployment is performed by this implementation task. The release gate in `scripts/delivery/LOCAL-CI-OPERATIONS.md` requires the complete 22-step evidence on the same candidate, including isolated container boot, plus independent review and the existing deployment lease/backup/rollback checks. The local full runner additionally requires the remote candidate branch to name the same SHA; a local commit alone does not satisfy that provenance condition.
+
+## Task 2: Read committed conversation updates
+
+**Reason:** Personal inbox notifications and top-level last-message previews do not cover an unmentioned thread reply or every post in a burst.
+
+**Files:** Create `packages/engine/src/apps/command-deck-events.ts` and `apps/server/test/mcp-command-deck-events.test.ts`; register the read tool in `apps/tools.ts`; extend ADR 0119.
+
+**Contract:** `get_command_deck_events({ cursor?, limit?, tracked_message_ids? })` returns the versioned, principal-bound page and independent tracked-row refresh documented in ADR 0119. Both use one membership/mute/explicit-unfollow-filtered reader. Read watermarks preserve the source distinction between unread and merely observed updates. No durable infrastructure, mutation or new scope.
+
+- [x] Add failing API integration tests, including quiet seed, unmentioned/backplaced replies, pagination, tracked read-state changes, administrator/nonmember and other-user DM boundaries, muted/unfollowed exclusions, forged scope, revoked membership and content fencing.
+- [x] Observe all eight tests fail because the tool is absent.
+- [x] Implement the minimal shared query and registration; all eight tests pass (104 assertions).
+- [x] Complete combined MCP regression (41 tests, 545 assertions), all 15 workspace typechecks, changed-source Biome and boundaries.
+- [ ] Complete exact-candidate independent review and clean-candidate repository lint.
+- [ ] Run the canonical local checks and isolated container boot when the shared CI lease is available.
+
+This successor starts from reviewed `5fbfe99fcfa713e460f7d7c96d6c6f426d2e8209` (base `bd7f7294518e70840c88728feb3368ad633c6700`). The predecessor's queued local CI was cancelled before checks started; another task's global CI lease was left untouched. Public publication and runtime changes remain held. Canonical local checks can establish private validation but cannot substitute for the full runner's exact remote-source provenance gate.
