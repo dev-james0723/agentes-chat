@@ -2231,6 +2231,41 @@ export interface Memory {
   updatedAt: string;
   /** `about: "me"` only: the viewer's message it came from ("Você disse hoje, nesta conversa"). */
   from?: { messageId: string; channelId: string; threadId: string | null; dm: boolean; at: string } | null;
+  /** Where it applies (`agent`, `channel`, `thread`, `org`, `person`, `entity`); older servers leave it out. */
+  scope?: { type: string; id: string | null };
+  trust?: "high" | "low";
+  status?: "active" | "archived";
+  /** When the claim holds in the world (ISO, half-open); null: unknown. */
+  validFrom?: string | null;
+  validTo?: string | null;
+  /** The revision of the source it was read from (a message edit, a file hash). */
+  sourceRevision?: string | null;
+  /** The newest message it was saved from that the viewer reads. */
+  sourceMessage?: { messageId: string; channelId: string; threadId: string | null; at: string } | null;
+}
+
+/** A memory's versions (oldest first) and the newest runs that received it, as far as the viewer reads them. */
+export interface MemoryHistory {
+  versions: {
+    id: string;
+    version: number;
+    text: string;
+    /** The version asked about. */
+    current: boolean;
+    status: "active" | "archived";
+    createdAt: string;
+    supersededAt: string | null;
+    validFrom: string | null;
+    validTo: string | null;
+  }[];
+  runs: {
+    runId: string;
+    agentId: string;
+    agentName: string | null;
+    channelId: string;
+    channelName: string | null;
+    createdAt: string;
+  }[];
 }
 
 export type ProposalStatus = "pending" | "accepted" | "refused";
