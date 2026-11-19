@@ -22,7 +22,7 @@ import { recordAudit } from "./audit";
 import { runAuthorityById, runPerson } from "./authority";
 import { requireChannelAccess } from "./channels";
 import { recordOutcome } from "./context/outcomes";
-import { ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import {
   publishChannelEvent,
   publishListChanged,
@@ -39,6 +39,7 @@ import { enqueueRunJob } from "./mission-runs";
 import { notifyIssueChanged } from "./notification-producers";
 import { can, getMembership, requireActiveMembership } from "./organizations";
 import { enqueue } from "./outbox";
+import { assertOwnerEpoch, currentEpochSql, OWNER_EPOCH_CONFLICT, tieRuns } from "./owner-epoch";
 import { paperclipIssueIds } from "./paperclip-routine-state";
 import { membersWhoMaySql } from "./permissions";
 import { fireRoutineEvent } from "./routines";
@@ -921,6 +922,8 @@ async function createIssueCore(
         projectId: project?.id ?? null,
         assigneeType: input.assignee?.type ?? null,
         assigneeId: input.assignee?.id ?? null,
+        // Made with an owner: its first claim (ADR 0202).
+        ownerEpoch: input.assignee ? 1 : 0,
         labels: cleanLabels(input.labels) ?? [],
         dueDate: checkDate(input.dueDate) ?? null,
         githubUrl: checkGithubUrl(input.githubUrl),
@@ -1177,6 +1180,11 @@ export async function updateIssue(
     /** Files to unlink: Desfazer on an agent's attach. */
     removeFiles?: string[];
   },
+  /**
+   * Owner epoch (ADR 0202). `expectedOwnerEpoch`: the epoch a claim or handoff was decided on (default: the one read
+   * here); `claim`: the change is a claim, which moves the epoch even when the assignee stays.
+   */
+  owner: { expectedOwnerEpoch?: number; claim?: boolean } = {},
 ): Promise<IssueView> {
   const { db } = deps;
   const current = await findVisible(db, actor, orgId, { id: issueId });
@@ -1311,13 +1319,40 @@ export async function updateIssue(
         data: { artifactIds: removed, files },
       });
   }
+  // A claim, a new assignee (a handoff) or a cancellation moves the owner epoch, decided on the epoch read: two at
+  // once, one wins (ADR 0202).
+  const handsOver =
+    owner.claim ||
+    (patch.assignee !== undefined &&
+      (patch.assignee?.type ?? null) + (patch.assignee?.id ?? "") !==
+        (current.assigneeType ?? null) + (current.assigneeId ?? "")) ||
+    (set.status === "canceled" && current.status !== "canceled");
+  const expectedEpoch = owner.expectedOwnerEpoch ?? current.ownerEpoch;
+  if (handsOver) set.ownerEpoch = sql`${issues.ownerEpoch} + 1` as unknown as number;
   const row = await db.transaction(async (tx) => {
-    if (set.status === "done") {
-      await tx.select({ id: issues.id }).from(issues).where(eq(issues.id, current.id)).for("update");
-      if (await hasPendingCapabilityWork(tx, orgId, current.id))
+    // An agent's run writes only at the epoch it started under, read under the row's lock (a stale writer).
+    const fenced = actor.type === "agent" && Boolean(actor.runId);
+    if (set.status === "done" || fenced) {
+      const [locked] = await tx
+        .select({ id: issues.id, number: issues.number, ownerEpoch: issues.ownerEpoch })
+        .from(issues)
+        .where(eq(issues.id, current.id))
+        .for("update");
+      if (locked && fenced) await assertOwnerEpoch(tx, actor, locked);
+      if (set.status === "done" && (await hasPendingCapabilityWork(tx, orgId, current.id)))
         throw new ValidationError("This task still has a required capability evaluation in progress.");
     }
-    const [updated] = await tx.update(issues).set(set).where(eq(issues.id, current.id)).returning();
+    const [updated] = await tx
+      .update(issues)
+      .set(set)
+      .where(and(eq(issues.id, current.id), handsOver ? eq(issues.ownerEpoch, expectedEpoch) : undefined))
+      .returning();
+    if (!updated && handsOver)
+      throw new ConflictError(
+        "Someone else changed who owns this task first. Read it again before changing its owner.",
+        OWNER_EPOCH_CONFLICT,
+        { issueId: current.id },
+      );
     if (!updated) throw new NotFoundError("Issue not found");
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
     // Done work taken back to the board: against the agent it was assigned to (a cancel is not a reopen).
@@ -1336,7 +1371,11 @@ export async function updateIssue(
     }
     return updated;
   });
-  await linkRun(deps, actor, row);
+  // The run that claimed it holds the new epoch; any other is tied at the epoch it wrote under, so a handoff leaves it
+  // stale.
+  const claimed =
+    handsOver && actor.type === "agent" && patch.assignee?.type === "agent" && patch.assignee.id === actor.agentId;
+  await linkRun(deps, actor, row, claimed ? row.ownerEpoch : current.ownerEpoch, claimed);
   // A new agent assignee joins the task's conversation (ADR 0145): a mention there reaches it.
   if (patch.assignee?.type === "agent" && row.conversationChannelId) {
     await admitTaskAgents(db, orgId, row.conversationChannelId, { ids: [patch.assignee.id] });
@@ -1351,6 +1390,33 @@ export async function updateIssue(
 }
 
 const reload = async (db: Database, row: IssueRow) => (await db.select().from(issues).where(eq(issues.id, row.id)))[0];
+
+/**
+ * An agent's run claims an open task (ADR 0202): it becomes the assignee and the owner epoch moves on, only if the
+ * epoch is still `expectedOwnerEpoch`. Two claims on the same epoch: one wins, the other gets `OWNER_EPOCH_CONFLICT`
+ * and must read the task again, never retry over the winner. The claiming run holds the new epoch.
+ */
+export async function claimIssue(
+  deps: IssueDeps,
+  actor: AgentActor,
+  orgId: string,
+  issueId: string,
+  expectedOwnerEpoch: number,
+): Promise<{ issue: IssueView; ownerEpoch: number }> {
+  const current = await findVisible(deps.db, actor, orgId, { id: issueId });
+  if (!OPEN_FOR_WORK.has(current.status))
+    throw new ConflictError("This task is closed: there is nothing to claim.", OWNER_EPOCH_CONFLICT, { issueId });
+  const issue = await updateIssue(
+    deps,
+    actor,
+    orgId,
+    issueId,
+    { assignee: { type: "agent", id: actor.agentId } },
+    { expectedOwnerEpoch, claim: true },
+  );
+  const [row] = await deps.db.select({ e: issues.ownerEpoch }).from(issues).where(eq(issues.id, issueId));
+  return { issue, ownerEpoch: row?.e ?? expectedOwnerEpoch + 1 };
+}
 
 /**
  * The criteria a person edited in place: a kept one keeps its id and its check (and who checked it), a new one
@@ -1378,17 +1444,27 @@ function editedCriteria(current: IssueRow["criteria"], next: { id?: string; text
  * the run is linked to it, and an issue the agent has that is still "to do"
  * moves to "in progress" on its own.
  */
-async function linkRun(deps: IssueDeps, actor: IssueActor, issue: IssueRow) {
+async function linkRun(deps: IssueDeps, actor: IssueActor, issue: IssueRow, epoch?: number, claimed = false) {
   if (actor.type !== "agent" || !actor.runId) return;
-  await startedWork(deps, issue, actor.agentId, [actor.runId]);
+  await startedWork(deps, issue, actor.agentId, [actor.runId], epoch, claimed);
 }
 
-async function startedWork(deps: IssueDeps, issue: IssueRow, agentId: string, runIds: string[]) {
+/**
+ * `epoch`: the owner epoch the runs are tied under (ADR 0202), the issue's current one when left out (`issue` may be a
+ * read from before a handoff); `claimed`: a claim, which moves them onto it.
+ */
+async function startedWork(
+  deps: IssueDeps,
+  issue: IssueRow,
+  agentId: string,
+  runIds: string[],
+  epoch?: number,
+  claimed = false,
+) {
   if (runIds.length === 0) return;
-  await deps.db
-    .update(agentRuns)
-    .set({ issueId: issue.id })
-    .where(and(inArray(agentRuns.id, runIds), isNull(agentRuns.issueId), eq(agentRuns.orgId, issue.orgId)));
+  const [now] = await deps.db.select({ e: issues.ownerEpoch }).from(issues).where(eq(issues.id, issue.id));
+  if (!now) return;
+  await tieRuns(deps.db, issue.orgId, runIds, issue.id, epoch ?? now.e, claimed);
   const [current] = await deps.db.select().from(issues).where(eq(issues.id, issue.id));
   const isMineToStart =
     current?.status === "todo" && current.assigneeType === "agent" && current.assigneeId === agentId;
@@ -1432,6 +1508,7 @@ export async function setCriterion(
   done: boolean,
 ): Promise<IssueView> {
   const current = await findVisible(deps.db, actor, orgId, { id: issueId });
+  await assertOwnerEpoch(deps.db, actor, current);
   const criterion = current.criteria.find((c) => c.id === criterionId);
   if (!criterion) throw new NotFoundError("Criterion not found");
   const criteria = current.criteria.map((c) =>
@@ -1461,7 +1538,7 @@ export async function setCriterion(
       });
     return updated;
   });
-  await linkRun(deps, actor, row);
+  await linkRun(deps, actor, row, current.ownerEpoch);
   const view = await one(deps.db, (await reload(deps.db, row)) ?? row);
   await announce(deps, orgId, view, "issue.updated");
   return view;
@@ -1561,6 +1638,8 @@ export async function commentIssue(
   if (!body && (options.attachmentIds ?? []).length + (options.linkFileIds ?? []).length === 0)
     throw new ValidationError("Comment is empty");
   const issue = await findVisible(deps.db, actor, orgId, { id: issueId });
+  // A comment is a write to the task: an agent's run past its owner epoch doesn't post (ADR 0202).
+  await assertOwnerEpoch(deps.db, actor, issue);
   const uploaded = await ownFiles(deps.db, actor, orgId, options.attachmentIds);
   const files = await withLinked(deps.db, orgId, uploaded, options.linkFileIds);
   const conversation = await ensureTaskConversation(deps.db, issue.id);
@@ -1583,7 +1662,7 @@ export async function commentIssue(
     .update(issues)
     .set({ updatedAt: new Date(), ...(files.length ? { artifactIds: linked } : {}) })
     .where(eq(issues.id, issue.id));
-  await linkRun(deps, actor, issue);
+  await linkRun(deps, actor, issue, issue.ownerEpoch);
   return {
     id: message.id,
     kind: "comment",
@@ -2017,7 +2096,7 @@ export async function linkIssueToWork(
   await deps.db.update(schema.agentWorks).set({ issueId }).where(eq(schema.agentWorks.id, work.id));
   await deps.db
     .update(agentRuns)
-    .set({ issueId })
+    .set({ issueId, issueEpoch: currentEpochSql(issueId) })
     .where(and(eq(agentRuns.workId, work.id), isNull(agentRuns.issueId)));
   await setWorkIssueState(deps, { ...work, issueId }, {});
   return issueId;
@@ -2071,6 +2150,8 @@ export async function setWorkIssueState(
         blocked,
         updatedAt: now,
         ...(status !== current.status ? { status, columnId: null, boardRank: topRank() } : {}),
+        // Stopped work: its runs may no longer write the task (ADR 0202).
+        ...(ended === "canceled" ? { ownerEpoch: sql`${issues.ownerEpoch} + 1` } : {}),
       })
       .where(eq(issues.id, current.id))
       .returning();

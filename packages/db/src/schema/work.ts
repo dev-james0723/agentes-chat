@@ -106,6 +106,12 @@ export const issues = pgTable(
     /** `person` or `agent`. */
     assigneeType: text(),
     assigneeId: text(),
+    /**
+     * Its owner epoch (ADR 0202): moves on with every claim, change of assignee (a handoff) and cancellation. A run
+     * acting for the issue carries the epoch it started under (`agent_runs.issue_epoch`); a stale one's writes are
+     * refused at the Tool Gateway and at the write.
+     */
+    ownerEpoch: integer().notNull().default(0),
     labels: text().array().notNull().default(sql`'{}'::text[]`),
     dueDate: date({ mode: "string" }),
     /** `[{ id, text, done }]`. */
