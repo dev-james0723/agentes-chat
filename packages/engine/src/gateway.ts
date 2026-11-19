@@ -37,6 +37,14 @@ import {
 import { type Agent, getAgent } from "./agents";
 import { caches } from "./cache";
 import { decryptCredentialWithVersion, usableCredentialRow } from "./credentials";
+import {
+  admitCreditCall,
+  disableCreditRoute,
+  isCreditCredential,
+  markCreditPool,
+  settleCreditAttempt,
+} from "./credit-ledger";
+import { CREDIT_PROVIDER, CreditRouteRefusal, classifyCreditFailure, noteCreditOutcome } from "./credit-route";
 import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
@@ -68,6 +76,11 @@ export interface ModelGatewayDeps {
   sharedBudgetTransports?: Record<string, SharedBudgetTransport>;
   /** Immutable admission mode for this gateway instance. Legacy calls are outside shared-budget protection. */
   sharedBudgetRequired?: boolean;
+  /**
+   * Credit routes are switched on in this server (ADR 0200). Absent: no call checks them and a call asking for one is
+   * refused, so a server that never turned them on behaves exactly as before.
+   */
+  creditRoutes?: boolean;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
   /** Where an embeddings outage is reported, once (ADR 0104); absent: not reported. */
@@ -128,6 +141,11 @@ export interface GatewayCall {
   notes?: ModelRequest["notes"];
   /** The agent's conversation, the same on each of its calls (`StreamOptions.session`). */
   session?: string;
+  /**
+   * The run is on a credit route (ADR 0200): the call is admitted against that route's pool, on exactly this
+   * credential at exactly this version, or refused before anything is sent.
+   */
+  credit?: { routeId: string; credentialId: string; credentialVersion: string };
   onDelta(text: string): void;
   signal?: AbortSignal;
 }
@@ -343,6 +361,73 @@ export function createModelGateway(deps: ModelGatewayDeps) {
   const agentKey = (agent: Agent, provider: string) =>
     resolveKey(agent.orgId, provider, pinnedKey(agent.model) ?? agent.credentialId);
   const orgKey = (orgId: string, provider: string, model: string) => resolveKey(orgId, provider, pinnedKey(model));
+
+  /**
+   * Credit routes (ADR 0200). A key that belongs to a route is reserved for it: no other call, whoever it is for,
+   * may spend it. A call that asks for the route must be on exactly the credential and version qualified, on the
+   * provider's own endpoint. Nothing here runs unless credit routes are switched on in this server.
+   */
+  async function assertCreditKey(
+    orgId: string,
+    providerId: string,
+    key: Key,
+    credit: GatewayCall["credit"],
+  ): Promise<void> {
+    if (!deps.creditRoutes) {
+      if (credit) throw new CreditRouteRefusal("disabled");
+      return;
+    }
+    if (!credit) {
+      if (key.credentialId && (await isCreditCredential(db, orgId, key.credentialId)))
+        throw new CreditRouteRefusal("reserved_credential");
+      return;
+    }
+    if (providerId !== CREDIT_PROVIDER) throw new CreditRouteRefusal("account_mismatch");
+    if (key.endpoint) throw new CreditRouteRefusal("endpoint_mismatch");
+    if (key.credentialId !== credit.credentialId || key.credentialVersion !== credit.credentialVersion)
+      throw new CreditRouteRefusal("credential_changed");
+  }
+
+  /** What a call that went out and failed leaves in the ledger: a returned hold, or one that stays until reconciled. */
+  async function closeCreditAttempt(
+    orgId: string,
+    admission: { attemptId: string; poolId: string },
+    error: unknown,
+    thrown: unknown,
+    credentialId: string | null,
+  ): Promise<void> {
+    const failure = classifyCreditFailure(error);
+    let released = false;
+    try {
+      if (failure.charged === "no") {
+        await settleCreditAttempt(db, orgId, admission.attemptId, { kind: "released", reason: failure.class });
+        released = true;
+        if (failure.class === "exhausted") await markCreditPool(db, orgId, admission.poolId, "exhausted");
+        else if (failure.class === "billing_blocked")
+          await markCreditPool(db, orgId, admission.poolId, "billing_blocked");
+        else if (failure.class === "credential" && credentialId) await disableCreditRoute(db, orgId, credentialId);
+      } else {
+        await settleCreditAttempt(db, orgId, admission.attemptId, { kind: "unknown", reason: "outcome unknown" });
+      }
+    } catch (ledgerError) {
+      deps.errors?.capture(ledgerError, { cause: "credit_close", attempt: admission.attemptId });
+    }
+    noteCreditOutcome(thrown, {
+      attemptId: admission.attemptId,
+      class: failure.class,
+      hold: released ? "released" : "unknown",
+    });
+  }
+
+  const promptBytesOf = (request: ModelRequest) =>
+    new TextEncoder().encode(
+      JSON.stringify({
+        system: request.system,
+        messages: request.messages,
+        tools: request.tools,
+        notes: request.notes,
+      }),
+    ).length;
 
   /**
    * A model's entry from the catalog or OpenRouter's list (read first when due), or why there is none. Called once
@@ -749,6 +834,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!providerId) throw new ValidationError(`Model ${agent.model} is not in the catalog`);
       const provider = providerFor(providerId);
       const key = await agentKey(agent, providerId);
+      const credit = call.credit;
+      await assertCreditKey(agent.orgId, providerId, key, credit);
       const info = await infoFor(agent.orgId, agent.model);
 
       const request: ModelRequest = {
@@ -785,7 +872,22 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       request.maxTokens = maxTokens;
 
       let result: ModelResult;
+      let admission: Awaited<ReturnType<typeof admitCreditCall>> | null = null;
       try {
+        // The hold on the route's pool is taken last, right before the call goes out, and every call on the key
+        // (a pre-warm included) takes it. A refusal here sends nothing.
+        if (credit)
+          admission = await admitCreditCall(db, {
+            orgId: call.orgId,
+            credentialId: credit.credentialId,
+            credentialVersion: credit.credentialVersion,
+            model: agent.model,
+            need: { tools: (request.tools?.length ?? 0) > 0, promptBytes: promptBytesOf(request) },
+            amountNanoUsd: maxCostNanoUsd(agent.model, promptTokens, request.maxTokens, longCache),
+            runId: call.runId,
+            agentId: agent.id,
+            now,
+          });
         result = await withSharedBudget(db, {
           orgId: call.orgId,
           subject: `agent:${agent.id}`,
@@ -832,7 +934,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
         });
         if (personId && usage)
           await addPersonSpend(db, { orgId: agent.orgId, personId, amountNanoUsd: actual, at: now() });
-        throw masked(error, label(providerId), key);
+        const thrown = masked(error, label(providerId), key);
+        if (admission) await closeCreditAttempt(call.orgId, admission, error, thrown, key.credentialId);
+        throw thrown;
       }
 
       const { record, spent, personSpent } = await settleCall({
@@ -846,6 +950,15 @@ export function createModelGateway(deps: ModelGatewayDeps) {
         usage: result.usage,
         reportedCost: result.costNanoUsd,
       });
+      // The call is made and recorded: a ledger that cannot close its hold now leaves it held (it counts against the
+      // pool until someone reconciles it) rather than failing a call that already happened, which would be sent again.
+      if (admission)
+        await settleCreditAttempt(db, call.orgId, admission.attemptId, {
+          kind: "settled",
+          actualNanoUsd: record.cost,
+        }).catch((error: unknown) =>
+          deps.errors?.capture(error, { cause: "credit_settle", attempt: admission?.attemptId }),
+        );
       await checkThresholds(agent, spent, record.cost);
       if (personId && personSpent !== null)
         await personSpendAdded(
@@ -1023,6 +1136,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!credential) return null;
       const { provider, apiKey, workspaceId, options } = credential;
       if (provider === "custom") return { provider, result: { state: "unchecked" } as KeyCheck };
+      // A key reserved for a credit route is never probed: a probe is a call nobody holds room for.
+      if (deps.creditRoutes && (await isCreditCredential(db, orgId, credentialId)))
+        return { provider, result: { state: "unchecked" } as KeyCheck };
       const key = {
         apiKey,
         ...(workspaceId ? { workspaceId } : {}),
@@ -1039,6 +1155,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!providerId) throw new ValidationError(`Model ${call.model} is not in the catalog`);
       const provider = providerFor(providerId);
       const key = await orgKey(call.orgId, providerId, call.model);
+      await assertCreditKey(call.orgId, providerId, key, undefined);
       const info = await infoFor(call.orgId, call.model);
       const request: ModelRequest = {
         model: call.model,

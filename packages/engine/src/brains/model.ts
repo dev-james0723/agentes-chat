@@ -3,7 +3,7 @@ import { type ModelMessage, modelProvider, type SystemBlock, type ToolSpec } fro
 import type { Agent } from "../agents";
 import { turnNotes } from "../context";
 import { cutOldToolSteps } from "../context-budget";
-import type { GatewayResult, ModelGateway } from "../gateway";
+import type { GatewayCall, GatewayResult, ModelGateway } from "../gateway";
 import type { Brain, BrainEvent, BrainIO, BrainTurn } from "./types";
 
 /**
@@ -30,6 +30,8 @@ export interface ModelBrainOptions {
   conversation(): ModelConversation;
   /** The agent's conversation, the same on each of its calls (`StreamOptions.session`). */
   session?: string;
+  /** The run is on a credit route (ADR 0200): every call it makes, a pre-warm included, is admitted against it. */
+  credit?(): GatewayCall["credit"] | undefined;
 }
 
 /**
@@ -90,6 +92,7 @@ export class ModelBrain implements Brain {
       // The prompt up to the conversation stays cached for an hour: a message after a pause reads it.
       cacheTtl: "1h" as const,
       ...(this.options.session ? { session: this.options.session } : {}),
+      ...(this.options.credit?.() ? { credit: this.options.credit() } : {}),
     };
   }
 
