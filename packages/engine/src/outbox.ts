@@ -96,6 +96,7 @@ export const LONG_JOB_KINDS = [
   "foundry.evaluate",
   // A git fetch and push to the skills repository (SF-19): seconds, but a slow remote must not hold a quick slot.
   "foundry.sync",
+  "skill.sync",
   "agent_run.execute",
   "routine.run",
   "autonomy.later",

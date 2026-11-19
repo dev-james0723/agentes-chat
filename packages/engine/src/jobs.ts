@@ -122,6 +122,7 @@ import { type AgentRun, NO_AI } from "./runs";
 import type { SandboxDeps } from "./sandbox";
 import { indexSource, reindexOrg } from "./search";
 import { activateDeliveredSecret, discardClosedSecret } from "./secrets";
+import { createSkillSync, SKILL_SYNC_JOB } from "./skill-sync";
 import { runSkillUpdates, SKILL_UPDATES_JOB } from "./skill-updates";
 import type { SkillDeps } from "./skills";
 import { TEAM_HELLO_JOB } from "./standing";
@@ -587,6 +588,13 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
       await createFoundryCapabilitySync({
         db: deps.db,
         blobs: deps.artifacts.blobs,
+        capabilitySync: deps.foundry?.capabilitySync,
+      }).run(orgOf(job), job.payload, { finalAttempt: ctx.finalAttempt });
+    },
+    [SKILL_SYNC_JOB]: async (job, ctx) => {
+      await createSkillSync({
+        db: deps.db,
+        blobs: deps.artifacts?.blobs,
         capabilitySync: deps.foundry?.capabilitySync,
       }).run(orgOf(job), job.payload, { finalAttempt: ctx.finalAttempt });
     },

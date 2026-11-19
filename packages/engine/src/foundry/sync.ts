@@ -4,9 +4,8 @@ import {
   type FoundryCapabilitySyncPort,
 } from "@agenteschat/adapters";
 import { and, desc, eq, isNull, schema } from "@agenteschat/db";
-import { openPersonAgentDm } from "../dms";
-import { insertMessage } from "../messages";
-import { enqueue, PermanentJobError } from "../outbox";
+import { postAgentReport } from "../agent-report";
+import { PermanentJobError } from "../outbox";
 import { type FoundryDependencies, loadFoundryBundle } from "./service";
 
 /** SF-19: an ACTIVE version is saved to the skills repository and its approver is told by the creating agent. */
@@ -90,7 +89,6 @@ export function createFoundryCapabilitySync(
         .limit(1);
       if (!row) throw new PermanentJobError("No binding for this capability version");
       const to = row.decidedBy ?? row.candidate.personId;
-      const dm = await openPersonAgentDm(tx, orgId, to, row.candidate.agentId);
       const path = `${capability.kind === "skill" ? "skills" : "tools"}/${capability.name}`;
       const where =
         claimed.syncState === "SYNCED" && claimed.syncCommit
@@ -98,11 +96,10 @@ export function createFoundryCapabilitySync(
           : claimed.syncState === "REFUSED"
             ? `Not saved to the skills repository: ${claimed.syncReason}. It is still active and in use.`
             : `Could not save it to the skills repository: ${claimed.syncReason}. It is still active and in use.`;
-      const message = await insertMessage(tx, {
+      await postAgentReport(tx, {
         orgId,
-        channelId: dm.id,
-        threadId: null,
-        author: { type: "agent", agentId: row.candidate.agentId, runId: null, hop: 0, stretchId: null },
+        agentId: row.candidate.agentId,
+        userId: to,
         body: [
           `New ${capability.kind} ready: ${capability.name}`,
           `Made by: ${capability.agent}`,
@@ -110,17 +107,7 @@ export function createFoundryCapabilitySync(
           `How it will be used from now on: ${capability.use}`,
           where,
         ].join("\n"),
-        meta: {
-          agentDm: { fromChannelId: null, fromMessageId: null, fromThreadId: null },
-          foundrySync: { versionId, state: claimed.syncState },
-        },
-      });
-      await enqueue(tx, {
-        orgId,
-        kind: "notifications.message",
-        payload: { messageId: message.id },
-        dedupeKey: `notifications.message:${message.id}`,
-        maxAttempts: 4,
+        meta: { foundrySync: { versionId, state: claimed.syncState } },
       });
     });
   }

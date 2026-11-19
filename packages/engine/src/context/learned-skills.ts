@@ -30,6 +30,7 @@ import {
   PRIVATE_PUBLICATION_DEFER,
   preflightPrivatePublication,
 } from "../private-skill-publication";
+import { queueSkillSync } from "../skill-sync";
 import { restoreSkillSnapshot, type SkillSnapshot } from "../skill-updates";
 import {
   agentSkillByName,
@@ -358,6 +359,16 @@ export async function changeSkillAsAgent(
           })
           .where(and(eq(schema.approvals.orgId, ctx.orgId), eq(schema.approvals.id, approval.id)));
       }
+      // SF-19: saved to the skills repository and reported, except a private publication (decision 2).
+      await queueSkillSync(db, {
+        orgId: ctx.orgId,
+        skillId: row.id,
+        version: row.version,
+        agentId: ctx.agentId,
+        notifyUserId: asked?.person ?? null,
+        via: "update_skill",
+        private: !!publicationCtx.privatePublicationApprovalId,
+      });
       return marked ?? row;
     });
     if (!own && deps.pubsub)
@@ -690,6 +701,15 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
       .returning();
     if (!skill) throw new Error("skill insert returned nothing");
     await tx.insert(agentSkills).values({ orgId, agentId, skillId: skill.id, enabled: true });
+    // SF-19: a how-to that became a skill is saved to the skills repository and its agent's owner told.
+    await queueSkillSync(tx, {
+      orgId,
+      skillId: skill.id,
+      version: skill.version,
+      agentId,
+      notifyUserId: null,
+      via: "promotion",
+    });
     await tx
       .update(contextItems)
       .set({ status: "archived", updatedAt: new Date() })
