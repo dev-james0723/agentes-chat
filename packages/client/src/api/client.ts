@@ -198,6 +198,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -1301,6 +1302,8 @@ export interface ApiClient {
     confirm(orgId: string, memoryId: string, expectedVersion?: number): Promise<Memory>;
     /** Undoes a change the agent made from the chat (`update.undo.path`). */
     revert(orgId: string, memoryId: string): Promise<void>;
+    /** Its versions and the runs that used it (who may change it). */
+    history(orgId: string, memoryId: string): Promise<MemoryHistory>;
   };
   proposals: {
     /** The newest 200, pending ones first; with `ids`, only those (a chat card's rows). */

@@ -3519,6 +3519,7 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
       revert: async (orgId, id) => {
         log("memory.revert", orgId, id);
       },
+      history: async () => ({ versions: [], runs: [] }),
     },
     dms: {
       list: async () => state.dms.map(dmRow),

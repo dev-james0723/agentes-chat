@@ -3661,6 +3661,32 @@ export function useMemoryAction(orgId: string, agentId: string) {
   });
 }
 
+/** A memory's versions and the runs that used it ("Histórico e uso"), fetched when opened. */
+export const useMemoryHistory = (orgId: string, id: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.memoryHistory(orgId, id),
+    queryFn: () => api.memory.history(orgId, id),
+    enabled,
+  });
+};
+
+/** Volta à versão anterior (`POST …/memories/{id}/revert`). */
+export function useRevertMemory(orgId: string, agentId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.memory.revert(orgId, id),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: keys.memory(orgId, agentId) }),
+        qc.invalidateQueries({ queryKey: keys.orgMemories(orgId) }),
+        qc.invalidateQueries({ queryKey: keys.teamMemories(orgId) }),
+        qc.invalidateQueries({ queryKey: ["org", orgId, "memory-history"] }),
+      ]),
+  });
+}
+
 /** Memória do time (ADR 0167). */
 export const useTeamMemories = (orgId: string) => {
   const api = useApi();

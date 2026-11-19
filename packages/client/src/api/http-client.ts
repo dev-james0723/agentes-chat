@@ -151,6 +151,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -1188,6 +1189,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       revert: async (orgId, id) => {
         await request<unknown>(`${org(orgId)}/memories/${enc(id)}/revert`, { json: {} });
       },
+      history: (orgId, id) => request<MemoryHistory>(`${org(orgId)}/memories/${enc(id)}/history`),
     },
     dms: {
       list: async (orgId) => (await request<{ dms: DirectMessage[] }>(`${org(orgId)}/dms`)).dms,

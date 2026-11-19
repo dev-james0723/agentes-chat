@@ -3095,3 +3095,24 @@ test("a null requester does not transfer a note to a person-rooted run", async (
   expect(otherNote).toBeUndefined();
   expect((await resumeJob(f, b.id))?.nextAttemptAt.getTime()).toBe(timerAt.getTime());
 });
+
+test("Claude quota checks the selected auto model before dispatch", async () => {
+  f = await setup({ reply: () => ({ chunks: ["pela API"] }) });
+  const machineId = await computerAgent(f, { brainFallback: false, brainExtraUsage: false, brainModel: "auto" });
+  const reset = later(3 * 86_400_000).toISOString();
+  await storeOwnUsage(f, machineId, {
+    windows: [
+      { kind: "seven_day", usedPercent: 81, resetsAt: reset },
+      { kind: "seven_day_sonnet", usedPercent: 100, resetsAt: reset },
+      { kind: "other", label: "Fable", usedPercent: 100, resetsAt: reset },
+    ],
+    source: "probe",
+    at: new Date().toISOString(),
+  });
+  const { brain, seen } = scripted(() => [{ type: "done", text: "feito" }]);
+  await post(f, "@dev oi");
+  await drainOutbox(f.db, handlersWith(f, brain));
+  expect(seen).toHaveLength(0);
+  expect(f.provider.calls).toHaveLength(0);
+  expect(waitOf((await runs(f))[0])).toMatchObject({ code: "plan_limit", model: "sonnet" });
+});

@@ -38,6 +38,7 @@ import { enqueue } from "./outbox";
 import { isRoutineRoomKey } from "./routine-brief";
 import { openOrg } from "./standing";
 import { adminChannelSql, fileSeenSql, fileSharedSql, taskSeenSql } from "./task-access";
+import { redactCredentials } from "./tool-detail";
 import { visibleWikiPageIds } from "./wiki-links";
 
 const { messages, channelMembers, channels, contextItems, organizationMembers, routines } = schema;
@@ -132,8 +133,14 @@ export async function indexSource(deps: SearchDeps, input: { orgId: string; kind
  * Upserts documents, with vectors for the kinds that get them (`EMBEDDINGS_KINDS`). When the vectors fail, the
  * documents still go in, found by their words, and the failure is thrown so the job tries them again.
  */
-async function upsertWithEmbeddings(deps: SearchDeps, orgId: string, docs: SearchDocument[]) {
-  if (docs.length === 0) return;
+async function upsertWithEmbeddings(deps: SearchDeps, orgId: string, given: SearchDocument[]) {
+  if (given.length === 0) return;
+  // A pasted key stays in its source but never in the index, its words or an embedding provider's request (A35).
+  const docs = given.map((d) => ({
+    ...d,
+    body: redactCredentials(d.body),
+    ...(d.title ? { title: redactCredentials(d.title) } : {}),
+  }));
   const withVectors: SearchDocument[] = [];
   let failed = false;
   let failure: unknown;
