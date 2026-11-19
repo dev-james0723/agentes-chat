@@ -762,6 +762,30 @@ export const envVars = {
     description: "agentes.chat's own servers: the least a workspace's limit above may be, however few its members.",
     section: "Chat",
   },
+  MEM0_ENABLED: {
+    schema: z.stringbool().default(false),
+    description:
+      "Enable the optional, manually run Mem0 synthetic evaluation. Native memory remains authoritative. This does not send personal memories or start automatic replication.",
+    section: "Connectors",
+  },
+  MEM0_API_KEY: {
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4096)
+      .regex(/^[^\r\n]+$/, "must not contain a line break")
+      .optional(),
+    description:
+      "Server-only Mem0 Platform API key for the synthetic evaluation. Unset: evaluation reports unavailable. Never put this key in a browser build or a memory record.",
+    section: "Connectors",
+    secret: true,
+  },
+  MEM0_REQUEST_TIMEOUT_MS: {
+    schema: z.coerce.number().int().min(100).max(30_000).default(5_000),
+    description: "Maximum time for one Mem0 evaluation request, including its response body, in milliseconds.",
+    section: "Connectors",
+  },
   CONNECTOR_GITHUB_CLIENT_ID: {
     schema: z.string().optional(),
     description:

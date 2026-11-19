@@ -77,6 +77,8 @@ const {
 } = schema;
 
 /** Whether a person owns the workspace (ADR 0085); what a member may do comes from their roles (`roles.ts`). */
+import { forgetSharedMemoryOwner, suspendSharedMemoryInOrg } from "./shared-memory-store";
+
 export type MemberRole = "owner" | "member";
 
 /** The billing hold of a workspace with no plan yet: the one a new workspace may start on. */
@@ -1016,6 +1018,7 @@ export async function changeMemberRole(
     if (target.role === "owner" && role !== "owner" && (await ownerCount(tx, orgId)) <= 1) {
       throw new ConflictError("An organization needs at least one owner");
     }
+    if (target.role !== role) await suspendSharedMemoryInOrg(tx, orgId, "Workspace ownership changed");
     await tx
       .update(organizationMembers)
       .set({ role })
@@ -1193,6 +1196,7 @@ export async function removeMember(
     if (target.role === "owner" && (await ownerCount(tx, orgId)) <= 1) {
       throw new ConflictError("An organization needs at least one owner. Transfer ownership first.");
     }
+    await suspendSharedMemoryInOrg(tx, orgId, "A workspace member left");
     await tx
       .delete(organizationMembers)
       .where(and(eq(organizationMembers.orgId, orgId), eq(organizationMembers.userId, targetUserId)));
@@ -1405,6 +1409,7 @@ export async function deleteAccount(
     const plan = await accountDeletionPlan(tx, userId);
     const refusal = soleOwnerRefusal(plan);
     if (refusal) throw refusal;
+    await forgetSharedMemoryOwner(tx, userId);
     const closed: Closed[] = [];
     for (const org of plan.closes) {
       // One already being deleted keeps its date, and is no news.
@@ -2262,6 +2267,7 @@ export async function joinOrganization(
     .from(organizationMembers)
     .where(and(eq(organizationMembers.orgId, orgId), eq(organizationMembers.userId, userId)));
   if (!member) await assertMemberRoom(tx, orgId);
+  if (!member) await suspendSharedMemoryInOrg(tx, orgId, "A new human joined this workspace");
   await tx.insert(organizationMembers).values({ orgId, userId, role }).onConflictDoNothing();
   await addMemberRolesInTx(tx, orgId, userId, roleIds);
   // Nothing a closed request kept stays (ADR 0090): the password it chose goes, and the page's key is spent, so that

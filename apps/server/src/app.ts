@@ -63,6 +63,8 @@ import { roleRoutes } from "./routes/app/roles";
 import { routineRoutes } from "./routes/app/routines";
 import { sandboxRoutes } from "./routes/app/sandboxes";
 import { secretRoutes } from "./routes/app/secrets";
+import { sharedMemoryRoutes } from "./routes/app/shared-memory";
+import { sharedMemoryMem0Routes } from "./routes/app/shared-memory-mem0";
 import { skillRoutes } from "./routes/app/skills";
 import { storageRoutes } from "./routes/app/storage";
 import { teamWeekRoutes } from "./routes/app/team-week";
@@ -209,6 +211,8 @@ export function createApp(options: AppOptions) {
     api.route("/app", managementRoutes(deps));
     api.route("/app", knowledgeRoutes(deps));
     api.route("/app", memoryRoutes(deps));
+    api.route("/app", sharedMemoryRoutes(deps));
+    api.route("/app", sharedMemoryMem0Routes(deps));
     api.route("/app", dmRoutes(deps));
     api.route("/app", questionRoutes(deps));
     api.route("/app", browserRoutes(deps));

@@ -387,10 +387,32 @@ const beforeOf = (diff: string) =>
     .map((l) => l.slice(1))
     .join("\n");
 
-async function proposalViews(db: Database, rows: (ProposalRow & { canDecide: boolean })[]) {
+async function proposalViews(
+  db: Database,
+  orgId: string,
+  viewerId: string,
+  rows: (ProposalRow & { canDecide: boolean })[],
+) {
+  const itemIds = [...new Set(rows.filter((r) => r.orgId === orgId).flatMap((r) => r.itemIds))];
+  const items = itemIds.length
+    ? await db
+        .select()
+        .from(schema.contextItems)
+        .where(and(eq(schema.contextItems.orgId, orgId), inArray(schema.contextItems.id, itemIds)))
+    : [];
+  const visible = itemIds.length
+    ? await memorySourceVisibilityForUser(db, orgId, viewerId, await userVisibleChannels(db, orgId, viewerId), items)
+    : new Set<string>();
+  // A source can be withdrawn after listProposals. Its diff and proposed text can quote that source too,
+  // so withhold the whole card instead of merely hiding its expanded evidence.
+  rows = rows.filter((r) => r.orgId === orgId && r.itemIds.every((id) => visible.has(id)));
+  const itemById = new Map(items.filter((i) => visible.has(i.id)).map((i) => [i.id, i]));
   const agentIds = [...new Set(rows.flatMap((r) => (r.agentId ? [r.agentId] : [])))];
   const agents = agentIds.length
-    ? await db.select().from(schema.agents).where(inArray(schema.agents.id, agentIds))
+    ? await db
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.orgId, orgId), inArray(schema.agents.id, agentIds)))
     : [];
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const userIds = [
@@ -409,11 +431,6 @@ async function proposalViews(db: Database, rows: (ProposalRow & { canDecide: boo
       : []
     ).map((u) => [u.id, u.name]),
   );
-  const itemIds = [...new Set(rows.flatMap((r) => r.itemIds))];
-  const items = itemIds.length
-    ? await db.select().from(schema.contextItems).where(inArray(schema.contextItems.id, itemIds))
-    : [];
-  const itemById = new Map(items.map((i) => [i.id, i]));
   const applied = rows.filter((r) => r.target === "agent_settings" && r.status === "accepted").map((r) => r.id);
   const receipts = applied.length
     ? await db
@@ -421,6 +438,7 @@ async function proposalViews(db: Database, rows: (ProposalRow & { canDecide: boo
         .from(schema.agentActions)
         .where(
           and(
+            eq(schema.agentActions.orgId, orgId),
             eq(schema.agentActions.kind, "agent.settings_changed"),
             inArray(sql`${schema.agentActions.params}->>'proposalId'`, applied),
           ),
@@ -754,7 +772,7 @@ export function memoryRoutes(deps: AppDeps) {
           groupKey: WAITING_GROUP,
           userIds: [c.get("user").id],
         });
-      return c.json({ proposals: await proposalViews(db, rows) }, 200);
+      return c.json({ proposals: await proposalViews(db, c.req.valid("param").orgId, c.get("user").id, rows) }, 200);
     },
   );
 
@@ -776,7 +794,8 @@ export function memoryRoutes(deps: AppDeps) {
       await askProposal({ db, pubsub: deps.adapters.pubsub }, actorId, orgId, proposalId);
       const [row] = await listProposals(db, actorId, orgId, { ids: [proposalId] });
       if (!row) throw new NotFoundError("Proposal not found");
-      const [view] = await proposalViews(db, [row]);
+      const [view] = await proposalViews(db, orgId, actorId, [row]);
+      if (!view) throw new NotFoundError("Proposal not found");
       return c.json(view, 200);
     },
   );
@@ -809,7 +828,8 @@ export function memoryRoutes(deps: AppDeps) {
         });
         const [row] = await listProposals(db, actorId, orgId, { ids: [proposalId] });
         if (!row) throw new NotFoundError("Proposal not found");
-        const [view] = await proposalViews(db, [row]);
+        const [view] = await proposalViews(db, orgId, actorId, [row]);
+        if (!view) throw new NotFoundError("Proposal not found");
         return c.json(view, 200);
       },
     );

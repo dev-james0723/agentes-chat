@@ -38,6 +38,7 @@ import { personBehindCall, wikiActorOfCall } from "../requester";
 import { isRightHandId, rightHandReader } from "../right-hand";
 import { isRoutineRoomKey } from "../routine-brief";
 import { agentSearchChannels, agentVisibleChannels, indexSource, searchForUser, searchVisible } from "../search";
+import { sharedMemoryVisibleIds, trackSharedMemoryWrite } from "../shared-memory-store";
 import { closedRefusal } from "../standing";
 import { noAgentText } from "../team";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -981,8 +982,13 @@ export function createContextToolSource(deps: ContextDeps): ToolSource {
         await ctx.db.transaction(async (tx) => {
           await tx
             .update(contextItems)
-            .set({ status: "archived", updatedAt: new Date() })
+            .set({ status: "archived", version: sql`${contextItems.version} + 1`, updatedAt: new Date() })
             .where(eq(contextItems.id, item.id));
+          await trackSharedMemoryWrite(
+            tx,
+            { ...item, status: "archived", version: item.version + 1 },
+            { actorId: requester ?? undefined, forget: true },
+          );
           if (requester || !learnedQuietly(item))
             await recordAgentActions(tx, ctx, [
               {
@@ -1849,7 +1855,15 @@ export async function teamMemoryForPrompt(db: Database, orgId: string): Promise<
     .orderBy(asc(contextItems.createdAt))
     .limit(60);
   if (items.length === 0) return "";
+  const managedVisible = await sharedMemoryVisibleIds(
+    db,
+    orgId,
+    items.map((i) => i.id),
+    undefined,
+    { agent: true },
+  );
   const publicItems = await filterAsync(items, async (item) => {
+    if (!managedVisible.has(item.id)) return false;
     if (!isAcceptedRequirement(item)) return false;
     try {
       await requirePublicMemorySources(db, orgId, item);

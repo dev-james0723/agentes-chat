@@ -25,6 +25,7 @@ export * from "./run-files";
 export * from "./runtime";
 export * from "./sandbox";
 export * from "./shared-budget";
+export * from "./shared-memory";
 export * from "./skills";
 export * from "./storage";
 export * from "./team-actions";

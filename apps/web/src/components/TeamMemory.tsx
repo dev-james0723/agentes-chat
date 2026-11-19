@@ -2,6 +2,7 @@ import { useMemoryAction, useTeamMemories } from "@agenteschat/client";
 import { can } from "@agenteschat/client/lib/permissions";
 import { memoryLine } from "@agenteschat/client/lib/proposals";
 import { Button, Card, CardHeader, Field, Locked, Textarea } from "@agenteschat/ui";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorState, LoadingLine } from "@/components/Loading";
@@ -40,6 +41,13 @@ export function TeamMemoryCard() {
         id="sec-team-memory"
         icon="members"
         title={title}
+        action={
+          <Button asChild size="sm">
+            <Link to="/org/$orgId/shared-memory" params={{ orgId: org.id }}>
+              {t("sharedMemory.title")}
+            </Link>
+          </Button>
+        }
         hint={{ name: t("common.about", { label: title }), text: t("teamMemory.help") }}
       />
       {list.isPending ? (

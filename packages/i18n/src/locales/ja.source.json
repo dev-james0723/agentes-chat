@@ -1,4 +1,664 @@
 {
+  "sharedMemory.title": {
+    "value": "My memory"
+  },
+  "sharedMemory.subtitle": {
+    "value": "What you keep, where it is shared, and the sources behind it."
+  },
+  "sharedMemory.scope": {
+    "value": "Your personal profile"
+  },
+  "sharedMemory.canonical": {
+    "value": "Kept in {{name}}"
+  },
+  "sharedMemory.refresh": {
+    "value": "Refresh status"
+  },
+  "sharedMemory.reconcile": {
+    "value": "Sync enrolled workspaces"
+  },
+  "sharedMemory.saved": {
+    "value": "Change saved"
+  },
+  "sharedMemory.queued": {
+    "value": "Change queued. Check the destination status for completion."
+  },
+  "sharedMemory.blocked": {
+    "value": "This change is blocked. Review the reason and try again."
+  },
+  "sharedMemory.stale": {
+    "value": "This memory changed while you were editing. Your draft is kept. Reopen the latest version before saving."
+  },
+  "sharedMemory.unavailable": {
+    "value": "This server does not offer shared memory yet."
+  },
+  "sharedMemory.denied": {
+    "value": "This personal memory profile is not available to your account."
+  },
+  "sharedMemory.staleView": {
+    "value": "Status could not be refreshed. The information below may be out of date."
+  },
+  "sharedMemory.tabs.current": {
+    "value": "Memories"
+  },
+  "sharedMemory.tabs.candidates": {
+    "value": "Review"
+  },
+  "sharedMemory.tabs.graph": {
+    "value": "Graph"
+  },
+  "sharedMemory.tabs.sync": {
+    "value": "Sync"
+  },
+  "sharedMemory.tabs.privacy": {
+    "value": "Privacy"
+  },
+  "sharedMemory.tabs.history": {
+    "value": "History"
+  },
+  "sharedMemory.tabsLabel": {
+    "value": "Memory views"
+  },
+  "sharedMemory.search": {
+    "value": "Search memories and sources"
+  },
+  "sharedMemory.searchPlaceholder": {
+    "value": "Find a memory…"
+  },
+  "sharedMemory.filter": {
+    "value": "Privacy filter"
+  },
+  "sharedMemory.all": {
+    "value": "All scopes"
+  },
+  "sharedMemory.clear": {
+    "value": "Clear search"
+  },
+  "sharedMemory.loaded": {
+    "value": "{{loaded}} of {{total}} records loaded"
+  },
+  "sharedMemory.loadMore": {
+    "value": "Load more records"
+  },
+  "sharedMemory.partial": {
+    "value": "Counts and graph cover only the records loaded so far."
+  },
+  "sharedMemory.changedWhileLoading": {
+    "value": "Memory changed while these pages loaded. Refresh to see one consistent revision."
+  },
+  "sharedMemory.activeCount": {
+    "value": "Current memories"
+  },
+  "sharedMemory.reviewCount": {
+    "value": "Waiting for review"
+  },
+  "sharedMemory.destinationCount": {
+    "value": "Enrolled workspaces"
+  },
+  "sharedMemory.verifiedCount": {
+    "value": "Retrieval verification"
+  },
+  "sharedMemory.never": {
+    "value": "Not checked"
+  },
+  "sharedMemory.unknownDate": {
+    "value": "Date not recorded"
+  },
+  "sharedMemory.count": {
+    "value": "{{count}} records"
+  },
+  "sharedMemory.status.active": {
+    "value": "Current"
+  },
+  "sharedMemory.status.candidate": {
+    "value": "Needs review"
+  },
+  "sharedMemory.status.disputed": {
+    "value": "Disputed"
+  },
+  "sharedMemory.status.rejected": {
+    "value": "Rejected"
+  },
+  "sharedMemory.status.forgotten": {
+    "value": "Forgotten"
+  },
+  "sharedMemory.assertion.owner_statement": {
+    "value": "Your statement"
+  },
+  "sharedMemory.assertion.owner_correction": {
+    "value": "Your correction"
+  },
+  "sharedMemory.assertion.observation": {
+    "value": "Observation"
+  },
+  "sharedMemory.assertion.inference": {
+    "value": "Agent inference"
+  },
+  "sharedMemory.assertion.import": {
+    "value": "Imported claim"
+  },
+  "sharedMemory.sensitivity.personal": {
+    "value": "Personal"
+  },
+  "sharedMemory.sensitivity.workspace": {
+    "value": "Work"
+  },
+  "sharedMemory.sensitivity.sensitive": {
+    "value": "Sensitive"
+  },
+  "sharedMemory.sensitivityHelp": {
+    "value": "A memory is copied only to workspaces enrolled for its scope."
+  },
+  "sharedMemory.empty": {
+    "value": "No current memories yet."
+  },
+  "sharedMemory.emptyReview": {
+    "value": "Nothing is waiting for review."
+  },
+  "sharedMemory.emptyHistory": {
+    "value": "No earlier versions or forgotten memories yet."
+  },
+  "sharedMemory.emptySearch": {
+    "value": "No memories match this search."
+  },
+  "sharedMemory.reviewHelp": {
+    "value": "Check the original source before accepting a claim. An inference stays an inference until you correct it."
+  },
+  "sharedMemory.details": {
+    "value": "Read memory"
+  },
+  "sharedMemory.titleField": {
+    "value": "Title"
+  },
+  "sharedMemory.contentField": {
+    "value": "Memory"
+  },
+  "sharedMemory.source": {
+    "value": "Source"
+  },
+  "sharedMemory.sources": {
+    "value": "Sources"
+  },
+  "sharedMemory.noSource": {
+    "value": "No source record linked"
+  },
+  "sharedMemory.openSource": {
+    "value": "Open source"
+  },
+  "sharedMemory.recorded": {
+    "value": "Recorded"
+  },
+  "sharedMemory.observed": {
+    "value": "Observed"
+  },
+  "sharedMemory.validFrom": {
+    "value": "Valid from"
+  },
+  "sharedMemory.validTo": {
+    "value": "Valid until"
+  },
+  "sharedMemory.captured": {
+    "value": "Captured"
+  },
+  "sharedMemory.coverage": {
+    "value": "Coverage"
+  },
+  "sharedMemory.origin": {
+    "value": "Original source"
+  },
+  "sharedMemory.revision": {
+    "value": "Revision {{version}}"
+  },
+  "sharedMemory.sourceRevision": {
+    "value": "Source revision"
+  },
+  "sharedMemory.currentVersion": {
+    "value": "Current version"
+  },
+  "sharedMemory.previousVersions": {
+    "value": "Previous versions"
+  },
+  "sharedMemory.sourceEcho": {
+    "value": "Copies with the same original source do not count as independent evidence."
+  },
+  "sharedMemory.accept": {
+    "value": "Accept memory"
+  },
+  "sharedMemory.reject": {
+    "value": "Reject suggestion"
+  },
+  "sharedMemory.correct": {
+    "value": "Correct memory"
+  },
+  "sharedMemory.saveCorrection": {
+    "value": "Save correction"
+  },
+  "sharedMemory.correctionHelp": {
+    "value": "The previous version remains in history. This correction becomes your statement."
+  },
+  "sharedMemory.dateExample": {
+    "value": "YYYY-MM-DD"
+  },
+  "sharedMemory.invalidDate": {
+    "value": "Use a valid date in YYYY-MM-DD format."
+  },
+  "sharedMemory.dateOrder": {
+    "value": "The end date must be after the start date."
+  },
+  "sharedMemory.changeScope": {
+    "value": "Change privacy scope"
+  },
+  "sharedMemory.saveScope": {
+    "value": "Save scope"
+  },
+  "sharedMemory.forget": {
+    "value": "Forget memory"
+  },
+  "sharedMemory.forgetTitle": {
+    "value": "Forget “{{title}}”"
+  },
+  "sharedMemory.forgetHelp": {
+    "value": "Stops reuse in the selected native destinations and records what still needs removal elsewhere."
+  },
+  "sharedMemory.forgetScope": {
+    "value": "Where to forget"
+  },
+  "sharedMemory.forgetEverywhere": {
+    "value": "This profile and its native copies"
+  },
+  "sharedMemory.forgetWorkspace": {
+    "value": "One enrolled workspace"
+  },
+  "sharedMemory.chooseWorkspace": {
+    "value": "Workspace"
+  },
+  "sharedMemory.forgetAction": {
+    "value": "Forget in selected destinations"
+  },
+  "sharedMemory.retained": {
+    "value": "Source archives and external imports may still contain this text. Their removal is tracked separately."
+  },
+  "sharedMemory.outstanding": {
+    "value": "Still needs removal"
+  },
+  "sharedMemory.noOutstanding": {
+    "value": "No external removals are recorded as outstanding."
+  },
+  "sharedMemory.forgetDate": {
+    "value": "Forgotten"
+  },
+  "sharedMemory.setupTitle": {
+    "value": "Keep memory under your control"
+  },
+  "sharedMemory.setupText": {
+    "value": "Choose existing notes to keep. Other workspaces receive nothing until you enroll them."
+  },
+  "sharedMemory.profileName": {
+    "value": "Profile name"
+  },
+  "sharedMemory.defaultName": {
+    "value": "My memory"
+  },
+  "sharedMemory.adopt": {
+    "value": "Notes to bring in"
+  },
+  "sharedMemory.adoptHelp": {
+    "value": "Only current notes you can read in this workspace appear here."
+  },
+  "sharedMemory.noAdopt": {
+    "value": "There are no eligible notes here. You can start with an empty profile."
+  },
+  "sharedMemory.configure": {
+    "value": "Create my memory"
+  },
+  "sharedMemory.setupScope": {
+    "value": "Imported notes start as personal. You can change each scope after review."
+  },
+  "sharedMemory.privacyTitle": {
+    "value": "Choose where memory goes"
+  },
+  "sharedMemory.privacyHelp": {
+    "value": "New workspaces are excluded until you enroll them. Sharing a workspace with another person suspends personal copies."
+  },
+  "sharedMemory.canonicalPrivacy": {
+    "value": "The original profile stays in its home workspace. Destinations below receive only their allowed scopes."
+  },
+  "sharedMemory.destination": {
+    "value": "Workspace"
+  },
+  "sharedMemory.enrolled": {
+    "value": "Enrolled"
+  },
+  "sharedMemory.paused": {
+    "value": "Paused"
+  },
+  "sharedMemory.blockedDestination": {
+    "value": "Blocked"
+  },
+  "sharedMemory.notEnrolled": {
+    "value": "Not enrolled"
+  },
+  "sharedMemory.enroll": {
+    "value": "Enroll workspace"
+  },
+  "sharedMemory.editDestination": {
+    "value": "Edit sharing"
+  },
+  "sharedMemory.pause": {
+    "value": "Pause sharing"
+  },
+  "sharedMemory.resume": {
+    "value": "Resume sharing"
+  },
+  "sharedMemory.allowed": {
+    "value": "Scopes this workspace receives"
+  },
+  "sharedMemory.saveSharing": {
+    "value": "Save sharing choices"
+  },
+  "sharedMemory.enrollHelp": {
+    "value": "Only workspaces eligible for your personal memory are listed."
+  },
+  "sharedMemory.noDestinations": {
+    "value": "No other workspaces are enrolled."
+  },
+  "sharedMemory.noEligible": {
+    "value": "No additional eligible workspaces."
+  },
+  "sharedMemory.currentCopies": {
+    "value": "Current: {{count}}"
+  },
+  "sharedMemory.pendingCopies": {
+    "value": "Pending: {{count}}"
+  },
+  "sharedMemory.conflicts": {
+    "value": "Conflicts: {{count}}"
+  },
+  "sharedMemory.checked": {
+    "value": "Last checked"
+  },
+  "sharedMemory.synced": {
+    "value": "Last synchronized"
+  },
+  "sharedMemory.syncTitle": {
+    "value": "Native workspace sync"
+  },
+  "sharedMemory.syncHelp": {
+    "value": "A current copy proves synchronization. Retrieval is checked separately against a real agent run."
+  },
+  "sharedMemory.copyStates.current": {
+    "value": "Current"
+  },
+  "sharedMemory.copyStates.pending": {
+    "value": "Pending"
+  },
+  "sharedMemory.copyStates.conflict": {
+    "value": "Conflict"
+  },
+  "sharedMemory.copyStates.blocked": {
+    "value": "Blocked"
+  },
+  "sharedMemory.copyStates.forgotten": {
+    "value": "Forgotten"
+  },
+  "sharedMemory.consumerTitle": {
+    "value": "Other memory consumers"
+  },
+  "sharedMemory.consumerHelp": {
+    "value": "A one-time import is a snapshot. A receipt alone does not enable continuous synchronization."
+  },
+  "sharedMemory.consumersEmpty": {
+    "value": "No external consumer receipts recorded."
+  },
+  "sharedMemory.consumerStates.not_connected": {
+    "value": "Not connected"
+  },
+  "sharedMemory.consumerStates.snapshot": {
+    "value": "One-time snapshot"
+  },
+  "sharedMemory.consumerStates.current": {
+    "value": "Current receipt"
+  },
+  "sharedMemory.consumerStates.pending": {
+    "value": "Pending"
+  },
+  "sharedMemory.consumerStates.blocked": {
+    "value": "Blocked"
+  },
+  "sharedMemory.snapshotOnly": {
+    "value": "No continuous write connection"
+  },
+  "sharedMemory.writable": {
+    "value": "Write connection available"
+  },
+  "sharedMemory.verificationTitle": {
+    "value": "Actual retrieval"
+  },
+  "sharedMemory.verificationStates.not_run": {
+    "value": "Not verified"
+  },
+  "sharedMemory.verificationStates.passed": {
+    "value": "Verified for this run"
+  },
+  "sharedMemory.verificationStates.failed": {
+    "value": "Missing in this run"
+  },
+  "sharedMemory.verificationHelp": {
+    "value": "A check applies to the listed memories and run. It does not prove that every agent has loaded every memory."
+  },
+  "sharedMemory.verifyAction": {
+    "value": "Check a completed run"
+  },
+  "sharedMemory.runId": {
+    "value": "Completed run ID"
+  },
+  "sharedMemory.verifyMemories": {
+    "value": "Memories expected in this run"
+  },
+  "sharedMemory.verifySubmit": {
+    "value": "Verify retrieval"
+  },
+  "sharedMemory.verified": {
+    "value": "Found: {{count}}"
+  },
+  "sharedMemory.missing": {
+    "value": "Missing: {{count}}"
+  },
+  "sharedMemory.sourcesTitle": {
+    "value": "Source freshness"
+  },
+  "sharedMemory.sourceStates.snapshot": {
+    "value": "Snapshot"
+  },
+  "sharedMemory.sourceStates.current": {
+    "value": "Current"
+  },
+  "sharedMemory.sourceStates.stale": {
+    "value": "Needs refresh"
+  },
+  "sharedMemory.sourceStates.blocked": {
+    "value": "Blocked"
+  },
+  "sharedMemory.refreshAfter": {
+    "value": "Review after"
+  },
+  "sharedMemory.sourcesEmpty": {
+    "value": "No source snapshots recorded."
+  },
+  "sharedMemory.graphTitle": {
+    "value": "Memory connections"
+  },
+  "sharedMemory.graphHelp": {
+    "value": "Lines show recorded sources, native copies and conflicts. They do not imply a relationship between unrelated claims."
+  },
+  "sharedMemory.graphSearch": {
+    "value": "Find a graph node"
+  },
+  "sharedMemory.graphFilter": {
+    "value": "Graph nodes"
+  },
+  "sharedMemory.graphAll": {
+    "value": "All nodes"
+  },
+  "sharedMemory.graphEntries": {
+    "value": "Memories and connections"
+  },
+  "sharedMemory.graphSources": {
+    "value": "Sources and connections"
+  },
+  "sharedMemory.graphWorkspaces": {
+    "value": "Workspaces and connections"
+  },
+  "sharedMemory.graphList": {
+    "value": "Show connection list"
+  },
+  "sharedMemory.graphCanvas": {
+    "value": "Show graph"
+  },
+  "sharedMemory.graphEmpty": {
+    "value": "No source-backed connections match this view."
+  },
+  "sharedMemory.graphNode.entry": {
+    "value": "Memory"
+  },
+  "sharedMemory.graphNode.source": {
+    "value": "Source"
+  },
+  "sharedMemory.graphNode.workspace": {
+    "value": "Workspace"
+  },
+  "sharedMemory.graphEdge.derived_from": {
+    "value": "Has source"
+  },
+  "sharedMemory.graphEdge.replicated_to": {
+    "value": "Copied to"
+  },
+  "sharedMemory.graphEdge.conflicts_with": {
+    "value": "Conflicts with"
+  },
+  "sharedMemory.graphNodes": {
+    "value": "{{nodes}} nodes · {{edges}} connections"
+  },
+  "sharedMemory.graphSelect": {
+    "value": "Select a node to inspect its source, scope and current state."
+  },
+  "sharedMemory.graphRelated": {
+    "value": "Recorded connections"
+  },
+  "sharedMemory.zoomIn": {
+    "value": "Zoom in"
+  },
+  "sharedMemory.zoomOut": {
+    "value": "Zoom out"
+  },
+  "sharedMemory.zoomReset": {
+    "value": "Reset view"
+  },
+  "sharedMemory.zoom": {
+    "value": "Zoom {{percent}}%"
+  },
+  "sharedMemory.graphKeyboard": {
+    "value": "Use Tab to reach nodes, Enter to inspect, and the zoom buttons to resize. The connection list shows the same data."
+  },
+  "sharedMemory.mem0Title": {
+    "value": "Mem0 evaluation"
+  },
+  "sharedMemory.mem0Help": {
+    "value": "Synthetic evaluation only. Your private memory is not projected to Mem0."
+  },
+  "sharedMemory.mem0States.disabled": {
+    "value": "Disabled"
+  },
+  "sharedMemory.mem0States.missing_key": {
+    "value": "Server key needed"
+  },
+  "sharedMemory.mem0States.configured_unverified": {
+    "value": "Configured, not verified"
+  },
+  "sharedMemory.evaluate": {
+    "value": "Run synthetic evaluation"
+  },
+  "sharedMemory.evaluationResult": {
+    "value": "Evaluation result"
+  },
+  "sharedMemory.evaluationPending": {
+    "value": "An evaluation started but has no confirmed completion. Its result is unverified."
+  },
+  "sharedMemory.previousEvaluation": {
+    "value": "Previous completed evaluation"
+  },
+  "sharedMemory.evaluationSkipped": {
+    "value": "Evaluation was skipped"
+  },
+  "sharedMemory.evaluationUnavailable": {
+    "value": "Synthetic evaluation is unavailable on this server."
+  },
+  "sharedMemory.evaluationOwner": {
+    "value": "Only the installation owner can run this evaluation."
+  },
+  "sharedMemory.evaluationLimit": {
+    "value": "This tests fabricated memories and retrieval. It does not grade agent answers."
+  },
+  "sharedMemory.evidenceMode.provider_live": {
+    "value": "Live provider"
+  },
+  "sharedMemory.evidenceMode.injected_transport": {
+    "value": "Test transport"
+  },
+  "sharedMemory.evidenceMode.not_run": {
+    "value": "Not run"
+  },
+  "sharedMemory.evaluationStates.passed": {
+    "value": "Passed"
+  },
+  "sharedMemory.evaluationStates.failed": {
+    "value": "Failed"
+  },
+  "sharedMemory.evaluationStates.partial": {
+    "value": "Partial"
+  },
+  "sharedMemory.evaluationStates.unavailable": {
+    "value": "Unavailable"
+  },
+  "sharedMemory.evaluationStates.skipped": {
+    "value": "Skipped"
+  },
+  "sharedMemory.evaluationTotals": {
+    "value": "{{passed}} passed · {{failed}} failed · {{unavailable}} unavailable · {{skipped}} skipped"
+  },
+  "sharedMemory.evaluationCases": {
+    "value": "Synthetic cases"
+  },
+  "sharedMemory.elapsed": {
+    "value": "Elapsed time"
+  },
+  "sharedMemory.latency": {
+    "value": "Search latency (p95)"
+  },
+  "sharedMemory.requests": {
+    "value": "Requests"
+  },
+  "sharedMemory.cost": {
+    "value": "Cost"
+  },
+  "sharedMemory.notMeasured": {
+    "value": "Not measured"
+  },
+  "sharedMemory.cleanup": {
+    "value": "Test data cleanup"
+  },
+  "sharedMemory.cleanupStates.complete": {
+    "value": "Complete"
+  },
+  "sharedMemory.cleanupStates.incomplete": {
+    "value": "Needs attention"
+  },
+  "sharedMemory.cleanupStates.not_needed": {
+    "value": "Not needed"
+  },
+  "sharedMemory.cleanupOutstanding": {
+    "value": "Some synthetic test data or requests still need cleanup."
+  },
   "app.name": {
     "value": "agentes"
   },

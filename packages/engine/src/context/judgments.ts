@@ -1,6 +1,7 @@
 import { and, desc, type Executor, eq, inArray, isNull, schema } from "@agenteschat/db";
 import { cutText } from "../format";
 import type { Judge, JudgeQuestion } from "../judge";
+import { unmanagedMemorySql } from "../shared-memory-store";
 import {
   type ContextItem,
   type ContextKind,
@@ -102,6 +103,7 @@ export async function findCandidates(db: Executor, input: NewContextItem, limit 
     .where(
       and(
         eq(contextItems.orgId, input.orgId),
+        unmanagedMemorySql(),
         inArray(contextItems.kind, kindFamily(input.kind)),
         eq(contextItems.status, "active"),
         isNull(contextItems.supersededBy),

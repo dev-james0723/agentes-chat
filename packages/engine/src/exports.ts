@@ -2,6 +2,7 @@ import { and, arrayContained, asc, type Database, desc, eq, inArray, isNull, ne,
 import { type BundleRoutine, type BundleRule, IMPORT_LIMITS, type MigrationBundle, NOTE_KINDS } from "./imports";
 import { requirePermission } from "./organizations";
 import type { RoutineTarget } from "./routines";
+import { sharedMemoryVisibleIds } from "./shared-memory-store";
 
 const { organizations, agents, skills, skillFiles, agentSkills, channels, channelMembers, routines, contextItems } =
   schema;
@@ -160,6 +161,12 @@ export async function exportBundle(db: Database, actorId: string, orgId: string)
       .limit(IMPORT_LIMITS.notes),
   ]);
 
+  const visibleNotes = await sharedMemoryVisibleIds(
+    db,
+    orgId,
+    noteRows.map((n) => n.id),
+    actorId,
+  );
   const leftOut: MigrationBundle["leftOut"] = [];
   const bundleRoutines: BundleRoutine[] = [];
   for (const r of routineRows) {
@@ -198,13 +205,15 @@ export async function exportBundle(db: Database, actorId: string, orgId: string)
         .map((m) => ({ key: m.agentId as string, autoReply: m.autoReply })),
     })),
     routines: bundleRoutines,
-    notes: noteRows.map((n) => ({
-      key: n.id,
-      agent: n.agentId,
-      kind: n.kind as MigrationBundle["notes"][number]["kind"],
-      title: n.title,
-      content: n.content,
-    })),
+    notes: noteRows
+      .filter((n) => visibleNotes.has(n.id))
+      .map((n) => ({
+        key: n.id,
+        agent: n.agentId,
+        kind: n.kind as MigrationBundle["notes"][number]["kind"],
+        title: n.title,
+        content: n.content,
+      })),
     todo: [],
     leftOut,
   };

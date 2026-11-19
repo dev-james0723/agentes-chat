@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, lt, lte, ne, or, schema, sql } from "@agenteschat/db";
 import { isPlaybook } from "../audience";
 import { enqueue } from "../outbox";
+import { unmanagedMemorySql } from "../shared-memory-store";
 import {
   accessSql,
   type ContextItem,
@@ -53,7 +54,14 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
   const active = await db
     .select()
     .from(contextItems)
-    .where(and(eq(contextItems.orgId, orgId), eq(contextItems.status, "active"), isNull(contextItems.supersededBy)))
+    .where(
+      and(
+        eq(contextItems.orgId, orgId),
+        unmanagedMemorySql(),
+        eq(contextItems.status, "active"),
+        isNull(contextItems.supersededBy),
+      ),
+    )
     .orderBy(asc(contextItems.createdAt));
   const groups = new Map<string, typeof active>();
   for (const item of active) {
@@ -131,6 +139,7 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
         eq(contextItems.status, "active"),
         eq(contextItems.pinned, false),
         // Only requests that match bring an item back now (ADR 0167): what a person said stays until they take it back.
+        unmanagedMemorySql(),
         ne(contextItems.createdByKind, "person"),
         lt(contextItems.relevance, DECAY.archiveBelow),
         lt(contextItems.createdAt, new Date(now.getTime() - DECAY.archiveAfterDays * 86_400_000)),
@@ -147,6 +156,7 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
         eq(contextItems.status, "active"),
         eq(contextItems.pinned, false),
         eq(contextItems.trust, "low"),
+        unmanagedMemorySql(),
         eq(contextItems.createdByKind, "agent"),
         sql`${contextItems.agentId} is not null`,
         inArray(contextItems.kind, ["note", "lesson", "fact"]),
@@ -171,6 +181,7 @@ export async function consolidateOrg(deps: ContextDeps, orgId: string, now = new
         eq(contextItems.pinned, false),
         eq(contextItems.kind, "fact"),
         eq(contextItems.verified, false),
+        unmanagedMemorySql(),
         sql`not ${accessSql()}`,
         or(
           lt(contextItems.lastUsedAt, monthAgo),
@@ -277,6 +288,7 @@ export async function consolidateByMeaning(deps: ContextDeps, orgId: string, now
         eq(contextItems.status, "active"),
         isNull(contextItems.supersededBy),
         sql`${contextItems.updatedAt} >= ${since.toISOString()}::timestamptz`,
+        unmanagedMemorySql(),
       ),
     )
     .orderBy(asc(contextItems.updatedAt))

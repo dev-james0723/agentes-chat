@@ -3,6 +3,7 @@ import { decidesAgentApprovals } from "../approval-rules";
 import { type AuthorityRun, type RunAuthority, runAuthority } from "../authority";
 import { caches, rulesPresenceKey } from "../cache";
 import { routineCreatorOf } from "../requester";
+import { sharedMemoryVisibleIds } from "../shared-memory-store";
 
 const { contextItems, users } = schema;
 
@@ -63,7 +64,17 @@ export async function rulesForPerson(
     )
     .orderBy(contextItems.createdAt)
     .limit(30);
-  const givers = [...new Set(rows.map((r) => r.by ?? ""))];
+  const visible = await sharedMemoryVisibleIds(
+    db,
+    input.orgId,
+    rows.map((r) => r.id),
+    input.personId ?? undefined,
+    {
+      agent: true,
+    },
+  );
+  const kept = rows.filter((r) => visible.has(r.id));
+  const givers = [...new Set(kept.map((r) => r.by ?? ""))];
   const holds = new Map(
     await Promise.all(
       givers.map(
@@ -72,7 +83,7 @@ export async function rulesForPerson(
       ),
     ),
   );
-  return rows.filter((r) => r.scopeType === "person" || holds.get(r.by ?? ""));
+  return kept.filter((r) => r.scopeType === "person" || holds.get(r.by ?? ""));
 }
 
 /** "# Rules people gave you" for a run, or "" when none holds in it. */

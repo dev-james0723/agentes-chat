@@ -122,6 +122,7 @@ import { type AgentRun, NO_AI } from "./runs";
 import type { SandboxDeps } from "./sandbox";
 import { indexSource, reindexOrg } from "./search";
 import { activateDeliveredSecret, discardClosedSecret } from "./secrets";
+import { reconcileSharedMemory, SHARED_MEMORY_JOB } from "./shared-memory";
 import { createSkillSync, SKILL_SYNC_JOB } from "./skill-sync";
 import { runSkillUpdates, SKILL_UPDATES_JOB } from "./skill-updates";
 import type { SkillDeps } from "./skills";
@@ -1206,6 +1207,16 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
     [VAULT_SYNC_JOB]: async (job) => {
       if (!deps.vault) return;
       await runVaultSync(deps.vault, orgOf(job), String(job.payload.connectionId));
+    },
+    [SHARED_MEMORY_JOB]: async (job) => {
+      const profileId = job.payload.profileId;
+      if (typeof profileId !== "string" || !/^[0-9a-f-]{36}$/i.test(profileId)) return;
+      const [profile] = await deps.db
+        .select({ orgId: schema.sharedMemoryProfiles.orgId })
+        .from(schema.sharedMemoryProfiles)
+        .where(eq(schema.sharedMemoryProfiles.id, profileId));
+      if (!profile || profile.orgId !== orgOf(job)) return;
+      await reconcileSharedMemory(deps.db, profileId);
     },
     "context.consolidate": async (job) => {
       if (!deps.context) return;

@@ -13,6 +13,7 @@ import {
   enqueueIdleReflections,
   enqueueOverdueAccountDeletions,
   enqueueOverdueDeletions,
+  enqueueSharedMemoryRepair,
   enqueueSkillUpdates,
   enqueueTeamWeeks,
   enqueueVaultSyncs,
@@ -454,6 +455,9 @@ export function startWorkers(deps: WorkerDeps) {
   }
 
   const context = deps.context;
+  every("sharedMemoryRepair", WORKER_INTERVALS_MS.consolidation, async () => {
+    await enqueueSharedMemoryRepair(db);
+  });
   if (context) {
     every("reflections", WORKER_INTERVALS_MS.reflections, async () => {
       const queued = await enqueueIdleReflections(context);

@@ -103,6 +103,7 @@ export const LONG_JOB_KINDS = [
   "agent_work.check_in",
   "agent.follow_up",
   "context.consolidate",
+  "memory.shared.reconcile",
   "context.reflect",
   "search.reindex",
   "storage.migrate",

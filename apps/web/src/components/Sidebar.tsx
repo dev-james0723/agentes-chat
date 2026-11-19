@@ -567,15 +567,25 @@ export function Sidebar() {
       {loose.rest.map(agentRow)}
     </>
   );
+  const sharedMemoryLink = (
+    <Link
+      to="/org/$orgId/shared-memory"
+      params={{ orgId }}
+      className="sidebar__item"
+      title={rail ? t("sharedMemory.title") : undefined}
+    >
+      <Icon name="bulb" />
+      <span className="sidebar__item-label">{t("sharedMemory.title")}</span>
+    </Link>
+  );
   const blocks: Record<SectionKey, ReactNode> = {
     // A personal workspace's list is its conversations (ADR 0159): a tool comes into sight only while something
     // waits in it, or once the person put it there; Início, Go to… and the other tools are in More at the end.
     tools: personal ? (
-      listed.length > 0 && (
-        <div className="sidebar__group sidebar__tools">
-          <ToolList items={listed} row={toolRow} />
-        </div>
-      )
+      <div className="sidebar__group sidebar__tools">
+        {sharedMemoryLink}
+        <ToolList items={listed} row={toolRow} />
+      </div>
     ) : (
       // The tools each person keeps in sight; the rest open beside the sidebar from More.
       <div className="sidebar__group sidebar__tools">
@@ -583,6 +593,7 @@ export function Sidebar() {
           <Icon name="home" />
           <span className="sidebar__item-label">{t("shell.home")}</span>
         </Link>
+        {sharedMemoryLink}
         <ToolList items={listed} row={toolRow} />
         <MoreTools items={inMore} row={toolRow} countOf={countOf} onCustomize={() => setCustomizing(true)} />
       </div>

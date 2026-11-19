@@ -1,3 +1,4 @@
+import { sharedMemoryEn } from "./shared-memory";
 import type { Widen } from "./widen";
 
 /**
@@ -7,6 +8,7 @@ import type { Widen } from "./widen";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const en = {
+  sharedMemory: sharedMemoryEn,
   app: { name: "agentes" },
   privatePublication: {
     title: "Review sharing a private draft",

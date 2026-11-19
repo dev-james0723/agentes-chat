@@ -183,14 +183,21 @@ function MemoryView({ agent, item }: { agent: Agent; item?: string }) {
         title={t("memory.title", g)}
         meta={t(modeKey(org, "memory.subtitle"), g)}
         actions={
-          pendingProposals.length > 0 && (
+          <>
             <Button asChild>
-              <Link to="/org/$orgId/proposals" params={{ orgId: org.id }} search={{ agent: agent.id }}>
-                <Icon name="waiting" />
-                {t("memory.proposals", { count: pendingProposals.length })}
+              <Link to="/org/$orgId/shared-memory" params={{ orgId: org.id }}>
+                {t("sharedMemory.title")}
               </Link>
             </Button>
-          )
+            {pendingProposals.length > 0 && (
+              <Button asChild>
+                <Link to="/org/$orgId/proposals" params={{ orgId: org.id }} search={{ agent: agent.id }}>
+                  <Icon name="waiting" />
+                  {t("memory.proposals", { count: pendingProposals.length })}
+                </Link>
+              </Button>
+            )}
+          </>
         }
       />
 

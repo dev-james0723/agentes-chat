@@ -13,6 +13,7 @@ import {
   ForbiddenError,
   getAgent,
   listContextItems,
+  listContextItemsPage,
   listMessageReactions,
   memoryJudging,
   readableChannelIds,
@@ -283,13 +284,21 @@ export function knowledgeRoutes(deps: AppDeps) {
             .openapi({ description: `Comma-separated: ${KINDS.join(", ")}` }),
           includeArchived: z.stringbool().optional(),
           limit: z.coerce.number().int().min(1).max(500).optional(),
+          paginate: z
+            .stringbool()
+            .optional()
+            .openapi({ description: "Return a stable ID cursor for complete enumeration." }),
+          cursor: z.uuid().optional(),
           createdBy: z
             .string()
             .optional()
             .openapi({ description: 'Comma-separated: agent, job, person ("What it learned": agent,job).' }),
         }),
       },
-      responses: { 200: json(z.object({ items: z.array(Item) })), ...errors },
+      responses: {
+        200: json(z.object({ items: z.array(Item), nextCursor: z.uuid().nullable().optional() })),
+        ...errors,
+      },
     }),
     async (c) => {
       const q = c.req.valid("query");
@@ -297,7 +306,7 @@ export function knowledgeRoutes(deps: AppDeps) {
         ?.split(",")
         .map((k) => k.trim())
         .filter((k): k is (typeof KINDS)[number] => (KINDS as readonly string[]).includes(k));
-      const rows = await listContextItems(db, c.get("user").id, c.req.valid("param").orgId, {
+      const filter = {
         agentId: q.agentId,
         kinds,
         includeArchived: q.includeArchived,
@@ -306,7 +315,15 @@ export function knowledgeRoutes(deps: AppDeps) {
           ?.split(",")
           .map((k) => k.trim())
           .filter((k): k is "agent" | "job" | "person" => k === "agent" || k === "job" || k === "person"),
-      });
+      };
+      if (q.paginate || q.cursor) {
+        const page = await listContextItemsPage(db, c.get("user").id, c.req.valid("param").orgId, {
+          ...filter,
+          cursor: q.cursor,
+        });
+        return c.json({ items: page.items.map(toItem), nextCursor: page.nextCursor }, 200);
+      }
+      const rows = await listContextItems(db, c.get("user").id, c.req.valid("param").orgId, filter);
       return c.json({ items: rows.map(toItem) }, 200);
     },
   );

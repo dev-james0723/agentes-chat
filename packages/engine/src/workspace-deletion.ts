@@ -698,6 +698,8 @@ export async function purgeWorkspace(deps: PurgeDeps, orgId: string, options: { 
       .from(githubAppInstallations)
       .where(eq(githubAppInstallations.orgId, orgId));
     // ponytail: one cascading delete; batch it by table if a workspace's delete ever outlives the job's renewed lease.
+    const { forgetSharedMemoryCanonicalOrg } = await import("./shared-memory-store");
+    await forgetSharedMemoryCanonicalOrg(tx, orgId);
     await tx.delete(organizations).where(eq(organizations.id, orgId));
     return { computers, installs, requestedBy: row.requestedBy, via };
   });
