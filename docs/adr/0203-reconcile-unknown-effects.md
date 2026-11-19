@@ -24,8 +24,8 @@ authoritative result before any retry, not a blanket retry policy.
 Keep the native run, epoch and approval rows as the journal (no new table, no migration, no workflow engine). Add one
 module, `packages/engine/src/effect-reconcile.ts`, that settles each unknown effect exactly once and then lifts the hold.
 
-1. **Fence a dead turn.** The stale-run sweep (`recoverStaleRuns`) first finds running runs whose beat is older than
-   the stale cutoff, not executed by this process, with an `open` epoch. It closes that epoch as `closed_unknown`,
+1. **Fence a dead turn.** The stale-run sweep (`recoverStaleRuns`) first finds running runs that have not beaten for 30
+   minutes (well past the 2-minute stale cutoff: a turn that missed beats may still close its own epoch), not executed by this process, with an `open` epoch. It closes that epoch as `closed_unknown`,
    revokes its token (the computer can no longer call on it) and sets the marker `interrupted computer turn`: the turn
    may have run the computer's own tools, which the server never saw.
 2. **Read back where a read-back exists.** For every held run (still `queued`, `running` or `waiting_*`), each bridge

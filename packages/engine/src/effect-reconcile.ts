@@ -35,6 +35,8 @@ export interface UnknownEffect {
 const BRIDGE_SENTINEL = "unresolved bridge effect";
 /** The marker's name for a turn cut with its worker: what its computer did on its own is unknown (`fenceBridgeEpochOnStop`). */
 const INTERRUPTED_TURN = "interrupted computer turn";
+/** A running run's open epoch is fenced only after this long without a beat (beats come every 20 s). */
+export const FENCE_AFTER_MS = 30 * 60_000;
 /** Statuses a held run can be in. Any other is over: a stopped or ended run is never revived (ADR 0203 §4). */
 const HELD_STATUSES = ["queued", "running", "waiting_input", "waiting_approval"] as const;
 
@@ -312,6 +314,9 @@ export async function reconcileHeldRuns(
   const { db } = deps;
   const out = { fenced: [] as string[], released: [] as string[] };
   const lastBeat = sql`coalesce(${agentRuns.heartbeatAt}, ${agentRuns.startedAt}, ${agentRuns.updatedAt})`;
+  // Fenced only long after the stale cutoff: a turn that missed its beats may still close its own epoch cleanly, and
+  // until then the run is held anyway.
+  const fenceBefore = new Date(Math.min(at.cutoff.getTime(), at.now.getTime() - FENCE_AFTER_MS)).toISOString();
   const dead = await db
     .select({ id: agentRuns.id })
     .from(agentRuns)
@@ -320,7 +325,7 @@ export async function reconcileHeldRuns(
       and(
         eq(agentRuns.status, "running"),
         eq(runToolTokens.effectEpochState, "open"),
-        sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
+        sql`${lastBeat} < ${fenceBefore}::timestamptz`,
       ),
     )
     .limit(100);
@@ -331,11 +336,7 @@ export async function reconcileHeldRuns(
         .update(agentRuns)
         .set({ updatedAt: at.now })
         .where(
-          and(
-            eq(agentRuns.id, id),
-            eq(agentRuns.status, "running"),
-            sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
-          ),
+          and(eq(agentRuns.id, id), eq(agentRuns.status, "running"), sql`${lastBeat} < ${fenceBefore}::timestamptz`),
         )
         .returning({ id: agentRuns.id });
       if (!run) return false;
