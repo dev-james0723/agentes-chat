@@ -125,6 +125,10 @@ test("an exact one-time owner decision resumes the native run and publishes once
   const after = await getSkill(f.db, w.admin.id, f.org.id, w.skill.id);
   expect(after.body).toBe(`Exact private draft ${marker}`);
   expect(after.version).toBe(w.skill.version + 1);
+  // SF-19 decision 2: a private publication is queued only to be reported, marked private, never copied out.
+  expect((await f.db.select().from(schema.skillSyncs)).map((r) => [r.skillId, r.version, r.via, r.private])).toEqual([
+    [w.skill.id, after.version, "update_skill", true],
+  ]);
   const [used] = await f.db.select().from(schema.approvals).where(eq(schema.approvals.id, approval.id));
   expect(used?.executedAt).not.toBeNull();
   await f.tools!.executeApproved(
