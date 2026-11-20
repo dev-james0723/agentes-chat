@@ -7,6 +7,7 @@ import { ARTIFACT_LIMITS, type ArtifactDeps, createFileArtifact, fileReach } fro
 import { recordAudit } from "../audit";
 import { connectorKeyOf } from "../connector-usage";
 import { cutText } from "../format";
+import { mergeDetailsOf } from "../founder-status";
 import { type GitHubAppAccess, githubCallAuth, githubListingHeaders } from "../git/github-call";
 import { githubItemOfCall, recordGitHubItem } from "../git/github-events";
 import { creditedMessage, runCoAuthors, signatureLine, signedBody } from "../git/signature";
@@ -531,6 +532,8 @@ export function createConnectorToolSource(
                         kind: mapped.onSuccess.kind,
                         subject: fillTitle(mapped.onSuccess.subject, input),
                         summary: `${def.label} ${tool.name}`,
+                        // The merge commit GitHub answered with: what a task's status matches deploys against (ADR 0204).
+                        ...mergeDetailsOf(mapped.onSuccess.kind, result.content),
                       },
                     }
                   : {}),

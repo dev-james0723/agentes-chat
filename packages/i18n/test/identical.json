@@ -945,6 +945,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "de": [
+      "memory.inspect.run",
       "devices.iphone.steps.account",
       "devices.workspace",
       "devices.cpus",
@@ -1381,6 +1382,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "it": [
+      "memory.inspect.run",
       "shell.email.label",
       "calendar.moreRuns",
       "devices.iphone.steps.account",
@@ -1736,6 +1738,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "nl": [
+      "memory.inspect.run",
       "calendar.moreRuns",
       "devices.iphone.steps.account",
       "devices.filter.computers",

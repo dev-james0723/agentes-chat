@@ -378,6 +378,8 @@ test("a provider refused this server's own OAuth app: what's wrong and who fixes
  * hit goes in `KNOWN` instead.
  */
 const PLAIN_LINE = new Set([
+  // Only the operator API answers it (a deploy record for a source this server doesn't run, ADR 0204): no person meets it.
+  "deploy_not_running",
   // Only an agent names a project by a name that isn't one, and the pickers offer only projects that exist.
   "issue_project.unknown",
   "issue_project.not_found",

@@ -260,6 +260,20 @@ function accountView(
   };
 }
 
+/** A newer observation can reconcile waiting work even when its displayed percentages did not change. */
+function usageNewer(prev: PlanUsage | null | undefined, next: PlanUsage | null | undefined): boolean {
+  const at = Date.parse(next?.at ?? "");
+  const before = Date.parse(prev?.at ?? "");
+  return Number.isFinite(at) && (!Number.isFinite(before) || at > before);
+}
+
+/** A delayed/invalid reading cannot replace newer known usage. Equal-time updates keep their existing semantics. */
+function usageOlder(prev: PlanUsage | null | undefined, next: PlanUsage): boolean {
+  const at = Date.parse(next.at);
+  const before = Date.parse(prev?.at ?? "");
+  return Number.isFinite(before) && (!Number.isFinite(at) || at < before);
+}
+
 /** People would see a difference: a window moved a point or more, its reset moved, one came or went, or the limit. */
 export function usageMoved(prev: PlanUsage | null | undefined, next: PlanUsage | null | undefined): boolean {
   if (!prev || !next) return Boolean(prev) !== Boolean(next);
@@ -658,11 +672,21 @@ async function settleAccount(
   const [fresh] = await db
     .update(machineAccounts)
     .set({ email, plan, keyHint, ...state, shared, ...usage, updatedAt: now })
-    .where(and(eq(machineAccounts.orgId, orgId), eq(machineAccounts.id, row.id)))
+    .where(
+      and(
+        eq(machineAccounts.orgId, orgId),
+        eq(machineAccounts.id, row.id),
+        sql`coalesce(${machineAccounts.usage}, 'null'::jsonb) = ${JSON.stringify(row.usage ?? null)}::jsonb`,
+      ),
+    )
     .returning();
+  // Re-read after an overlapping report; only an accepted observation may reconcile waiting work.
+  if (!fresh) return settleAccount(db, orgId, machine, info, dedupe, now);
   const released = await unshare(db, orgId, row, shared, now);
   const moved = usageMoved(row.usage, usage.usage);
-  if (moved && usage.usage) await wakeOnRoom(db, orgId, machine.id, kindOf(row), row.id, usage.usage, now.getTime());
+  if (usage.usage && (moved || usageNewer(row.usage, usage.usage))) {
+    await wakeOnRoom(db, orgId, machine.id, kindOf(row), row.id, usage.usage, now.getTime(), row.provider);
+  }
   return { row: fresh ?? row, released, changed: !same || moved };
 }
 
@@ -672,6 +696,7 @@ async function settleAccount(
  * full is a model's (`refusalScope`), not the account's.
  */
 function accountReading(provider: string | null, prev: PlanUsage | null | undefined, next: PlanUsage): PlanUsage {
+  if (prev && usageOlder(prev, next)) return prev;
   const { limited, models: _, answered: __, ...rest } = next;
   const models = liveModelLimits(prev);
   const perModel = planOf(provider)?.limitsPerModel === true;
@@ -899,21 +924,39 @@ export async function syncMachineAccounts(
 export async function storeOwnUsage(deps: MachineAccountDeps, orgId: string, machineId: string, own: OwnPlanUsage) {
   if (!ACCOUNT_KINDS.some((k) => own[k])) return;
   const where = and(eq(machines.orgId, orgId), eq(machines.id, machineId));
-  const [row] = await deps.db.select({ executors: machines.executors }).from(machines).where(where);
-  if (!row) return;
-  const prev = row.executors?.ownUsage ?? {};
-  const next = { ...prev, ...own };
-  // Only this key: what `hello` wrote meanwhile (the CLIs, the browser) stays.
-  await deps.db
-    .update(machines)
-    .set({ executors: sql`${machines.executors} || ${JSON.stringify({ ownUsage: next })}::jsonb` })
-    .where(where);
-  const moved = ACCOUNT_KINDS.filter((k) => usageMoved(prev[k], next[k]));
-  for (const k of moved) {
-    const usage = own[k];
-    if (usage) await wakeOnRoom(deps.db, orgId, machineId, k, undefined, usage).catch(() => []);
+  for (;;) {
+    const [row] = await deps.db.select({ executors: machines.executors }).from(machines).where(where);
+    if (!row) return;
+    const previous = row.executors?.ownUsage ?? null;
+    const prev = previous ?? {};
+    const next = { ...prev };
+    for (const kind of ACCOUNT_KINDS) {
+      const usage = own[kind];
+      if (usage && !usageOlder(prev[kind], usage)) next[kind] = usage;
+    }
+    // Accept only the snapshot compared above. A concurrent report (including another brain's)
+    // retries against its new numbers; unrelated executor metadata is merged at the write itself.
+    const [saved] = await deps.db
+      .update(machines)
+      .set({ executors: sql`${machines.executors} || ${JSON.stringify({ ownUsage: next })}::jsonb` })
+      .where(
+        and(
+          where,
+          sql`coalesce(${machines.executors}->'ownUsage', 'null'::jsonb) = ${JSON.stringify(previous)}::jsonb`,
+        ),
+      )
+      .returning({ id: machines.id });
+    if (!saved) continue;
+    const moved = ACCOUNT_KINDS.filter((k) => usageMoved(prev[k], next[k]));
+    for (const k of ACCOUNT_KINDS) {
+      const usage = next[k];
+      if (usage && (moved.includes(k) || usageNewer(prev[k], usage))) {
+        await wakeOnRoom(deps.db, orgId, machineId, k, undefined, usage).catch(() => []);
+      }
+    }
+    if (moved.length) await publishAccountsChanged(deps.pubsub, orgId, machineId);
+    return;
   }
-  if (moved.length) await publishAccountsChanged(deps.pubsub, orgId, machineId);
 }
 
 /**

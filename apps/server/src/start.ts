@@ -77,6 +77,7 @@ import {
   parseInternalDatabaseTargets,
   publicHttpsFetch,
   queueEmbeddingBackfill,
+  reapplyMemoryTombstones,
   relayCredentials,
   resolveHostDns,
   retireHostTokens,
@@ -99,6 +100,7 @@ import { buildEngine } from "./engine";
 import { startFreezeWatch } from "./freeze-watch";
 import { checkHumanCheckAtBoot } from "./http/human-check";
 import { createLogger, type Logger } from "./logger";
+import { readMemoryDeletions } from "./memory-deletion-ledger";
 import { OPERATOR_API_PREFIX, serveOperatorApi } from "./operator/app";
 import { createMachineSockets } from "./realtime/machines";
 import { createStreamSockets } from "./realtime/streams";
@@ -219,7 +221,7 @@ async function boot(
   }
 
   const database = createDatabase({ url: config.DATABASE_URL, poolMax: config.DATABASE_POOL_MAX });
-  await prepareDatabase(database, log, config.RUN_MIGRATIONS_ON_BOOT);
+  await prepareDatabase(database, log, config.RUN_MIGRATIONS_ON_BOOT, config.FILES_DIR);
   // Best effort: a replica that boots before the migrations ran (RUN_MIGRATIONS_ON_BOOT=false) still starts.
   await retireHostTokens(database.db, config.HOST_COMPUTER_TOKEN).then(
     (retired) =>
@@ -622,6 +624,7 @@ async function boot(
         emails: adapters.email.delivers,
         humanCheck: adapters.humanCheck,
         sessions: engine.sessions,
+        sourceIdentity,
       });
   if (operator) {
     log.info("operator API listening", { url: `http://${config.HOST}:${operator.port}${OPERATOR_API_PREFIX}` });
@@ -701,7 +704,13 @@ async function boot(
  * migrations (unless `migrate` is false), then the upcoming `messages`
  * partitions. Exits 1 when the database's migrations don't match this build.
  */
-export async function prepareDatabase(database: DatabaseHandle, log: Logger, migrate = true) {
+export async function prepareDatabase(
+  database: DatabaseHandle,
+  log: Logger,
+  migrate = true,
+  /** The server's files folder (`FILES_DIR`), where memory tombstones are also kept. */
+  filesDir?: string,
+) {
   if (migrate) {
     log.info("applying database migrations");
     try {
@@ -720,6 +729,15 @@ export async function prepareDatabase(database: DatabaseHandle, log: Logger, mig
     }
   }
   await ensureMessagePartitions(database.db);
+  // A backup restored from before a memory's deletion holds it again: remove it before anything is served (A19). The
+  // tombstones kept in the files folder cover a whole-database restore. Best effort, like the host-token sweep: a
+  // replica that boots before the migrations ran, or one bad row, never stops the server.
+  try {
+    const { removed } = await reapplyMemoryTombstones(database.db, await readMemoryDeletions(filesDir));
+    if (removed) log.info("removed deleted memories a restore brought back", { removed });
+  } catch (error) {
+    log.warn("deleted memories not re-checked after boot", { error });
+  }
 }
 
 /** MillionSend (or another Resend-compatible API) when keyed, else SMTP when `SMTP_URL` is set, else only the log. */

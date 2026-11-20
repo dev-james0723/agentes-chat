@@ -14365,6 +14365,84 @@
   "memory.editHelp": {
     "value": "The previous version stays in the history. {{source}}"
   },
+  "memory.inspect.scope": {
+    "value": "Applies to {{scope}}"
+  },
+  "memory.inspect.scopes.agent": {
+    "value": "this agent"
+  },
+  "memory.inspect.scopes.channel": {
+    "value": "one channel"
+  },
+  "memory.inspect.scopes.thread": {
+    "value": "one thread"
+  },
+  "memory.inspect.scopes.org": {
+    "value": "the whole workspace"
+  },
+  "memory.inspect.scopes.person": {
+    "value": "one person"
+  },
+  "memory.inspect.scopes.entity": {
+    "value": "one topic"
+  },
+  "memory.inspect.scopes.other": {
+    "value": "a narrower place"
+  },
+  "memory.inspect.trustHigh": {
+    "value": "Trusted source"
+  },
+  "memory.inspect.trustLow": {
+    "value": "Outside source"
+  },
+  "memory.inspect.statusActive": {
+    "value": "In use"
+  },
+  "memory.inspect.statusArchived": {
+    "value": "Archived"
+  },
+  "memory.inspect.validFrom": {
+    "value": "Holds from {{date}}"
+  },
+  "memory.inspect.validTo": {
+    "value": "Holds until {{date}}"
+  },
+  "memory.inspect.source": {
+    "value": "Open the message it came from"
+  },
+  "memory.inspect.toggle": {
+    "value": "History & use"
+  },
+  "memory.inspect.versions": {
+    "value": "Versions"
+  },
+  "memory.inspect.version": {
+    "value": "Version {{version}}"
+  },
+  "memory.inspect.current": {
+    "value": "this one"
+  },
+  "memory.inspect.replaced": {
+    "value": "replaced {{when}}"
+  },
+  "memory.inspect.runs": {
+    "value": "Recently used by"
+  },
+  "memory.inspect.run": {
+    "value": "{{agent}} in #{{channel}} · {{when}}"
+  },
+  "memory.inspect.noRuns": {
+    "value": "No agent has used it yet."
+  },
+  "memory.inspect.revert": {
+    "value": "Revert"
+  },
+  "memory.inspect.revertTitle": {
+    "value": "Go back to the previous version?"
+  },
+  "memory.inspect.revertText": {
+    "value": "This version is archived and the one before it comes back. Both stay in the history."
+  },
   "memory.origin.person": {
     "value": "Written by {{name}}"
   },
@@ -18135,6 +18213,24 @@
   },
   "issues.createdByShort": {
     "value": "Created by {{name}}"
+  },
+  "issues.founder.title": {
+    "value": "Delivery status"
+  },
+  "issues.founder.available": {
+    "value": "In the running app"
+  },
+  "issues.founder.notAvailable": {
+    "value": "Not in the running app"
+  },
+  "issues.founder.verified": {
+    "value": "Verified"
+  },
+  "issues.founder.notVerified": {
+    "value": "Not verified"
+  },
+  "issues.founder.needsYou": {
+    "value": "Needs you"
   },
   "issues.fromMessage": {
     "value": "from <0>a message in #{{channel}}</0>"

@@ -2231,6 +2231,41 @@ export interface Memory {
   updatedAt: string;
   /** `about: "me"` only: the viewer's message it came from ("Você disse hoje, nesta conversa"). */
   from?: { messageId: string; channelId: string; threadId: string | null; dm: boolean; at: string } | null;
+  /** Where it applies (`agent`, `channel`, `thread`, `org`, `person`, `entity`); older servers leave it out. */
+  scope?: { type: string; id: string | null };
+  trust?: "high" | "low";
+  status?: "active" | "archived";
+  /** When the claim holds in the world (ISO, half-open); null: unknown. */
+  validFrom?: string | null;
+  validTo?: string | null;
+  /** The revision of the source it was read from (a message edit, a file hash). */
+  sourceRevision?: string | null;
+  /** The newest message it was saved from that the viewer reads. */
+  sourceMessage?: { messageId: string; channelId: string; threadId: string | null; at: string } | null;
+}
+
+/** A memory's versions (oldest first) and the newest runs that received it, as far as the viewer reads them. */
+export interface MemoryHistory {
+  versions: {
+    id: string;
+    version: number;
+    text: string;
+    /** The version asked about. */
+    current: boolean;
+    status: "active" | "archived";
+    createdAt: string;
+    supersededAt: string | null;
+    validFrom: string | null;
+    validTo: string | null;
+  }[];
+  runs: {
+    runId: string;
+    agentId: string;
+    agentName: string | null;
+    channelId: string;
+    channelName: string | null;
+    createdAt: string;
+  }[];
 }
 
 export type ProposalStatus = "pending" | "accepted" | "refused";
@@ -3671,6 +3706,59 @@ export interface IssueConversation extends IssueConversationRef {
   /** The first ones to write, oldest first (at most 5). */
   participants: Actor[];
   working: boolean;
+}
+
+/**
+ * A task's status from stored evidence only (ADR 0204), in Hong Kong Traditional Chinese: what changed, whether this
+ * server runs it, what is verified, blockers, the next step and its owner, and whether the reader must decide.
+ */
+export interface FounderStatus {
+  issueId: string;
+  number: number;
+  observedAt: string;
+  changed: { title: string; pullRequests: { number: number; url: string }[]; why: string | null; text: string };
+  delivery: {
+    state:
+      | "not_merged"
+      | "reverted"
+      | "merge_commit_unknown"
+      | "merged_not_deployed"
+      | "rolled_back"
+      | "deployed_not_running"
+      | "runtime_unknown"
+      | "available";
+    available: boolean;
+    merge: { subject: string; commit: string | null; at: string } | null;
+    deploy: { commit: string; digest: string; at: string } | null;
+    running: { digest: string; files: number } | null;
+    text: string;
+  };
+  verification: {
+    state: "verified" | "done_unverified" | "unverified" | "no_criteria";
+    verified: boolean;
+    criteria: { total: number; checkedByPerson: number };
+    checks: { kind: string; positive: boolean; at: string }[];
+    text: string;
+  };
+  blockers: { reason: string; since: string; text: string }[];
+  next: {
+    action: string;
+    owner: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    text: string;
+  };
+  needsMe: {
+    needed: boolean;
+    decisions: {
+      approvalId: string;
+      title: string;
+      channelId: string;
+      threadId: string | null;
+      messageId: string | null;
+      expiresAt: string;
+    }[];
+    text: string;
+  };
+  summary: string;
 }
 
 export interface IssueActivity {

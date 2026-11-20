@@ -107,6 +107,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GitHubAppInfo,
@@ -151,6 +152,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -1188,6 +1190,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       revert: async (orgId, id) => {
         await request<unknown>(`${org(orgId)}/memories/${enc(id)}/revert`, { json: {} });
       },
+      history: (orgId, id) => request<MemoryHistory>(`${org(orgId)}/memories/${enc(id)}/history`),
     },
     dms: {
       list: async (orgId) => (await request<{ dms: DirectMessage[] }>(`${org(orgId)}/dms`)).dms,
@@ -1522,6 +1525,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         }),
       activity: async (orgId, id) =>
         (await request<{ activity: IssueActivity[] }>(`${org(orgId)}/issues/${enc(id)}/activity`)).activity,
+      founderStatus: (orgId, id) => request<FounderStatus>(`${org(orgId)}/issues/${enc(id)}/founder-status`),
       comment: (orgId, id, text, attachmentIds) =>
         request<IssueActivity>(`${org(orgId)}/issues/${enc(id)}/comments`, {
           json: { text, ...(attachmentIds?.length ? { attachmentIds } : {}) },

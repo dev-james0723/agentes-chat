@@ -1,4 +1,4 @@
-import { and, type Database, eq, inArray, schema, sql } from "@agenteschat/db";
+import { and, type Database, desc, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import {
   announceMessageMemories,
   askProposal,
@@ -94,6 +94,25 @@ const Memory = z
     channelId: z.uuid().nullable().optional().openapi({ description: "Where it was learned." }),
     updatedAt: z.string(),
     version: z.number().int().min(1).openapi({ description: "Native revision; send as expectedVersion on edits." }),
+    scope: z.object({ type: z.string(), id: z.string().nullable() }).openapi({
+      description: "Where it applies: `agent`, `channel`, `thread`, `org`, `person` or `entity`, and which.",
+    }),
+    trust: z.enum(["high", "low"]),
+    status: z.enum(["active", "archived"]),
+    validFrom: z
+      .string()
+      .nullable()
+      .openapi({ description: "When the claim starts to hold in the world; null: unknown." }),
+    validTo: z.string().nullable().openapi({ description: "When it stops holding (exclusive); null: no end known." }),
+    sourceRevision: z
+      .string()
+      .nullable()
+      .openapi({ description: "The revision of the source it was read from (a message edit, a file hash)." }),
+    sourceMessage: z
+      .object({ messageId: z.uuid(), channelId: z.uuid(), threadId: z.string().nullable(), at: z.string() })
+      .nullable()
+      .optional()
+      .openapi({ description: "The newest message it was saved from that the viewer reads; null: none they read." }),
     from: z
       .object({
         messageId: z.uuid(),
@@ -265,6 +284,7 @@ async function memoryViews(db: Database, items: ContextItem[], visible: readonly
       .filter((r) => previousVisible.has(r.id) && itemVisibleIn(r, visible))
       .map((r) => [r.supersededBy, itemWords(r).text]),
   );
+  const sources = await readableSources(db, orgId, visible, items);
   const people = items.flatMap((i) => (i.createdByKind === "person" && i.createdById ? [i.createdById] : []));
   const names = new Map(
     (people.length
@@ -320,8 +340,171 @@ async function memoryViews(db: Database, items: ContextItem[], visible: readonly
       channelId: i.channelIds[0] ?? null,
       updatedAt: i.updatedAt.toISOString(),
       version: i.version,
+      scope: { type: i.scopeType, id: i.scopeId },
+      trust: i.trust,
+      status: i.status,
+      validFrom: i.validFrom ? i.validFrom.toISOString() : null,
+      validTo: i.validTo ? i.validTo.toISOString() : null,
+      sourceRevision: i.sourceRevision,
+      sourceMessage: sources.get(i.id) ?? null,
     };
   });
+}
+
+/** Each item's newest source message the viewer reads (a live message in one of their `visible` channels). */
+async function readableSources(db: Database, orgId: string, visible: readonly string[], items: ContextItem[]) {
+  const out = new Map<string, { messageId: string; channelId: string; threadId: string | null; at: string }>();
+  const ids = [...new Set(items.flatMap((i) => i.sourceIds))];
+  if (ids.length === 0 || visible.length === 0) return out;
+  const rows = await db
+    .select({
+      id: schema.messages.id,
+      channelId: schema.messages.channelId,
+      threadId: schema.messages.threadId,
+      createdAt: schema.messages.createdAt,
+    })
+    .from(schema.messages)
+    .where(
+      and(
+        eq(schema.messages.orgId, orgId),
+        inArray(schema.messages.id, ids),
+        inArray(schema.messages.channelId, [...visible]),
+        isNull(schema.messages.deletedAt),
+      ),
+    );
+  const byId = new Map(rows.map((m) => [m.id, m]));
+  for (const item of items) {
+    const newest = item.sourceIds
+      .flatMap((id) => (byId.get(id) ? [byId.get(id) as (typeof rows)[number]] : []))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (newest)
+      out.set(item.id, {
+        messageId: newest.id,
+        channelId: newest.channelId,
+        threadId: newest.threadId,
+        at: newest.createdAt.toISOString(),
+      });
+  }
+  return out;
+}
+
+const MemoryHistory = z
+  .object({
+    versions: z.array(
+      z.object({
+        id: z.uuid(),
+        version: z.number().int(),
+        text: z.string().openapi({ description: "The version's words, cut to 280 characters." }),
+        current: z.boolean().openapi({ description: "The version asked about." }),
+        status: z.enum(["active", "archived"]),
+        createdAt: z.string(),
+        supersededAt: z.string().nullable(),
+        validFrom: z.string().nullable(),
+        validTo: z.string().nullable(),
+      }),
+    ),
+    runs: z.array(
+      z.object({
+        runId: z.uuid(),
+        agentId: z.uuid(),
+        agentName: z.string().nullable(),
+        channelId: z.uuid(),
+        channelName: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
+  })
+  .openapi("MemoryHistory");
+
+const CHAIN_LIMIT = 50;
+const short = (text: string) => (text.length > 280 ? `${text.slice(0, 279)}…` : text);
+
+/**
+ * A memory's versions (oldest first: what it replaced, it, what replaced it) and the newest runs that received it,
+ * only as far as the viewer reads them. Who may change it (`PATCH …/memories/{id}`) sees this; others: 403, or 404
+ * when they can't read it at all.
+ */
+async function memoryHistory(db: Database, actorId: string, orgId: string, memoryId: string) {
+  const { contextItems, contextUsage, agentRuns, agents, channels } = schema;
+  const [item] = await db
+    .select()
+    .from(contextItems)
+    .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, memoryId)));
+  if (!item) throw new NotFoundError("Item not found");
+  const visible = await userVisibleChannels(db, orgId, actorId);
+  const readable = await memorySourceVisibilityForUser(db, orgId, actorId, visible, [item]);
+  if (!readable.has(item.id) || !itemVisibleIn(item, visible)) throw new NotFoundError("Item not found");
+  if (!(await mayEditItem(db, actorId, item)))
+    throw new ForbiddenError("Only the agent's owner or an admin can change this");
+
+  const chain: ContextItem[] = [item];
+  const seen = new Set([item.id]);
+  let back = [item.id];
+  while (back.length && chain.length < CHAIN_LIMIT) {
+    const rows = await db
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), inArray(contextItems.supersededBy, back)));
+    const fresh = rows.filter((r) => !seen.has(r.id));
+    for (const r of fresh) seen.add(r.id);
+    chain.push(...fresh);
+    back = fresh.map((r) => r.id);
+  }
+  let next = item.supersededBy;
+  while (next && !seen.has(next) && chain.length < CHAIN_LIMIT) {
+    const [row] = await db
+      .select()
+      .from(contextItems)
+      .where(and(eq(contextItems.orgId, orgId), eq(contextItems.id, next)));
+    if (!row) break;
+    seen.add(row.id);
+    chain.push(row);
+    next = row.supersededBy;
+  }
+  const shown = await memorySourceVisibilityForUser(db, orgId, actorId, visible, chain);
+  const versions = chain
+    .filter((r) => shown.has(r.id) && itemVisibleIn(r, visible))
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((r) => ({
+      id: r.id,
+      version: r.version,
+      text: short(itemWords(r).text),
+      current: r.id === item.id,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+      supersededAt: r.supersededAt ? r.supersededAt.toISOString() : null,
+      validFrom: r.validFrom ? r.validFrom.toISOString() : null,
+      validTo: r.validTo ? r.validTo.toISOString() : null,
+    }));
+
+  const runs = visible.length
+    ? await db
+        .select({
+          runId: contextUsage.runId,
+          agentId: agentRuns.agentId,
+          agentName: agents.name,
+          channelId: agentRuns.channelId,
+          channelName: channels.name,
+          createdAt: contextUsage.createdAt,
+        })
+        .from(contextUsage)
+        .innerJoin(agentRuns, and(eq(agentRuns.id, contextUsage.runId), eq(agentRuns.orgId, orgId)))
+        .leftJoin(agents, and(eq(agents.id, agentRuns.agentId), eq(agents.orgId, orgId)))
+        .leftJoin(channels, eq(channels.id, agentRuns.channelId))
+        .where(
+          and(
+            eq(contextUsage.orgId, orgId),
+            eq(contextUsage.itemId, item.id),
+            inArray(agentRuns.channelId, [...visible]),
+          ),
+        )
+        .orderBy(desc(contextUsage.createdAt))
+        .limit(10)
+    : [];
+  return {
+    versions,
+    runs: runs.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+  };
 }
 
 /** What "O que sabe sobre você" lists (summaries and open questions are the agent's own bookkeeping). */
@@ -690,6 +873,23 @@ export function memoryRoutes(deps: AppDeps) {
         c.get("user").id,
       );
       return c.json(view, 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/memories/{memoryId}/history",
+      tags,
+      security,
+      summary:
+        "A memory's versions and the newest 10 runs that received it, as far as the viewer reads them (who may change it)",
+      request: { params: OrgParams.extend({ memoryId: z.uuid() }) },
+      responses: { 200: json(MemoryHistory), ...errors },
+    }),
+    async (c) => {
+      const { orgId, memoryId } = c.req.valid("param");
+      return c.json(await memoryHistory(db, c.get("user").id, orgId, memoryId), 200);
     },
   );
 
