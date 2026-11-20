@@ -66,3 +66,12 @@ regexes = ['''^abcdef0123456789$''']
 description = "Keyboard shortcut lists"
 targetRules = ["generic-api-key"]
 regexes = ['''^Alt\+Shift\+Arrow(Up|Down)( Alt\+Shift\+Arrow(Up|Down))*$''']
+
+# Colab importer tests used this exact synthetic secret before the fixture was shortened.
+# Keep immutable history scannable; do not exempt other values or other JavaScript tests.
+[[allowlists]]
+description = "Historical synthetic Colab OAuth importer fixture"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^scripts/colab/import-google-oauth\.test\.mjs$''']
+regexes = ['''^GOCSPX\-fixture_secret_12345678$''']

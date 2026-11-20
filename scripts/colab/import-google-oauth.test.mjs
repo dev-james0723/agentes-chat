@@ -11,7 +11,7 @@ const publicUrl = "https://chat.example.com";
 const callback = `${publicUrl}/api/app/connectors/oauth/callback`;
 const web = {
   client_id: "123-fixture.apps.googleusercontent.com",
-  client_secret: "GOCSPX-fixture_secret_12345678",
+  client_secret: "test-only",
   redirect_uris: [callback],
 };
 

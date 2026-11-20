@@ -32,23 +32,21 @@ async function fixture() {
     .set({ executors: { taskModels: true } })
     .where(eq(schema.machines.id, machineId));
   const accountId = crypto.randomUUID();
-  await f.db
-    .insert(schema.machineAccounts)
-    .values({
-      id: accountId,
-      orgId: f.org.id,
-      machineId,
-      kind: "codex",
-      label: "Owner Codex",
-      createdBy: f.owner.id,
-      status: "active",
-      authMethod: "cli_login",
-      usage: {
-        source: "probe",
-        at: new Date().toISOString(),
-        windows: [{ kind: "seven_day", usedPercent: 20, resetsAt: new Date(Date.now() + 3600000).toISOString() }],
-      },
-    });
+  await f.db.insert(schema.machineAccounts).values({
+    id: accountId,
+    orgId: f.org.id,
+    machineId,
+    kind: "codex",
+    label: "Owner Codex",
+    createdBy: f.owner.id,
+    status: "active",
+    authMethod: "cli_login",
+    usage: {
+      source: "probe",
+      at: new Date().toISOString(),
+      windows: [{ kind: "seven_day", usedPercent: 20, resetsAt: new Date(Date.now() + 3600000).toISOString() }],
+    },
+  });
   const root = await insertMessage(f.db, {
     orgId: f.org.id,
     channelId: f.general.id,
