@@ -15692,6 +15692,16 @@ export const en = {
     actions: { raise: "Raise to {{amount}} this month", refuse: "Decline", see: "See their usage" },
   },
   usageViews: {
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
+    costPerSuccess: {
+      title: "Cost per verified success",
+      intro:
+        "Last 30 days. A success is a task whose acceptance criteria a person checked and nobody reopened since. Every run counts toward cost.",
+      perSuccess: "{{cost}} per success",
+      unknown: "Cost unknown",
+      noSuccess: "No verified success yet",
+      line: "{{runs}} runs · {{successes}} verified · {{failed}} failed · {{retries}} retries",
+    },
     signedOut: "Signed out",
     whose: "{{name}}'s",
     serves: {
