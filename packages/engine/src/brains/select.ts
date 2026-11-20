@@ -28,7 +28,7 @@ import type { Agent } from "../agents";
 import type { MachineStatus } from "../machine-hub";
 import { pausedMessage } from "../machines";
 import { missionTurnFor } from "../missions-engine";
-import { isRightHand, rightHandPerson, rightHandPlanRefusal, thinkingAgent } from "../right-hand";
+import { isRightHand, personalOwnSignIn, rightHandPerson, rightHandPlanRefusal, thinkingAgent } from "../right-hand";
 import { runnerUpdateWay } from "../runner-update";
 import type { AgentRun } from "../runs";
 import { accountUnavailable, brainSessionId, claudeCodeAvailability, toolOff } from "./claude-code";
@@ -987,6 +987,8 @@ export async function resolveBrain(
     quotaReserveMaxAgeMs?: number;
     /** Internal candidate admission only, bound to the unchanged source mission; it never persists a route. */
     qualifiedQuotaHandoff?: { missionId: string; sourceSessionId: string; ownerId: string | null };
+    /** Internal subscription candidate/resume admission, bound to the actual person and stored run session. */
+    qualifiedPersonalQuotaHandoff?: { personId: string; machineId: string; sourceSessionId: string };
   } = {},
 ): Promise<BrainPlan> {
   let mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
@@ -1008,7 +1010,102 @@ export async function resolveBrain(
     };
   }
   // The right hand: the AI of the person whose DM this is, else the workspace's; on a plan, its computer and owner.
-  const thinker = await thinkingAgent(deps.db, given, await rightHandPerson(deps.db, given, run));
+  const person = await rightHandPerson(deps.db, given, run);
+  let thinker = await thinkingAgent(deps.db, given, person);
+  const personal = options.qualifiedPersonalQuotaHandoff;
+  if (
+    personal &&
+    person &&
+    personal.sourceSessionId &&
+    isRightHand(given) &&
+    person === personal.personId &&
+    thinker.ownerUserId === person &&
+    thinker.machineId === personal.machineId &&
+    run.orgId === given.orgId &&
+    run.agentId === given.id &&
+    run.brainSessionId === personal.sourceSessionId &&
+    ["claude_code", "codex", "grok"].includes(given.brain)
+  ) {
+    const [bound] = await deps.db
+      .select({ sessionId: schema.agentRuns.brainSessionId })
+      .from(schema.agentRuns)
+      .where(
+        and(
+          eq(schema.agentRuns.orgId, run.orgId),
+          eq(schema.agentRuns.id, run.id),
+          eq(schema.agentRuns.agentId, given.id),
+        ),
+      );
+    if (bound?.sessionId === personal.sourceSessionId) {
+      const target: Agent = {
+        ...thinker,
+        brain: given.brain,
+        brainModel: given.brainModel,
+        brainAccountId: given.brainAccountId,
+        brainAccountLentBy: null,
+        machineId: personal.machineId,
+        brainFallback: false,
+        brainExtraUsage: false,
+        planForOthers: false,
+      };
+      let subscription = false;
+      if (target.brainAccountId) {
+        const { machineAccounts: accounts, agents } = schema;
+        const [account] = await deps.db
+          .select({
+            owner: accounts.createdBy,
+            kind: accounts.kind,
+            status: accounts.status,
+            auth: accounts.authMethod,
+            provider: accounts.provider,
+            key: accounts.keyHint,
+          })
+          .from(accounts)
+          .where(
+            and(
+              eq(accounts.orgId, given.orgId),
+              eq(accounts.id, target.brainAccountId),
+              eq(accounts.machineId, personal.machineId),
+              sql`(${accounts.shared} or not exists
+              (select 1 from ${agents} held where held.org_id = ${given.orgId}::uuid
+                and held.brain_account_id = ${target.brainAccountId}::uuid
+                and held.id <> ${given.id}::uuid and held.archived_at is null))`,
+            ),
+          );
+        subscription =
+          !!account &&
+          account.owner === person &&
+          account.kind === target.brain &&
+          account.status === "active" &&
+          account.auth === "cli_login" &&
+          account.provider === null &&
+          account.key === null;
+      } else {
+        const [machine] = await deps.db
+          .select({
+            owner: schema.machines.pairedByUserId,
+            executors: schema.machines.executors,
+            deletedAt: schema.machines.deletedAt,
+          })
+          .from(schema.machines)
+          .where(and(eq(schema.machines.orgId, given.orgId), eq(schema.machines.id, personal.machineId)));
+        subscription =
+          !!machine &&
+          !machine.deletedAt &&
+          machine.owner === person &&
+          personalOwnSignIn(target.brain, machine.executors);
+      }
+      const account = subscription
+        ? await brainAccountFor(deps.db, target, kindOf(target.brain), personal.machineId)
+        : undefined;
+      if (
+        subscription &&
+        (!target.brainAccountId || (account?.status === "active" && !account.provider)) &&
+        (await planIsOwners(deps.db, target, personal.machineId, account))
+      )
+        thinker = target;
+    }
+  }
   // A committed mission handoff keeps its account even when the agent's default brain is another provider.
   const agent =
     mission?.accountId !== undefined

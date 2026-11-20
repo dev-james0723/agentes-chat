@@ -53,12 +53,12 @@
 
 **Files:** Runtime image recipe and private activation/verification receipts outside the public source; the spec/plan verification state.
 
-- [ ] Build the candidate from the actual live image, include the scoped changes and retain existing web/Foundry behavior.
-- [ ] Verify source identity and smoke in an isolated container without production data or external model calls.
-- [ ] Recheck deployment ownership and current runs; deploy the tested image while retaining rollback image.
-- [ ] Create exactly one visible Model Inspector agent, enable the requested organization and verify automatic worker operation.
-- [ ] Refresh real usage; verify available-model and Grok execution separately; record exact completed versus unavailable claims.
-- [ ] Record final independent review, relevant test evidence, live agent/worker state and remaining limitations.
+- [x] Build the candidate from the actual live image, include the scoped changes and retain existing web/Foundry behavior.
+- [x] Verify source identity and smoke in an isolated container without production data or external model calls.
+- [x] Recheck deployment ownership and current runs; deploy the tested image while retaining rollback image.
+- [x] Create exactly one visible Model Inspector agent, enable the requested organization and verify automatic worker operation.
+- [x] Refresh real usage; verify available-model and Grok execution separately; record exact completed versus unavailable claims.
+- [x] Record final independent review, relevant test evidence, live agent/worker state and remaining limitations.
 
 ## Verified implementation gates
 
@@ -79,6 +79,17 @@
 - [x] Add the nullable personal account and explicit personal machine schema, preserving named rows; verify migration ordering, FK behavior and supported record shapes. Commit the coherent schema change.
 - [x] Extend the existing personal API and effective resolver for validated own subscriptions while retaining reset semantics, account ownership and billing settings. Test ownership, reset and effective route resolution. Commit the API change.
 - [x] Inspect the owner's effective personal binding, choose through JEV, and apply only personal settings after locked CAS and idle checks. Test another member's isolation, concurrent edits and ordinary-agent regressions. Commit the Inspector change.
-- [ ] Run affected suites, DB/engine/server type checks and boundaries on the exact combined release, including existing Colab changes.
-- [ ] Build the compatibility rollback image and final image; verify their source identities. Back up affected production state, recheck deployment ownership/idle state and activate through normal migration-on-boot.
-- [ ] Verify the owner right-hand route with the ordinary worker and an actual bounded run as needed; recheck whole-team reporting, routine/authority invariants, migration identity and runtime health. Record completed versus unavailable provider claims.
+- [x] Run affected suites, DB/engine/server type checks and boundaries on the exact combined release, including existing Colab changes.
+- [x] Build the compatibility rollback image and final image; verify their source identities. Back up affected production state, recheck deployment ownership/idle state and activate through normal migration-on-boot.
+- [x] Verify the owner right-hand route with the ordinary worker and an actual bounded run as needed; recheck whole-team reporting, routine/authority invariants, migration identity and runtime health. Record completed versus unavailable provider claims.
+
+
+### Task 5: Complete active personal continuity from live failure evidence
+
+**Files:** `packages/engine/src/executor.ts`, `packages/engine/src/brains/select.ts`, and a focused personal continuation regression file. Preserve all other source and native behavior.
+
+- [x] Reproduce the real right-hand `no_ai` path with the actual resolver, covering known-limit startup and a no-effect provider refusal.
+- [x] Attempt qualified personal continuation before terminal no-AI handling; bind resolver override and durable admission to the real person, owner, machine and source session. Preserve locked tools and reject changed personal authority or unresolved effects.
+- [ ] Verify the focused regression plus directly affected continuation tests, engine/server type checks, formatting and boundaries on the exact combined release.
+- [ ] Build from the current verified personal-route image, activate only the app at idle, and verify exact source identity and runtime health. No further database or native-runner change is required.
+- [ ] Preserve evidence for the earlier failed no-work verification message, recover it through the existing native answer-now path, and verify personal continuity with bounded live evidence without altering quota telemetry. Record the API's actual message/run-ID behavior.

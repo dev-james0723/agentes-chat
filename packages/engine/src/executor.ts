@@ -316,10 +316,12 @@ import {
 import { routineCreatorOf, wikiPersonOf } from "./requester";
 import {
   isRightHand,
+  personalBrain,
   RIGHT_HAND_AUTO,
   rightHandNoAiReason,
   rightHandPerson,
   scrubRightHandReply,
+  thinkingAgent,
   withPersonalBrain,
 } from "./right-hand";
 import { routineBriefOf } from "./routine-brief";
@@ -997,6 +999,9 @@ export interface Transcript {
     /** Inspector choices are fresh even for agents with a fixed model; legacy handoffs omit this. */
     selection?: Pick<ModelInspectorRoute, "tier" | "effort" | "reason" | "source">;
     missionId?: string;
+    /** A personal route belongs only to this person and their unchanged explicit binding. */
+    personalUserId?: string;
+    personalBinding?: string;
     /** Completed source turns: a resumed target can distinguish its own history from the source's. */
     afterTurns?: number;
   };
@@ -2111,11 +2116,11 @@ async function executeRunInner(
   /** What the run's policy refused of the tools the agent's scopes grant: who is behind it held them back. */
   const heldBack: string[] = [];
   const stored = await getAgentCached(db, run.orgId, run.agentId);
+  const personalUserId = stored ? await rightHandPerson(db, stored, run) : null;
+  const personalBinding = personalUserId ? await personalBrain(db, run.orgId, personalUserId) : null;
+  const personalFingerprint = personalBinding ? sha256(JSON.stringify(personalBinding)) : null;
   // The right hand thinks with the AI of the person whose DM this is, when they chose their own (ADR 0137 §11).
-  const agent =
-    stored && isRightHand(stored)
-      ? (await withPersonalBrain(db, stored, await rightHandPerson(db, stored, run))).agent
-      : stored;
+  const agent = stored && isRightHand(stored) ? (await withPersonalBrain(db, stored, personalUserId)).agent : stored;
   // Claude Code defers our tools itself (its ToolSearch): a new run lists every tool the agent has, the same in every
   // run, instead of the groups a judge picks, so its cached prefix holds across runs and sessions (ADR 0043).
   if (needsContext && deps.toolsOnDemand && agent && brainOf(agent.brain) === "claude_code") {
@@ -3292,6 +3297,14 @@ async function executeRunInner(
   const quotaContinuation =
     deps.quotaCliContinuation?.enabled?.(run.orgId) === false ? undefined : deps.quotaCliContinuation;
   const inspectorPolicy = () => (deps.modelInspector?.enabled(run.orgId) ? deps.modelInspector : undefined);
+  const personalSource = personalBinding && personalUserId ? await thinkingAgent(db, agent, personalUserId) : null;
+  const personalQuotaAllowed = Boolean(
+    personalSource?.machineId &&
+      personalSource.ownerUserId === personalUserId &&
+      personalSource.brainFallback === false &&
+      personalSource.brainExtraUsage === false,
+  );
+  const mayInspectQuota = () => !isRightHand(agent) || Boolean(inspectorPolicy() && personalQuotaAllowed);
   const inspectorAtStart = inspectorPolicy();
   brainPlan = await resolveBrain(deps, agent, run, replyThreadId ?? run.channelId, {
     // A routine's or any background run's work never continues a conversation's session, nor the other way.
@@ -3362,6 +3375,14 @@ async function executeRunInner(
     run.brainSessionId === transcript.quotaCliHandoff.targetSessionId
       ? await (async () => {
           const h = transcript.quotaCliHandoff as NonNullable<Transcript["quotaCliHandoff"]>;
+          if (
+            isRightHand(agent) &&
+            (!personalQuotaAllowed ||
+              h.personalUserId !== personalUserId ||
+              h.personalBinding !== personalFingerprint ||
+              h.machineId !== personalSource?.machineId)
+          )
+            return null;
           const accountId =
             h.targetAccountId !== undefined
               ? h.targetAccountId
@@ -3380,11 +3401,28 @@ async function executeRunInner(
             } as Agent,
             run,
             replyThreadId ?? run.channelId,
-            { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
+            {
+              quotaReservePercent: deps.quotaReservePercent,
+              quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
+              ...(isRightHand(agent) && personalUserId
+                ? {
+                    qualifiedPersonalQuotaHandoff: {
+                      personId: personalUserId,
+                      machineId: h.machineId,
+                      sourceSessionId: h.targetSessionId,
+                    },
+                  }
+                : {}),
+            },
           ).catch(() => null);
           if (
             !resumed ||
             resumed.kind !== h.targetKind ||
+            (isRightHand(agent) &&
+              (resumed.session?.id !== h.targetSessionId ||
+                resumed.session?.machineId !== h.machineId ||
+                resumed.model !== h.model ||
+                (resumed.account?.id ?? null) !== accountId)) ||
             (h.missionId
               ? resumed.missionId !== h.missionId ||
                 resumed.session?.id !== h.targetSessionId ||
@@ -3869,21 +3907,6 @@ async function executeRunInner(
       if (back === null) return "canceled";
       if (back) return "back";
     }
-    // The team's right hand on a plan (ADR 0137 §7): one line says why, with the way to an API key; it never stands
-    // in on a key nor waits for the computer. Only waiting its turn for room stays a wait.
-    if (isRightHand(agent) && u.code !== "busy" && !u.queued) {
-      const ownModel = u.scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
-      const line = rightHandNoAiReason(u.code, ownModel ? u.scope : undefined);
-      // What the plan's CLI or its computer said is kept in the run and reported, as any agent's CLI failure is, and the
-      // line names what the CLI said. Otherwise a CLI that can't start there fails every turn with nothing saying why.
-      if (line === "cli_failed" || line === "computer_failed") {
-        await addRunStep(db, run, "error", { reason: "brain_unavailable", code: u.code, message: u.message });
-        options.failed?.(new BrainFailure(u.code, u.message, true));
-      }
-      const said = line === "cli_failed" ? cliWords({ code: u.code, message: u.message }) : "";
-      await failNoAi(line, undefined, ownModel?.label, said || undefined);
-      return "failed";
-    }
     // Tools already ran in a turn cut off by its computer: only that computer may finish it (the model
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
@@ -3907,6 +3930,9 @@ async function executeRunInner(
                   eq(schema.auditLog.targetType, "agent"),
                   eq(schema.auditLog.targetId, agent.id),
                   inArray(schema.auditLog.action, ["model_inspector.switch", "model_inspector.handoff"]),
+                  ...(isRightHand(agent) && personalUserId
+                    ? [sql`${schema.auditLog.details}->>'personalUserId' = ${personalUserId}`]
+                    : []),
                 ),
               )
               .orderBy(desc(schema.auditLog.createdAt))
@@ -3950,7 +3976,7 @@ async function executeRunInner(
             mission.threadRootId === run.threadRootId &&
             mission.mainSessionId === session?.id &&
             mission.machineId === machineId)) &&
-        !isRightHand(agent) &&
+        mayInspectQuota() &&
         agent.brainExtraUsage === false &&
         !onlyThisComputer &&
         !t.pending &&
@@ -3998,7 +4024,8 @@ async function executeRunInner(
               account?.status === "active" &&
               account.authMethod === "cli_login" &&
               account.keyHint === null &&
-              account.provider === null
+              account.provider === null &&
+              (!isRightHand(agent) || account.createdBy === personalUserId)
             );
           }
           if (proof.targetKind === "claude_code")
@@ -4039,6 +4066,11 @@ async function executeRunInner(
               quotaReservePercent: inspector?.thresholdPercent ?? deps.quotaReservePercent,
               quotaReserveMaxAgeMs: inspector?.maxAgeMs ?? deps.quotaReserveMaxAgeMs,
               ...(qualifiedMission ? { qualifiedQuotaHandoff: qualifiedMission } : {}),
+              ...(isRightHand(agent) && personalUserId
+                ? {
+                    qualifiedPersonalQuotaHandoff: { personId: personalUserId, machineId, sourceSessionId: session.id },
+                  }
+                : {}),
             },
           ).catch(() => null);
         };
@@ -4255,6 +4287,9 @@ async function executeRunInner(
                 }
               : {}),
             ...(mission ? { missionId: mission.id } : {}),
+            ...(isRightHand(agent) && personalUserId && personalFingerprint
+              ? { personalUserId, personalBinding: personalFingerprint }
+              : {}),
           };
           // This is portable context for a new harness, never a claim that the source native session resumed.
           const nextTranscript: Transcript = {
@@ -4306,9 +4341,40 @@ async function executeRunInner(
                 !current ||
                 current.archivedAt ||
                 current.deletedAt ||
-                keys.some((key) => JSON.stringify(current[key]) !== JSON.stringify(agent[key]))
+                keys.some(
+                  (key) =>
+                    JSON.stringify(current[key]) !==
+                    JSON.stringify((isRightHand(agent) ? (stored ?? agent) : agent)[key]),
+                )
               )
                 throw new PermanentJobError("agent ownership or settings changed before inspector handoff");
+              let owner = current;
+              if (isRightHand(agent)) {
+                const [binding] = personalUserId
+                  ? await tx
+                      .select()
+                      .from(schema.rightHandBrains)
+                      .where(
+                        and(
+                          eq(schema.rightHandBrains.orgId, run.orgId),
+                          eq(schema.rightHandBrains.userId, personalUserId),
+                        ),
+                      )
+                      .for("update")
+                  : [];
+                const effective = await thinkingAgent(tx, current, personalUserId);
+                if (
+                  !binding ||
+                  sha256(JSON.stringify(binding)) !== personalFingerprint ||
+                  (await rightHandPerson(tx, current, run)) !== personalUserId ||
+                  !personalSource ||
+                  effective.ownerUserId !== personalUserId ||
+                  effective.machineId !== machineId ||
+                  keys.some((key) => JSON.stringify(effective[key]) !== JSON.stringify(personalSource[key]))
+                )
+                  throw new PermanentJobError("personal ownership or settings changed before inspector handoff");
+                owner = effective;
+              }
               const latestUsage = await storedPlanUsage(tx, run.orgId, machineId, kind, proof.accountId ?? undefined);
               const latestReserve = quotaReserveOf(
                 latestUsage,
@@ -4318,7 +4384,7 @@ async function executeRunInner(
               if (
                 latestReserve.state === "low" ||
                 !(await subscriptionAuth(tx, proof)) ||
-                !(await planIsOwners(tx, current, machineId, target.account))
+                !(await planIsOwners(tx, owner, machineId, target.account))
               )
                 throw new PermanentJobError(
                   "target quota, subscription credentials or ownership changed before inspector handoff",
@@ -4383,6 +4449,7 @@ async function executeRunInner(
                 details: {
                   runId: run.id,
                   missionId: mission?.id ?? null,
+                  ...(isRightHand(agent) ? { personalUserId } : {}),
                   from: {
                     kind: from,
                     model: plan.model ?? null,
@@ -4429,6 +4496,21 @@ async function executeRunInner(
     }
     // A reserve reading is not provider exhaustion. If no alternate qualified, leave existing admission unchanged.
     if (u.quotaReserve) return "no";
+    // The right hand may continue on its person's qualified subscription above. Every other refusal keeps its
+    // no-AI behavior: it never stands in on an API key. Only waiting its turn for room stays a wait.
+    if (isRightHand(agent) && u.code !== "busy" && !u.queued) {
+      const ownModel = u.scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
+      const line = rightHandNoAiReason(u.code, ownModel ? u.scope : undefined);
+      // What the plan's CLI or its computer said is kept in the run and reported, as any agent's CLI failure is, and the
+      // line names what the CLI said. Otherwise a CLI that can't start there fails every turn with nothing saying why.
+      if (line === "cli_failed" || line === "computer_failed") {
+        await addRunStep(db, run, "error", { reason: "brain_unavailable", code: u.code, message: u.message });
+        options.failed?.(new BrainFailure(u.code, u.message, true));
+      }
+      const said = line === "cli_failed" ? cliWords({ code: u.code, message: u.message }) : "";
+      await failNoAi(line, undefined, ownModel?.label, said || undefined);
+      return "failed";
+    }
     // A background run never stands in on the model brain (`mayFallBack`): it waits for its computer.
     // Behind others in the computer's line (`roomGate`) is no refusal: it waits its turn.
     if (
@@ -5568,7 +5650,7 @@ async function executeRunInner(
   const inspectBoundaryQuota = async (): Promise<(BrainUnavailability & { quotaReserve?: boolean }) | null> => {
     const policy = inspectorPolicy();
     const machineId = plan.session?.machineId;
-    if (!policy || !quotaContinuation || !isHandoffKind(plan.kind) || !machineId || isRightHand(agent)) return null;
+    if (!policy || !quotaContinuation || !isHandoffKind(plan.kind) || !machineId || !mayInspectQuota()) return null;
     const usage = await storedPlanUsage(db, run.orgId, machineId, plan.kind, plan.account?.id).catch(() => null);
     const reserve = quotaReserveOf(
       usage,
@@ -5599,7 +5681,7 @@ async function executeRunInner(
     reservePending ||
     (!plan.unavailable &&
       isHandoffKind(plan.kind) &&
-      !isRightHand(agent) &&
+      mayInspectQuota() &&
       quotaContinuation &&
       plan.quotaReserve?.state === "low")
   ) {
@@ -5611,7 +5693,7 @@ async function executeRunInner(
         reserve?.pool.accountId === reservePending.pool.accountId);
     await addRunStep(db, run, "context", { quotaReserveWarning: reserve });
     const reserveHandled =
-      samePool && isHandoffKind(plan.kind) && !isRightHand(agent) && quotaContinuation
+      samePool && isHandoffKind(plan.kind) && mayInspectQuota() && quotaContinuation
         ? await brainUnavailable(
             {
               code: "quota_reserve",
@@ -5915,7 +5997,7 @@ async function executeRunInner(
       }
       // Long work near its limit parks here, between steps: nothing is in flight and the next step reads on.
       const pause = await longWorkPause();
-      if (pause && pause.source === "plan" && isHandoffKind(plan.kind) && !isRightHand(agent) && quotaContinuation) {
+      if (pause && pause.source === "plan" && isHandoffKind(plan.kind) && mayInspectQuota() && quotaContinuation) {
         // Between steps nothing is in flight: try a qualified route before parking the task.
         const moved = await brainUnavailable({
           code: "quota_reserve",
