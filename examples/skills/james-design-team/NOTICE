@@ -1,0 +1,28 @@
+James Design Team — source and attribution notice
+
+This package contains original integration guidance and implementation for the
+existing Agentes Designer Team. Its license is the repository's GNU Affero
+General Public License version 3, reproduced in LICENSE.
+
+The research methods are attributed to these pinned upstream projects:
+- Naksha Studio, Adityaraj0421, MIT:
+  https://github.com/Adityaraj0421/naksha-studio/tree/f5275255d1c5417026508c5e294cf6d27ec8809d
+- Design Jarvis contributors, MIT:
+  https://github.com/renfei-design/Design-Jarvis/tree/05fe0be9e2b74fcc465055b9545a4b3441e9822f
+- Impeccable contributors, Apache License 2.0:
+  https://github.com/pbakaus/impeccable/tree/b49177d32788f2dc585c42831d845dacf1ebed2c
+- Agency Agents, AgentLand Contributors, MIT:
+  https://github.com/msitarzewski/agency-agents/tree/8ae6164602c95ca78828b148b9052460ee426885
+- Social Media Agent, LangChain, MIT:
+  https://github.com/langchain-ai/social-media-agent/tree/bc27973c9c11f5c4929d78f26cb9ed200ab017f2
+- Anthropic Skills frontend-design, Apache License 2.0:
+  https://github.com/anthropics/skills/tree/e4bb5d960d87126ff3b3a8af1a104b7db67560ba/skills/frontend-design
+
+references/provenance.json supplies exact source paths, pinned URLs, license
+locations and applicable upstream notice links. The workflow files also cite
+the methods that informed them. Upstream prompt bodies, executable payloads,
+fonts and assets are not copied into this package. Upstream names remain
+attribution, not a claim of endorsement or an installed integration.
+
+The Hong Kong composition guidance, task-specific role mapping, context
+isolation and delivery evidence conventions are local integration work.
