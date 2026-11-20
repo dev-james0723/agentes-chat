@@ -46,9 +46,12 @@ export function searchCatalog(list: ConnectorDef[], query: string, shown: (d: Co
   return q ? list.filter((d) => `${d.label} ${d.id} ${d.description} ${shown(d)}`.toLowerCase().includes(q)) : list;
 }
 
-/** How it connects, for the card: one click (OAuth), OAuth or a key, a key only, or through Composio. */
-export function authKind(d: ConnectorDef): "oneClick" | "oauthOrKey" | "key" | "composio" {
+/** How it connects, including an OAuth-only service whose sign-in still needs server setup. */
+export function authKind(d: ConnectorDef): "oneClick" | "oauthOrKey" | "oauthSetup" | "key" | "composio" {
   if (d.via === "composio") return "composio";
+  if (d.auth.includes("oauth") && !d.auth.includes("api_key")) {
+    return d.kind === "catalog" && !d.oauthConfigured ? "oauthSetup" : "oneClick";
+  }
   if (d.kind === "remote_mcp" && d.oauthConfigured && d.auth.includes("oauth")) return "oneClick";
   return d.oauthConfigured && d.auth.includes("oauth") ? "oauthOrKey" : "key";
 }
@@ -417,7 +420,9 @@ export function ConnectorCatalogDialog({
                             ? t("connectors.tileConnected", { name: e.name })
                             : e.soon
                               ? t("connectors.tileSoon", { name: e.name })
-                              : e.name
+                              : e.how === "oauthSetup"
+                                ? t("connectors.tileSetupRequired", { name: e.name })
+                                : e.name
                         }
                         data-soon={!e.available || undefined}
                         disabled={e.soon}
@@ -427,9 +432,9 @@ export function ConnectorCatalogDialog({
                           <TileIcon entry={e} size="md" />
                           <span className="catalog-tile__name">{e.name}</span>
                         </span>
-                        {e.soon ? (
+                        {e.soon || e.how === "oauthSetup" ? (
                           <Chip icon="lock" className="catalog-tile__soon">
-                            {t("connectors.soon")}
+                            {t(e.soon ? "connectors.soon" : "connectors.setupRequired")}
                           </Chip>
                         ) : (
                           <span className="catalog-tile__desc">{e.description}</span>
@@ -491,6 +496,7 @@ function TileIcon({ entry, size }: { entry: Entry; size: "md" | "lg" }) {
 const HOW_ICON: Record<HowKind, IconName> = {
   oneClick: "bolt",
   oauthOrKey: "bolt",
+  oauthSetup: "lock",
   key: "key",
   composio: "plug",
   appPassword: "lock",
@@ -588,7 +594,7 @@ function Detail({ entry, onConnect }: { entry: Entry; onConnect: () => void }) {
           </Button>
         ) : (
           <Button variant="primary" disabled>
-            {t("connectors.soon")}
+            {t(entry.how === "oauthSetup" ? "connectors.setupRequired" : "connectors.soon")}
           </Button>
         )}
       </div>

@@ -12088,6 +12088,8 @@ export const en = {
     more: "More services",
     tileConnected: "{{name}}, connected",
     tileSoon: "{{name}}, soon",
+    tileSetupRequired: "{{name}}, setup required",
+    setupRequired: "Setup required",
     otherTitle: "Another service",
     otherDetail: "Any service that offers a connection for agents, by its address (it starts with https://).",
     otherSteps: {
@@ -12111,6 +12113,7 @@ export const en = {
     how: {
       oneClick: "One click: you authorize on the service's page",
       oauthOrKey: "You authorize on the service's page, or use an API key",
+      oauthSetup: "Sign-in needs to be configured on this server.",
       key: "Needs an API key",
       appPassword: "Needs an app password",
       addressPassword: "Needs the database address and a password",

@@ -28911,6 +28911,12 @@
   "connectors.tileSoon": {
     "value": "{{name}}, soon"
   },
+  "connectors.tileSetupRequired": {
+    "value": "{{name}}, setup required"
+  },
+  "connectors.setupRequired": {
+    "value": "Setup required"
+  },
   "connectors.otherTitle": {
     "value": "Another service"
   },
@@ -28964,6 +28970,9 @@
   },
   "connectors.how.oauthOrKey": {
     "value": "You authorize on the service's page, or use an API key"
+  },
+  "connectors.how.oauthSetup": {
+    "value": "Sign-in needs to be configured on this server."
   },
   "connectors.how.key": {
     "value": "Needs an API key"

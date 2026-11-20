@@ -12277,6 +12277,8 @@
     "more": "Altri servizi",
     "tileConnected": "{{name}}, collegato",
     "tileSoon": "{{name}}, in arrivo",
+    "tileSetupRequired": "{{name}}, configurazione necessaria",
+    "setupRequired": "Configurazione necessaria",
     "otherTitle": "Un altro servizio",
     "otherDetail": "Qualsiasi servizio che offra un collegamento per agenti, tramite il suo indirizzo (inizia con https://).",
     "otherSteps": {
@@ -12300,6 +12302,7 @@
     "how": {
       "oneClick": "Un clic: autorizzi nella pagina del servizio",
       "oauthOrKey": "Autorizzi nella pagina del servizio, oppure usi una chiave API",
+      "oauthSetup": "L'accesso deve essere configurato su questo server.",
       "key": "Richiede una chiave API",
       "appPassword": "Richiede una password per app",
       "addressPassword": "Richiede l'indirizzo del database e una password",

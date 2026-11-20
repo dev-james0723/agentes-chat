@@ -12138,6 +12138,8 @@ export const ptBR = {
     more: "Mais serviços",
     tileConnected: "{{name}}, conectado",
     tileSoon: "{{name}}, em breve",
+    tileSetupRequired: "{{name}}, falta configurar",
+    setupRequired: "Falta configurar",
     otherTitle: "Outro serviço",
     otherDetail: "Qualquer serviço que ofereça conexão para agentes, pelo endereço dele (começa com https://).",
     otherSteps: {
@@ -12161,6 +12163,7 @@ export const ptBR = {
     how: {
       oneClick: "Um clique: você autoriza na página do serviço",
       oauthOrKey: "Você autoriza na página do serviço, ou usa uma chave de API",
+      oauthSetup: "O login precisa ser configurado neste servidor.",
       key: "Precisa de uma chave de API",
       appPassword: "Precisa de uma senha de app",
       addressPassword: "Precisa do endereço do banco e de uma senha",
