@@ -22,6 +22,7 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelResult,
+  type ModelTier,
   type ModelUsage,
   maxCostNanoUsd,
   modelInfo,
@@ -52,6 +53,7 @@ import {
   settleCreditAttempt,
 } from "./credit-ledger";
 import { creditPricingProfile, creditReceiptCost } from "./credit-pricing";
+import { type CreditEffort, creditModelMeetsRequirement } from "./credit-quality";
 import { CreditRouteRefusal, classifyCreditFailure, noteCreditOutcome } from "./credit-route";
 import { sha256 } from "./crypto";
 import { loadEndpointModels } from "./endpoints";
@@ -164,6 +166,9 @@ export interface GatewayCall {
     ownerJobId: string;
     ownerWorkerId: string;
     ownerEpoch: number;
+    minimumTier?: ModelTier;
+    effort?: CreditEffort;
+    capabilities?: string[];
     bucket?: "automatic" | "emergency";
     approvalId?: string;
   };
@@ -903,6 +908,13 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
     /** An agent's model call (runs). Streams deltas through `onDelta`. */
     async stream(call: GatewayCall): Promise<GatewayResult> {
+      // Snapshot the native requirement before awaiting keys or other policy reads.
+      const credit = call.credit
+        ? {
+            ...call.credit,
+            capabilities: Array.isArray(call.credit.capabilities) ? [...call.credit.capabilities] : undefined,
+          }
+        : undefined;
       await assertCanWork(db, call.orgId, call.agentId);
       const row =
         call.agent && call.agent.id === call.agentId && call.agent.orgId === call.orgId
@@ -915,9 +927,10 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!providerId) throw new ValidationError(`Model ${agent.model} is not in the catalog`);
       const provider = providerFor(providerId);
       const key = await agentKey(agent, providerId);
-      const credit = call.credit;
       await assertCreditKey(agent.orgId, providerId, key, credit);
       const info = await infoFor(agent.orgId, agent.model);
+      if (credit && !creditModelMeetsRequirement(agent.model, credit.minimumTier, credit.effort))
+        throw new CreditRouteRefusal("unsupported_capability");
 
       const request: ModelRequest = {
         model: agent.model,
@@ -932,7 +945,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
         messages: call.messages,
         maxTokens: capOf(call.maxTokens, info),
         tools: call.tools,
-        ...(call.effort ? { effort: call.effort } : {}),
+        ...(credit ? { effort: credit.effort } : call.effort ? { effort: call.effort } : {}),
         ...(call.cacheTtl && (!credit || providerId === "anthropic") ? { cacheTtl: call.cacheTtl } : {}),
         ...(call.notes ? { notes: call.notes } : {}),
         ...(credit ? { noTransportRetries: true as const } : {}),
@@ -994,6 +1007,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
             tools: (request.tools?.length ?? 0) > 0,
             promptBytes: bound.promptBytes,
             amountNanoUsd: bound.amountNanoUsd,
+            minimumTier: credit.minimumTier,
+            effort: credit.effort,
+            capabilities: credit.capabilities,
           };
           // Qualification of the full bound may select an explicitly approved emergency bucket. No partial
           // reservation is split across buckets and the transaction still rechecks every counter and approval.

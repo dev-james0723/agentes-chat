@@ -32,6 +32,7 @@ import {
   isAutoModel,
   type ModelMessage,
   type ModelResult,
+  type ModelTier,
   PROVIDERS,
   ProviderError,
   parseCustomModel,
@@ -212,6 +213,7 @@ import {
   lockCreditClaim,
   recoverCreditRun,
 } from "./credit-continuity";
+import { deriveCreditRequirements, isCreditEffort, isCreditMinimumTier } from "./credit-quality";
 import {
   CREDIT_PROOF_MAX_MS,
   type CreditProof,
@@ -752,7 +754,14 @@ export interface EngineDeps {
       orgId: string;
       runId: string;
       agentId: string;
-      need: { tools: boolean; promptBytes: number; capabilities?: string[]; amountNanoUsd?: number };
+      need: {
+        tools: boolean;
+        promptBytes: number;
+        capabilities?: string[];
+        amountNanoUsd?: number;
+        minimumTier?: ModelTier;
+        effort?: "low" | "medium" | "high";
+      };
       provider?: "openai" | "anthropic";
       /** The route a run already moved to: it is qualified again, never another. */
       routeId?: string;
@@ -1057,6 +1066,11 @@ export interface Transcript {
     credentialVersion: string;
     model: string;
     sourceKind: BrainKind;
+    /** Concrete source identity and task requirements survive a new native/API process. */
+    sourceModel?: string;
+    minimumTier?: ModelTier;
+    effort?: "low" | "medium" | "high";
+    capabilities?: string[];
     sourceSessionId: string | null;
     evidenceRef: string;
     selectedAt: number;
@@ -3659,17 +3673,60 @@ async function executeRunInner(
   const savedCredit = transcript.creditRoute;
   if (savedCredit && !savedCredit.ended && run.brain === "model") {
     if (isHandoffKind(brainPlan.kind) && !brainPlan.missionId && deps.creditRoute && !isRightHand(agent)) {
-      // Only exactly the route it was qualified on, qualified again now: a rotated key, expired evidence or an
-      // exhausted pool sends it back to where it came from, and nothing is sent to the API on the old proof.
-      const again = await deps.creditRoute
-        .qualify({
-          orgId: run.orgId,
-          runId: run.id,
-          agentId: agent.id,
-          need: { tools: true, promptBytes: 0 },
-          routeId: savedCredit.routeId,
-        })
-        .catch((): CreditQualification => ({ ok: false, reason: "disabled" }));
+      // A restart retains the original quality floor. New task/source requirements can only strengthen it.
+      // Legacy or malformed records do not infer permission from a cheaper route or an unavailable judge.
+      const savedRequirements =
+        savedCredit.sourceKind === brainPlan.kind &&
+        typeof savedCredit.sourceModel === "string" &&
+        isCreditMinimumTier(savedCredit.minimumTier) &&
+        isCreditEffort(savedCredit.effort) &&
+        Array.isArray(savedCredit.capabilities) &&
+        savedCredit.capabilities.includes("text") &&
+        savedCredit.capabilities.every((capability) => typeof capability === "string");
+      const requirements = savedRequirements
+        ? deriveCreditRequirements({
+            sourceKind: brainPlan.kind,
+            sourceModel: isAutoModel(brainPlan.model) ? savedCredit.sourceModel : brainPlan.model,
+            taskTiers: [
+              savedCredit.minimumTier,
+              transcript.autoModel?.tier,
+              transcript.quotaCliHandoff?.selection?.tier,
+            ],
+            efforts: [
+              savedCredit.effort,
+              brainPlan.effort,
+              agent.brainEffort === "auto" ? undefined : agent.brainEffort,
+              transcript.autoModel?.effort,
+              transcript.quotaCliHandoff?.effort,
+              transcript.quotaCliHandoff?.selection?.effort,
+            ],
+            tools: tools.length > 0,
+          })
+        : null;
+      const capabilities = [
+        ...new Set([
+          ...(Array.isArray(savedCredit.capabilities) ? savedCredit.capabilities : []),
+          "text",
+          ...(tools.length ? ["client_tools"] : []),
+        ]),
+      ].sort();
+      if (requirements) {
+        Object.assign(savedCredit, requirements, { capabilities });
+        // The ledger checks these durable requirements under the same native claim before admitting or sending.
+        await saveTranscript(db, transcript);
+      }
+      // Requalify only the exact route. A rotated key, expired grant or weaker model returns to a fresh native wait.
+      const again: CreditQualification = requirements
+        ? await deps.creditRoute
+            .qualify({
+              orgId: run.orgId,
+              runId: run.id,
+              agentId: agent.id,
+              need: { tools: tools.length > 0, promptBytes: 0, capabilities, ...requirements },
+              routeId: savedCredit.routeId,
+            })
+            .catch((): CreditQualification => ({ ok: false, reason: "disabled" }))
+        : { ok: false, reason: "unsupported_capability" };
       if (
         again.ok &&
         again.proof.cycleId === savedCredit.cycleId &&
@@ -3679,7 +3736,7 @@ async function executeRunInner(
       ) {
         creditResumed = again.proof;
         creditSource = { plan: brainPlan, thinker: agent };
-        brainPlan = { kind: "model" };
+        brainPlan = { kind: "model", effort: savedCredit.effort };
       } else brainPlan = await returnToSource(brainPlan, again.ok ? "credential_changed" : again.reason);
     } else if (isHandoffKind(brainPlan.kind)) brainPlan = await returnToSource(brainPlan, "disabled");
     else savedCredit.ended = "agent_changed";
@@ -4135,8 +4192,22 @@ async function executeRunInner(
     };
     const body = JSON.stringify({ system: t.system, messages: t.messages });
     const promptBytes = new TextEncoder().encode(body).length;
-    const capabilities = ["text", ...(tools.length ? ["client_tools"] : [])];
-    const need = { tools: tools.length > 0, promptBytes, capabilities };
+    const capabilities = ["text", ...(tools.length ? ["client_tools"] : [])].sort();
+    const requirements = deriveCreditRequirements({
+      sourceKind: plan.kind,
+      sourceModel: plan.model,
+      taskTiers: [t.autoModel?.tier, t.quotaCliHandoff?.selection?.tier],
+      efforts: [
+        plan.effort,
+        agent.brainEffort === "auto" ? undefined : agent.brainEffort,
+        t.autoModel?.effort,
+        t.quotaCliHandoff?.effort,
+        t.quotaCliHandoff?.selection?.effort,
+      ],
+      tools: tools.length > 0,
+    });
+    if (!requirements) return skipped("unsupported_capability");
+    const need = { tools: tools.length > 0, promptBytes, capabilities, ...requirements };
     const preferred = plan.kind === "codex" ? "openai" : "anthropic";
     let q = await credit
       .qualify({ orgId: run.orgId, runId: run.id, agentId: agent.id, need, provider: preferred })
@@ -4263,6 +4334,9 @@ async function executeRunInner(
       credentialVersion: proof.credentialVersion,
       model: proof.model,
       sourceKind: plan.kind,
+      sourceModel: plan.model,
+      ...requirements,
+      capabilities,
       sourceSessionId: plan.session?.id ?? null,
       evidenceRef: proof.evidenceRef,
       selectedAt: at,
@@ -4283,6 +4357,7 @@ async function executeRunInner(
         "machineId",
         "brain",
         "brainModel",
+        "brainEffort",
         "brainAccountId",
         "brainExtraUsage",
         "brainFallback",
@@ -4325,6 +4400,9 @@ async function executeRunInner(
           model: proof.model,
           pool: proof.pool,
           eligibilityVerified: true,
+          minimumTier: requirements.minimumTier,
+          effort: requirements.effort,
+          capabilities,
         },
       });
       return row;
@@ -4338,7 +4416,7 @@ async function executeRunInner(
     delete t.quotaCliHandoff;
     creditSource = { plan, thinker };
     await leaveLine();
-    plan = { kind: "model" };
+    plan = { kind: "model", effort: requirements.effort };
     thinker = { ...thinker, model: proof.model, credentialId: proof.credentialId };
     await modelInfoFor(db, thinker.model, run.orgId);
     onDemandForOtherBrain(t);
@@ -8184,6 +8262,9 @@ function createUnboundBrain(
         cycleId: c.cycleId,
         credentialId: c.credentialId,
         credentialVersion: c.credentialVersion,
+        minimumTier: c.minimumTier,
+        effort: c.effort,
+        capabilities: Array.isArray(c.capabilities) ? [...c.capabilities] : undefined,
         workUnitKey: creditWorkUnitKey(run.id, token.creditTurn),
         attemptKey: `${run.id}:${token.creditTurn}:${token.creditClaim.ownerJobId}:${token.creditClaim.ownerEpoch}`,
         ...token.creditClaim,

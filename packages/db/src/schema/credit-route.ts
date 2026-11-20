@@ -225,7 +225,15 @@ export const creditAttempts = pgTable(
     ownerJobId: uuid().notNull(),
     ownerWorkerId: text().notNull(),
     bucket: text().notNull(),
-    reservationNeed: jsonb().$type<{ tools: boolean; promptBytes: number; capabilities?: string[] }>().notNull(),
+    reservationNeed: jsonb()
+      .$type<{
+        tools: boolean;
+        promptBytes: number;
+        capabilities?: string[];
+        minimumTier?: "small" | "medium" | "large";
+        effort?: "low" | "medium" | "high";
+      }>()
+      .notNull(),
     pricingSnapshot: jsonb().$type<StoredCreditPricingProfile>().notNull(),
     pricingProfileHash: text().notNull(),
     cacheTtl: text().$type<"default" | "1h">().notNull(),

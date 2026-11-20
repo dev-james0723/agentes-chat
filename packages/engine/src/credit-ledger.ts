@@ -1,4 +1,5 @@
-import { and, type Database, type Executor, eq, inArray, schema } from "@agenteschat/db";
+import { and, type Database, type Executor, eq, inArray, schema, sql } from "@agenteschat/db";
+import { type ModelTier, modelInfo } from "@agenteschat/providers";
 import { recordAudit } from "./audit";
 import { credentialVersion } from "./credentials";
 import {
@@ -9,6 +10,7 @@ import {
   type CreditPricingProfile,
   creditReceiptCost,
 } from "./credit-pricing";
+import { type CreditEffort, creditModelMeetsRequirement, isCreditEffort, isCreditMinimumTier } from "./credit-quality";
 import {
   CREDIT_PROOF_MAX_MS,
   type CreditProof,
@@ -80,7 +82,18 @@ export interface CreditNeed {
   tools: boolean;
   promptBytes: number;
   capabilities?: string[];
+  /** Durable task/source quality floor; optional only for read-only financial status and route preparation. */
+  minimumTier?: ModelTier;
+  effort?: CreditEffort;
 }
+
+const completeNeed = (need: CreditNeed) =>
+  isCreditMinimumTier(need.minimumTier) &&
+  isCreditEffort(need.effort) &&
+  Array.isArray(need.capabilities) &&
+  need.capabilities.every((c) => typeof c === "string" && c.length > 0) &&
+  need.capabilities.includes("text") &&
+  (!need.tools || need.capabilities.includes("client_tools"));
 
 function refusalOf(
   pool: Pool,
@@ -134,6 +147,13 @@ function refusalOf(
   } catch (error) {
     return error instanceof CreditRouteRefusal ? error.reason : "pricing_unverified";
   }
+  // A known model name or price does not prove a quality rank; unranked API models cannot be enabled.
+  if (
+    !isCreditMinimumTier(modelInfo(route.model)?.tier) ||
+    ((need.minimumTier !== undefined || need.effort !== undefined) &&
+      !creditModelMeetsRequirement(route.model, need.minimumTier, need.effort))
+  )
+    return "unsupported_capability";
   // SDK routes require a separate proven adapter. Interactive Claude Code is never admitted here.
   if (
     !validAmount(need.promptBytes) ||
@@ -163,6 +183,7 @@ export async function qualifyCreditRoute(
 ): Promise<CreditQualification> {
   const at = (input.now ?? (() => new Date()))();
   const amount = input.need.amountNanoUsd ?? 1;
+  if (!completeNeed(input.need)) return { ok: false, reason: "unsupported_capability" };
   if (!validAmount(amount) || amount === 0) return { ok: false, reason: "invalid_reservation" };
   const { creditPools: p, creditRoutes: r, creditGrantCycles: c, providerCredentials: k } = schema;
   const rows = await db
@@ -324,6 +345,7 @@ async function checkRun(
   runId: string,
   claim: { ownerEpoch: number; ownerJobId: string; ownerWorkerId: string },
   at: Date,
+  expected: { routeId: string; need: CreditNeed },
 ) {
   const [job] = await db
     .select()
@@ -341,14 +363,34 @@ async function checkRun(
   )
     throw new CreditRouteRefusal("stale_owner");
   const [run] = await db
-    .select({ status: schema.agentRuns.status })
+    .select({
+      status: schema.agentRuns.status,
+      creditRoute: sql<unknown>`${schema.agentRuns.transcript}->'creditRoute'`,
+    })
     .from(schema.agentRuns)
     .where(and(eq(schema.agentRuns.orgId, orgId), eq(schema.agentRuns.id, runId)))
     .for("update");
   if (run?.status !== "running") throw new CreditRouteRefusal("stale_owner");
+  const route =
+    run.creditRoute && typeof run.creditRoute === "object" && !Array.isArray(run.creditRoute)
+      ? (run.creditRoute as Record<string, unknown>)
+      : null;
+  if (
+    !route ||
+    route.ended ||
+    route.routeId !== expected.routeId ||
+    !completeNeed(expected.need) ||
+    route.minimumTier !== expected.need.minimumTier ||
+    route.effort !== expected.need.effort ||
+    !Array.isArray(route.capabilities) ||
+    route.capabilities.some((c) => typeof c !== "string") ||
+    JSON.stringify([...route.capabilities].sort()) !== JSON.stringify([...(expected.need.capabilities ?? [])].sort())
+  )
+    throw new CreditRouteRefusal("unsupported_capability");
 }
 
 export async function admitCreditCall(db: Database, input: CreditAdmissionInput): Promise<CreditAdmission> {
+  if (!completeNeed(input.need)) throw new CreditRouteRefusal("unsupported_capability");
   if (
     !validAmount(input.amountNanoUsd) ||
     input.amountNanoUsd === 0 ||
@@ -404,7 +446,7 @@ export async function admitCreditCall(db: Database, input: CreditAdmissionInput)
     if (input.pricingProfileHash !== pricingSnapshot.profileHash) throw new CreditRouteRefusal("pricing_changed");
     const cacheTtl = input.cacheTtl ?? "default";
     assertCreditCachePolicy(pricingSnapshot, cacheTtl);
-    await checkRun(tx, input.orgId, input.runId, input, now());
+    await checkRun(tx, input.orgId, input.runId, input, now(), { routeId: route.id, need: input.need });
     await tx
       .insert(w)
       .values({
@@ -455,6 +497,8 @@ export async function admitCreditCall(db: Database, input: CreditAdmissionInput)
         same.cacheTtl !== cacheTtl ||
         same.reservationNeed.tools !== input.need.tools ||
         same.reservationNeed.promptBytes !== input.need.promptBytes ||
+        same.reservationNeed.minimumTier !== input.need.minimumTier ||
+        same.reservationNeed.effort !== input.need.effort ||
         JSON.stringify([...(same.reservationNeed.capabilities ?? [])].sort()) !==
           JSON.stringify([...(input.need.capabilities ?? [])].sort()) ||
         same.bucket !== bucket ||
@@ -548,6 +592,8 @@ export async function admitCreditCall(db: Database, input: CreditAdmissionInput)
           tools: input.need.tools,
           promptBytes: input.need.promptBytes,
           capabilities: [...(input.need.capabilities ?? [])].sort(),
+          minimumTier: input.need.minimumTier,
+          effort: input.need.effort,
         },
         approvalId: input.approvalId ?? null,
         createdAt: now(),
@@ -589,6 +635,7 @@ export async function markCreditAttemptDispatched(
       .from(a)
       .where(and(eq(a.orgId, orgId), eq(a.id, attemptId)));
     if (!hint) throw new CreditRouteRefusal("invalid_reservation");
+    if (!completeNeed(hint.reservationNeed)) throw new CreditRouteRefusal("unsupported_capability");
     const pool = await lockPool(tx, orgId, hint.poolId);
     const cycle = await lockCycle(tx, orgId, pool.id, hint.cycleId);
     const [route] = await tx
@@ -628,7 +675,7 @@ export async function markCreditAttemptDispatched(
       cycle.spentEmergencyNanoUsd + cycle.heldEmergencyNanoUsd > cycle.emergencyLimitNanoUsd
     )
       throw new CreditRouteRefusal("budget_exhausted");
-    await checkRun(tx, orgId, input.runId, input, at);
+    await checkRun(tx, orgId, input.runId, input, at, { routeId: route.id, need: hint.reservationNeed });
     const [unit] = await tx
       .select()
       .from(w)

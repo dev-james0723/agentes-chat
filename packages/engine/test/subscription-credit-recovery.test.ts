@@ -95,7 +95,15 @@ async function world() {
     transcript: {
       marker: "original-task-context",
       messages: [{ role: "user", content: "Continue the original work" }],
-      creditRoute: { routeId, poolId, cycleId: pool.currentCycleId, provider: "anthropic" },
+      creditRoute: {
+        routeId,
+        poolId,
+        cycleId: pool.currentCycleId,
+        provider: "anthropic",
+        minimumTier: "medium",
+        effort: "high",
+        capabilities: ["text", "client_tools"],
+      },
       creditInFlight: {
         schema: "credit-turn/1",
         turn: 1,
@@ -123,7 +131,13 @@ async function world() {
       credentialId: key.id,
       credentialVersion: route.credentialVersion,
       model: route.model,
-      need: { tools: true, promptBytes: 1000, capabilities: ["text", "client_tools"] },
+      need: {
+        tools: true,
+        promptBytes: 1000,
+        capabilities: ["text", "client_tools"],
+        minimumTier: "medium",
+        effort: "high",
+      },
       pricingProfileHash: creditPricingProfile(route.model).profileHash,
       amountNanoUsd: USD,
       runId,

@@ -29,20 +29,27 @@ afterEach(async () => {
 const MODEL = "claude-sonnet-5-5";
 const KEY = "sk-ant-synthetic-credit-gateway";
 const NOW = () => new Date("2026-11-20T12:00:00Z");
+const REQUIREMENTS = {
+  minimumTier: "medium" as const,
+  effort: "high" as const,
+  capabilities: ["text", "client_tools"],
+};
 
-async function route() {
+async function route(provider: "anthropic" | "openai" = "anthropic") {
+  const model = provider === "openai" ? "gpt-6.1-sol" : MODEL;
   const credential = await createCredential(f.db, f.keyWrapper, f.owner.id, f.org.id, {
-    provider: "anthropic",
+    provider,
     label: "synthetic grant route",
     apiKey: KEY,
+    ...(provider === "openai" ? { organization: "org-gateway-fixture" } : {}),
   });
   const poolId = await registerCreditPool(
     f.db,
     f.org.id,
     {
-      provider: "anthropic",
+      provider,
       upstreamAccount: "org-gateway-fixture",
-      product: "claude_ultra_api",
+      product: provider === "openai" ? "openai_pro_api" : "claude_ultra_api",
       cycleKey: "cycle-gateway-20261113",
       grantId: "grant-gateway-fixture",
       grantStart: new Date("2026-11-13T00:00:00Z"),
@@ -67,33 +74,43 @@ async function route() {
     {
       poolId,
       credentialId: credential.id,
-      model: MODEL,
+      model,
       pricingEvidence: {
         evidenceRef: "official-pricing-fixture",
         verifiedAt: new Date("2026-11-20T11:59Z"),
         validUntil: new Date("2026-11-20T13:00Z"),
-        profileHash: creditPricingProfile(MODEL).profileHash,
+        profileHash: creditPricingProfile(model).profileHash,
       },
       supportsTools: true,
       maxPromptBytes: 100_000,
-      routeKind: "anthropic_messages",
+      routeKind: provider === "openai" ? "openai_responses" : "anthropic_messages",
       accountEvidenceRef: "synthetic-organization-binding",
       capabilities: ["text", "client_tools"],
     },
     NOW,
   );
   await setCreditRouteEnabled(f.db, f.org.id, routeId, true, NOW);
-  const q = await qualifyCreditRoute(f.db, { orgId: f.org.id, need: { tools: false, promptBytes: 10 }, now: NOW });
+  const q = await qualifyCreditRoute(f.db, {
+    orgId: f.org.id,
+    need: { tools: false, promptBytes: 10, ...REQUIREMENTS },
+    now: NOW,
+  });
   if (!q.ok) throw new Error(`fixture route refused: ${q.reason}`);
   return {
     credential,
     poolId,
     routeId,
     proof: q.proof,
-    agent: { ...f.agent, model: MODEL, credentialId: credential.id },
+    agent: { ...f.agent, model, credentialId: credential.id },
   };
 }
 async function claim() {
+  const [route] = await f.db
+    .select({ id: schema.creditRoutes.id })
+    .from(schema.creditRoutes)
+    .where(eq(schema.creditRoutes.orgId, f.org.id))
+    .orderBy(schema.creditRoutes.id)
+    .limit(1);
   const runId = crypto.randomUUID();
   const ownerJobId = crypto.randomUUID();
   await f.db.insert(schema.agentRuns).values({
@@ -106,6 +123,7 @@ async function claim() {
     trigger: "mention",
     hop: 1,
     status: "running",
+    transcript: { creditRoute: { routeId: route?.id, ...REQUIREMENTS } },
   });
   await f.db.insert(schema.outbox).values({
     id: ownerJobId,
@@ -137,17 +155,22 @@ function callOf(r: Route, c: Claim, over: Partial<GatewayCall> = {}): GatewayCal
     system: "sys",
     messages: [{ role: "user", content: "hello" }],
     maxTokens: 100,
-    credit: { ...r.proof, ...c },
+    credit: { ...r.proof, ...c, ...REQUIREMENTS },
     onDelta: () => {},
     ...over,
   };
 }
-function gatewayOf(provider: ModelProvider, creditRoutes = true, sharedBudgetRequired = false) {
+function gatewayOf(
+  provider: ModelProvider,
+  creditRoutes = true,
+  sharedBudgetRequired = false,
+  providerId: "anthropic" | "openai" = "anthropic",
+) {
   return createModelGateway({
     db: f.db,
     keyWrappers: [f.keyWrapper],
     platformCredentials: noPlatformCredentials,
-    providers: { anthropic: provider },
+    providers: { [providerId]: provider },
     creditRoutes,
     sharedBudgetRequired,
     now: NOW,
@@ -770,3 +793,57 @@ test("a newly registered pool blocks a warm default credential cache while fallb
   expect(provider.calls).toHaveLength(1);
   expect(await attempts()).toHaveLength(0);
 });
+
+for (const providerId of ["anthropic", "openai"] as const) {
+  test(`${providerId}: the native quality and reasoning requirement reaches exactly one provider request`, async () => {
+    f = await setup();
+    const r = await route(providerId);
+    const c = await claim();
+    const provider = verified();
+    const gateway = gatewayOf(provider, true, false, providerId);
+    const call = callOf(r, c, { effort: "low" });
+    await gateway.stream(call);
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0]?.request.effort).toBe("high");
+    const [attempt] = await attempts();
+    expect(attempt?.reservationNeed).toMatchObject({
+      ...REQUIREMENTS,
+      capabilities: [...REQUIREMENTS.capabilities].sort(),
+    });
+    expect(attempt?.state).toBe("settled");
+    const [run] = await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, c.runId));
+    expect(run?.status).toBe("running");
+  });
+
+  test(`${providerId}: missing, weaker or stale task quality sends no provider request`, async () => {
+    f = await setup();
+    const r = await route(providerId);
+    const c = await claim();
+    const provider = verified();
+    const gateway = gatewayOf(provider, true, false, providerId);
+    const base = callOf(r, c);
+    for (const change of [
+      { minimumTier: undefined },
+      { effort: undefined },
+      { minimumTier: "large" as const },
+      { capabilities: undefined },
+    ]) {
+      await expect(gateway.stream({ ...base, credit: { ...base.credit!, ...change } })).rejects.toMatchObject({
+        reason: "unsupported_capability",
+      });
+    }
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: { creditRoute: { routeId: r.routeId, ...REQUIREMENTS, minimumTier: "large" } },
+      })
+      .where(eq(schema.agentRuns.id, c.runId));
+    await expect(gateway.stream(base)).rejects.toMatchObject({ reason: "unsupported_capability" });
+    expect(provider.calls).toHaveLength(0);
+    expect(provider.countCalls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+    expect(
+      (await creditLedgerSnapshot(f.db, f.org.id, NOW)).pools.find((p) => p.provider === providerId)?.heldNanoUsd,
+    ).toBe(0);
+  });
+}

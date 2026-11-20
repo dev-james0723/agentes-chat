@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { eq, schema } from "@agenteschat/db";
+import { MODEL_CATALOG } from "@agenteschat/providers";
 import { createCredential } from "../src/credentials";
 import {
   admitCreditCall,
@@ -32,7 +33,13 @@ afterEach(async () => {
 });
 const USD = CREDIT_USD;
 const NOW = () => new Date("2026-11-20T12:00:00Z");
-const need = { tools: true, promptBytes: 1000, capabilities: ["text", "client_tools"] };
+const need = {
+  tools: true,
+  promptBytes: 1000,
+  capabilities: ["text", "client_tools"],
+  minimumTier: "medium" as const,
+  effort: "high" as const,
+};
 const MODEL = "claude-sonnet-5-5";
 
 function evidence(o: Partial<CreditPoolEvidence> = {}): CreditPoolEvidence {
@@ -58,9 +65,9 @@ function evidence(o: Partial<CreditPoolEvidence> = {}): CreditPoolEvidence {
     ...o,
   };
 }
-async function route(o: Partial<CreditPoolEvidence> = {}, enabled = true) {
+async function route(o: Partial<CreditPoolEvidence> = {}, enabled = true, selectedModel?: string) {
   const e = evidence(o);
-  const model = e.provider === "openai" ? "gpt-6.1-sol" : MODEL;
+  const model = selectedModel ?? (e.provider === "openai" ? "gpt-6.1-sol" : MODEL);
   const pricingEvidence = {
     evidenceRef: "official-pricing-fixture",
     verifiedAt: new Date("2026-11-20T11:59Z"),
@@ -106,7 +113,13 @@ async function route(o: Partial<CreditPoolEvidence> = {}, enabled = true) {
     evidence: e,
   };
 }
-async function claim() {
+async function claim(routeId?: string) {
+  const [route] = await f.db
+    .select({ id: schema.creditRoutes.id })
+    .from(schema.creditRoutes)
+    .where(routeId ? eq(schema.creditRoutes.id, routeId) : eq(schema.creditRoutes.orgId, f.org.id))
+    .orderBy(schema.creditRoutes.id)
+    .limit(1);
   const runId = crypto.randomUUID();
   const ownerJobId = crypto.randomUUID();
   await f.db.insert(schema.agentRuns).values({
@@ -119,6 +132,14 @@ async function claim() {
     trigger: "mention",
     hop: 1,
     status: "running",
+    transcript: {
+      creditRoute: {
+        routeId: route?.id,
+        minimumTier: need.minimumTier,
+        effort: need.effort,
+        capabilities: [...need.capabilities],
+      },
+    },
   });
   await f.db.insert(schema.outbox).values({
     id: ownerJobId,
@@ -1086,3 +1107,171 @@ postgresTest(
   },
   30_000,
 );
+
+for (const provider of ["anthropic", "openai"] as const) {
+  test(`${provider}: a weaker first route cannot take work requiring the stronger qualified model`, async () => {
+    f = await setup();
+    const weakModel = provider === "anthropic" ? "claude-haiku-5-5" : "gpt-6-luna";
+    const strongModel = provider === "anthropic" ? "claude-opus-5-5" : "gpt-6.1-sol";
+    const minimumTier = provider === "anthropic" ? ("large" as const) : ("medium" as const);
+    const r = await route(
+      {
+        provider,
+        product: provider === "anthropic" ? "claude_ultra_api" : "openai_pro_api",
+      },
+      true,
+      weakModel,
+    );
+    const weakId = "00000000-0000-4000-8000-000000000001";
+    await f.db.update(schema.creditRoutes).set({ id: weakId }).where(eq(schema.creditRoutes.id, r.routeId));
+    const created = await registerCreditRoute(
+      f.db,
+      f.org.id,
+      {
+        poolId: r.poolId,
+        credentialId: r.credentialId,
+        model: strongModel,
+        pricingEvidence: { ...r.pricingEvidence, profileHash: creditPricingProfile(strongModel).profileHash },
+        supportsTools: true,
+        maxPromptBytes: 100_000,
+        routeKind: provider === "anthropic" ? "anthropic_messages" : "openai_responses",
+        accountEvidenceRef: "stronger-model-fixture",
+        capabilities: ["text", "client_tools"],
+      },
+      NOW,
+    );
+    const strongId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    await f.db.update(schema.creditRoutes).set({ id: strongId }).where(eq(schema.creditRoutes.id, created));
+    await setCreditRouteEnabled(f.db, f.org.id, strongId, true, NOW);
+    const selected = await qualifyCreditRoute(f.db, { orgId: f.org.id, need: { ...need, minimumTier }, now: NOW });
+    expect(selected).toMatchObject({ ok: true, proof: { routeId: strongId, model: strongModel } });
+    expect(await f.db.select().from(schema.creditAttempts)).toHaveLength(0);
+    await setCreditRouteEnabled(f.db, f.org.id, strongId, false, NOW);
+    expect(await qualifyCreditRoute(f.db, { orgId: f.org.id, need: { ...need, minimumTier }, now: NOW })).toEqual({
+      ok: false,
+      reason: "unsupported_capability",
+    });
+    expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(0);
+  });
+
+  test(`${provider}: missing or newly insufficient quality cannot create a reservation`, async () => {
+    f = await setup();
+    const r = await route({ provider, product: provider === "anthropic" ? "claude_ultra_api" : "openai_pro_api" });
+    const c = await claim(r.routeId);
+    for (const incomplete of [
+      { ...need, minimumTier: undefined },
+      { ...need, effort: undefined },
+      { ...need, capabilities: undefined },
+    ]) {
+      expect(await qualifyCreditRoute(f.db, { orgId: f.org.id, need: incomplete, now: NOW })).toEqual({
+        ok: false,
+        reason: "unsupported_capability",
+      });
+      await expect(admitCreditCall(f.db, { ...admission(r, c), need: incomplete })).rejects.toMatchObject({
+        reason: "unsupported_capability",
+      });
+    }
+    const info = MODEL_CATALOG[r.model]!;
+    const before = info.tier;
+    try {
+      info.tier = "small";
+      expect(await qualifyCreditRoute(f.db, { orgId: f.org.id, need, now: NOW })).toEqual({
+        ok: false,
+        reason: "unsupported_capability",
+      });
+      await expect(admitCreditCall(f.db, admission(r, c))).rejects.toMatchObject({ reason: "unsupported_capability" });
+    } finally {
+      info.tier = before;
+    }
+    expect(await f.db.select().from(schema.creditAttempts)).toHaveLength(0);
+    expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(0);
+  });
+
+  test(`${provider}: catalog quality is checked again after reservation and before dispatch`, async () => {
+    f = await setup();
+    const r = await route({ provider, product: provider === "anthropic" ? "claude_ultra_api" : "openai_pro_api" });
+    const c = await claim(r.routeId);
+    const a = await admitCreditCall(f.db, admission(r, c));
+    const info = MODEL_CATALOG[r.model]!;
+    const before = info.tier;
+    try {
+      info.tier = undefined;
+      await expect(markCreditAttemptDispatched(f.db, f.org.id, a.attemptId, { ...c, now: NOW })).rejects.toMatchObject({
+        reason: "unsupported_capability",
+      });
+    } finally {
+      info.tier = before;
+    }
+    const [attempt] = await f.db.select().from(schema.creditAttempts).where(eq(schema.creditAttempts.id, a.attemptId));
+    expect(attempt).toMatchObject({
+      state: "held",
+      reservationNeed: { ...need, capabilities: [...need.capabilities].sort() },
+    });
+    expect(attempt?.dispatchedAt).toBeNull();
+    expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(USD);
+  });
+}
+
+test("the native task requirement cannot be weakened by a caller or changed on an existing attempt", async () => {
+  f = await setup();
+  const r = await route();
+  const c = await claim(r.routeId);
+  await expect(
+    admitCreditCall(f.db, { ...admission(r, c), need: { ...need, minimumTier: "small" } }),
+  ).rejects.toMatchObject({ reason: "unsupported_capability" });
+  const a = await admitCreditCall(f.db, admission(r, c));
+  await f.db
+    .update(schema.agentRuns)
+    .set({
+      transcript: { creditRoute: { routeId: r.routeId, ...need, minimumTier: "small" } },
+    })
+    .where(eq(schema.agentRuns.id, c.runId));
+  await expect(
+    admitCreditCall(f.db, { ...admission(r, c), need: { ...need, minimumTier: "small" } }),
+  ).rejects.toMatchObject({ reason: "duplicate_attempt" });
+  await expect(markCreditAttemptDispatched(f.db, f.org.id, a.attemptId, { ...c, now: NOW })).rejects.toMatchObject({
+    reason: "unsupported_capability",
+  });
+  expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(USD);
+  expect((await f.db.select().from(schema.creditAttempts))[0]?.state).toBe("held");
+});
+
+test("a changed durable effort or capability requirement holds the reservation before dispatch", async () => {
+  for (const patch of [{ effort: "low" }, { capabilities: ["text"] }]) {
+    f = await setup();
+    const r = await route();
+    const c = await claim(r.routeId);
+    const a = await admitCreditCall(f.db, admission(r, c));
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: { creditRoute: { routeId: r.routeId, ...need, ...patch } },
+      })
+      .where(eq(schema.agentRuns.id, c.runId));
+    await expect(markCreditAttemptDispatched(f.db, f.org.id, a.attemptId, { ...c, now: NOW })).rejects.toMatchObject({
+      reason: "unsupported_capability",
+    });
+    expect((await f.db.select().from(schema.creditAttempts))[0]?.state).toBe("held");
+    expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(USD);
+    await f.close();
+    f = undefined as unknown as Fixture;
+  }
+});
+
+test("legacy reservations without a quality requirement retain their liability and cannot dispatch", async () => {
+  f = await setup();
+  const r = await route();
+  const c = await claim(r.routeId);
+  const a = await admitCreditCall(f.db, admission(r, c));
+  await f.db
+    .update(schema.creditAttempts)
+    .set({
+      reservationNeed: { tools: need.tools, promptBytes: need.promptBytes, capabilities: [...need.capabilities] },
+    })
+    .where(eq(schema.creditAttempts.id, a.attemptId));
+  await expect(markCreditAttemptDispatched(f.db, f.org.id, a.attemptId, { ...c, now: NOW })).rejects.toMatchObject({
+    reason: "unsupported_capability",
+  });
+  expect((await f.db.select().from(schema.creditAttempts))[0]?.state).toBe("held");
+  expect((await cycle(r.cycleId)).heldAutomaticNanoUsd).toBe(USD);
+});
