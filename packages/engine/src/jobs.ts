@@ -835,6 +835,7 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
         executeRun(deps, String(job.payload.runId), {
           ...ctx,
           jobId: job.id,
+          creditClaim: { ownerJobId: job.id, ownerWorkerId: job.lockedBy ?? "", ownerEpoch: job.attempts },
           ...(wait ? { wait } : {}),
           ...(lineSince ? { lineSince } : {}),
         }),

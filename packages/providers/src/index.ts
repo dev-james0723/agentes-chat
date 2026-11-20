@@ -11,6 +11,7 @@ export * from "./catalog";
 export * from "./context-limits";
 export * from "./custom";
 export * from "./embeddings";
+export * from "./errors";
 export * from "./gemini";
 export * from "./key-check";
 export * from "./openai";

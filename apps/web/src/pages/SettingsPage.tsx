@@ -76,6 +76,7 @@ import { EndpointForm } from "@/components/ai/EndpointForm";
 import { WhoPicksSection } from "@/components/ai/Jev";
 import { BillingLinkButton } from "@/components/BillingLinkButton";
 import { ConnectorsSection } from "@/components/Connectors";
+import { CreditContinuityCard } from "@/components/CreditContinuityCard";
 import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import type { ConnectStart } from "@/components/devices/ConnectDialog";
 import { DevicePage } from "@/components/devices/DevicePage";
@@ -1132,6 +1133,7 @@ function UsageSection() {
   return (
     <>
       <PlanUsageCards />
+      <CreditContinuityCard />
       {composio.data && showsComposioUsage(composio.data) && (
         <Card>
           <span className="small">{composioUsageText(t, i18n.language, composio.data)}</span>

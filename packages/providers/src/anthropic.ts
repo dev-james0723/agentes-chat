@@ -8,6 +8,13 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { MODEL_CATALOG } from "./catalog";
 import {
+  annotateProviderFailure,
+  providerBillingFailure,
+  safeProviderRequestId,
+  safeProviderResponseId,
+  withoutBillingRetries,
+} from "./errors";
+import {
   type ContentBlock,
   deniedError,
   hasToolImages,
@@ -86,22 +93,30 @@ export function createAnthropicProvider(
 ): ModelProvider {
   const id = options.id ?? "anthropic";
   const { compat } = options;
-  const client = (apiKey: string, workspaceId?: string) =>
-    new Anthropic({
+  const client = (apiKey: string, workspaceId?: string, noTransportRetries = false) => {
+    const officialBaseURL = "https://api.anthropic.com";
+    if (
+      noTransportRetries &&
+      (id !== "anthropic" || compat || (options.baseURL !== undefined && options.baseURL !== officialBaseURL))
+    )
+      throw new ProviderError("grant route requires the official Claude Platform endpoint", false);
+    return new Anthropic({
       apiKey,
-      baseURL: options.baseURL,
-      maxRetries: options.maxRetries ?? 2,
-      fetch: options.fetch,
+      // An absent SDK baseURL inherits ANTHROPIC_BASE_URL; grant admission proves only this official route.
+      baseURL: noTransportRetries ? officialBaseURL : options.baseURL,
+      maxRetries: noTransportRetries ? 0 : (options.maxRetries ?? 2),
+      fetch: withoutBillingRetries(options.fetch ?? globalThis.fetch),
       // Keys not scoped to a workspace must name one on every request.
       ...(workspaceId ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } } : {}),
     });
+  };
 
   return {
     id,
     async stream(input, { apiKey, workspaceId, onDelta }): Promise<ModelResult> {
       const request = laidOut(input);
       const info = MODEL_CATALOG[request.model];
-      const fallback = !compat && info?.serverSideFallback === true;
+      const fallback = !compat && !request.noTransportRetries && info?.serverSideFallback === true;
       const format = compat ? undefined : request.outputSchema;
       const answerSchema = compat ? request.outputSchema : undefined;
       const tools = [
@@ -143,6 +158,9 @@ export function createAnthropicProvider(
         return {
           model: request.model,
           max_tokens: request.maxTokens,
+          ...(!compat && request.noTransportRetries
+            ? { service_tier: "standard_only" as const, speed: "standard" as const }
+            : {}),
           system: toSystem(request, compat ? undefined : room(request)),
           // Another company's endpoint (DeepSeek, Kimi, Z.ai, MiniMax) isn't trusted to take images, unless it says it does.
           messages: toMessageParams(
@@ -179,11 +197,27 @@ export function createAnthropicProvider(
       // Pre-warm (`maxTokens` 0): the API writes the prompt to the cache and answers nothing, billing no output.
       if (request.maxTokens === 0 && !compat) {
         try {
-          const message = await client(apiKey, workspaceId).beta.messages.create(
+          const message = await client(apiKey, workspaceId, request.noTransportRetries).beta.messages.create(
             { ...params(true), max_tokens: 0, stream: false },
             { signal: request.signal },
           );
+          const verified = verifiedAnthropicUsage(message.usage);
+          if (
+            request.noTransportRetries &&
+            (!verified || message.model !== request.model || !standardAnthropicReceipt(message.usage))
+          )
+            throw new ProviderError(
+              "grant response lacks verified final usage, reserved model or standard pricing tier",
+              false,
+              undefined,
+              partial,
+            );
           return {
+            ...(verified ? { usageVerified: true as const } : {}),
+            ...(safeProviderRequestId(message._request_id)
+              ? { providerRequestId: safeProviderRequestId(message._request_id) }
+              : {}),
+            ...(safeProviderResponseId(message.id) ? { providerResponseId: safeProviderResponseId(message.id) } : {}),
             text: "",
             content: [],
             model: message.model,
@@ -203,18 +237,31 @@ export function createAnthropicProvider(
         }
       }
       const call = async (withThinking: boolean): Promise<ModelResult> => {
-        const stream = client(apiKey, workspaceId).beta.messages.stream(params(withThinking), {
-          signal: request.signal,
-        });
+        let started = false,
+          finalUsage = false,
+          stopped = false;
+        const stream = client(apiKey, workspaceId, request.noTransportRetries).beta.messages.stream(
+          params(withThinking),
+          {
+            signal: request.signal,
+          },
+        );
         stream.on("streamEvent", (event) => {
           if (event.type === "message_start") {
+            started = true;
             partial.inputTokens = event.message.usage.input_tokens;
             partial.cacheReadTokens = event.message.usage.cache_read_input_tokens ?? 0;
             partial.cacheWriteTokens = event.message.usage.cache_creation_input_tokens ?? 0;
             const long = event.message.usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
             if (long > 0) partial.cacheWriteLongTokens = long;
           } else if (event.type === "message_delta") {
+            finalUsage =
+              typeof event.usage.output_tokens === "number" &&
+              Number.isSafeInteger(event.usage.output_tokens) &&
+              event.usage.output_tokens >= 0;
             partial.outputTokens = event.usage.output_tokens;
+          } else if (event.type === "message_stop") {
+            stopped = true;
           } else if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
             partial.outputChars += event.delta.partial_json.length;
           }
@@ -224,6 +271,17 @@ export function createAnthropicProvider(
           onDelta(delta);
         });
         const message = await stream.finalMessage();
+        const verified = started && finalUsage && stopped && verifiedAnthropicUsage(message.usage);
+        if (
+          request.noTransportRetries &&
+          (!verified || message.model !== request.model || !standardAnthropicReceipt(message.usage))
+        )
+          throw new ProviderError(
+            "grant response lacks verified final usage, reserved model or standard pricing tier",
+            false,
+            undefined,
+            partial,
+          );
         const dropped: Record<string, number> = {};
         for (const t of message.input_transformations ?? [])
           if (t.type === "thinking_dropped") dropped[t.reason] = (dropped[t.reason] ?? 0) + 1;
@@ -240,6 +298,11 @@ export function createAnthropicProvider(
           text: content.map((b) => (b.type === "text" ? b.text : "")).join(""),
           content,
           model: message.model,
+          ...(!compat && verified ? { usageVerified: true as const } : {}),
+          ...(safeProviderRequestId(stream.request_id)
+            ? { providerRequestId: safeProviderRequestId(stream.request_id) }
+            : {}),
+          ...(safeProviderResponseId(message.id) ? { providerResponseId: safeProviderResponseId(message.id) } : {}),
           stopReason: answer ? "end_turn" : mapStopReason(message.stop_reason),
           usage: {
             inputTokens: message.usage.input_tokens,
@@ -263,7 +326,7 @@ export function createAnthropicProvider(
       try {
         return await call(true);
       } catch (error) {
-        if (!refusesThinking(error)) throw failure(error);
+        if (request.noTransportRetries || !refusesThinking(error)) throw failure(error);
         refused = toProviderError(error).message;
       }
       try {
@@ -285,7 +348,7 @@ export function createAnthropicProvider(
       : {
           async countTokens(request: ModelRequest, { apiKey, workspaceId }: { apiKey: string; workspaceId?: string }) {
             try {
-              const result = await client(apiKey, workspaceId).beta.messages.countTokens({
+              const result = await client(apiKey, workspaceId, request.noTransportRetries).beta.messages.countTokens({
                 model: request.model,
                 system: toSystem(request),
                 messages: toMessageParams(request.messages, id),
@@ -298,6 +361,33 @@ export function createAnthropicProvider(
           },
         }),
   };
+}
+
+/** Missing tier evidence is unknown cost; neither priority nor fast mode shares this bound. */
+function standardAnthropicReceipt(usage: unknown): boolean {
+  if (!usage || typeof usage !== "object") return false;
+  const receipt = usage as { service_tier?: unknown; speed?: unknown };
+  return receipt.service_tier === "standard" && receipt.speed === "standard";
+}
+
+function verifiedAnthropicUsage(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const u = value as {
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+    cache_read_input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
+    cache_creation?: { ephemeral_5m_input_tokens?: unknown; ephemeral_1h_input_tokens?: unknown };
+  };
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const cached = u.cache_read_input_tokens,
+    written = u.cache_creation_input_tokens;
+  if (!count(u.input_tokens) || !count(u.output_tokens) || !count(cached) || !count(written)) return false;
+  // Cache writes can mix 5-minute and 1-hour TTLs, with different prices. Missing breakdown is not zero long writes.
+  if (written === 0 && u.cache_creation == null) return true;
+  const short = u.cache_creation?.ephemeral_5m_input_tokens;
+  const long = u.cache_creation?.ephemeral_1h_input_tokens;
+  return count(short) && count(long) && short + long === written;
 }
 
 const isAnswer = (b: ContentBlock): b is Extract<ContentBlock, { type: "tool_use" }> =>
@@ -459,8 +549,23 @@ function saidIn(error: InstanceType<typeof Anthropic.APIError>) {
   return (typeof body?.error?.message === "string" && shortSaid(body.error.message)) || undefined;
 }
 
-function toProviderError(error: unknown): ProviderError {
+export function toProviderError(error: unknown): ProviderError {
+  return annotateProviderFailure(mappedAnthropicError(error), error);
+}
+
+function mappedAnthropicError(error: unknown): ProviderError {
   if (error instanceof ProviderError) return error;
+  if (error instanceof Anthropic.APIError) {
+    const billing = providerBillingFailure(error);
+    if (billing)
+      return new ProviderError(
+        billing === "exhausted" ? "no prepaid credit left at the provider" : "provider spending limit reached",
+        false,
+        error.status ?? (billing === "exhausted" ? 400 : 429),
+        undefined,
+        saidIn(error),
+      );
+  }
   // Most specific first: rate limits and server errors are worth retrying, bad requests and auth are not.
   if (error instanceof Anthropic.RateLimitError) return new ProviderError("rate limited by provider", true, 429);
   if (error instanceof Anthropic.AuthenticationError) return new ProviderError("invalid provider API key", false, 401);

@@ -138,6 +138,8 @@ export interface ModelRequest {
    * `after` are left out of the system. Absent: the system as it is.
    */
   notes?: { at: number; text: string };
+  /** One admitted credit attempt dispatches once; disables SDK and adapter retries. Never sent upstream. */
+  noTransportRetries?: true;
   signal?: AbortSignal;
 }
 
@@ -181,6 +183,12 @@ export interface ModelResult {
   usage: ModelUsage;
   /** What the provider says the call cost (OpenRouter's `usage.cost`); absent: priced from the catalog. */
   costNanoUsd?: number;
+  /** Complete final API usage receipt was observed and token counts validated. */
+  usageVerified?: true;
+  /** Bounded upstream HTTP request identifier, never a generated identifier or credential. */
+  providerRequestId?: string;
+  /** Bounded final response/message object identifier, distinct from the HTTP request id. */
+  providerResponseId?: string;
   /**
    * Thinking sent back that the call went without (Anthropic): the blocks the API dropped, by reason, or the
    * refusal that sent the call again without any.
