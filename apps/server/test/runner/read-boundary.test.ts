@@ -13,7 +13,7 @@ import {
 import { grokTurnArgs } from "../../runner/brain-grok";
 import { foldersEnforced, normalizeStored } from "../../runner/config";
 import { configFromGrant } from "../../runner/daemon";
-import { claudePermissionSettings } from "../../runner/mcp";
+import { claudeMcpConfig, claudePermissionSettings, mcpScopeFromEnv, permissionPrompt } from "../../runner/mcp";
 
 // The machine's folder allow-list enforced by each CLI itself (`readsOnlyInFolders`): off unless the owner turns it on.
 
@@ -53,10 +53,45 @@ test("config: readsOnlyInFolders is kept only when true, and survives pairing ag
   expect(off.readsOnlyInFolders).toBe(false);
 });
 
-test("ADR 0205: the allow-list is in force unless the owner turned it off", () => {
-  expect(foldersEnforced({})).toBe(true);
-  expect(foldersEnforced({ readsOnlyInFolders: true })).toBe(true);
+test("ADR 0205: the allow-list is opt-in: in force only when the owner turned it on", () => {
+  expect(foldersEnforced({})).toBe(false);
   expect(foldersEnforced({ readsOnlyInFolders: false })).toBe(false);
+  expect(foldersEnforced({ readsOnlyInFolders: true })).toBe(true);
+});
+
+test("ADR 0205: with the setting unset, nothing is refused and nobody is asked for a folder", async () => {
+  // Claude Code: no read or write block in its settings.
+  for (const mode of ["work", "plan"] as const) {
+    const settings = claudePermissionSettings(mode, [], undefined, { promptReads: true });
+    expect("blockReadsOutsideWorkingDirectories" in settings.permissions).toBe(false);
+    expect("blockWritesOutsideWorkingDirectories" in settings.permissions).toBe(false);
+  }
+  // Our MCP process: no allow-list in its scope, so reads anywhere pass at once with nobody asked.
+  const env = (
+    claudeMcpConfig({ command: ["r"], taskId: "t", socketPath: "/s", token: "k", cwd: "/w/a", folders: ["/w/a"] })
+      .mcpServers as Record<string, { env: NodeJS.ProcessEnv }>
+  ).agentes?.env;
+  const scope = mcpScopeFromEnv(env ?? {});
+  expect(scope?.confined).toBeUndefined();
+  let asked = 0;
+  const call = async () => {
+    asked++;
+    return { ok: true as const, text: JSON.stringify({ behavior: "allow" }) };
+  };
+  for (const input of [
+    { tool_name: "Bash", input: { command: "cat /Users/someone/notes.txt" } },
+    { tool_name: "Bash", input: { command: "ls ~/Documents" } },
+    { tool_name: "Read", input: { file_path: "/Users/someone/notes.txt" } },
+  ]) {
+    expect(await permissionPrompt(input, call, { ...(scope ? { scope } : {}) })).toMatchObject({ behavior: "allow" });
+  }
+  expect(asked).toBe(0);
+  // Codex keeps its legacy sandbox (no folder profile); Grok its `workspace` sandbox.
+  const codex = codexTurnArgs({ cwd: "/w/a", lastFile: "/tmp/l", runId: "r" });
+  expect(codex).toContain("--sandbox");
+  expect(codex.some((a) => a.startsWith("default_permissions="))).toBe(false);
+  const grok = grokTurnArgs({ prompt: "hi" });
+  expect(grok[grok.indexOf("--sandbox") + 1]).toBe("workspace");
 });
 
 test("Claude Code: with the allow-list, its file tools also refuse writes outside its working directories", () => {
