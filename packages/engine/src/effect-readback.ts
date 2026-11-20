@@ -120,27 +120,8 @@ export async function reconcileBridgeCalls(
     .map(([id]) => id);
   const found: Record<string, ReadBack> = {};
   for (const callId of unknown) {
-    const [step] = await db
-      .select({ data: agentRunSteps.data })
-      .from(agentRunSteps)
-      .where(
-        and(
-          eq(agentRunSteps.runId, run.id),
-          eq(agentRunSteps.kind, "tool_call"),
-          sql`${agentRunSteps.data}->>'toolUseId' = ${callId}`,
-        ),
-      )
-      .limit(1);
-    const data = step?.data as { name?: unknown; input?: unknown } | undefined;
-    const readBack = READ_BACKS[str(data?.name)];
-    if (!readBack || !data?.input || typeof data.input !== "object") continue;
-    const verdict = await readBack(db, {
-      orgId: run.orgId,
-      agentId: run.agentId,
-      runId: run.id,
-      input: data.input as Record<string, unknown>,
-      since: epoch.since,
-    }).catch((): ReadBack => "unknown");
+    const verdict = await readBackCall(db, run, callId, epoch.since);
+    if (verdict === null) continue;
     found[callId] = verdict;
     if (verdict === "unknown") continue;
     await db
@@ -157,4 +138,37 @@ export async function reconcileBridgeCalls(
       );
   }
   return found;
+}
+
+/**
+ * One call's read-back (also used once its epoch is held, ADR 0203): null when its tool has none. `since` is when its
+ * turn's epoch opened.
+ */
+export async function readBackCall(
+  db: Executor,
+  run: { id: string; orgId: string; agentId: string },
+  callId: string,
+  since: Date,
+): Promise<ReadBack | null> {
+  const [step] = await db
+    .select({ data: agentRunSteps.data })
+    .from(agentRunSteps)
+    .where(
+      and(
+        eq(agentRunSteps.runId, run.id),
+        eq(agentRunSteps.kind, "tool_call"),
+        sql`${agentRunSteps.data}->>'toolUseId' = ${callId}`,
+      ),
+    )
+    .limit(1);
+  const data = step?.data as { name?: unknown; input?: unknown } | undefined;
+  const readBack = READ_BACKS[str(data?.name)];
+  if (!readBack || !data?.input || typeof data.input !== "object") return null;
+  return readBack(db, {
+    orgId: run.orgId,
+    agentId: run.agentId,
+    runId: run.id,
+    input: data.input as Record<string, unknown>,
+    since,
+  }).catch((): ReadBack => "unknown");
 }
