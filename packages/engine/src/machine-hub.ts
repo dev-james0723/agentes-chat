@@ -749,6 +749,7 @@ export function createMachineHub(deps: MachineHubDeps) {
         frame.desktopUse ||
         frame.claudeLoginMethods ||
         frame.toolchains ||
+        machine.executors?.taskModels ||
         machine.executors?.antigravity?.hostAuth
           ? {
               executors: {

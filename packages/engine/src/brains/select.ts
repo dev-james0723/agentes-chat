@@ -41,9 +41,12 @@ const kindOf = (v: unknown): BrainKind => (KINDS.includes(v as BrainKind) ? (v a
 /** A mission's choice for a run in its thread (`missionTurnFor`). */
 export interface MissionTurn {
   missionId: string;
+  ownerId?: string | null;
   brain: BrainKind;
   model?: string;
   session?: BrainSession;
+  accountId?: string | null;
+  effort?: BrainEffort;
 }
 
 /**
@@ -524,7 +527,7 @@ export interface QuotaReserve {
 export function quotaReserveOf(
   usage: PlanUsage | null | undefined,
   pool: QuotaReserve["pool"],
-  options: { now?: number; thresholdPercent?: number; maxAgeMs?: number } = {},
+  options: { now?: number; thresholdPercent?: number; maxAgeMs?: number; model?: string } = {},
 ): QuotaReserve {
   const thresholdPercent = options.thresholdPercent ?? 90;
   const maxAgeMs = options.maxAgeMs ?? 15 * 60_000;
@@ -548,9 +551,11 @@ export function quotaReserveOf(
   // pool held "low" by an old reading gets no turn, so the reading is never replaced: the pool stays shut until the
   // window resets. Unknown is tried; a plan that is really full refuses that turn and the task waits or moves on.
   if (now - at > maxAgeMs) return unknown;
-  const windows = usage.windows.filter(
+  const scoped = pool.kind === "claude_code" ? planUsageForModel(usage, options.model ?? "sonnet") : usage;
+  const windows = scoped.windows.filter(
     (w) =>
-      ["five_hour", "seven_day", "monthly"].includes(w.kind) &&
+      (["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "monthly"].includes(w.kind) ||
+        (w.kind === "other" && w.label && w.label !== "Extra usage" && w.label !== "OAuth apps")) &&
       Number.isFinite(w.usedPercent) &&
       w.usedPercent >= 0 &&
       w.usedPercent <= 100 &&
@@ -870,11 +875,41 @@ export async function resolveBrain(
     promptKey?: string;
     quotaReservePercent?: number;
     quotaReserveMaxAgeMs?: number;
+    /** Internal candidate admission only, bound to the unchanged source mission; it never persists a route. */
+    qualifiedQuotaHandoff?: { missionId: string; sourceSessionId: string; ownerId: string | null };
   } = {},
 ): Promise<BrainPlan> {
-  const mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
+  let mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
+  const qualified = options.qualifiedQuotaHandoff;
+  if (
+    mission &&
+    qualified &&
+    mission.missionId === qualified.missionId &&
+    mission.session?.id === qualified.sourceSessionId &&
+    mission.ownerId === qualified.ownerId
+  ) {
+    mission = {
+      ...mission,
+      brain: kindOf(given.brain),
+      model: given.brainModel ?? undefined,
+      accountId: given.brainAccountId ?? null,
+      effort: brainEffortFor(given, kindOf(given.brain)),
+      session: { ...mission.session, resume: false },
+    };
+  }
   // The right hand: the AI of the person whose DM this is, else the workspace's; on a plan, its computer and owner.
-  const agent = await thinkingAgent(deps.db, given, await rightHandPerson(deps.db, given, run));
+  const thinker = await thinkingAgent(deps.db, given, await rightHandPerson(deps.db, given, run));
+  // A committed mission handoff keeps its account even when the agent's default brain is another provider.
+  const agent =
+    mission?.accountId !== undefined
+      ? {
+          ...thinker,
+          brain: mission.brain,
+          machineId: mission.session?.machineId ?? thinker.machineId,
+          brainAccountId: mission.accountId,
+          brainAccountLentBy: null,
+        }
+      : thinker;
   const kind = brainFor(agent, run, mission);
   const base = mission ? { missionId: mission.missionId } : {};
   if (kind === "model") return { kind, ...base };
@@ -892,7 +927,7 @@ export async function resolveBrain(
   // provider for a model it doesn't have.
   const runs =
     kind === "claude_code" && model && !isAutoModel(model) ? claudeCodeModel(planOf(account?.provider), model) : model;
-  const effort = brainEffortFor(agent, kind);
+  const effort = mission?.effort ?? brainEffortFor(agent, kind);
   const unavailable =
     (isRightHand(agent) ? await rightHandPlanRefusal(deps.db, agent, run, status) : null) ??
     (machineId && !deps.machines
@@ -952,6 +987,7 @@ export async function resolveBrain(
         now: options.now?.getTime(),
         thresholdPercent: options.quotaReservePercent,
         maxAgeMs: options.quotaReserveMaxAgeMs,
+        model: runs,
       },
     ),
     ...(settingsChanged ? { settingsChanged } : {}),

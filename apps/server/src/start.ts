@@ -487,6 +487,7 @@ async function boot(
     browserLive: engine.browserLive,
     desktops: engine.desktops,
     machines: engine.machineHub,
+    ...(config.MODEL_INSPECTOR_ORG_IDS.length ? { modelInspector: engine.modelInspector } : {}),
     ...(config.OPS_REPORT_EMAIL?.length
       ? { opsReport: { to: config.OPS_REPORT_EMAIL, publicUrl: config.PUBLIC_URL } }
       : {}),
@@ -527,6 +528,7 @@ async function boot(
       wakeWorkers: workers.wakeAll,
       extras: {
         foundry: engine.foundry,
+        modelInspector: engine.modelInspector,
         internalDatabaseTargets,
         embed: engine.gateway.embed,
         storage: engine.storage,

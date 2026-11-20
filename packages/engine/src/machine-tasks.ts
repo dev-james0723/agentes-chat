@@ -36,6 +36,8 @@ import {
 import { getMessage, insertMessage, type Message, messageView } from "./messages";
 import { blockedOfTask, missionAllowRules, recordTaskDenials } from "./mission-command-rules";
 import { MISSION_RULES } from "./mission-rules";
+import type { MissionRow } from "./missions";
+import type { MissionInspectorRoute } from "./missions-engine";
 import { recordTaskFinished } from "./operator-events";
 import { enqueue } from "./outbox";
 import { lineLocale, personBehindCall } from "./requester";
@@ -233,6 +235,8 @@ export interface StartTaskInput {
   requestedByUserId: string | null;
   title: string;
   executor: TaskExecutor;
+  /** Server-bound route of a native mission child; never inferred from later agent defaults. */
+  modelInspectorRoute?: ModelInspectorChildRoute;
   command?: string;
   prompt?: string;
   sessionId?: string | null;
@@ -269,6 +273,227 @@ export interface StartTaskInput {
 
 /** What a task waiting in our queue keeps to start later (`machine_tasks.start_request`). */
 export type QueuedTaskStart = Omit<StartTaskInput, "protocol" | "machineName">;
+
+export interface ModelInspectorChildRoute {
+  schema: "model-inspector-child-route/1";
+  missionId: string;
+  mainSessionId: string;
+  brain: "claude_code" | "codex";
+  model: string;
+  accountId: string | null;
+  machineId: string;
+  ownerId: string | null;
+  agentId: string;
+}
+
+const CHILD_ROUTE_EVENT = "model_inspector_child_route";
+
+/** The same lock as queue claim: an entry with no start request is already claimed and must stay pinned. */
+export const lockMissionTaskQueue = (db: Executor, machineId: string) =>
+  db.execute(sql`select pg_advisory_xact_lock(hashtext(${`machine-queue:${machineId}`}))`);
+
+/** A runner explicitly promises that native task.start honors the concrete model in the bound receipt. */
+export async function supportsMissionTaskModels(db: Executor, machineId: string) {
+  const [machine] = await db
+    .select({ executors: schema.machines.executors })
+    .from(schema.machines)
+    .where(eq(schema.machines.id, machineId));
+  return machine?.executors?.taskModels === true;
+}
+
+export async function hasLiveNativeMissionTasks(db: Executor, missionId: string) {
+  const [row] = await db
+    .select({ id: machineTasks.id })
+    .from(machineTasks)
+    .where(
+      and(eq(machineTasks.missionId, missionId), inArray(machineTasks.executor, ["claude", "codex"]), liveTaskWhere()),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+function childRoute(mission: MissionRow, route: MissionInspectorRoute): ModelInspectorChildRoute | undefined {
+  if (!mission.machineId || route.brain === "grok") return undefined;
+  return {
+    schema: "model-inspector-child-route/1",
+    missionId: mission.id,
+    mainSessionId: route.sessionId,
+    brain: route.brain,
+    model: route.model,
+    accountId: route.accountId,
+    machineId: mission.machineId,
+    ownerId: mission.ownerId,
+    agentId: mission.agentId,
+  };
+}
+
+/** Messages addressed to an unstarted child's old session follow its replacement in the same transaction. */
+async function remapChildInbox(db: Executor, row: MachineTaskRow, sessionId: string | null) {
+  if (!row.missionId || !row.sessionId || !sessionId || row.sessionId === sessionId) return;
+  const { missions } = schema;
+  await db
+    .update(missions)
+    .set({
+      inbox: sql`coalesce((select jsonb_agg(case when x.value->>'sessionId' = ${row.sessionId}
+      then jsonb_set(x.value, '{sessionId}', to_jsonb(${sessionId}::text)) else x.value end order by x.n)
+      from jsonb_array_elements(${missions.inbox}) with ordinality as x(value, n)), '[]'::jsonb)`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(missions.id, row.missionId), eq(missions.orgId, row.orgId)));
+}
+
+async function recordChildRoute(db: Executor, row: MachineTaskRow, route: ModelInspectorChildRoute) {
+  await db
+    .insert(schema.missionEvents)
+    .values({
+      orgId: row.orgId,
+      missionId: route.missionId,
+      kind: CHILD_ROUTE_EVENT,
+      data: { ...route, taskId: row.id, executor: row.executor, sessionId: row.sessionId },
+    });
+}
+
+/** A launched native session's account/model are historical facts, even after its main mission moves again. */
+async function childRouteForTask(db: Executor, row: MachineTaskRow): Promise<ModelInspectorChildRoute | undefined> {
+  if (!row.missionId) return undefined;
+  const [event] = await db
+    .select({ data: schema.missionEvents.data })
+    .from(schema.missionEvents)
+    .where(
+      and(
+        eq(schema.missionEvents.orgId, row.orgId),
+        eq(schema.missionEvents.missionId, row.missionId),
+        eq(schema.missionEvents.kind, CHILD_ROUTE_EVENT),
+        sql`${schema.missionEvents.data}->>'taskId' = ${row.id}`,
+      ),
+    )
+    .orderBy(desc(schema.missionEvents.createdAt), desc(schema.missionEvents.id))
+    .limit(1);
+  const route = event?.data;
+  if (
+    route?.schema !== "model-inspector-child-route/1" ||
+    route.sessionId !== row.sessionId ||
+    route.executor !== row.executor ||
+    route.machineId !== row.machineId ||
+    route.agentId !== row.agentId ||
+    route.missionId !== row.missionId ||
+    route.brain !== (row.executor === "claude" ? "claude_code" : "codex") ||
+    typeof route.model !== "string" ||
+    typeof route.mainSessionId !== "string" ||
+    !(route.accountId === null || typeof route.accountId === "string") ||
+    !(route.ownerId === null || typeof route.ownerId === "string")
+  )
+    return undefined;
+  return route as unknown as ModelInspectorChildRoute;
+}
+
+/** New children follow the committed route; a native resume uses its own executor and historical account. */
+export async function missionChildStartRoute(
+  db: Executor,
+  mission: MissionRow,
+  input: { resume?: boolean; sessionId?: string | null },
+): Promise<Pick<StartTaskInput, "executor" | "modelInspectorRoute">> {
+  const { missionInspectorRouteFor } = await import("./missions-engine");
+  const mainRoute = await missionInspectorRouteFor(db, mission);
+  if (input.resume && input.sessionId) {
+    const [previous] = await db
+      .select()
+      .from(machineTasks)
+      .where(
+        and(
+          eq(machineTasks.orgId, mission.orgId),
+          eq(machineTasks.missionId, mission.id),
+          eq(machineTasks.agentId, mission.agentId),
+          eq(machineTasks.machineId, mission.machineId ?? ""),
+          eq(machineTasks.sessionId, input.sessionId),
+          inArray(machineTasks.executor, ["claude", "codex"]),
+        ),
+      )
+      .orderBy(desc(machineTasks.createdAt), desc(machineTasks.id))
+      .limit(1);
+    if (previous) {
+      const route = await childRouteForTask(db, previous);
+      return { executor: previous.executor as "claude" | "codex", ...(route ? { modelInspectorRoute: route } : {}) };
+    }
+    if (mainRoute) {
+      throw new TaskSignInError(
+        "No existing native child session matches this resume. Continue using the main agent tools or start a fresh supported child task; the previous executor will not be guessed.",
+      );
+    }
+    return { executor: mission.executor === "codex" ? "codex" : "claude" };
+  }
+  if (mainRoute?.brain === "grok") {
+    throw new TaskSignInError(
+      "Grok supports the main agent tools but cannot run detached native child tasks. Continue this work using the main agent tools, or select a qualified Claude Code or Codex mission route before starting a child task.",
+    );
+  }
+  const bound = mainRoute ? childRoute(mission, mainRoute) : undefined;
+  return bound
+    ? { executor: bound.brain === "codex" ? "codex" : "claude", modelInspectorRoute: bound }
+    : { executor: mission.executor === "codex" ? "codex" : "claude" };
+}
+
+/** Called under the queue lock and in the main-route CAS transaction, after fresh target admission. */
+export async function retargetQueuedMissionChildren(db: Executor, mission: MissionRow, target: MissionInspectorRoute) {
+  const route = childRoute(mission, target);
+  if (!route) return;
+  const queued = await db
+    .select()
+    .from(machineTasks)
+    .where(
+      and(
+        eq(machineTasks.orgId, mission.orgId),
+        eq(machineTasks.missionId, mission.id),
+        eq(machineTasks.agentId, mission.agentId),
+        eq(machineTasks.machineId, route.machineId),
+        eq(machineTasks.status, "queued"),
+        isNull(machineTasks.endedAt),
+        isNull(machineTasks.startedAt),
+        isNull(machineTasks.resumedFromId),
+        eq(machineTasks.resumeCount, 0),
+        inArray(machineTasks.executor, ["claude", "codex"]),
+        sql`${machineTasks.startRequest} is not null`,
+        sql`${machineTasks.startRequest}->'resume' = 'false'::jsonb`,
+      ),
+    )
+    .for("update");
+  for (const row of queued) {
+    const request = row.startRequest as unknown as QueuedTaskStart;
+    if (
+      request.resume !== false ||
+      request.resumedFromId ||
+      request.resumeCount ||
+      request.orgId !== row.orgId ||
+      request.agent?.id !== row.agentId ||
+      request.machineId !== row.machineId ||
+      (request.mission?.id ?? request.missionId) !== mission.id ||
+      request.executor !== row.executor ||
+      (request.sessionId ?? null) !== row.sessionId
+    )
+      continue;
+    const sessionId = Bun.randomUUIDv7();
+    const executor = route.brain === "codex" ? "codex" : "claude";
+    const next: QueuedTaskStart = { ...request, executor, sessionId, resume: false, modelInspectorRoute: route };
+    const [changed] = await db
+      .update(machineTasks)
+      .set({ executor, sessionId, startRequest: next as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(
+        and(
+          eq(machineTasks.id, row.id),
+          eq(machineTasks.status, "queued"),
+          isNull(machineTasks.startedAt),
+          isNull(machineTasks.endedAt),
+          isNull(machineTasks.resumedFromId),
+          sql`${machineTasks.startRequest} = ${JSON.stringify(row.startRequest)}::jsonb`,
+        ),
+      )
+      .returning();
+    if (changed) {
+      await remapChildInbox(db, row, sessionId);
+      await recordChildRoute(db, changed, route);
+    }
+  }
+}
 
 /** A runner older than protocol 4 can't run background tasks: the computer needs an update (`runnerUpdateWay`). */
 export class RunnerOutdatedError extends Error {
@@ -308,17 +533,136 @@ const TASK_CLIS = {
  */
 export async function taskSignIn(
   db: Database,
-  input: Pick<QueuedTaskStart, "orgId" | "agent" | "machineId" | "executor">,
+  input: Pick<
+    QueuedTaskStart,
+    "orgId" | "agent" | "machineId" | "executor" | "modelInspectorRoute" | "mission" | "missionId" | "resume"
+  >,
 ): Promise<{ account?: string; model?: string }> {
   if (input.executor !== "claude" && input.executor !== "codex") return {};
   const [agent, machine] = await Promise.all([
     getAgentCached(db, input.orgId, input.agent.id),
     getMachineById(db, input.machineId),
   ]);
-  if (!agent || !machine) return {};
+  if (!agent || !machine) {
+    if (input.modelInspectorRoute)
+      throw new TaskSignInError("The mission child agent or computer is no longer available.");
+    return {};
+  }
   // Loaded here: the brains' selection builds on the missions, which build on this module.
-  const { brainAccountFor, planIsOwners, storedPlanUsage } = await import("./brains/select");
+  const { brainAccountFor, planIsOwners, storedPlanUsage, quotaReserveOf, planLimitOf } = await import(
+    "./brains/select"
+  );
   const { kind, cli, plan } = TASK_CLIS[input.executor];
+  const route = input.modelInspectorRoute;
+  if (route) {
+    if (machine.executors?.taskModels !== true) {
+      throw new TaskSignInError(
+        "This runner does not yet support concrete native task models. Continue using the main agent tools until the runner update advertises task model support.",
+      );
+    }
+    const [current] = await db
+      .select()
+      .from(schema.agents)
+      .where(and(eq(schema.agents.orgId, input.orgId), eq(schema.agents.id, input.agent.id)));
+    const [mission] = await db
+      .select()
+      .from(schema.missions)
+      .where(and(eq(schema.missions.orgId, input.orgId), eq(schema.missions.id, route.missionId)));
+    if (
+      !current ||
+      current.archivedAt ||
+      current.deletedAt ||
+      !mission ||
+      route.schema !== "model-inspector-child-route/1" ||
+      route.agentId !== input.agent.id ||
+      route.machineId !== input.machineId ||
+      route.brain !== kind ||
+      route.missionId !== (input.mission?.id ?? input.missionId) ||
+      mission.machineId !== route.machineId ||
+      mission.agentId !== route.agentId ||
+      mission.ownerId !== route.ownerId ||
+      machine.orgId !== input.orgId ||
+      !route.model ||
+      isAutoModel(route.model)
+    ) {
+      throw new TaskSignInError(
+        "The mission child route changed or no longer belongs to this task. Continue using the main agent tools until a fresh route is available.",
+      );
+    }
+    const bound = {
+      ...current,
+      brain: kind,
+      machineId: machine.id,
+      brainAccountId: route.accountId,
+      brainAccountLentBy: null,
+    };
+    const account = await brainAccountFor(db, bound, kind, machine.id);
+    const [credentials] = route.accountId
+      ? await db
+          .select({
+            authMethod: schema.machineAccounts.authMethod,
+            keyHint: schema.machineAccounts.keyHint,
+            provider: schema.machineAccounts.provider,
+          })
+          .from(schema.machineAccounts)
+          .where(
+            and(
+              eq(schema.machineAccounts.id, route.accountId),
+              eq(schema.machineAccounts.orgId, input.orgId),
+              eq(schema.machineAccounts.machineId, machine.id),
+            ),
+          )
+      : [];
+    const subscription = route.accountId
+      ? credentials?.authMethod === "cli_login" && credentials.keyHint === null && !credentials.provider
+      : kind === "claude_code"
+        ? machine.executors?.claude?.loggedIn === true && machine.executors.claude.authMethod === "claude.ai"
+        : Boolean(machine.executors?.codex);
+    if (
+      !subscription ||
+      current.brainExtraUsage !== false ||
+      (account?.id ?? null) !== route.accountId ||
+      account?.status === "signed_out" ||
+      account?.provider ||
+      (account && machine.protocol < TASK_ACCOUNTS_PROTOCOL) ||
+      !(await planIsOwners(db, bound, machine.id, account)) ||
+      (!account && kind === "claude_code" && machine.executors?.claude?.loggedIn === false)
+    ) {
+      throw new TaskSignInError(
+        "The mission child's qualified subscription account is no longer available. Continue using the main agent tools; no other account was substituted.",
+      );
+    }
+    const usage = await storedPlanUsage(db, input.orgId, machine.id, kind, account?.id);
+    if (
+      !account &&
+      kind === "codex" &&
+      (!usage ||
+        !["probe", "turn"].includes(usage.source) ||
+        !usage.windows?.length ||
+        !Number.isFinite(Date.parse(usage.at)) ||
+        Date.parse(usage.at) > Date.now() ||
+        Date.now() - Date.parse(usage.at) > 300000)
+    ) {
+      throw new TaskSignInError(
+        "The mission child's Codex subscription evidence is missing or stale. Continue using the main agent tools until its current plan usage is known.",
+      );
+    }
+    const reserve = quotaReserveOf(
+      usage,
+      { machineId: machine.id, kind, accountId: route.accountId },
+      { thresholdPercent: 95, maxAgeMs: 300000, model: route.model },
+    );
+    // A pinned native resume cannot change harnesses safely; a reserve warning still leaves usable room.
+    if (
+      (!input.resume && reserve.state === "low") ||
+      planLimitOf(machine.id, kind, account?.id, usage, Date.now(), route.model)
+    ) {
+      throw new TaskSignInError(
+        "The mission child's subscription route reached its reserve or limit before dispatch. Continue using the main agent tools until the inspector selects an available route.",
+      );
+    }
+    return { ...(account ? { account: account.id } : {}), model: route.model };
+  }
   const own = await brainAccountFor(db, agent, kind, machine.id);
   const account = own && machine.protocol >= TASK_ACCOUNTS_PROTOCOL ? own : undefined;
   const refuse = (why: string, who: string) =>
@@ -379,8 +723,38 @@ export async function startMachineTask(
   options: { requeue?: boolean } = {},
 ) {
   await checkTaskProtocol(deps.db, input);
-  const row = await insertTask(deps.db, input, null);
-  return (await launchTask(deps, row, input, options)).row;
+  const bound = await deps.db.transaction(async (tx) => {
+    await lockMissionTaskQueue(tx, input.machineId);
+    const start = await bindQueuedMissionRoute(tx, input);
+    const row = await insertTask(tx, start, null);
+    return { row, start };
+  });
+  return (await launchTask(deps, bound.row, bound.start, options)).row;
+}
+
+/** Refresh new queued work under the same lock as handoff/claim, so an old main-session snapshot cannot win. */
+async function bindQueuedMissionRoute(db: Executor, input: QueuedTaskStart): Promise<QueuedTaskStart> {
+  const missionId = input.mission?.id ?? input.missionId;
+  if (!missionId || !["claude", "codex"].includes(input.executor) || input.resume || input.resumedFromId) return input;
+  const [mission] = await db
+    .select()
+    .from(schema.missions)
+    .where(and(eq(schema.missions.id, missionId), eq(schema.missions.orgId, input.orgId)));
+  if (!mission || mission.agentId !== input.agent.id || mission.machineId !== input.machineId) {
+    if (input.modelInspectorRoute)
+      throw new TaskSignInError("The mission child's owner or computer changed before queueing.");
+    return input;
+  }
+  const route = await missionChildStartRoute(db, mission, { resume: false });
+  if (!route.modelInspectorRoute) {
+    if (input.modelInspectorRoute) throw new TaskSignInError("The mission route changed before queueing this child.");
+    return input;
+  }
+  const changed =
+    route.executor !== input.executor ||
+    (input.modelInspectorRoute &&
+      JSON.stringify(input.modelInspectorRoute) !== JSON.stringify(route.modelInspectorRoute));
+  return { ...input, ...route, ...(changed ? { sessionId: Bun.randomUUIDv7() } : {}), resume: false };
 }
 
 async function checkTaskProtocol(
@@ -454,6 +828,17 @@ export async function launchTask(
   try {
     // Its CLI signs in with the agent's own account, as its turns (refused here when there's nothing to sign in with).
     const signIn = await taskSignIn(deps.db, input);
+    if (input.modelInspectorRoute) {
+      if (
+        row.executor !== input.executor ||
+        row.sessionId !== (input.sessionId ?? null) ||
+        row.machineId !== input.machineId ||
+        row.agentId !== input.agent.id
+      ) {
+        throw new TaskSignInError("The native task identity changed before dispatch.");
+      }
+      await recordChildRoute(deps.db, row, input.modelInspectorRoute);
+    }
     // The mission tools' token (ADR 0032): the runner sends it with each of the executor's calls.
     const mcpToken = input.mission
       ? await issueRunToolToken(deps.db, {
@@ -518,11 +903,33 @@ export async function launchTask(
       return { row: now, queued: false };
     }
     if (options.requeue && isWaitError(error)) {
-      const [back] = await deps.db
-        .update(machineTasks)
-        .set({ startRequest: input as unknown as Record<string, unknown>, updatedAt: new Date() })
-        .where(and(eq(machineTasks.id, row.id), eq(machineTasks.status, "queued"), isNull(machineTasks.endedAt)))
-        .returning();
+      const back = await deps.db.transaction(async (tx) => {
+        await lockMissionTaskQueue(tx, input.machineId);
+        // A clear no-slot/offline refusal proved no child started; a handoff may have committed since its claim.
+        const next = await bindQueuedMissionRoute(tx, input).catch(() => input);
+        const [returned] = await tx
+          .update(machineTasks)
+          .set({
+            executor: next.executor,
+            sessionId: next.sessionId ?? null,
+            startRequest: next as unknown as Record<string, unknown>,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(machineTasks.id, row.id),
+              eq(machineTasks.status, "queued"),
+              isNull(machineTasks.endedAt),
+              isNull(machineTasks.startedAt),
+            ),
+          )
+          .returning();
+        if (returned && next.modelInspectorRoute) {
+          await remapChildInbox(tx, row, returned.sessionId);
+          await recordChildRoute(tx, returned, next.modelInspectorRoute);
+        }
+        return returned;
+      });
       if (back) {
         await publishTaskEvent(deps.pubsub, back);
         return { row: back, queued: true };
@@ -555,7 +962,11 @@ export async function launchTask(
 export async function queueMachineTask(deps: TaskDeps, input: StartTaskInput) {
   await checkTaskProtocol(deps.db, input);
   const { protocol: _p, machineName: _n, ...queued } = input;
-  const row = await insertTask(deps.db, queued, queued);
+  const row = await deps.db.transaction(async (tx) => {
+    await lockMissionTaskQueue(tx, input.machineId);
+    const start = await bindQueuedMissionRoute(tx, queued);
+    return insertTask(tx, start, start);
+  });
   await publishTaskEvent(deps.pubsub, row);
   return row;
 }
@@ -577,7 +988,7 @@ export async function claimQueuedTask(
   machineId: string,
 ): Promise<{ row: MachineTaskRow; start: QueuedTaskStart } | null> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`machine-queue:${machineId}`}))`);
+    await lockMissionTaskQueue(tx, machineId);
     const [next] = await tx
       .select()
       .from(machineTasks)
@@ -899,6 +1310,7 @@ export async function settleInterruptedTask(
     // Never seen running (its start was cut by a drop): the session may not have its task, so it comes along.
     const asked = claimed.startedAt ? null : claimed.prompt;
     const shell = claimed.executor === "shell";
+    const nativeRoute = shell ? undefined : await childRouteForTask(deps.db, claimed);
     try {
       const again = {
         orgId: claimed.orgId,
@@ -928,6 +1340,7 @@ export async function settleInterruptedTask(
                 : RESUME_PROMPT,
             sessionId: claimed.sessionId,
             resume: true,
+            ...(nativeRoute ? { modelInspectorRoute: nativeRoute } : {}),
             // The session lives in its folder (a worktree for a branch): resume it there.
             cwd: claimed.cwd || null,
             // In the mission's worktree (ADR 0044): the same kind, and a write item still ends in a commit.

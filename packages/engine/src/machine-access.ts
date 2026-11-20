@@ -107,7 +107,7 @@ export async function storeMachineExecutors(
   const [row] = await deps.db
     .update(machines)
     .set({
-      executors: sql`(coalesce(${machines.executors}, '{}'::jsonb) - 'claude' - 'codex' - 'cursor' - 'opencode' - 'grok' - 'antigravity') || ${next}::jsonb`,
+      executors: sql`(coalesce(${machines.executors}, '{}'::jsonb) - 'claude' - 'codex' - 'cursor' - 'opencode' - 'grok' - 'antigravity' - 'taskModels') || ${next}::jsonb`,
       updatedAt: new Date(),
     })
     .where(eq(machines.id, machineId))

@@ -502,6 +502,8 @@ export function executorCommand(
     command?: string;
     session?: string;
     resume?: boolean;
+    /** Explicit model for a native subscription task; quoted as one CLI argument. */
+    model?: string;
     extra?: string[];
     /** Claude Code's permission mode (default `acceptEdits`; a mission's plan turn runs `dontAsk`). */
     permissionMode?: "acceptEdits" | "dontAsk";
@@ -523,6 +525,7 @@ export function executorCommand(
     if (!command) throw new RunnerError("bad_request", "A shell task needs a command");
     return command;
   }
+  const model = typeof options.model === "string" && options.model.trim() ? options.model.trim() : undefined;
   // `extra`: a mission task's MCP server and rules (already quoted for the shell).
   if (executor === "codex") {
     // `codex exec` (JSONL events) runs unattended with approval_policy=never: the sandbox is the limit, so
@@ -537,6 +540,7 @@ export function executorCommand(
       "--json",
       "--skip-git-repo-check",
       "--ignore-rules",
+      ...(model ? ["--model", q(model)] : []),
       ...(c ? ["-C", q(c.cwd), "--sandbox", c.sandbox] : []),
       ...(c?.sandbox === "workspace-write"
         ? ["-c", q("sandbox_workspace_write.network_access=true"), "-c", q(codexWritableRoots(addDirs))]
@@ -556,6 +560,7 @@ export function executorCommand(
     "--permission-mode",
     options.permissionMode ?? "acceptEdits",
   ];
+  if (model) parts.push("--model", shellArg(model, options.platform));
   parts.push(...(options.extra ?? []));
   for (const d of addDirs) parts.push("--add-dir", shellArg(d, options.platform));
   if (options.session) parts.push(options.resume ? "--resume" : "--session-id", options.session);
@@ -1099,6 +1104,7 @@ export class TaskManager {
     const plan = keyPlan && planForTurn(keyPlan, req.model);
     // The agent's model on its plan, as its turns: the plan's `sonnet` when the server named none.
     const planModel = plan ? claudeCodeModel(plan, req.model) : undefined;
+    const taskModel = keyPlan ? planModel : typeof req.model === "string" ? req.model : undefined;
     const folder = await this.opts.agentFolder(agent);
     let cwd = folder;
     if (typeof req.cwd === "string" && req.cwd.trim() !== "") {
@@ -1285,12 +1291,12 @@ export class TaskManager {
       writeFileSync(settingsFile, JSON.stringify(accountSettings), { mode: 0o600 });
       extra.push("--settings", shellArg(settingsFile));
     }
-    // A coding plan serves only its own models: Claude Code asks for one by the alias the plan maps (as a turn).
-    if (planModel) extra.push("--model", planModel);
+    // Coding keys keep their mapped aliases; native subscription tasks receive the exact requested model.
     const command = hosted
       ? "claude"
       : executorCommand(executor, {
           command: req.command,
+          model: taskModel,
           ...(readOnly && executor === "claude" ? { permissionMode: "dontAsk" as const } : {}),
           ...(program ? { program } : {}),
           session,
