@@ -1,5 +1,7 @@
 # Google Colab remote MCP
 
+Related: [product requirements](colab-remote-mcp-prd.md), [engineering specification](colab-remote-mcp-spec.md), [job playbook](colab-job-playbook.md), [implementation plan](superpowers/plans/2026-11-20-colab-remote-mcp.md).
+
 The Google Colab connector lets agents manage cloud runtimes and run Python through
 `https://colaboratory.googleapis.com/mcp`. It uses the Google-hosted API, not the older
 local browser bridge. The agents' coordinator and this server remain where they already run.
@@ -12,7 +14,7 @@ local browser bridge. The agents' coordinator and this server remain where they 
    client and register this exact redirect URI, substituting this installation's `PUBLIC_URL`:
 
    ```text
-   {PUBLIC_URL}/api/app/connectors/oauth/callback
+   ${PUBLIC_URL}/api/app/connectors/oauth/callback
    ```
 
 3. Add the client values to the server's protected environment:
@@ -46,6 +48,26 @@ silently migrate its grants or credentials.
 A Google OAuth application in Testing may have time-limited refresh credentials under Google's
 rules. Configure its audience/publishing status for the intended use before relying on unattended
 jobs. A provider refusal is shown as a reconnect requirement by the existing connector flow.
+
+## Personal OAuth application
+
+For an integration used only by the person creating it, Google's [Personal audience](https://support.google.com/cloud/answer/15544987?hl=en) can create a single-creator project without the seven-day Testing refresh expiry. Its audience choice cannot later be converted. Follow the [Personal client setup](https://support.google.com/cloud/answer/15549945?hl=en), select AI-agent usage when offered, and use the intended Colab account. Console acceptance still needs a live check.
+
+Register exactly ${PUBLIC_URL}/api/app/connectors/oauth/callback and enable the Colab API. The user handles required Google sign-in. After returning to the connector screen, inspect its state and run the authenticated checks below. An expired or already-used OAuth state needs a fresh sign-in flow; do not replay its callback.
+
+## Import the downloaded Web client
+
+The optional [credential import helper](../scripts/colab/import-google-oauth.mjs) validates a downloaded Google Web-client JSON against the server's current PUBLIC_URL. First validate without changing configuration:
+
+```bash
+node scripts/colab/import-google-oauth.mjs \
+  --oauth-json /absolute/path/client.json \
+  --env-file /absolute/path/runtime/.env \
+  --public-url "${PUBLIC_URL}" \
+  --check
+```
+
+Use the same command without --check to write only CONNECTOR_COLAB_CLIENT_ID and CONNECTOR_COLAB_CLIENT_SECRET. Run as the protected environment file's owner. The helper refuses a Desktop client or wrong callback, preserves unrelated settings, atomically writes mode 0600 and never prints credential values. It does not restart the service.
 
 ## Verify a real connection
 
