@@ -19,6 +19,7 @@ An enabled organization has a visible Model Inspector agent backed by a determin
 | MI-07 | Integrate Grok through the existing authenticated CLI account and real brain adapter. | Account visibility and quota uncertainty remain distinct; a Grok model must pass the existing resolver and a bounded real smoke before live usability is claimed. |
 | MI-08 | Keep monitoring independent from any model's quota. | Worker polling continues if JEV or the inspector agent's model is unavailable. Switching has cooldown, per-sweep limits, account-aware selection and durable audit records. |
 | MI-09 | Make results inspectable. | The inspector has a status tool/API, the service records decision reasons and timestamps, and the visible agent explains changes in plain language. |
+| MI-10 | Include the owner's personal right-hand agent in full-team inspection. | Inspect its effective personal binding, select an authenticated own or named subscription route, and update only that owner's personal settings after CAS/active-work checks. Global defaults and other members remain independent. |
 
 ## Scope
 

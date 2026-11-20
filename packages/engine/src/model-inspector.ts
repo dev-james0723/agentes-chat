@@ -33,10 +33,12 @@ import { publishAgentsChanged } from "./events";
 import type { Judge } from "./judge";
 import { refreshAiAccounts } from "./machine-accounts";
 import type { MachineCaller, MachineStatus } from "./machine-hub";
+import { publishMachineAgentsChanged } from "./machines";
 import { type ModelInspectorWorkObservation, observeModelInspectorWork } from "./model-inspector-observations";
 import { chooseModelInspectorRoute, type ModelInspectorCandidate } from "./model-inspector-routing";
 import { agentUsageFor } from "./plan-usage";
 import { createQuotaCliQualifier, hasCredentialText } from "./quota-qualifier";
+import { personalBrain, thinkingAgent } from "./right-hand";
 
 type RouteKind = ModelInspectorCandidate["kind"];
 const ROUTES: readonly RouteKind[] = ["claude_code", "codex", "grok"];
@@ -44,6 +46,15 @@ const TERMINAL_RUNS = ["done", "failed", "canceled"] as const;
 const TERMINAL_MISSIONS = ["done", "canceled"] as const;
 const SWITCH_ACTION = "model_inspector.switch";
 const SWEEP_MS = 60_000;
+const PERSONAL = Symbol("model-inspector-personal-route");
+type InspectionAgent = Agent & {
+  [PERSONAL]?: {
+    userId: string;
+    globalFingerprint: string;
+    bindingFingerprint: string;
+    hasBinding: boolean;
+  };
+};
 
 export interface ModelInspectorDeps {
   db: Database;
@@ -82,6 +93,8 @@ export interface ModelInspectorAgentReport {
   lastSwitchAt?: string;
   cooldownUntil?: string;
   apiBudgetPercent?: number;
+  /** A right hand is inspected for its configured owner's private route, never another member's. */
+  scope?: "owner_personal";
 }
 
 export interface ModelInspectorReport {
@@ -120,7 +133,12 @@ async function loadFleet(db: Database, orgId: string) {
       .from(schema.missions)
       .where(and(eq(schema.missions.orgId, orgId), notInArray(schema.missions.status, [...TERMINAL_MISSIONS]))),
     db
-      .select({ id: schema.routines.id, agentId: schema.routines.agentId, prompt: schema.routines.prompt })
+      .select({
+        id: schema.routines.id,
+        agentId: schema.routines.agentId,
+        prompt: schema.routines.prompt,
+        createdByUserId: schema.routines.createdByUserId,
+      })
       .from(schema.routines)
       .where(
         and(eq(schema.routines.orgId, orgId), eq(schema.routines.active, true), isNull(schema.routines.deletedAt)),
@@ -202,6 +220,21 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     now: () => now().getTime(),
   });
 
+  async function forInspection(db: Database, stored: Agent): Promise<InspectionAgent> {
+    if (stored.builtin !== "right_hand" || !stored.ownerUserId) return stored;
+    const binding = await personalBrain(db, stored.orgId, stored.ownerUserId);
+    const effective = await thinkingAgent(db, stored, stored.ownerUserId);
+    return {
+      ...effective,
+      [PERSONAL]: {
+        userId: stored.ownerUserId,
+        globalFingerprint: fingerprint(stored),
+        bindingFingerprint: JSON.stringify(binding),
+        hasBinding: binding !== null,
+      },
+    };
+  }
+
   async function readQuota(
     db: Database,
     agent: Agent,
@@ -229,7 +262,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     const owners = [
       ...new Set(
         fleet.agents
-          .filter((a) => a.machineId)
+          .filter((a) => a.machineId || a.builtin === "right_hand")
           .map((a) => a.ownerUserId)
           .filter((id): id is string => !!id),
       ),
@@ -269,7 +302,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
 
   async function inspect(
     fleet: Snapshot,
-    agent: Agent,
+    agent: InspectionAgent,
     work: ModelInspectorWorkObservation[],
   ): Promise<ModelInspectorAgentReport> {
     const { reserve, usage, exhausted } = await readQuota(deps.db, agent);
@@ -293,13 +326,24 @@ export function createModelInspector(deps: ModelInspectorDeps) {
       activeMissionIds: fleet.missions.filter((m) => m.agentId === agent.id).map((m) => m.id),
       activeTaskIds: fleet.tasks.filter((t) => t.agentId === agent.id).map((t) => t.id),
       activeWork: work.filter((w) => w.agentId === agent.id),
-      routineIds: fleet.routines.filter((r) => r.agentId === agent.id).map((r) => r.id),
+      routineIds: fleet.routines
+        .filter((r) => r.agentId === agent.id && (!agent[PERSONAL] || r.createdByUserId === agent[PERSONAL]?.userId))
+        .map((r) => r.id),
       decision: "kept",
       reason:
         reserve.state === "unknown"
           ? "No fresh applicable allowance reading; unknown is not remaining capacity."
           : "The current subscription has room.",
     };
+    if (agent.builtin === "right_hand") {
+      result.scope = "owner_personal";
+      const personal = agent[PERSONAL];
+      if (!personal?.hasBinding || !agent.machineId || agent.ownerUserId !== personal.userId) {
+        result.decision = "blocked";
+        result.reason =
+          "The right hand has no available owner-specific subscription route; other members' choices and the workspace default are retained.";
+      }
+    }
     if (agent.brain === "model") {
       const api = (await agentUsageFor(deps.db, null, agent.orgId, agent.id, now())).api;
       result.state = "api_budget";
@@ -309,7 +353,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     } else if (!routeKind(agent.brain)) {
       result.reason =
         "This adapter is inspected, but automatic subscription handoff currently supports Claude Code, Codex and Grok.";
-    } else if (reserve.state === "low" || exhausted) {
+    } else if (result.decision !== "blocked" && (reserve.state === "low" || exhausted)) {
       result.reason =
         agent.brain === "grok" && durableGrokRefusal(usage, now().getTime())
           ? "Grok explicitly refused the account's usage balance; remaining allowance and reset time are unknown."
@@ -323,6 +367,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
           eq(schema.auditLog.orgId, agent.orgId),
           inArray(schema.auditLog.action, [SWITCH_ACTION, "model_inspector.handoff"]),
           eq(schema.auditLog.targetId, agent.id),
+          ...(agent[PERSONAL] ? [sql`${schema.auditLog.details}->>'personalUserId' = ${agent[PERSONAL]?.userId}`] : []),
         ),
       )
       .orderBy(desc(schema.auditLog.createdAt))
@@ -478,10 +523,12 @@ export function createModelInspector(deps: ModelInspectorDeps) {
 
   async function changeIdle(
     fleet: Snapshot,
-    agent: Agent,
+    agent: InspectionAgent,
     row: ModelInspectorAgentReport,
     work: ModelInspectorWorkObservation[],
   ): Promise<boolean> {
+    const personal = agent[PERSONAL];
+    if (agent.builtin === "right_hand" && row.decision === "blocked") return false;
     if (
       row.activeWork.some(
         (work) =>
@@ -508,7 +555,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         : "Active work checks fresh usage and changes model at its next safe executor boundary; its session and transcript stay owned by that work.";
       return false;
     }
-    if (!agent.ownerUserId || agent.builtin || agent.brainAccountLentBy) {
+    if (!agent.ownerUserId || (agent.builtin && !personal) || agent.brainAccountLentBy) {
       row.decision = "blocked";
       row.reason =
         "This agent requires its existing personal or lent-plan authority; no automatic permission change is allowed.";
@@ -521,7 +568,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     }
     const task =
       fleet.routines
-        .filter((r) => r.agentId === agent.id)
+        .filter((r) => row.routineIds.includes(r.id))
         .map((r) => r.prompt)
         .join("\n")
         .slice(0, 3000) || "Prepare the most appropriate available model for this idle agent's next task.";
@@ -620,7 +667,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         row.reason = "This sweep's migration allowance is used; another batch follows on the next sweep.";
         return false;
       }
-      const [current] = await tx
+      const [stored] = await tx
         .select()
         .from(schema.agents)
         .where(
@@ -632,8 +679,24 @@ export function createModelInspector(deps: ModelInspectorDeps) {
           ),
         )
         .for("update");
-      if (!current?.ownerUserId || fingerprint(current) !== fingerprint(agent)) {
+      if (!stored?.ownerUserId || fingerprint(stored) !== (personal?.globalFingerprint ?? fingerprint(agent))) {
         row.reason = "The agent changed after inspection; its newer settings take priority.";
+        return false;
+      }
+      if (personal) {
+        const [binding] = await tx
+          .select()
+          .from(schema.rightHandBrains)
+          .where(and(eq(schema.rightHandBrains.orgId, agent.orgId), eq(schema.rightHandBrains.userId, personal.userId)))
+          .for("update");
+        if (!binding || JSON.stringify(binding) !== personal.bindingFingerprint) {
+          row.reason = "The owner's personal route changed after inspection; the newer choice takes priority.";
+          return false;
+        }
+      }
+      const current = personal ? await thinkingAgent(db, stored, personal.userId) : stored;
+      if (fingerprint(current) !== fingerprint(agent)) {
+        row.reason = "The effective subscription authority changed after inspection; inspect it again.";
         return false;
       }
       const active = await loadFleet(db, agent.orgId);
@@ -662,6 +725,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         current.orgId,
         current.id,
         {
+          ...(personal ? { scope: "mine", machineId: target.accountId === null ? target.machineId : undefined } : {}),
           brain: target.kind,
           model: current.brainModel === "auto" ? "auto" : target.model,
           account: target.accountId,
@@ -671,17 +735,36 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         },
         { remember: false, audit: { source: "model-inspector", reason } },
       );
-      const [saved] = await tx
+      const [savedRecord] = await tx
         .select()
         .from(schema.agents)
         .where(and(eq(schema.agents.orgId, agent.orgId), eq(schema.agents.id, agent.id)));
-      if (!saved || authority(saved) !== authority(current)) throw new Error("model_inspector.authority_changed");
+      if (
+        !savedRecord ||
+        authority(savedRecord) !== authority(stored) ||
+        (personal && fingerprint(savedRecord) !== fingerprint(stored))
+      ) {
+        throw new Error("model_inspector.authority_changed");
+      }
+      const saved = personal ? await thinkingAgent(db, savedRecord, personal.userId) : savedRecord;
+      if (
+        personal &&
+        (saved.ownerUserId !== personal.userId ||
+          saved.machineId !== target.machineId ||
+          saved.brain !== target.kind ||
+          saved.brainAccountId !== target.accountId ||
+          saved.brainFallback !== current.brainFallback ||
+          saved.brainExtraUsage !== current.brainExtraUsage)
+      ) {
+        throw new Error("model_inspector.personal_route_changed");
+      }
       await recordAudit(tx, {
         orgId: agent.orgId,
         actor: { type: "system", id: null },
         action: SWITCH_ACTION,
         target: { type: "agent", id: agent.id },
         details: {
+          ...(personal ? { scope: "owner_personal", personalUserId: personal.userId } : {}),
           from: {
             kind: current.brain,
             model: current.brainModel,
@@ -755,7 +838,8 @@ export function createModelInspector(deps: ModelInspectorDeps) {
       });
       const agents: ModelInspectorAgentReport[] = [];
       let changed = 0;
-      for (const agent of fleet.agents) {
+      for (const stored of fleet.agents) {
+        const agent = await forInspection(deps.db, stored);
         const row = await inspect(fleet, agent, work);
         try {
           if (
@@ -779,7 +863,8 @@ export function createModelInspector(deps: ModelInspectorDeps) {
       const report = finish(orgId, agents, "sweep");
       latest.set(orgId, report);
       reports.push(report);
-      if (changed) await publishAgentsChanged(deps.pubsub, orgId);
+      if (changed)
+        await Promise.all([publishAgentsChanged(deps.pubsub, orgId), publishMachineAgentsChanged(deps.pubsub, orgId)]);
     }
     return reports;
   }
@@ -805,7 +890,11 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         thresholdPercent: policy.thresholdPercent,
         maxAgeMs: policy.maxAgeMs,
       });
-      return finish(orgId, await Promise.all(fleet.agents.map((a) => inspect(fleet, a, work))), "snapshot");
+      return finish(
+        orgId,
+        await Promise.all(fleet.agents.map(async (a) => inspect(fleet, await forInspection(deps.db, a), work))),
+        "snapshot",
+      );
     },
   };
 }

@@ -659,7 +659,7 @@ export async function machineAgents(db: Database, orgId: string, machineId: stri
     .orderBy(agents.createdAt);
   const personal = rows.some((a) => a.builtin === RIGHT_HAND)
     ? await db
-        .select({ id: schema.rightHandBrains.brainAccountId })
+        .select({ id: schema.machineAccounts.id })
         .from(schema.rightHandBrains)
         .innerJoin(
           schema.machineAccounts,
