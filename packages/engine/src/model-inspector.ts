@@ -21,6 +21,7 @@ import { setAgentBrain } from "./brain-settings";
 import {
   brainAccountFor,
   computerBrainUnavailable,
+  durableGrokRefusal,
   planIsOwners,
   quotaReserveOf,
   storedPlanLimit,
@@ -218,7 +219,8 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     const at = usage ? Date.parse(usage.at) : Number.NaN;
     const fresh = Number.isFinite(at) && at <= now().getTime() && now().getTime() - at <= policy.maxAgeMs;
     const exhausted =
-      fresh && !!storedPlanLimit(usage, now().getTime(), kind === "claude_code" ? (model ?? "sonnet") : undefined);
+      (kind === "grok" && durableGrokRefusal(usage, now().getTime())) ||
+      (fresh && !!storedPlanLimit(usage, now().getTime(), kind === "claude_code" ? (model ?? "sonnet") : undefined));
     return { usage, reserve, exhausted };
   }
 
@@ -308,7 +310,10 @@ export function createModelInspector(deps: ModelInspectorDeps) {
       result.reason =
         "This adapter is inspected, but automatic subscription handoff currently supports Claude Code, Codex and Grok.";
     } else if (reserve.state === "low" || exhausted) {
-      result.reason = "The current subscription reached the configured switch threshold.";
+      result.reason =
+        agent.brain === "grok" && durableGrokRefusal(usage, now().getTime())
+          ? "Grok explicitly refused the account's usage balance; remaining allowance and reset time are unknown."
+          : "The current subscription reached the configured switch threshold.";
     }
     const [last] = await deps.db
       .select({ createdAt: schema.auditLog.createdAt, details: schema.auditLog.details })

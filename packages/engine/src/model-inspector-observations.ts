@@ -1,7 +1,7 @@
 import type { PlanUsage } from "@agenteschat/adapters";
 import { and, asc, type Database, desc, eq, inArray, isNull, ne, notInArray, schema, sql } from "@agenteschat/db";
 import { isAutoModel } from "@agenteschat/providers";
-import { brainModelFor, quotaReserveOf, storedPlanLimit } from "./brains/select";
+import { brainModelFor, durableGrokRefusal, quotaReserveOf, storedPlanLimit } from "./brains/select";
 import { type BrainKind, isComputerBrain } from "./brains/types";
 import { missionBrain } from "./missions-engine";
 
@@ -225,12 +225,13 @@ export async function observeModelInspectorWork(input: {
       (usage?.source === "probe" || usage?.source === "turn") &&
       Array.isArray(usage.windows);
     const exhausted =
-      fresh &&
-      !!storedPlanLimit(
-        usage,
-        now,
-        route.kind === "claude_code" && !account?.provider ? (route.model ?? "") : undefined,
-      );
+      (route.kind === "grok" && durableGrokRefusal(usage, now)) ||
+      (fresh &&
+        !!storedPlanLimit(
+          usage,
+          now,
+          route.kind === "claude_code" && !account?.provider ? (route.model ?? "") : undefined,
+        ));
     result.state = exhausted
       ? "exhausted"
       : reserve.state === "low"

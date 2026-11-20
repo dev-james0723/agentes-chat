@@ -98,3 +98,7 @@ Focused tests cover scoped configuration, percentage and freshness handling, dup
 work, native settings preservation, task-aware route choice, unknown Grok usage, permission revocation, cross-workspace
 isolation and read-only status behavior. Deployment acceptance separately verifies the running image, the enabled
 workspace, a completed native sweep and actual account evidence. Test results do not establish live provider capacity.
+
+## Explicit Grok balance refusals
+
+Grok can refuse an actual turn with a plan-limit error while publishing no numeric allowance. The executor stores that account-scoped observation as `source: turn`, `limited: true`, empty windows, and its actual observation time. It does not invent a percentage or reset. For the existing thirty-minute unknown-reset interval, fleet and active-work reports retain the exhausted state across restarts and inconclusive account probes; the normal five-minute freshness rule still applies to numerical quota. A later successful turn clears only a receipt older than that turn started, so it cannot erase a newer concurrent refusal.
