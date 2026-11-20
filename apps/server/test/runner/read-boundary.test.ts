@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { CODEX_READ_PROFILE, codexFolderPermissions, codexTurnArgs } from "../../runner/brain-codex";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  CODEX_READ_PROFILE,
+  CODEX_TOOLCHAINS,
+  codexFolderPermissions,
+  codexToolchainDirs,
+  codexTurnArgs,
+} from "../../runner/brain-codex";
 import { grokTurnArgs } from "../../runner/brain-grok";
 import { foldersEnforced, normalizeStored } from "../../runner/config";
 import { configFromGrant } from "../../runner/daemon";
@@ -129,3 +139,66 @@ test("Grok Build: the strict profile (reads the working folder and system paths 
     expect(on[on.indexOf("--sandbox") + 1]).toBe("strict");
   }
 });
+
+test("Codex: the fixed toolchain folders that exist are read (never written); nothing else of the home is", () => {
+  const home = realpathSync(mkdtempSync(path.join(os.tmpdir(), "codex-tools-")));
+  try {
+    for (const d of [".bun/bin", ".cargo/bin", ".nvm", "Documents"]) mkdirSync(path.join(home, d), { recursive: true });
+    const dirs = codexToolchainDirs(home, "darwin");
+    expect(dirs).toEqual([".bun", ".cargo", ".nvm"].map((d) => path.join(home, d)));
+    expect(dirs.some((d) => d.endsWith("Documents"))).toBe(false);
+    // Only names from the fixed list, all inside the home or Homebrew.
+    expect(CODEX_TOOLCHAINS).toEqual([".bun", ".cargo", ".rustup", ".nvm", ".local/bin"]);
+    const fs = codexFolderPermissions({ profile: "work", cwd: "/Users/a/ws/agent", roots: [], readable: dirs })[1];
+    for (const d of dirs) expect(fs).toContain(`${JSON.stringify(d)}="read"`);
+    expect(fs).not.toContain(`${JSON.stringify(path.join(home, ".bun"))}="write"`);
+    // Linux's Homebrew lives under /home, which the profile hides: it is on the list there.
+    expect(codexToolchainDirs(home, "linux", (p) => p === "/home/linuxbrew/.linuxbrew")).toContain(
+      "/home/linuxbrew/.linuxbrew",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+const codexBin = (() => {
+  if (process.platform !== "darwin") return null;
+  const found = spawnSync("sh", ["-c", "command -v codex"], { encoding: "utf8" }).stdout.trim();
+  try {
+    return found ? realpathSync(found) : null;
+  } catch {
+    return null;
+  }
+})();
+
+// A live check of the profile in Codex's own Seatbelt sandbox, no model: only where Codex is installed (a Mac).
+test.if(Boolean(codexBin))(
+  "Codex (live sandbox): a toolchain in the home runs, its folder isn't written, a file outside the list is refused",
+  () => {
+    const home = realpathSync(mkdtempSync(path.join(os.homedir(), ".codex-tools-live-")));
+    try {
+      const agent = path.join(home, "ws", "agent");
+      mkdirSync(agent, { recursive: true });
+      mkdirSync(path.join(home, ".bun", "bin"), { recursive: true });
+      const tool = path.join(home, ".bun", "bin", "tool");
+      writeFileSync(tool, "#!/bin/sh\necho TOOL_OK\n");
+      chmodSync(tool, 0o755);
+      writeFileSync(path.join(home, "private.txt"), "SECRET");
+      const readable = [path.dirname(codexBin as string), ...codexToolchainDirs(home, "darwin")];
+      const cfg = codexFolderPermissions({ profile: "work", cwd: agent, roots: [], readable });
+      const run = (cmd: string) =>
+        spawnSync(codexBin as string, ["sandbox", ...cfg.flatMap((c) => ["-c", c]), "--", "sh", "-c", cmd], {
+          cwd: agent,
+          encoding: "utf8",
+        });
+      const ran = run(tool);
+      expect(ran.stdout).toContain("TOOL_OK");
+      expect(run(`cat ${path.join(home, "private.txt")}`).status).not.toBe(0);
+      expect(run(`echo x > ${path.join(home, ".bun", "planted")}`).status).not.toBe(0);
+      expect(run("echo ok > own.txt && cat own.txt").stdout).toContain("ok");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);

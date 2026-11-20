@@ -28,7 +28,8 @@ What each CLI can enforce (checked 2026-11-19 against the installed versions):
 
 ## Consequences
 
-- A Codex command that needs a tool installed in the home (for example `~/.bun`, `~/.cargo`) fails under the profile; tools in system paths (`/opt/homebrew`, `/usr`) work. The owner can allow that folder or turn the limit off.
+- Toolchains: a fixed list of toolchain folders in the home (`CODEX_TOOLCHAINS`: `~/.bun`, `~/.cargo`, `~/.rustup`, `~/.nvm`, `~/.local/bin`; on Linux also Homebrew's `/home/linuxbrew/.linuxbrew`) is read and run from in Codex's profile, never written; on macOS Homebrew is outside the hidden roots already. Nothing else of the home is opened. A tool elsewhere in the home, or a link in `~/.local/bin` whose target is elsewhere in the home, still fails; the owner can allow that folder or turn the limit off.
+- Before turning failing closed on, the two runners paired on the owner's computer showed every brain turn since they were paired (176) on Claude Code and no state of Cursor, OpenCode or Antigravity. The server's database, on another computer, was not read.
 - Agents on Cursor, OpenCode or Antigravity stop working on a computer that keeps the default until they move to Claude Code, Codex or Grok Build or the owner turns the limit off.
 - Not covered: Claude Code's shell running a program that opens an unnamed outside path; background tasks (`tasks.ts`); system mode, where each agent is its own OS user and the OS already keeps it out of others' files; Windows (no Codex profile there, and `outsideFolders` checks POSIX paths only).
 - A later step can move Claude Code's shell into its own sandbox (`sandbox.enabled`, `allowUnsandboxedCommands: false`) once its network limits fit agents' work (it confines every command's network to listed domains).
