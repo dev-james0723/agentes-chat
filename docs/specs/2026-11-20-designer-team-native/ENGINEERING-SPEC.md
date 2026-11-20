@@ -14,7 +14,9 @@ Skill name: james-design-team. Release: 1.0.0.
 scripts/design_team.py:
 - plan --input PATH or --request-json JSON -> JSON plan, exit 0; invalid input -> error JSON, exit 2.
 - validate --input PATH --workspace PATH or --request-json JSON --workspace PATH -> JSON validation, exit 0 when verified, exit 1 when incomplete/invalid evidence, exit 2 for invalid input.
-- catalog -> capabilities and provenance summary.
+- catalog -> capabilities and role map.
+- self-check -> package resource hashes, release digest and verified boolean; root SKILL.md is parsed by the native runtime and is not copied as a resource.
+- publication-key --input PATH or --request-json JSON -> stable intent identity for accountId/channel/taskId/contentVersion (optional brand/locale/format/destination); this does not make a platform call or provide server-side idempotency.
 Input to plan: taskId, brand, surface, brief, languages, deliverables, stack (optional), requestedCapabilities/requestedSkills (optional), brandContexts (optional), overrides (optional).
 Supported surfaces: web, native, social, motion, brand, data, presentation, print, email, conversation, spatial.
 Plan fields: taskId, brand, surface, stack, languages, requiredDeliverables, coordinator, owner, collaborators, reviewer, selectedCapabilities, selectedSkills, references, brandContext, warnings, evidenceRequirements.

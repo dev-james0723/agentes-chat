@@ -1,0 +1,24 @@
+{
+  "bodySha256": "959020098f45ef5c547c43e7af22dc84ab45005c44417df76c09596cc84d238c",
+  "digest": "f92d5fa77b35b51768771bdcd11591f09805b8dcda64d91cf49b2f9765b7d840",
+  "files": {
+    "LICENSE": "67b81541a464b23e93c332cce9c694d0090ea9284e071c8159ce89fd09e0d09d",
+    "NOTICE": "0eece83bdb6f3c4849a2018355827106bf79b89ae68c3729b4c8091c19ea0574",
+    "references/capabilities.json": "19c53aac9047a87ed0955ec15300ccd80919198cfde1121128d48f9d25fa236d",
+    "references/provenance.json": "a4387482a6af61c1dec06f94c159dd88b32b100011a6d8f3c8d3bb778ec53722",
+    "references/roles.json": "3c006a072489b52b2ec38c6afcbc53277e0302c25f6ac36f12fc16bb529fa09d",
+    "references/workflows/brand.md": "f3c06e72f7aa7e5af5089ad35964671ba3d02a5b8c89d704cebf14ae18c60802",
+    "references/workflows/delivery.md": "aea707e91cc5c7f1599e090e8b6c1a1a893221122b57e8ce548e2a0e32eab97e",
+    "references/workflows/memory.md": "df36179d399d174bffbbcb8cc0132e3eccc94acc6eea3f9960a8403ca9fa3e67",
+    "references/workflows/motion.md": "24a9e66076bb490b07bad915d1594abff442fcda997045e3796382dc48e2bd0b",
+    "references/workflows/native.md": "1b6a986cfba0bafe0b05d67c649d503dac3b45177690d0508788c687019955ec",
+    "references/workflows/product.md": "695bab2c2e2163f2067e12e8ffe93c5643630dce49b927b3b31a88c46b3b0327",
+    "references/workflows/review.md": "559a70a7b6ec581ea860abde0bbcd2a2dc4c4792096519d71b102ae19e8e8156",
+    "references/workflows/social.md": "3b6306f927c6f9917822670d2e459b2bf7d64cea286c1834ee5c3f0762eb0019",
+    "references/workflows/typography.md": "494b7bfcbca4216c9eab484c7a3586e441dd792b4272aec8bdf32e959101d722",
+    "scripts/design_team.py": "e27bdfa3bae0f74ac86e62e994d724efcfbeaf4589f69c2b40130c2bdfbcf7eb",
+    "scripts/team_core.py": "84523e1cccd3fd6a64fc7edf8c74ee15b25ddf47e4c22c05e84ae6cc9a543d09"
+  },
+  "skillMarkdownSha256": "3de3818f01612c9a0ba1d12ff1e714d60341dfe0445360517d1634ab00766494",
+  "version": "1.0.0"
+}

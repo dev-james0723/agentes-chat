@@ -155,7 +155,7 @@ def package_hashes(root):
     hashes = {}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
-        if not path.is_file() or any(x.startswith(".") or x == "__pycache__" for x in relative.parts):
+        if not path.is_file() or path.suffix in {".pyc", ".pyo"} or any(x.startswith(".") or x == "__pycache__" for x in relative.parts):
             continue
         if relative.as_posix() in {"SKILL.md", "references/release.json"}:
             continue
