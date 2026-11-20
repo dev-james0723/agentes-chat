@@ -463,6 +463,27 @@ test.skipIf(!posix)(
   },
 );
 
+test.skipIf(!posix)(
+  "ADR 0205: with the allow-list unset (the default), Cursor, OpenCode and Antigravity turns are not refused",
+  async () => {
+    const root = tempDir("brain-cursor-");
+    dirs.push(root);
+    const { ctx } = turnContext(root);
+    process.env.FAKE_CURSOR_LOG = path.join(root, "cursor.log");
+    const scope = { signal: new AbortController().signal, output: () => {}, emit: () => {} };
+    for (const kind of ["cursor", "opencode", "antigravity"]) {
+      const out = handleRequest(
+        ctx as never,
+        turn({ kind, runId: `${RUN.slice(0, -1)}${kind.length}` }),
+        scope as never,
+      );
+      // Whatever the CLI then does, the allow-list never stops it.
+      await out.catch((err: { code?: string }) => expect(err.code).not.toBe("not_allowed"));
+    }
+  },
+  30_000,
+);
+
 test.skipIf(!posix)("Cursor turned off on the computer refuses the turn", async () => {
   const root = tempDir("brain-cursor-");
   dirs.push(root);
