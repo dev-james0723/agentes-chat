@@ -11,6 +11,7 @@ import { resumeWaitingRunWithResult } from "../run-resume";
 import { freshGrantedKeys, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
 import type { FoundryExecutionPolicy } from "./execution-policy";
+import { foundryDraftGuidance } from "./guidance";
 import type { FrozenPackage } from "./packages";
 import {
   type FoundryCandidate,
@@ -20,6 +21,17 @@ import {
   loadFoundryBundle,
   ownedCandidate,
 } from "./service";
+
+/**
+ * What a builder can act on after its version failed: the way forward and the public contract's own words. Never a
+ * hidden case, an expected output or the evaluator's verdict detail.
+ */
+function repairHint() {
+  return {
+    next: "This version is final and is not evaluated again. Check tool.mjs against the semantics below, fix it, call stage_foundry_package with the candidate's current revision to make a new version, then evaluate_foundry_capability with the new digest.",
+    semantics: foundryDraftGuidance().semantics,
+  };
+}
 
 export const FOUNDRY_EVALUATE_JOB = "foundry.evaluate";
 const { foundryVersions: versions, foundryCandidates: candidates, agentRuns } = schema;
@@ -129,6 +141,13 @@ export function createDurableFoundryEvaluation(deps: EvaluationDependencies) {
         existing.toolUseId === ctx.toolUseId
       )
         return pending(existing);
+      // A finished evaluation is final for its digest: say how it ended, never "in progress".
+      if (existing?.state === "TERMINAL" && existing.reasonCode)
+        return {
+          state: "BLOCKED",
+          code: existing.reasonCode,
+          ...(existing.reasonCode === "EVAL_FAILED" ? repairHint() : {}),
+        };
       if (locked.state !== "DRAFT" || existing) return { state: "BLOCKED", code: "EVALUATION_IN_PROGRESS_OR_UNKNOWN" };
       const job: EvaluationJob = {
         waitId: `foundry-evaluation:${ctx.orgId}:${version.id}`,
@@ -244,7 +263,12 @@ export function createDurableFoundryEvaluation(deps: EvaluationDependencies) {
       }
       const outcome = authorized && eligibleVersion ? state : "BLOCKED";
       const reason = !eligibleVersion ? "STALE_VERSION" : authorized ? code : "AUTHORITY_CHANGED";
-      const content = JSON.stringify({ state: outcome, ...(reason ? { code: reason } : {}), digest: version.digest });
+      const content = JSON.stringify({
+        state: outcome,
+        ...(reason ? { code: reason } : {}),
+        digest: version.digest,
+        ...(outcome === "BLOCKED" && reason === "EVAL_FAILED" ? repairHint() : {}),
+      });
       const delivered =
         authorized && eligibleVersion
           ? await resumeWaitingRunWithResult(tx, {

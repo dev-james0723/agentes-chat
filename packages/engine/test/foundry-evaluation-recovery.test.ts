@@ -131,6 +131,32 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     });
     expect(await wakes(w.ctx.runId)).toHaveLength(1);
   });
+  test("a failed evaluation tells the builder to stage a corrected version, and re-asking says it failed", async () => {
+    const { w, staged, claim, waitId } = await ready();
+    await w.checkpointEvaluation(w.ctx, waitId);
+    const evaluate = w.executor.evaluate;
+    w.executor.evaluate = async (...args) => ({ ...(await evaluate(...args)), outcome: "FAIL" });
+    await w.rawLifecycle.reconcileEvaluation(claim);
+    const transcript = (await runRow(w.ctx.runId)).transcript as {
+      pending?: { calls?: { result?: { content: string } }[] };
+    };
+    const delivered = JSON.parse(transcript.pending?.calls?.[0]?.result?.content ?? "{}");
+    expect(delivered).toMatchObject({ state: "BLOCKED", code: "EVAL_FAILED" });
+    expect(delivered.next).toContain("stage_foundry_package");
+    expect(delivered.next).toContain("new version");
+    expect(delivered.semantics).toContain("unknown and unverified");
+    // The same digest again, from the resumed run: its outcome, never "in progress".
+    await f.db.update(schema.agentRuns).set({ status: "running" }).where(eq(schema.agentRuns.id, w.ctx.runId));
+    const again = await w.rawLifecycle.evaluate(
+      { ...w.ctx, toolUseId: "again" },
+      {
+        candidateId: staged.candidateId,
+        digest: staged.digest,
+      },
+    );
+    expect(again).toMatchObject({ state: "BLOCKED", code: "EVAL_FAILED" });
+    expect((again as { next?: string }).next).toContain("stage_foundry_package");
+  });
   test("unknown final outcome does not activate and wakes the parent with an explicit blocker", async () => {
     const { w, staged, claim, waitId } = await ready();
     await w.checkpointEvaluation(w.ctx, waitId);
