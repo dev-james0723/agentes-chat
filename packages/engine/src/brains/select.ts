@@ -99,6 +99,16 @@ const limitKey = (machineId: string, kind: BrainKind, accountId?: string) =>
 /** How long a limit with no known reset holds after it was seen: then a turn asks the plan again. */
 export const UNKNOWN_LIMIT_MS = 30 * 60_000;
 
+/**
+ * Grok can explicitly refuse its account's balance without reporting any percentage or reset. That real turn
+ * receipt keeps the existing unknown-reset hold, independently of the five-minute freshness of numeric readings.
+ */
+export function durableGrokRefusal(usage: PlanUsage | null | undefined, now = Date.now()): boolean {
+  if (usage?.source !== "turn" || usage.limited !== true || usage.windows.length !== 0) return false;
+  const at = Date.parse(usage.at);
+  return Number.isFinite(at) && at <= now && now - at < UNKNOWN_LIMIT_MS;
+}
+
 /** A computer brain hit its plan limit (until `resetsAt`, or `UNKNOWN_LIMIT_MS` when unknown). */
 export function notePlanLimit(
   machineId: string,
@@ -336,6 +346,106 @@ export async function storedPlanUsage(
     .from(machines)
     .where(and(eq(machines.orgId, orgId), eq(machines.id, machineId)));
   return (row?.executors.ownUsage?.[kind] as PlanUsage | undefined) ?? null;
+}
+
+/** A real Grok plan-limit response, shared by this account's agents and retained across server restarts. */
+export async function recordGrokPlanRefusal(
+  db: Executor,
+  orgId: string,
+  machineId: string,
+  accountId: string | undefined,
+  observedAt = Date.now(),
+): Promise<boolean> {
+  const at = new Date(observedAt).toISOString();
+  const receipt: PlanUsage = { source: "turn", limited: true, windows: [], at };
+  const { machineAccounts, machines } = schema;
+  if (accountId) {
+    const rows = await db
+      .update(machineAccounts)
+      .set({ usage: receipt })
+      .where(
+        and(
+          eq(machineAccounts.orgId, orgId),
+          eq(machineAccounts.machineId, machineId),
+          eq(machineAccounts.id, accountId),
+          eq(machineAccounts.kind, "grok"),
+          sql`coalesce(${machineAccounts.usage}->>'at', '') <= ${at}`,
+        ),
+      )
+      .returning({ id: machineAccounts.id });
+    return rows.length > 0;
+  }
+  const rows = await db
+    .update(machines)
+    .set({
+      executors: sql`jsonb_set(
+    coalesce(${machines.executors}, '{}'::jsonb), '{ownUsage}',
+    coalesce(${machines.executors}->'ownUsage', '{}'::jsonb) || ${JSON.stringify({ grok: receipt })}::jsonb, true)`,
+    })
+    .where(
+      and(
+        eq(machines.orgId, orgId),
+        eq(machines.id, machineId),
+        sql`coalesce(${machines.executors}#>>'{ownUsage,grok,at}', '') <= ${at}`,
+      ),
+    )
+    .returning({ id: machines.id });
+  return rows.length > 0;
+}
+
+/**
+ * A later successful Grok turn disproves an older refusal. A concurrent refusal seen after this turn began wins;
+ * neither a successful turn nor a probe is allowed to manufacture remaining capacity from an empty reading.
+ */
+export async function clearGrokPlanRefusal(
+  db: Executor,
+  orgId: string,
+  machineId: string,
+  accountId: string | undefined,
+  turnStartedAt: number,
+  observedAt = Date.now(),
+): Promise<boolean> {
+  const before = new Date(turnStartedAt).toISOString();
+  const at = new Date(observedAt).toISOString();
+  const cleared: PlanUsage = { source: "turn", limited: false, windows: [], at };
+  const { machineAccounts, machines } = schema;
+  if (accountId) {
+    const rows = await db
+      .update(machineAccounts)
+      .set({ usage: cleared })
+      .where(
+        and(
+          eq(machineAccounts.orgId, orgId),
+          eq(machineAccounts.machineId, machineId),
+          eq(machineAccounts.id, accountId),
+          eq(machineAccounts.kind, "grok"),
+          sql`${machineAccounts.usage}->>'source' = 'turn'`,
+          sql`${machineAccounts.usage}->'limited' = 'true'::jsonb`,
+          sql`${machineAccounts.usage}->'windows' = '[]'::jsonb`,
+          sql`${machineAccounts.usage}->>'at' < ${before}`,
+        ),
+      )
+      .returning({ id: machineAccounts.id });
+    return rows.length > 0;
+  }
+  const rows = await db
+    .update(machines)
+    .set({
+      executors: sql`jsonb_set(
+    ${machines.executors}, '{ownUsage,grok}', ${JSON.stringify(cleared)}::jsonb, true)`,
+    })
+    .where(
+      and(
+        eq(machines.orgId, orgId),
+        eq(machines.id, machineId),
+        sql`${machines.executors}#>>'{ownUsage,grok,source}' = 'turn'`,
+        sql`${machines.executors}#>'{ownUsage,grok,limited}' = 'true'::jsonb`,
+        sql`${machines.executors}#>'{ownUsage,grok,windows}' = '[]'::jsonb`,
+        sql`${machines.executors}#>>'{ownUsage,grok,at}' < ${before}`,
+      ),
+    )
+    .returning({ id: machines.id });
+  return rows.length > 0;
 }
 
 export interface BrainUnavailability {

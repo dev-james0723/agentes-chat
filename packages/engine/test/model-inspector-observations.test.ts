@@ -243,6 +243,33 @@ describe("model inspector active-route observations", () => {
     }
   });
 
+  test("Grok refusal evidence outlives numeric freshness but expires without inventing usage", async () => {
+    const { fx, now, observe, mission, account, usage } = await world();
+    const accountId = await account("grok", 20);
+    await fx.db
+      .update(schema.agents)
+      .set({ brain: "grok", brainAccountId: accountId })
+      .where(eq(schema.agents.id, fx.agent.id));
+    await mission({ brain: "grok", brainModel: "grok-4.7" });
+    for (const [age, state] of [
+      [10 * 60_000, "exhausted"],
+      [30 * 60_000 - 1, "exhausted"],
+      [30 * 60_000, "unknown"],
+      [-1, "unknown"],
+    ] as const) {
+      await fx.db
+        .update(schema.machineAccounts)
+        .set({ usage: { source: "turn", limited: true, windows: [], at: new Date(now - age).toISOString() } })
+        .where(eq(schema.machineAccounts.id, accountId));
+      expect((await observe())[0]).toMatchObject({ kind: "grok", accountId, state, usedPercent: null });
+    }
+    await fx.db
+      .update(schema.machineAccounts)
+      .set({ usage: usage(99, now - 10 * 60_000) })
+      .where(eq(schema.machineAccounts.id, accountId));
+    expect((await observe())[0]).toMatchObject({ state: "unknown", usedPercent: null });
+  });
+
   test("an active Claude model does not inherit another model's exhausted window", async () => {
     const { fx, now, machineId, observe, mission, executors } = await world();
     await mission({ brain: "claude_code", brainModel: "sonnet" });

@@ -86,6 +86,7 @@ import {
   type BrainUnavailability,
   bindingReset,
   brainSpeedFor,
+  clearGrokPlanRefusal,
   forgetModelLimit,
   forgetPlanLimit,
   type ModelScope,
@@ -98,6 +99,7 @@ import {
   planIsOwners,
   planLimitOf,
   quotaReserveOf,
+  recordGrokPlanRefusal,
   recordRunBrain,
   refusalScope,
   regionRefusal,
@@ -4877,6 +4879,13 @@ async function executeRunInner(
     error: BrainFailure,
   ): Promise<Pick<BrainUnavailability, "scope" | "resetsAt">> => {
     const account = plan.account;
+    if (plan.kind === "grok") {
+      const observedAt = Date.now();
+      notePlanLimit(machineId, "grok", error.resetsAt, observedAt, account?.id);
+      if (await recordGrokPlanRefusal(db, run.orgId, machineId, account?.id, observedAt))
+        await publishAccountsChanged(deps.pubsub, run.orgId, machineId);
+      return error.resetsAt ? { resetsAt: error.resetsAt } : {};
+    }
     const ownModel = ownLimitsModel(account?.provider, plan.model);
     if (!account || !ownModel) return error.resetsAt ? { resetsAt: error.resetsAt } : {};
     const stored = await storedPlanUsage(db, run.orgId, machineId, plan.kind, account.id).catch(() => null);
@@ -6083,6 +6092,7 @@ async function executeRunInner(
         if (admitted && !admitted.fromLine) await publishQueueChanged(deps.pubsub, run.orgId, admitted.machineId);
       }
       const turnPlan = plan;
+      const turnStartedAt = Date.now();
       // Where this computer turn's steps start (the bridge records a step per tool it runs).
       const turnStepSeq = plan.kind !== "model" ? await lastStepSeq(db, run.id) : 0;
       /** Calls the computer brain said it ran in this turn (through the bridge or on its own). */
@@ -6262,7 +6272,13 @@ async function executeRunInner(
                 turnPlan.kind !== "model" &&
                 !ownLimitsModel(turnPlan.account?.provider, turnPlan.model)
               ) {
-                notePlanLimit(machineId, turnPlan.kind, resetsAt, Date.now(), turnPlan.account?.id);
+                const observedAt = Date.now();
+                notePlanLimit(machineId, turnPlan.kind, resetsAt, observedAt, turnPlan.account?.id);
+                if (turnPlan.kind === "grok")
+                  later(async () => {
+                    if (await recordGrokPlanRefusal(db, run.orgId, machineId, turnPlan.account?.id, observedAt))
+                      await publishAccountsChanged(deps.pubsub, run.orgId, machineId);
+                  });
               }
             },
             ...(deps.planLimitGraceMs !== undefined ? { limitGraceMs: deps.planLimitGraceMs } : {}),
@@ -6378,7 +6394,12 @@ async function executeRunInner(
           // The plan had room for this turn: the runs parked on its limit go on now, not at their own timers.
           const planMachine = turnPlan.session?.machineId;
           if (planMachine && !turnLimited) {
-            forgetPlanLimit(planMachine, turnPlan.kind, account?.id);
+            forgetPlanLimit(
+              planMachine,
+              turnPlan.kind,
+              account?.id,
+              turnPlan.kind === "grok" ? turnStartedAt : undefined,
+            );
             const ownModel = ownLimitsModel(account?.provider, turnPlan.model);
             if (account && ownModel)
               later(async () => {
@@ -6392,7 +6413,15 @@ async function executeRunInner(
               kind: turnPlan.kind,
               accountId: account?.id,
             });
-            later(() => wakePlanWaits(db, run.orgId, key, turnPlan.model ?? null));
+            later(async () => {
+              if (turnPlan.kind === "grok") {
+                if (await clearGrokPlanRefusal(db, run.orgId, planMachine, account?.id, turnStartedAt))
+                  await publishAccountsChanged(deps.pubsub, run.orgId, planMachine);
+                const usage = await storedPlanUsage(db, run.orgId, planMachine, "grok", account?.id);
+                if (planLimitOf(planMachine, "grok", account?.id, usage)) return;
+              }
+              await wakePlanWaits(db, run.orgId, key, turnPlan.model ?? null);
+            });
           }
           turnLimited = false;
           // Later turns of this run continue the same session.
