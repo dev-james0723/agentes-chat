@@ -1,6 +1,6 @@
 {
   "bodySha256": "959020098f45ef5c547c43e7af22dc84ab45005c44417df76c09596cc84d238c",
-  "digest": "f92d5fa77b35b51768771bdcd11591f09805b8dcda64d91cf49b2f9765b7d840",
+  "digest": "e313b8cc8fda7691cff34008792637e4ff74226fccfd942cf98cf662eeca2303",
   "files": {
     "LICENSE": "67b81541a464b23e93c332cce9c694d0090ea9284e071c8159ce89fd09e0d09d",
     "NOTICE": "0eece83bdb6f3c4849a2018355827106bf79b89ae68c3729b4c8091c19ea0574",
@@ -17,8 +17,8 @@
     "references/workflows/social.md": "3b6306f927c6f9917822670d2e459b2bf7d64cea286c1834ee5c3f0762eb0019",
     "references/workflows/typography.md": "494b7bfcbca4216c9eab484c7a3586e441dd792b4272aec8bdf32e959101d722",
     "scripts/design_team.py": "e27bdfa3bae0f74ac86e62e994d724efcfbeaf4589f69c2b40130c2bdfbcf7eb",
-    "scripts/team_core.py": "84523e1cccd3fd6a64fc7edf8c74ee15b25ddf47e4c22c05e84ae6cc9a543d09"
+    "scripts/team_core.py": "6c9a13a1ba70f4ae4c91aab2e38531061084efe601a0e7b9bc8af5076c7fae71"
   },
   "skillMarkdownSha256": "3de3818f01612c9a0ba1d12ff1e714d60341dfe0445360517d1634ab00766494",
-  "version": "1.0.0"
+  "version": "1.0.1"
 }

@@ -154,6 +154,55 @@ class DeliveryTests(unittest.TestCase):
         (self.workspace / "story.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         self.assertFalse(self.validate()["verified"])
 
+    @staticmethod
+    def mp4_fixture(handler=b"vide", malformed=False):
+        """Small container metadata fixture, not a claim of decoded video."""
+        import struct
+
+        def box(kind, payload):
+            return struct.pack(">I4s", len(payload) + 8, kind) + payload
+
+        hdlr = box(b"hdlr", b"\0" * 8 + handler + b"\0" * 12 + b"fixture\0")
+        track = box(b"trak", box(b"mdia", hdlr))
+        moov = box(b"moov", track)
+        data = box(b"ftyp", b"isom\0\0\0\0isommp42") + moov + box(b"mdat", b"sample-data")
+        return data[:-3] if malformed else data
+
+    def video_delivery(self, data, filename="clip.mp4"):
+        (self.workspace / filename).write_bytes(data)
+        self.plan["requiredDeliverables"] = ["video"]
+        self.manifest["artifacts"] = [
+            {"deliverable": "video", "path": filename, "contentVersion": "fixture-v1"}]
+        self.manifest["review"]["evidence"] = [filename]
+        return self.validate()
+
+    def test_mp4_with_video_track_has_positive_metadata_evidence(self):
+        result = self.video_delivery(self.mp4_fixture())
+        self.assertTrue(result["verified"], result)
+        self.assertTrue(result["artifactChecks"][0]["videoTrackVerified"])
+        self.assertIn("metadata", result["artifactChecks"][0]["verificationScope"])
+
+    def test_audio_only_mp4_cannot_satisfy_video_even_when_named_mp4(self):
+        result = self.video_delivery(self.mp4_fixture(handler=b"soun"))
+        self.assertFalse(result["verified"], result)
+        self.assertNotEqual(result["artifactChecks"][0]["media"], "video")
+
+    def test_ftyp_and_embedded_vide_bytes_are_not_video_track_evidence(self):
+        import struct
+        data = (struct.pack(">I4s", 24, b"ftyp") + b"isom\0\0\0\0isommp42" +
+                struct.pack(">I4s", 24, b"mdat") + b"vide" * 4)
+        self.assertFalse(self.video_delivery(data)["verified"])
+
+    def test_truncated_mp4_box_is_not_verified_video(self):
+        self.assertFalse(self.video_delivery(self.mp4_fixture(malformed=True))["verified"])
+
+    def test_webm_container_without_verified_video_track_remains_unverified(self):
+        # EBML is a container signature shared by video and audio-only WebM.
+        result = self.video_delivery(b"\x1aE\xdf\xa3" + b"\0" * 64, filename="audio.webm")
+        self.assertFalse(result["verified"], result)
+        self.assertEqual(result["state"], "unverified")
+        self.assertTrue(any("WebM" in warning for warning in result["warnings"]))
+
     def test_artifact_version_mismatch_fails(self):
         self.manifest["artifacts"][1]["contentVersion"] = "old"
         self.assertFalse(self.validate()["verified"])
@@ -255,6 +304,19 @@ class DeliveryTests(unittest.TestCase):
                                  capture_output=True, text=True)
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("error", json.loads(invalid.stdout))
+
+    def test_publication_key_rejects_non_object_input_in_core_and_cli(self):
+        import subprocess
+        import sys
+        for data in ([], None, "text", 7):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                self.module.publication_key(data)
+        result = subprocess.run(
+            [sys.executable, str(PACK / "scripts/design_team.py"),
+             "publication-key", "--request-json", "[]"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("error", json.loads(result.stdout))
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_publication_key_is_available_to_native_cli(self):
         import subprocess

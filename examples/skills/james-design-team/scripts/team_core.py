@@ -166,6 +166,8 @@ def package_hashes(root):
 
 def publication_key(fields):
     """Stable intent key to record before a platform call; never makes that call."""
+    if not isinstance(fields, dict):
+        raise ValueError("publication-key input must be an object")
     required = ("accountId", "channel", "taskId", "contentVersion")
     key_fields = {key: nonempty_string(fields.get(key), key) for key in required}
     # Distinguish optional channel variants without depending on dictionary order.
@@ -173,6 +175,64 @@ def publication_key(fields):
         if key in fields:
             key_fields[key] = nonempty_string(fields[key], key)
     return hashlib.sha256(json.dumps(key_fields, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+def mp4_track_evidence(path, size):
+    """Bounded ISO BMFF box metadata walk; does not decode any codec."""
+    import struct
+    box_count = 0
+    handlers, media_data = set(), False
+    with path.open("rb") as stream:
+        def boxes(start, end):
+            nonlocal box_count
+            cursor = start
+            while cursor < end:
+                box_count += 1
+                if box_count > 10_000 or end - cursor < 8:
+                    raise ValueError("MP4 box metadata is truncated or exceeds inspection limits")
+                stream.seek(cursor)
+                raw = stream.read(8)
+                if len(raw) != 8:
+                    raise ValueError("MP4 box header is truncated")
+                length, kind = struct.unpack(">I4s", raw)
+                header = 8
+                if length == 1:
+                    extended = stream.read(8)
+                    if len(extended) != 8:
+                        raise ValueError("MP4 extended box header is truncated")
+                    length = int.from_bytes(extended, "big")
+                    header = 16
+                elif length == 0:
+                    length = end - cursor
+                if length < header or length > end - cursor:
+                    raise ValueError("MP4 box length is invalid or truncated")
+                yield kind, cursor + header, cursor + length
+                cursor += length
+
+        for kind, start, end in boxes(0, size):
+            if kind == b"mdat" and end > start:
+                media_data = True
+            if kind != b"moov":
+                continue
+            for track, track_start, track_end in boxes(start, end):
+                if track != b"trak":
+                    continue
+                for media, media_start, media_end in boxes(track_start, track_end):
+                    if media != b"mdia":
+                        continue
+                    for child, child_start, child_end in boxes(media_start, media_end):
+                        if child != b"hdlr":
+                            continue
+                        if child_end - child_start < 24:
+                            raise ValueError("MP4 track handler metadata is truncated")
+                        stream.seek(child_start)
+                        header = stream.read(24)
+                        if header[0] != 0:
+                            raise ValueError("Unsupported MP4 track handler version")
+                        handlers.add(header[8:12].decode("ascii", errors="replace"))
+    return {"videoTrackVerified": "vide" in handlers and media_data,
+            "trackHandlers": sorted(handlers), "hasMediaData": media_data,
+            "verificationScope": "MP4 track-handler metadata and media-data presence; no codec decoding or visual QA."}
+
 
 def inspect_media(path):
     """Recognize export headers/trailers. Full decoding and visual review remain external."""
@@ -196,10 +256,21 @@ def inspect_media(path):
     elif head[:4] == b"RIFF" and head[8:12] == b"WEBP" and len(head) >= 30:
         if int.from_bytes(head[4:8], "little") + 8 == size:
             info.update(media="image", format="webp")
-    elif head[4:8] == b"ftyp" and size >= 32:
-        info.update(media="video", format="mp4")
-    elif head[:4] == b"\x1aE\xdf\xa3" and size >= 32:
-        info.update(media="video", format="webm")
+    elif head[4:8] == b"ftyp":
+        info.update(format="mp4", videoTrackVerified=False)
+        try:
+            info.update(mp4_track_evidence(path, size))
+            if info["videoTrackVerified"]:
+                info["media"] = "video"
+            elif info["trackHandlers"] and set(info["trackHandlers"]) == {"soun"}:
+                info.update(media="audio", warning="MP4 contains audio tracks, not a verified video track.")
+            else:
+                info.update(verification="unverified", warning="MP4 video track or media data could not be verified.")
+        except ValueError as error:
+            info.update(verification="unverified", warning=str(error))
+    elif head[:4] == b"\x1aE\xdf\xa3":
+        info.update(format="webm", videoTrackVerified=False, verification="unverified",
+                    warning="WebM/EBML video tracks are not inspected by this validator; supply positive track evidence or an MP4 export.")
     elif head.startswith(b"%PDF-") and b"%%EOF" in tail:
         info.update(media="document", format="pdf")
     return info
@@ -235,6 +306,7 @@ def validate_delivery(plan, manifest, workspace):
     if not root.is_dir():
         raise ValueError("workspace must be an existing directory")
     errors, warnings, checks, covered, review_paths = [], [], [], set(), set()
+    unverified_video = False
     for artifact in artifacts:
         deliverable = nonempty_string(artifact.get("deliverable"), "artifact.deliverable")
         original_path = nonempty_string(artifact.get("path"), "artifact.path")
@@ -255,6 +327,10 @@ def validate_delivery(plan, manifest, workspace):
         info = inspect_media(path)
         check.update(info)
         kind = expected_media(deliverable)
+        if info.get("warning"):
+            warnings.append(original_path + ": " + info["warning"])
+        if kind == "video" and info.get("verification") == "unverified":
+            unverified_video = True
         if kind in {"image", "video"} and info["media"] != kind:
             errors.append("Required " + kind + " is not a recognized rendered export: " + original_path)
             continue
@@ -332,6 +408,8 @@ def validate_delivery(plan, manifest, workspace):
     next_action = "none"
     if status == "unverified" or not publication_valid:
         state, next_action = "unverified", "read_back_before_retry"
+    elif unverified_video:
+        state, next_action = "unverified", "verify_video_track_and_render"
     elif errors:
         state, next_action = "incomplete", "complete_missing_evidence"
     elif status in {"draft", "failed"}:
