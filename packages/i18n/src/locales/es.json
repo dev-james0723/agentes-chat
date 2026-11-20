@@ -3221,6 +3221,8 @@
     "atOnceHelp": "Cuántos trabajos que nadie pidió hace al mismo tiempo. Los demás esperan su turno.",
     "prs": "Pull requests por hora",
     "prsHelp": "Lo máximo que su propio trabajo abre en una hora.",
+    "shots": "Capturas de pantalla por tarea",
+    "shotsHelp": "Lo máximo que puede tomar un trabajo suyo. Súbelo para un agente que revisa cómo se ven las páginas. Las capturas nuevas también se pausan cuando el disco de su ordenador está casi lleno.",
     "call": "Agentes a los que puede llamar",
     "callHelp": "A quién puede mencionar o pasar trabajo.",
     "callAll": "Todos",
@@ -11983,6 +11985,48 @@
   },
   "storage": {
     "title": "Almacenamiento",
+    "clean": {
+      "title": "Limpiar el espacio de trabajo",
+      "intro": "Lo que dejaron las tareas terminadas en los ordenadores de los agentes. Las entregas, las pruebas y lo que no tiene explicación se quedan. Tú eliges qué archivos temporales limpiar.",
+      "computers": "Discos de los ordenadores",
+      "level": {
+        "ok": "{{free}} GB libres",
+        "low": "Poco espacio: {{free}} GB libres",
+        "critical": "Casi lleno: {{free}} GB libres. Las nuevas capturas y grabaciones están en pausa.",
+        "unknown": "Aún sin medir"
+      },
+      "none": "Ninguna tarea ha terminado desde que los agentes empezaron a registrar sus archivos.",
+      "task": "Tarea",
+      "mission": "Misión",
+      "ended": {
+        "done": "Hecha",
+        "canceled": "Cancelada"
+      },
+      "kept_one": "{{count}} conservado",
+      "kept_many": "{{count}} conservados",
+      "kept_other": "{{count}} conservados",
+      "candidates_one": "{{count}} archivo temporal, {{size}}",
+      "candidates_many": "{{count}} archivos temporales, {{size}}",
+      "candidates_other": "{{count}} archivos temporales, {{size}}",
+      "duplicates_one": "{{count}} copia exacta",
+      "duplicates_many": "{{count}} copias exactas",
+      "duplicates_other": "{{count}} copias exactas",
+      "restorable": "Pruebas: {{restorable}} recuperables desde el Drive, {{manifestOnly}} solo listadas",
+      "approve": "Limpiar archivos temporales",
+      "approved_one": "{{count}} archivo aprobado: se vuelve a comprobar en su ordenador antes de borrarlo.",
+      "approved_many": "{{count}} archivos aprobados: cada uno se vuelve a comprobar en su ordenador antes de borrarlo.",
+      "approved_other": "{{count}} archivos aprobados: cada uno se vuelve a comprobar en su ordenador antes de borrarlo.",
+      "status": {
+        "approved": "Esperando a su ordenador",
+        "done": "Borrado",
+        "skipped": "Ya no estaba",
+        "blocked": "Conservado: {{reason}}",
+        "unknown": "Aún no está claro: se comprobará más tarde"
+      },
+      "freed": "Espacio libre en el ordenador: {{before}} antes, {{after}} después",
+      "show": "Ver archivos",
+      "hide": "Ocultar archivos"
+    },
     "options": "Dónde guardar los archivos",
     "agentes": "Almacenamiento de agentes.chat",
     "agentesText": "Tus archivos se quedan en nuestro almacenamiento, separados por espacio de trabajo.",

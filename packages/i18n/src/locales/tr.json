@@ -3113,6 +3113,8 @@
     "atOnceHelp": "Kimsenin istemediği kaç işi aynı anda yapacağı. Diğerleri sırasını bekler.",
     "prs": "Saatte pull request",
     "prsHelp": "Kendi işinin bir saatte açabileceği en fazla sayı.",
+    "shots": "Görev başına ekran görüntüsü",
+    "shotsHelp": "Bir işinin alabileceği en fazla sayı. Sayfaların görünüşünü kontrol eden bir ajan için artır. Bilgisayarının diski neredeyse dolduğunda yeni ekran görüntüleri de duraklatılır.",
     "call": "Çağırabileceği ajanlar",
     "callHelp": "Kimden bahsedebileceği veya kime iş devredebileceği.",
     "callAll": "Hepsi",
@@ -11569,6 +11571,44 @@
   },
   "storage": {
     "title": "Depolama",
+    "clean": {
+      "title": "Çalışma alanını temizle",
+      "intro": "Biten görevlerin ajanların bilgisayarlarında bıraktıkları. Teslimler, kanıtlar ve amacı belli olmayan her şey kalır. Hangi geçici dosyaların temizleneceğini sen seçersin.",
+      "computers": "Bilgisayarların diskleri",
+      "level": {
+        "ok": "{{free}} GB boş",
+        "low": "Yer az: {{free}} GB boş",
+        "critical": "Neredeyse dolu: {{free}} GB boş. Yeni ekran görüntüleri ve kayıtlar duraklatıldı.",
+        "unknown": "Henüz ölçülmedi"
+      },
+      "none": "Ajanlar dosyalarını kaydetmeye başladığından beri hiçbir görev bitmedi.",
+      "task": "Görev",
+      "mission": "Misyon",
+      "ended": {
+        "done": "Tamamlandı",
+        "canceled": "İptal edildi"
+      },
+      "kept_one": "{{count}} saklandı",
+      "kept_other": "{{count}} saklandı",
+      "candidates_one": "{{count}} geçici dosya, {{size}}",
+      "candidates_other": "{{count}} geçici dosya, {{size}}",
+      "duplicates_one": "{{count}} birebir kopya",
+      "duplicates_other": "{{count}} birebir kopya",
+      "restorable": "Kanıtlar: {{restorable}} Drive’dan geri yüklenebilir, {{manifestOnly}} yalnızca listelendi",
+      "approve": "Geçici dosyaları temizle",
+      "approved_one": "{{count}} dosya onaylandı: silinmeden önce kendi bilgisayarında yeniden kontrol edilir.",
+      "approved_other": "{{count}} dosya onaylandı: her biri silinmeden önce kendi bilgisayarında yeniden kontrol edilir.",
+      "status": {
+        "approved": "Bilgisayarını bekliyor",
+        "done": "Silindi",
+        "skipped": "Zaten yoktu",
+        "blocked": "Saklandı: {{reason}}",
+        "unknown": "Henüz belli değil: sonra yeniden kontrol edilecek"
+      },
+      "freed": "Bilgisayardaki boş alan: önce {{before}}, sonra {{after}}",
+      "show": "Dosyaları göster",
+      "hide": "Dosyaları gizle"
+    },
     "options": "Dosyalar nerede saklansın",
     "agentes": "agentes.chat depolama alanı",
     "agentesText": "Dosyalarınız, her çalışma alanı için ayrı tutularak bizim depolama alanımızda kalır.",

@@ -9,6 +9,7 @@ import { CardHead, useAgentEdit } from "./context";
 
 const AT_ONCE = ["1", "2", "3", "5", "10"];
 const PRS = ["0", "1", "2", "3", "5", "10"];
+const SHOTS = ["20", "60", "120", "250", "500", "1000"];
 
 /**
  * Configurações → Autonomia sem pedido (ADR 0131): what the agent may start that nobody asked for directly (costly
@@ -92,6 +93,23 @@ export function BrakesCard() {
           disabled={!editable}
           onValueChange={(v) => save({ maxPrsPerHour: Number(v) })}
           options={PRS.map((n) => ({ value: n, label: n }))}
+        />
+      </SettingRow>
+      <SettingRow
+        title={t("brakes.shots")}
+        hint={{ name: t("common.about", { label: t("brakes.shots") }), text: t("brakes.shotsHelp") }}
+        htmlFor="agp-brakes-shots"
+      >
+        <Select
+          id="agp-brakes-shots"
+          size="sm"
+          value={String(b.maxScreenshotsPerRun)}
+          disabled={!editable}
+          onValueChange={(v) => save({ maxScreenshotsPerRun: Number(v) })}
+          options={(SHOTS.includes(String(b.maxScreenshotsPerRun))
+            ? SHOTS
+            : [...SHOTS, String(b.maxScreenshotsPerRun)]
+          ).map((n) => ({ value: n, label: n }))}
         />
       </SettingRow>
       <SettingRow
