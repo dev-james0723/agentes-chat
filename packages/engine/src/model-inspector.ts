@@ -695,7 +695,7 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         }
       }
       const current = personal ? await thinkingAgent(db, stored, personal.userId) : stored;
-      if (fingerprint(current) !== fingerprint(agent)) {
+      if (!current.ownerUserId || fingerprint(current) !== fingerprint(agent)) {
         row.reason = "The effective subscription authority changed after inspection; inspect it again.";
         return false;
       }

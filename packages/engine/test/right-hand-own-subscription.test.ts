@@ -128,7 +128,12 @@ test("a personal named plan can move to its owner's explicit Codex sign-in and r
   if (!run) throw new Error("Missing run");
   const [machine] = await fx.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
   if (!machine) throw new Error("Missing machine");
-  const plan = await resolveBrain({ db: fx.db, machines: { status: async () => machine } }, agent, run, dm.id);
+  const plan = await resolveBrain(
+    { db: fx.db, machines: { status: async () => ({ ...machine, lastSeenAt: machine.lastSeenAt?.toISOString() ?? null }) } },
+    agent,
+    run,
+    dm.id,
+  );
   expect(plan).toMatchObject({ kind: "codex", session: { machineId } });
   expect("account" in plan ? plan.account : undefined).toBeUndefined();
 }, 30_000);
