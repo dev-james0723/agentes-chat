@@ -95,6 +95,7 @@ import {
   notePlanLimit,
   offRefusal,
   planIsOwners,
+  planLimitOf,
   recordRunBrain,
   refusalScope,
   regionRefusal,
@@ -3453,6 +3454,30 @@ async function executeRunInner(
       later(() => saveTranscript(db, t));
     }
   }
+  // Auto is checked against shared windows before the choice; now the selected model's own cap counts too.
+  if (autoBrain && brainPlan.kind === "claude_code" && !brainPlan.unavailable) {
+    const machineId = brainPlan.session?.machineId ?? agent.machineId;
+    const limited = machineId
+      ? planLimitOf(
+          machineId,
+          brainPlan.kind,
+          brainPlan.account?.id,
+          brainPlan.usage,
+          Date.now(),
+          brainPlan.model,
+          brainPlan.account?.provider,
+        )
+      : null;
+    if (limited)
+      brainPlan = {
+        ...brainPlan,
+        unavailable: {
+          code: "plan_limit",
+          message: "Claude Code reached its plan limit.",
+          ...(limited.until !== null ? { resetsAt: new Date(limited.until).toISOString() } : {}),
+        },
+      };
+  }
   // The context budget reads the model's window: an OpenRouter model's comes with its list.
   await modelInfoFor(db, thinker.model, run.orgId);
   let plan: BrainPlan = brainPlan;
@@ -4524,7 +4549,12 @@ async function executeRunInner(
     // The account's windows say nothing about when a model's own limit resets.
     if (!budget && !scope && !(at > now) && machineId) {
       const stored = await storedPlanUsage(db, run.orgId, machineId, plan.kind, plan.account?.id).catch(() => null);
-      at = bindingReset(stored, now) ?? Number.NaN;
+      at =
+        bindingReset(
+          stored,
+          now,
+          plan.kind === "claude_code" && !plan.account?.provider ? (plan.model ?? "sonnet") : undefined,
+        ) ?? Number.NaN;
     }
     const known = at > now;
     // An unknown reset: only the head of the line asks the plan again (one re-check an hour per plan, not one per

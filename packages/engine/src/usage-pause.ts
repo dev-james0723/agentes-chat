@@ -1,8 +1,8 @@
 import type { PlanUsage, PubSub } from "@agenteschat/adapters";
 import { and, type Database, desc, type Executor, eq, inArray, type SQL, schema, sql } from "@agenteschat/db";
-import { extraUsageLeft, PLAN_PAUSE, planBinding, planState } from "@agenteschat/ui/plan-state";
+import { extraUsageLeft, PLAN_PAUSE, planBinding, planState, planUsageForModel } from "@agenteschat/ui/plan-state";
 import { recordAudit } from "./audit";
-import { forgetPlanLimit, storedPlanUsage } from "./brains/select";
+import { brainModelFor, forgetPlanLimit, storedPlanUsage } from "./brains/select";
 import type { BrainKind } from "./brains/types";
 import { mayStopRun, runRequester } from "./cancel";
 import { ConflictError, ForbiddenError } from "./errors";
@@ -192,7 +192,7 @@ export async function lineHeadLooks(db: Executor, orgId: string, key: string, no
  * going through says nothing about its line. One job per wait; the old timed one finds the wait gone and does nothing.
  * Only waits on the same `model` (a model's own weekly limit isn't lifted by another model's turn); a wait stored
  * without one is woken. `room`: a reading of the plan taken `at` has room again (`wakeOnRoom`): every wait on the
- * account's limit that last parked before it, whatever its model, and every long-work pause on that sign-in that the
+ * account's limit that last parked before it and whose model has room, and every long-work pause on that sign-in that the
  * reading puts back under the pause line for its own model (`longWorkHasRoom`). Without the reading's word a pause would
  * sleep on its timer, a reset a day away or, behind the head of an unknown reset, the line's day-long safety timer. A
  * wait that parked again right after a wake (`steady`) isn't woken for `REPARK_STEADY_MS` after that park (a wait behind
@@ -204,7 +204,7 @@ export async function wakePlanWaits(
   key: string,
   model: string | null,
   now = Date.now(),
-  room?: { at: number; usage?: PlanUsage },
+  room?: { at: number; usage?: PlanUsage; kind?: BrainKind; provider?: string | null },
 ): Promise<string[]> {
   const { agentRuns, agents } = schema;
   const fields = {
@@ -230,29 +230,60 @@ export async function wakePlanWaits(
         ? sql`not (${agentRuns.transcript}->'waitingForBrain' ? 'scope')`
         : sql`(not (${agentRuns.transcript}->'waitingForBrain' ? 'model') or ${agentRuns.transcript}->'waitingForBrain'->>'model' is not distinct from ${model})`,
     );
-  const limits = await db
-    .select(fields)
-    .from(agentRuns)
-    .where(parked(sql`${agentRuns.transcript}->'waitingForBrain'->>'code' = 'plan_limit'`))
-    .orderBy(agentRuns.createdAt)
-    .limit(100);
-  // Pauses have a query of their own, so the ones the reading leaves paused never take the limit waits' places.
   const reading = room?.usage;
-  const pauses = reading
-    ? (
-        await db
-          .select({
-            ...fields,
-            waitModel: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'model'`,
-            extraUsage: agents.brainExtraUsage,
-          })
-          .from(agentRuns)
-          .innerJoin(agents, eq(agents.id, agentRuns.agentId))
-          .where(parked(sql`${agentRuns.transcript}->'waitingForBrain'->>'code' = 'usage_pause'`))
-          .orderBy(agentRuns.createdAt)
-          .limit(100)
-      ).filter((r) => longWorkHasRoom(planReading(reading, r.waitModel, r.extraUsage, now)))
-    : [];
+  const nativeClaude = room?.kind === "claude_code" && !room.provider;
+  const page = (code: string, after?: { cursorAt: string; id: string }) =>
+    db
+      .select({
+        ...fields,
+        cursorAt: sql<string>`${agentRuns.createdAt}::text`,
+        waitModel: sql<string | null>`${agentRuns.transcript}->'waitingForBrain'->>'model'`,
+        agentBrain: agents.brain,
+        agentModel: agents.brainModel,
+        extraUsage: agents.brainExtraUsage,
+      })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agents.id, agentRuns.agentId))
+      .where(
+        and(
+          parked(sql`${agentRuns.transcript}->'waitingForBrain'->>'code' = ${code}`),
+          after
+            ? sql`(${agentRuns.createdAt}, ${agentRuns.id}) > (${after.cursorAt}::timestamptz, ${after.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(agentRuns.createdAt, agentRuns.id)
+      .limit(100);
+  const eligible = async (code: "plan_limit" | "usage_pause") => {
+    const rows: Awaited<ReturnType<typeof page>> = [];
+    let after: { cursorAt: string; id: string } | undefined;
+    for (;;) {
+      const batch = await page(code, after);
+      for (const r of batch) {
+        const parkedAt = Number(r.parkedAt ?? r.since);
+        if (!r.waitId || Date.parse(r.until ?? "") <= now + RESUME_GAP_MS || (room && parkedAt >= room.at)) continue;
+        const model =
+          r.waitModel ??
+          (nativeClaude
+            ? (brainModelFor("claude_code", { brain: r.agentBrain, brainModel: r.agentModel }) ?? null)
+            : null);
+        if (code === "usage_pause") {
+          if (!reading || !longWorkHasRoom(planReading(reading, model, r.extraUsage, now))) continue;
+        } else if (reading && nativeClaude && planState(planUsageForModel(reading, model), now).state === "limited") {
+          continue;
+        }
+        rows.push(r);
+        if (rows.length === 100) break;
+      }
+      if (rows.length === 100 || batch.length < 100) return rows;
+      const last = batch.at(-1);
+      if (!last) return rows;
+      after = last;
+    }
+  };
+  // Filter each model before the cap: a full page of blocked models must not hide eligible work.
+  const limits = await eligible("plan_limit");
+  const pauses = reading ? await eligible("usage_pause") : [];
   const due = [...limits, ...pauses]
     .map((r) => ({ ...r, since: Number(r.since), parkedAt: Number(r.parkedAt ?? r.since) }))
     .filter((r) => r.waitId && !(Date.parse(r.until ?? "") <= now + RESUME_GAP_MS) && !(room && r.parkedAt >= room.at))
@@ -272,7 +303,7 @@ export async function wakePlanWaits(
 
 /**
  * A reading of a sign-in's plan (an account, or `accountId` absent: the computer's own) that the runner just reported:
- * with no window full and no refusal, the plan has room again, so the runs parked on its limit go on now
+ * with no shared window full and no refusal, eligible models have room again, so their parked runs go on now
  * (`wakePlanWaits`), instead of waiting for a reset that already happened, and so does the long work it puts back under
  * the pause line.
  */
@@ -284,12 +315,14 @@ export async function wakeOnRoom(
   accountId: string | undefined,
   usage: PlanUsage,
   now = Date.now(),
+  provider?: string | null,
 ): Promise<string[]> {
   const at = Date.parse(usage.at);
-  if (!Number.isFinite(at) || planState(usage, now).state === "limited") return [];
-  forgetPlanLimit(machineId, kind, accountId);
+  const shared = kind === "claude_code" && !provider ? planUsageForModel(usage) : usage;
+  if (!Number.isFinite(at) || planState(shared, now).state === "limited") return [];
+  if (!forgetPlanLimit(machineId, kind, accountId, at)) return [];
   const key = usageWaitKey({ code: "plan_limit", machineId, kind, accountId });
-  return wakePlanWaits(db, orgId, key, null, now, { at, usage });
+  return wakePlanWaits(db, orgId, key, null, now, { at, usage, kind, provider });
 }
 
 /**
