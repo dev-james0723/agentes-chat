@@ -186,3 +186,36 @@ test("a person picks out of office with a line that ends when they are back", as
   expect(me).toMatchObject({ availability: "out", statusText: "De férias" });
   expect(memberPresence(me as NonNullable<typeof me>, false, false)).toBe("out");
 });
+
+test("Claude quota presence follows each agent's model in both presence and routing", async () => {
+  f = await setup();
+  const machineId = await onPlan(f, f.agent.id, false);
+  const reset = new Date(Date.now() + 3 * 86_400_000).toISOString();
+  await f.db
+    .update(schema.machines)
+    .set({
+      executors: {
+        ownUsage: {
+          claude_code: {
+            source: "probe",
+            at: new Date().toISOString(),
+            windows: [
+              { kind: "seven_day", usedPercent: 81, resetsAt: reset },
+              { kind: "other", label: "Fable", usedPercent: 100, resetsAt: reset },
+            ],
+          },
+        },
+      },
+    })
+    .where(eq(schema.machines.id, machineId));
+  for (const [model, out] of [
+    ["sonnet", false],
+    ["claude-fable-5", true],
+    ["auto", false],
+    [null, false],
+  ] as const) {
+    await f.db.update(schema.agents).set({ brainModel: model }).where(eq(schema.agents.id, f.agent.id));
+    expect((await statusOf(f, f.agent.id))?.presence).toBe(out ? "out" : "online");
+    expect([...(await outOfOfficeIds(f.db, f.org.id, [f.agent.id]))]).toEqual(out ? [f.agent.id] : []);
+  }
+});
