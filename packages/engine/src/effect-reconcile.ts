@@ -1,16 +1,20 @@
 import type { PubSub } from "@agenteschat/adapters";
 import { and, type Database, type Executor, eq, inArray, isNotNull, schema, sql } from "@agenteschat/db";
+import { postAgentReport } from "./agent-report";
 import { decides } from "./approvals";
 import { recordAudit } from "./audit";
 import { executesHere } from "./cancel";
+import { sendNote } from "./consultations";
 import { type ReadBack, readBackCall } from "./effect-readback";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 import { can, requireChangePermission } from "./organizations";
 import { enqueue } from "./outbox";
+import { isPrivatePublication } from "./private-skill-publication";
 import { addRunStep } from "./runs";
 import { standingRefusal } from "./standing";
+import type { ToolDefinition, ToolSource } from "./tools/types";
 
-const { agentRuns, agentRunSteps, agents, approvals, runToolTokens } = schema;
+const { agentGroups, agentRuns, agentRunSteps, agents, approvals, issues, runToolTokens } = schema;
 
 /**
  * Reconciling effects whose outcome is unknown (ADR 0203). A run is held while one of its tool calls may have acted
@@ -138,23 +142,125 @@ async function callName(db: Executor, runId: string, callId: string): Promise<st
 }
 
 /** The answer an approved action's call gets once reconciled: never its own lost result, never a second run. */
-function reconciledResult(verdict: EffectVerdict, by: string, at: Date, note?: string) {
-  const said = note ? ` Note: ${note}` : "";
+function reconciledResult(verdict: EffectVerdict, said: string, by: string, at: Date, note?: string) {
+  const noted = note ? ` Note: ${note}` : "";
   return {
     isError: verdict !== "done",
     content:
       verdict === "done"
-        ? `Its result was lost, and a person confirmed this approved action did happen. It was not run again.${said}`
-        : `Its result was lost, and a person confirmed this approved action did not happen. It was not run again by itself: ask again if it is still needed.${said}`,
+        ? `Its result was lost, and ${said} confirmed this approved action did happen. It was not run again.${noted}`
+        : `Its result was lost, and ${said} confirmed this approved action did not happen. It was not run again by itself: ask again if it is still needed.${noted}`,
     reconciled: { verdict, by, at: at.toISOString() },
   };
+}
+
+type HeldRun = typeof agentRuns.$inferSelect;
+/** Who settles an effect: a person, or the lead agent it was routed to (ADR 0203 §6). */
+type Decider = { type: "person"; id: string } | { type: "agent"; id: string };
+
+/**
+ * The run, locked first as a stop locks it (`cancelRun`), so a stop and a release never cross; then what makes a
+ * verdict possible at all, read now: the run still held (a stopped or ended run stays so), no turn open, the effect one
+ * of its unknown ones, and the workspace and agent at work.
+ */
+async function lockHeld(tx: Executor, orgId: string, runId: string, effectId: string) {
+  const [row] = await tx
+    .select({ run: agentRuns, ownerUserId: agents.ownerUserId })
+    .from(agentRuns)
+    .innerJoin(agents, eq(agents.id, agentRuns.agentId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
+    .for("update", { of: agentRuns });
+  if (!row) throw new NotFoundError("Run not found");
+  if (!(HELD_STATUSES as readonly string[]).includes(row.run.status))
+    throw new ConflictError("This run already ended: it is not taken up again", "run.effect_run_ended");
+  const held = await heldEffectsOf(tx, orgId, runId);
+  if (held.open) throw new ConflictError("A turn of this run is still working", "run.effect_turn_open");
+  const effect = held.effects.find((e) => e.id === effectId);
+  if (!effect) throw new ConflictError("No such unknown effect on this run", "run.effect_unknown_id");
+  const refusal = await standingRefusal(tx, orgId, row.run.agentId);
+  if (refusal) throw refusal;
+  return { run: row.run, ownerUserId: row.ownerUserId, effect };
+}
+
+/** The approval an `approval:` effect ran under, locked; it must still stand (ADR 0203 §4). */
+async function standingApproval(tx: Executor, effect: UnknownEffect) {
+  const [approval] = await tx
+    .select()
+    .from(approvals)
+    .where(eq(approvals.id, effect.id.slice("approval:".length)))
+    .for("update");
+  if (!approval) throw new ConflictError("No such unknown effect on this run", "run.effect_unknown_id");
+  // Withdrawn or ended since it ran: a restored run never goes on under an authority that no longer stands.
+  if (approval.status !== "approved")
+    throw new ConflictError("The approval behind this action no longer stands", "run.effect_grant_revoked");
+  return approval;
+}
+
+/**
+ * Only a person may vouch for these (ADR 0203 §6, kept narrow): an action in someone's own mailbox (`approvers.required`,
+ * only that person decides it) or a private publication of their own skill. Everything else a lead agent may settle.
+ */
+const personOnly = (approval: Pick<typeof approvals.$inferSelect, "approvers" | "params">) =>
+  Boolean(approval.approvers?.required) || isPrivatePublication(approval);
+
+/** Writes one verdict, its run step and its audit row (in the caller's transaction, the run locked). */
+async function applyVerdict(
+  tx: Executor,
+  input: {
+    run: HeldRun;
+    effect: UnknownEffect;
+    verdict: EffectVerdict;
+    decider: Decider;
+    /** How the run's model reads who confirmed it. */
+    said: string;
+    note?: string;
+    at: Date;
+  },
+) {
+  const { run, effect, verdict, decider, at, note } = input;
+  const by = decider.type === "person" ? decider.id : `agent:${decider.id}`;
+  if (effect.kind === "approval") {
+    await tx
+      .update(approvals)
+      .set({ result: reconciledResult(verdict, input.said, by, at, note) })
+      .where(and(eq(approvals.id, effect.id.slice("approval:".length)), unsettledApproval));
+  } else if (effect.kind === "bridge_call") {
+    const [, epochId = "", callId = ""] = effect.id.split(":");
+    await settleCall(tx, epochId, callId, { reconciled: verdict, by });
+  } else {
+    const entry = { verdict, by, at: at.toISOString() };
+    await tx
+      .update(agentRuns)
+      .set({
+        transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectReconciled}', coalesce(${agentRuns.transcript}->'effectReconciled', '{}'::jsonb) || ${JSON.stringify({ marker: entry })}::jsonb, true)`,
+      })
+      .where(eq(agentRuns.id, run.id));
+  }
+  await addRunStep(tx, run, "error", {
+    reason: "effect_reconciled",
+    effectId: effect.id,
+    tools: effect.tools,
+    verdict,
+    by,
+  });
+  await recordAudit(tx, {
+    orgId: run.orgId,
+    actor: decider,
+    action: "run.effect_reconciled",
+    target: { type: "run", id: run.id },
+    details: { effectId: effect.id, kind: effect.kind, tools: effect.tools, verdict, note },
+    runId: run.id,
+    channelId: run.channelId,
+    outcome: "done",
+  });
 }
 
 /**
  * An authorized person says what happened to one unknown effect of a held run (ADR 0203 §2). The person's right is
  * checked now, never taken from when the run was held; the run must still be held (a stopped run stays stopped), the
  * workspace and agent may work, and an approval the effect ran under must still stand. The verdict and an audit row are
- * written together; when it was the run's last unknown effect, the run is released as well.
+ * written together; when it was the run's last unknown effect, the run is released as well. A person may always do
+ * this; nobody is asked to before an escalation (§6).
  */
 export async function reconcileRunEffect(
   deps: { db: Database; pubsub?: PubSub; now?: () => Date },
@@ -169,69 +275,217 @@ export async function reconcileRunEffect(
   const note = input.note?.trim().slice(0, 1000) || undefined;
   const membership = await requireChangePermission(db, actorId, orgId, "read");
   return db.transaction(async (tx) => {
-    // Locked first, as a stop locks it (`cancelRun`): a stop and a release never cross.
-    const [run] = await tx
-      .select({ run: agentRuns, ownerUserId: agents.ownerUserId })
-      .from(agentRuns)
-      .innerJoin(agents, eq(agents.id, agentRuns.agentId))
-      .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
-      .for("update", { of: agentRuns });
-    if (!run) throw new NotFoundError("Run not found");
-    if (!(HELD_STATUSES as readonly string[]).includes(run.run.status))
-      throw new ConflictError("This run already ended: it is not taken up again", "run.effect_run_ended");
-    const held = await heldEffectsOf(tx, orgId, runId);
-    if (held.open) throw new ConflictError("A turn of this run is still working", "run.effect_turn_open");
-    const effect = held.effects.find((e) => e.id === input.effectId);
-    if (!effect) throw new ConflictError("No such unknown effect on this run", "run.effect_unknown_id");
-    const refusal = await standingRefusal(tx, orgId, run.run.agentId);
-    if (refusal) throw refusal;
-
-    const mayDecide = can(membership, "approve_actions") || run.ownerUserId === actorId;
+    const { run, ownerUserId, effect } = await lockHeld(tx, orgId, runId, input.effectId);
     if (effect.kind === "approval") {
-      const approvalId = effect.id.slice("approval:".length);
-      const [approval] = await tx.select().from(approvals).where(eq(approvals.id, approvalId)).for("update");
-      if (!approval || !decides(approval, actorId, membership))
+      const approval = await standingApproval(tx, effect);
+      if (!decides(approval, actorId, membership))
         throw new ForbiddenError("Only who may decide this approval can say whether it happened");
-      // Withdrawn or ended since it ran: a restored run never goes on under an authority that no longer stands.
-      if (approval.status !== "approved")
-        throw new ConflictError("The approval behind this action no longer stands", "run.effect_grant_revoked");
-      await tx
-        .update(approvals)
-        .set({ result: reconciledResult(input.verdict, actorId, at, note) })
-        .where(and(eq(approvals.id, approvalId), unsettledApproval));
-    } else if (!mayDecide) {
+    } else if (!can(membership, "approve_actions") && ownerUserId !== actorId) {
       throw new ForbiddenError("Only the agent's owner or someone who approves actions can say whether it happened");
-    } else if (effect.kind === "bridge_call") {
-      const [, epochId = "", callId = ""] = effect.id.split(":");
-      await settleCall(tx, epochId, callId, { reconciled: input.verdict, by: actorId });
-    } else {
-      const entry = { verdict: input.verdict, by: actorId, at: at.toISOString() };
-      await tx
-        .update(agentRuns)
-        .set({
-          transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectReconciled}', coalesce(${agentRuns.transcript}->'effectReconciled', '{}'::jsonb) || ${JSON.stringify({ marker: entry })}::jsonb, true)`,
-        })
-        .where(eq(agentRuns.id, runId));
     }
-    await addRunStep(tx, run.run, "error", {
-      reason: "effect_reconciled",
-      effectId: effect.id,
-      tools: effect.tools,
-      verdict: input.verdict,
-      by: actorId,
-    });
-    await recordAudit(tx, {
-      orgId,
-      actor: { type: "person", id: actorId },
-      action: "run.effect_reconciled",
-      target: { type: "run", id: runId },
-      details: { effectId: effect.id, kind: effect.kind, tools: effect.tools, verdict: input.verdict, note },
-      runId,
-      channelId: run.run.channelId,
-      outcome: "done",
-    });
-    return settleIfClear(tx, run.run, at);
+    const decider = { type: "person" as const, id: actorId };
+    await applyVerdict(tx, { run, effect, verdict: input.verdict, decider, said: "a person", note, at });
+    return settleIfClear(tx, run, at);
   });
+}
+
+/**
+ * The lead agent a held run's unknown effects go to first (ADR 0203 §6): the agent the task's assignee reports to
+ * ("Responde a", ADR 0148), else the one the run's own agent reports to. Never the run's own agent, an archived one, nor
+ * one held from working. Null: there is none, and a person is asked instead.
+ */
+export async function leadAgentFor(
+  db: Executor,
+  run: Pick<HeldRun, "orgId" | "agentId" | "issueId">,
+): Promise<string | null> {
+  let from = run.agentId;
+  if (run.issueId) {
+    const [issue] = await db
+      .select({ type: issues.assigneeType, id: issues.assigneeId })
+      .from(issues)
+      .where(and(eq(issues.id, run.issueId), eq(issues.orgId, run.orgId)));
+    if (issue?.type === "agent" && issue.id) from = issue.id;
+  }
+  const lead = async (agentId: string) => {
+    const [row] = await db
+      .select({ lead: agents.reportsToAgentId })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.orgId, run.orgId)));
+    return row?.lead ?? null;
+  };
+  let leadId = await lead(from);
+  if (!leadId && from !== run.agentId) leadId = await lead(run.agentId);
+  if (!leadId || leadId === run.agentId) return null;
+  const [agent] = await db
+    .select({ archivedAt: agents.archivedAt })
+    .from(agents)
+    .where(and(eq(agents.id, leadId), eq(agents.orgId, run.orgId)));
+  if (!agent || agent.archivedAt) return null;
+  if (await standingRefusal(db, run.orgId, leadId)) return null;
+  return leadId;
+}
+
+type Routing =
+  | { to: "lead"; leadAgentId: string; at: string }
+  | { to: "person"; userId: string | null; reason: EscalationReason; at: string };
+/** Why a person is asked (§6): no lead, the lead couldn't tell, the lead said nothing in a day, or a person-only effect. */
+export type EscalationReason = "no_lead" | "lead_unsure" | "lead_silent" | "person_only";
+
+/** How long the lead has before a person is asked instead. */
+export const LEAD_SILENT_MS = 24 * 3600_000;
+
+const routingOf = (run: Pick<HeldRun, "transcript">) =>
+  ((run.transcript ?? {}) as { effectRouting?: Routing }).effectRouting ?? null;
+
+async function setRouting(tx: Executor, runId: string, routing: Routing) {
+  await tx
+    .update(agentRuns)
+    .set({
+      transcript: sql`jsonb_set(coalesce(${agentRuns.transcript}, '{}'::jsonb), '{effectRouting}', ${JSON.stringify(routing)}::jsonb, true)`,
+    })
+    .where(eq(agentRuns.id, runId));
+}
+
+/**
+ * Asks a person (ADR 0203 §6), through the agent's own DM with them (`postAgentReport`, the notification any agent DM
+ * gets): the agent's owner, else its setor's lead. With neither, the run waits for whoever opens it (the API lists it).
+ */
+async function escalate(tx: Executor, run: HeldRun, effects: UnknownEffect[], reason: EscalationReason, at: Date) {
+  const [owner] = await tx
+    .select({ owner: agents.ownerUserId, setorLead: agentGroups.leadUserId, name: agents.name })
+    .from(agents)
+    .leftJoin(agentGroups, eq(agentGroups.id, agents.groupId))
+    .where(eq(agents.id, run.agentId));
+  const userId = owner?.owner ?? owner?.setorLead ?? null;
+  await setRouting(tx, run.id, { to: "person", userId, reason, at: at.toISOString() });
+  await addRunStep(tx, run, "error", { reason: "effect_escalated", why: reason, userId });
+  if (!userId) return null;
+  const why = {
+    no_lead: "No lead agent could check it",
+    lead_unsure: "Its lead agent could not tell",
+    lead_silent: "Its lead agent did not answer within a day",
+    person_only: "Only a person can vouch for it",
+  }[reason];
+  const list = effects.map((e) => `- ${e.tools.join(", ")} (${e.id})`).join("\n");
+  return postAgentReport(tx, {
+    orgId: run.orgId,
+    agentId: run.agentId,
+    userId,
+    body: `A task of mine is held: these actions may have happened, and nothing proves whether they did. ${why}. Tell me whether each one happened (nothing is done again by itself):\n${list}`,
+    meta: { effectEscalation: { runId: run.id, reason, effects: effects.map((e) => e.id) } },
+  });
+}
+
+/**
+ * The lead agent's verdict on one unknown effect it was asked about (`settle_unknown_effect`, ADR 0203 §6): done or not
+ * done with what it found, or `escalate` when it can't tell. Checked now: it is still the run's routed lead and still
+ * the lead the org chart names, both agents may work, the run is still held, and the effect is not person-only.
+ */
+export async function settleByLead(
+  deps: { db: Database; now?: () => Date },
+  lead: { orgId: string; agentId: string },
+  input: { runId: string; effectId: string; verdict: EffectVerdict | "escalate"; evidence: string },
+): Promise<{ released: boolean; escalated: boolean; remaining: UnknownEffect[] }> {
+  const at = deps.now?.() ?? new Date();
+  const evidence = input.evidence.trim().slice(0, 1000);
+  if (!["done", "not_done", "escalate"].includes(input.verdict)) throw new ConflictError("Unknown verdict");
+  if (!evidence) throw new ConflictError("Say what you checked", "run.effect_evidence_missing");
+  return deps.db.transaction(async (tx) => {
+    const { run, effect } = await lockHeld(tx, lead.orgId, input.runId, input.effectId);
+    const routing = routingOf(run);
+    if (routing?.to !== "lead" || routing.leadAgentId !== lead.agentId)
+      throw new ForbiddenError("This held task was not given to you to check", "run.effect_not_routed");
+    // The org chart changed since it was routed: the old lead's say lapsed with it.
+    if ((await leadAgentFor(tx, run)) !== lead.agentId)
+      throw new ConflictError("You no longer lead this task's agent", "run.effect_lead_changed");
+    const approval = effect.kind === "approval" ? await standingApproval(tx, effect) : null;
+    if (approval && personOnly(approval))
+      throw new ForbiddenError("Only a person can vouch for this one", "run.effect_person_only");
+    if (input.verdict === "escalate") {
+      const { effects } = await heldEffectsOf(tx, run.orgId, run.id);
+      await escalate(tx, run, effects, "lead_unsure", at);
+      return { released: false, escalated: true, remaining: effects };
+    }
+    const decider = { type: "agent" as const, id: lead.agentId };
+    await applyVerdict(tx, {
+      run,
+      effect,
+      verdict: input.verdict,
+      decider,
+      said: "the lead agent",
+      note: evidence,
+      at,
+    });
+    return { ...(await settleIfClear(tx, run, at)), escalated: false };
+  });
+}
+
+/**
+ * Hands each newly held run to its lead agent, or to a person when §6 says so; a lead silent for a day gives way to a
+ * person. The note to the lead goes as `tell_agent` notes do (`sendNote`), after the routing is recorded.
+ */
+async function routeHeldRuns(db: Database, now: Date) {
+  const heldSql = sql`(nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is not null
+    or exists (select 1 from ${runToolTokens} where ${runToolTokens.runId} = ${agentRuns.id} and ${runToolTokens.effectEpochState} = 'closed_unknown')
+    or exists (select 1 from ${approvals} where ${approvals.runId} = ${agentRuns.id} and ${unsettledApproval}))`;
+  const due = await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(
+      and(
+        inArray(agentRuns.status, [...HELD_STATUSES]),
+        heldSql,
+        sql`(${agentRuns.transcript}->'effectRouting' is null
+          or (${agentRuns.transcript}->'effectRouting'->>'to' = 'lead'
+            and (${agentRuns.transcript}->'effectRouting'->>'at')::timestamptz < ${new Date(now.getTime() - LEAD_SILENT_MS).toISOString()}::timestamptz))`,
+      ),
+    )
+    .limit(100);
+  for (const { id } of due) {
+    if (executesHere(id)) continue;
+    const note = await db.transaction(async (tx) => {
+      const [run] = await tx.select().from(agentRuns).where(eq(agentRuns.id, id)).for("update");
+      if (!run || !(HELD_STATUSES as readonly string[]).includes(run.status)) return null;
+      const held = await heldEffectsOf(tx, run.orgId, run.id);
+      if (held.open || held.effects.length === 0) return null;
+      if (routingOf(run)?.to === "lead") {
+        await escalate(tx, run, held.effects, "lead_silent", now);
+        return null;
+      }
+      const ran = held.effects.filter((e) => e.kind === "approval");
+      const only =
+        ran.length > 0 &&
+        (await tx
+          .select({ approvers: approvals.approvers, params: approvals.params })
+          .from(approvals)
+          .where(
+            inArray(
+              approvals.id,
+              ran.map((e) => e.id.slice("approval:".length)),
+            ),
+          )
+          .then((rows) => rows.some(personOnly)));
+      const leadId = only ? null : await leadAgentFor(tx, run);
+      if (!leadId) {
+        await escalate(tx, run, held.effects, only ? "person_only" : "no_lead", now);
+        return null;
+      }
+      await setRouting(tx, run.id, { to: "lead", leadAgentId: leadId, at: now.toISOString() });
+      await addRunStep(tx, run, "error", { reason: "effect_routed", leadAgentId: leadId });
+      return { run, leadId, effects: held.effects };
+    });
+    if (!note) continue;
+    const list = note.effects.map((e) => `- ${e.tools.join(", ")}: effect_id "${e.id}"`).join("\n");
+    await sendNote(db, {
+      orgId: note.run.orgId,
+      agentId: note.run.agentId,
+      runId: note.run.id,
+      hop: note.run.hop,
+      targetAgentId: note.leadId,
+      body: `One of my tasks is held (run_id "${note.run.id}"): these calls may have acted, and nothing proves whether they did. As my lead, check what happened where you can, without doing any of them again, then call settle_unknown_effect for each: done or not_done with what you found, or escalate if you can't tell.\n${list}`,
+      chain: [note.run.agentId],
+    }).catch(() => null);
+  }
 }
 
 /** Marks one bridge call settled, only while its epoch is still held and the call unsettled. */
@@ -284,7 +538,7 @@ async function settleIfClear(
   await tx
     .update(agentRuns)
     .set({
-      transcript: sql`coalesce(${agentRuns.transcript}, '{}'::jsonb) - 'effectUncertain' - 'effectReconciled'`,
+      transcript: sql`coalesce(${agentRuns.transcript}, '{}'::jsonb) - 'effectUncertain' - 'effectReconciled' - 'effectRouting'`,
       updatedAt: at,
     })
     .where(eq(agentRuns.id, run.id));
@@ -418,10 +672,79 @@ export async function reconcileHeldRuns(
     });
     if (released) out.released.push(row.id);
   }
+  // What is still unknown goes to the lead agent first, a person only when §6 says so.
+  await routeHeldRuns(db, at.now);
   return out;
 }
 
 async function orgOf(db: Executor, runId: string) {
   const [run] = await db.select({ orgId: agentRuns.orgId }).from(agentRuns).where(eq(agentRuns.id, runId));
   return run?.orgId;
+}
+
+const SETTLE_TOOL = "settle_unknown_effect";
+
+/**
+ * `settle_unknown_effect` (ADR 0203 §6): listed only to an agent some held run was routed to, so no other agent's tools
+ * change. Built in (no scope): what it may settle is checked on every call by `settleByLead`.
+ */
+export function createEffectReconcileToolSource(): ToolSource {
+  return {
+    name: "effect-reconcile",
+    async tools(ctx) {
+      const [routed] = await ctx.db
+        .select({ id: agentRuns.id })
+        .from(agentRuns)
+        .where(
+          and(
+            eq(agentRuns.orgId, ctx.orgId),
+            inArray(agentRuns.status, [...HELD_STATUSES]),
+            sql`${agentRuns.transcript}->'effectRouting'->>'to' = 'lead'`,
+            sql`${agentRuns.transcript}->'effectRouting'->>'leadAgentId' = ${ctx.agentId}`,
+          ),
+        )
+        .limit(1);
+      return routed ? [settleTool()] : [];
+    },
+  };
+}
+
+function settleTool(): ToolDefinition {
+  return {
+    name: SETTLE_TOOL,
+    description:
+      "Settle one unknown outcome of a held task you were asked to check as the agent's lead: whether a call that may have acted did. Check first (read the place it would have changed); never do the action again. `escalate` when you can't tell: a person is asked.",
+    scope: "",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_id: { type: "string", description: "The held task's run_id, from the note." },
+        effect_id: { type: "string", description: "The effect_id, from the note." },
+        verdict: { type: "string", enum: ["done", "not_done", "escalate"] },
+        evidence: { type: "string", description: "What you checked and found." },
+      },
+      required: ["run_id", "effect_id", "verdict", "evidence"],
+      additionalProperties: false,
+    },
+    describe: (input) => ({ title: `Settle an unknown outcome (${String(input.verdict)})` }),
+    async execute(input, ctx) {
+      try {
+        const out = await settleByLead(
+          { db: ctx.db },
+          { orgId: ctx.orgId, agentId: ctx.agentId },
+          {
+            runId: String(input.run_id ?? ""),
+            effectId: String(input.effect_id ?? ""),
+            verdict: input.verdict as EffectVerdict | "escalate",
+            evidence: String(input.evidence ?? ""),
+          },
+        );
+        if (out.escalated) return { content: "Escalated: a person is asked now." };
+        if (out.released) return { content: "Settled. Nothing is unknown any more: the task goes on." };
+        return { content: `Settled. Still unknown: ${out.remaining.map((e) => e.id).join(", ")}.` };
+      } catch (error) {
+        return { content: error instanceof Error ? error.message : "Not settled", isError: true };
+      }
+    },
+  };
 }

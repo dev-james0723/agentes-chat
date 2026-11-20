@@ -5,6 +5,7 @@ import {
   ConflictError,
   cancelRun,
   commentIssue,
+  createAgent,
   createIssue,
   decideApproval,
   drainOutbox,
@@ -13,10 +14,16 @@ import {
   postPersonMessage,
   recoverStaleRuns,
   setAgentHold,
+  type ToolContext,
   type ToolSource,
 } from "../src";
 import { admitBridgeEffect, finishBridgeEffect } from "../src/bridge-effect-epoch";
-import { heldEffectsOf, reconcileRunEffect } from "../src/effect-reconcile";
+import {
+  createEffectReconcileToolSource,
+  heldEffectsOf,
+  LEAD_SILENT_MS,
+  reconcileRunEffect,
+} from "../src/effect-reconcile";
 import { addMember, type Fixture, setup } from "./fixtures";
 import { pairMachine } from "./machine-fixtures";
 import { RUNNER } from "./mission-helpers";
@@ -345,5 +352,160 @@ describe("a run whose worker died with a bridge epoch open", () => {
     await expect(
       reconcileRunEffect(deps(), f.owner.id, f.org.id, t.run.id, { effectId: `call:${t.epoch}:c1`, verdict: "done" }),
     ).rejects.toBeInstanceOf(ConflictError);
+  });
+});
+
+/** A lead agent the held run's agent reports to ("Responde a", ADR 0148). */
+async function leadAgent(name = "Lia") {
+  const lead = await createAgent(
+    f.db,
+    f.owner.id,
+    f.org.id,
+    { name, handle: name.toLowerCase(), role: "Lead", credentialId: f.credential.id },
+    { model: "claude-sonnet-5-5" },
+  );
+  await f.db.update(schema.agents).set({ reportsToAgentId: lead.id }).where(eq(schema.agents.id, f.agent.id));
+  return lead;
+}
+
+const routingOf = async (runId: string) =>
+  ((await runRow(runId))?.transcript as { effectRouting?: Record<string, unknown> } | undefined)?.effectRouting;
+/** What the owner was asked: escalations in their DM with the agent, and DM notifications. */
+const askedOwner = async () => {
+  const escalations = (await f.db.select().from(schema.messages)).filter((m) => m.meta.effectEscalation);
+  const notes = (await f.db.select().from(schema.notifications)).filter(
+    (n) => n.userId === f.owner.id && n.kind === "dm",
+  );
+  return { escalations, notes };
+};
+/** The settle tool as the lead's run sees it. */
+async function leadTool(agentId: string) {
+  const ctx = { db: f.db, orgId: f.org.id, agentId, runId: "", channelId: f.general.id } as unknown as ToolContext;
+  const [tool] = await createEffectReconcileToolSource().tools(ctx);
+  return {
+    tool,
+    settle: (input: Record<string, unknown>) => {
+      if (!tool) throw new Error("no tool");
+      return tool.execute(input, ctx);
+    },
+  };
+}
+const sweep = (at = new Date()) => recoverStaleRuns(deps(), { now: at });
+
+describe("who is asked about an unknown outcome", () => {
+  test("by default its lead agent, through a note; the owner hears nothing", async () => {
+    const { run, approval } = await heldApproval("after");
+    const lead = await leadAgent();
+    await sweep();
+    expect(await routingOf(run.id)).toMatchObject({ to: "lead", leadAgentId: lead.id });
+    const notes = await f.db
+      .select()
+      .from(schema.agentConsultations)
+      .where(eq(schema.agentConsultations.targetAgentId, lead.id));
+    expect(notes).toHaveLength(1);
+    // Only the routed lead gets the tool.
+    expect((await leadTool(f.agent.id)).tool).toBeUndefined();
+    const { tool, settle } = await leadTool(lead.id);
+    expect(tool?.name).toBe("settle_unknown_effect");
+    await drainOutbox(f.db, f.handlers);
+    expect(await askedOwner()).toEqual({ escalations: [], notes: [] });
+
+    const out = await settle({
+      run_id: run.id,
+      effect_id: `approval:${approval.id}`,
+      verdict: "done",
+      evidence: "The note is in the team channel at 10:02.",
+    });
+    expect(out.isError).toBeFalsy();
+    await drainOutbox(f.db, f.handlers);
+    expect(sent).toEqual(["v2 is out"]);
+    expect((await runRow(run.id))?.status).toBe("done");
+    const audit = await f.db.select().from(schema.auditLog).where(eq(schema.auditLog.action, "run.effect_reconciled"));
+    expect(audit).toEqual([expect.objectContaining({ actorType: "agent", actorId: lead.id })]);
+    expect(await askedOwner()).toEqual({ escalations: [], notes: [] });
+  });
+
+  test("the lead can't tell: it escalates, and only then the owner is asked, in their DM", async () => {
+    const { run, approval } = await heldApproval("after");
+    const lead = await leadAgent();
+    await sweep();
+    const { settle } = await leadTool(lead.id);
+    await settle({ run_id: run.id, effect_id: `approval:${approval.id}`, verdict: "escalate", evidence: "No log." });
+    expect(await routingOf(run.id)).toMatchObject({ to: "person", userId: f.owner.id, reason: "lead_unsure" });
+    await drainOutbox(f.db, f.handlers);
+    const asked = await askedOwner();
+    expect(asked.escalations).toHaveLength(1);
+    expect(asked.notes.length).toBeGreaterThan(0);
+    // The escalated lead has no say any more; the owner settles it.
+    expect((await leadTool(lead.id)).tool).toBeUndefined();
+    const out = await reconcileRunEffect(deps(), f.owner.id, f.org.id, run.id, {
+      effectId: `approval:${approval.id}`,
+      verdict: "done",
+    });
+    expect(out.released).toBe(true);
+  });
+
+  test("no lead: the owner is asked at once", async () => {
+    const { run } = await heldApproval("after");
+    await sweep();
+    expect(await routingOf(run.id)).toMatchObject({ to: "person", userId: f.owner.id, reason: "no_lead" });
+    expect((await askedOwner()).escalations).toHaveLength(1);
+  });
+
+  test("an action only a person may vouch for skips the lead", async () => {
+    const { run, approval } = await heldApproval("after");
+    const lead = await leadAgent();
+    await f.db
+      .update(schema.approvals)
+      .set({
+        approvers: {
+          userIds: [f.owner.id],
+          label: "Owner",
+          requestedBy: null,
+          requesterDecides: false,
+          required: true,
+        } as typeof schema.approvals.$inferInsert.approvers,
+      })
+      .where(eq(schema.approvals.id, approval.id));
+    await sweep();
+    expect(await routingOf(run.id)).toMatchObject({ to: "person", reason: "person_only" });
+    expect((await leadTool(lead.id)).tool).toBeUndefined();
+  });
+
+  test("a lead replaced since, or silent for a day, has no say; silence asks the owner once", async () => {
+    const { run, approval } = await heldApproval("after");
+    const lead = await leadAgent();
+    await sweep();
+    const { settle } = await leadTool(lead.id);
+    // The org chart changed: the agent reports to someone else now.
+    const other = await leadAgent("Ori");
+    const refused = await settle({
+      run_id: run.id,
+      effect_id: `approval:${approval.id}`,
+      verdict: "done",
+      evidence: "Seen.",
+    });
+    expect(refused.isError).toBe(true);
+    expect((await heldEffectsOf(f.db, f.org.id, run.id)).effects).toHaveLength(1);
+    expect(await askedOwner()).toMatchObject({ escalations: [] });
+    // A day without a verdict: the owner is asked, once.
+    await sweep(new Date(Date.now() + LEAD_SILENT_MS + 60_000));
+    await sweep(new Date(Date.now() + LEAD_SILENT_MS + 120_000));
+    expect(await routingOf(run.id)).toMatchObject({ to: "person", reason: "lead_silent" });
+    expect((await askedOwner()).escalations).toHaveLength(1);
+    expect(other.id).not.toBe(lead.id);
+  });
+
+  test("a cancelled run is never routed nor settled by its lead", async () => {
+    const { run, approval } = await heldApproval("after");
+    const lead = await leadAgent();
+    await sweep();
+    const { settle } = await leadTool(lead.id);
+    await cancelRun(deps(), f.owner.id, f.org.id, run.id);
+    const out = await settle({ run_id: run.id, effect_id: `approval:${approval.id}`, verdict: "done", evidence: "x" });
+    expect(out.isError).toBe(true);
+    await drainOutbox(f.db, f.handlers);
+    expect((await runRow(run.id))?.status).toBe("canceled");
+    expect(sent).toEqual(["v2 is out"]);
   });
 });

@@ -53,6 +53,27 @@ module, `packages/engine/src/effect-reconcile.ts`, that settles each unknown eff
 
 Stopping remains the way to end a held run (`cancelRun`), so "release or fail" is: reconcile and release, or stop.
 
+6. **Who is asked: the lead agent first, a person only on escalation.** Unknown outcomes must not land on the owner
+   by default. The sweep hands each newly held run (still unknown after read-back) to its **lead agent**: the agent the
+   task's assignee reports to ("Responde a", ADR 0148), else the one the run's own agent reports to. It is never the run's
+   own agent, an archived one, or one held from working. The ask goes as a `tell_agent` note (`sendNote`), and the lead
+   answers with `settle_unknown_effect` (done or not done, with what it checked, or `escalate`). That tool is listed only
+   to an agent some held run is routed to. Each call checks the same things as a person's verdict, plus that the agent
+   is still the routed lead and still the lead the org chart names. Its verdict is audited with the agent as actor.
+
+   A person is asked only when one of these holds, through the agent's own DM with them (`postAgentReport`, the
+   notification any agent DM gets; no new notification type):
+   - there is no such lead (`no_lead`);
+   - the lead escalates (`lead_unsure`);
+   - the lead gives no verdict within 24 hours (`lead_silent`);
+   - the effect is one **only a person may vouch for** (`person_only`). This is kept narrow: an approved action in
+     someone's own mailbox (`approvers.required`, only that person decides it), or a private publication of their own
+     skill. Nothing else is person-only.
+
+   The person asked is the agent's owner, else its setor's lead. A person who may decide can still settle an effect
+   at any time through the API; nobody is prompted before an escalation. The held message the run already posts in its
+   conversation is unchanged.
+
 ## Consequences
 
 - The hold predicates (executor, sweep, `transitionRun`) treat an approval whose result carries `reconciled` as
@@ -62,6 +83,8 @@ Stopping remains the way to end a held run (`cancelRun`), so "release or fail" i
 - Read-backs exist for two tools; every other unknown effect needs a person. Adding a read-back for a tool is the way to
   make its recovery automatic.
 - No app screen yet: the API serves it, and the run's existing "waiting for reconciliation" message says why it waits.
+- The routing lives on the run (`transcript.effectRouting`) and goes with the release. The note to the lead is sent
+  after the routing commits; if it fails, the 24-hour rule asks a person.
 
 ## Verification
 
@@ -71,5 +94,13 @@ marked not done, goes on without the platform sending it; a member without the r
 approval withdrawn since are refused with nothing dispatched (revoked authority after restore); an agent on hold
 releases nothing; a cancelled run stays cancelled through a decision and the sweep; a dead worker's open epoch is
 fenced, its answered call read back, its native part settled by a person, then recovery ends it without replay; a call
-never answered is not read back; a live turn's epoch is neither fenced nor reconciled. Real PostgreSQL concurrency,
+never answered is not read back; a live turn's epoch is neither fenced nor reconciled. Routing tests cover:
+- by default the lead gets the note and the tool, settles the effect (one send, audited as the agent), and the owner
+  gets no escalation and no DM notification;
+- the lead's `escalate` is what first reaches the owner, in their DM;
+- with no lead, the owner is asked at once;
+- a person-only action skips the lead;
+- a lead replaced on the org chart is refused;
+- a day of silence asks the owner once;
+- a cancelled run is not settled by its lead. Real PostgreSQL concurrency,
 multi-replica timing and provider-side read-backs are not covered.
