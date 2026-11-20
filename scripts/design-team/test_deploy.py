@@ -81,6 +81,7 @@ class FakeAPI:
         self.groups = [{"id": "group-test", "name": "Designer Team", "agentIds": list(self.agents)}]
         self.skills["existing-skill"] = self.skill("existing-skill", "existing", "Original legacy body")
         self.next_version = 0
+        self.legacy_patch_source = "manual"
 
     @staticmethod
     def skill(id_, name, body):
@@ -127,6 +128,8 @@ class FakeAPI:
             if method == "PATCH":
                 row.update(payload)
                 row["version"] += 1
+                # Native updateSkill marks a person-edited body as manual.
+                row["source"] = self.legacy_patch_source
             return copy.deepcopy(row)
         if parts[0] == "agents" and len(parts) >= 2:
             id_ = parts[1]
@@ -204,6 +207,43 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.api.skills["new-native-skill"]["version"], version)
         for path in (self.root / "private-snapshots").rglob("*.json"):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_legacy_body_patch_normalizes_source_and_keeps_original_snapshot(self):
+        self.api.skills["existing-skill"].update(
+            source="url", sourceUrl="https://example.test/upstream/skill", sourceVia="github-app")
+        self.run_deploy(apply=True)
+        after = self.api.skills["existing-skill"]
+        self.assertEqual(after["source"], "manual")
+        self.assertEqual(after["sourceUrl"], "https://example.test/upstream/skill")
+        self.assertEqual(after["sourceVia"], "github-app")
+        snapshots = list((self.root / "private-snapshots").rglob("*before-legacy-existing.json"))
+        self.assertEqual(len(snapshots), 1)
+        original = json.loads(snapshots[0].read_text())
+        self.assertEqual(original["source"], "url")
+        self.assertEqual(original["body"], "Original legacy body")
+
+    def test_legacy_body_patch_rejects_other_source_transitions(self):
+        for unexpected in ("url", "upload", "unknown"):
+            with self.subTest(source=unexpected):
+                self.api = FakeAPI(self.agents)
+                self.api.legacy_patch_source = unexpected
+                with self.assertRaises(deploy.DeployError):
+                    self.run_deploy(apply=True)
+                self.assertFalse(any(path.startswith("/agents/") for _, path, _ in self.api.writes))
+
+    def test_manual_source_exception_does_not_hide_provenance_mutation(self):
+        native_request = self.api.request
+
+        def mutate_provenance(method, path, payload=None):
+            result = native_request(method, path, payload)
+            if method == "PATCH" and path == "/skills/existing-skill":
+                self.api.skills["existing-skill"]["sourceUrl"] = "https://unexpected.test/"
+            return result
+
+        self.api.request = mutate_provenance
+        with self.assertRaises(deploy.DeployError):
+            self.run_deploy(apply=True)
+        self.assertFalse(any(path.startswith("/agents/") for _, path, _ in self.api.writes))
 
     def test_exact_identity_and_group_checked_before_any_write(self):
         self.api.agents["agent-0"]["name"] = "Unexpected replacement"

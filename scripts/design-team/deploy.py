@@ -481,13 +481,20 @@ def deploy(config, package_dir, adapters, api, apply=False):
         fresh = api.request("GET", route)
         if object_hash(skill_state(fresh)) != object_hash(skill_state(original)):
             raise DeployError("Legacy skill version/content changed concurrently")
+        if fresh.get("source") not in ("upload", "url", "manual"):
+            raise DeployError("Legacy body edit has an unrecognized native source")
         snapshots.save("before-legacy-" + name, fresh)
         api.request("PATCH", route, {"body": desired})
         after = api.request("GET", route)
         if after.get("body") != desired:
             raise DeployError("Legacy body readback did not match")
         protected = tuple(key for key in SKILL_FIELDS if key not in ("body", "version"))
-        if selected(fresh, protected) != selected(after, protected):
+        expected = selected(fresh, protected)
+        # Native updateSkill always marks a person-edited body as manual.
+        # Original provenance remains in the private before snapshot; URLs,
+        # sourceVia, metadata and resources still have to match exactly.
+        expected["source"] = "manual"
+        if expected != selected(after, protected):
             raise DeployError("Legacy body update changed unrelated skill settings/resources")
         snapshots.save("after-legacy-" + name, after)
     for target in config["agents"]:
