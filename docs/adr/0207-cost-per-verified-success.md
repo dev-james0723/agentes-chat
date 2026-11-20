@@ -1,4 +1,4 @@
-# 0206. Cost per independently verified successful task (measurement only)
+# 0207. Cost per independently verified successful task (measurement only)
 
 - Status: Proposed
 - Date: 2026-11-19

@@ -10,7 +10,7 @@ import { renderApp, screen, settle } from "./render";
 
 afterEach(() => cleanup());
 
-/** Settings › Usage shows cost per verified success (ADR 0206): unknown money reads unknown, never US$0. */
+/** Settings › Usage shows cost per verified success (ADR 0207): unknown money reads unknown, never US$0. */
 const row = (over: Partial<CostPerSuccessRow>): CostPerSuccessRow => ({
   runs: 3,
   failedRuns: 1,

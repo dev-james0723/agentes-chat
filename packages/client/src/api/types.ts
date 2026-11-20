@@ -7519,7 +7519,7 @@ export interface PlanAccountUsage extends PlanAccountInfo {
   equivalentUsd?: number | null;
 }
 
-/** One row of `GET …/usage/cost-per-success` (ADR 0206). Null money is unknown, never 0. */
+/** One row of `GET …/usage/cost-per-success` (ADR 0207). Null money is unknown, never 0. */
 export interface CostPerSuccessRow {
   runs: number;
   failedRuns: number;
@@ -7534,7 +7534,7 @@ export interface CostPerSuccessRow {
   text: string;
 }
 
-/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0206). */
+/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0207). */
 export interface CostPerSuccessReport {
   from: string;
   to: string;

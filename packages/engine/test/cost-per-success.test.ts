@@ -4,7 +4,7 @@ import { costPerSuccess } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 /**
- * Cost per independently verified successful task (ADR 0206), measurement only: a success is a task whose
+ * Cost per independently verified successful task (ADR 0207), measurement only: a success is a task whose
  * acceptance criteria people checked (`criteria_met`, every criterion `doneBy` a person) and that nobody
  * reopened since. Every finished run counts toward cost; unknown cost stays unknown, never 0.
  */

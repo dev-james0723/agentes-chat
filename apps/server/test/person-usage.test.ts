@@ -69,7 +69,7 @@ test("Uso › Pessoas: admins see each person's use, its CSV and the limits; mem
   expect(raised.limit).toMatchObject({ limitUsd: 15, limitFrom: "raised" });
 });
 
-test("cost per verified success (ADR 0206): admins read it, a run with no verified task counts toward cost only", async () => {
+test("cost per verified success (ADR 0207): admins read it, a run with no verified task counts toward cost only", async () => {
   const w = await workspace();
   await w.owner(`/channels/${w.channelId}/messages`, { json: { body: "@dev status?" } });
   await t.drain();

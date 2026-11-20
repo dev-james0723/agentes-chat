@@ -2946,7 +2946,7 @@ export const usePlanUsage = (orgId: string) => {
   return useQuery({ queryKey: keys.planUsage(orgId), queryFn: () => api.orgs.planUsage(orgId) });
 };
 
-/** Cost per verified successful task (ADR 0206); only for those who may see usage. */
+/** Cost per verified successful task (ADR 0207); only for those who may see usage. */
 export const useCostPerSuccess = (orgId: string, enabled = true) => {
   const api = useApi();
   return useQuery({ queryKey: keys.costPerSuccess(orgId), queryFn: () => api.orgs.costPerSuccess(orgId), enabled });

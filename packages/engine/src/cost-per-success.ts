@@ -4,7 +4,7 @@ import { ForbiddenError, ValidationError } from "./errors";
 import { canViewCost } from "./usage";
 
 /**
- * Cost per independently verified successful task (ADR 0206). Measurement only: nothing here changes routing.
+ * Cost per independently verified successful task (ADR 0207). Measurement only: nothing here changes routing.
  *
  * - A success is a task (`agent_runs.issue_id`) whose newest `criteria_met` outcome has every criterion checked by a
  *   person and no `issue_reopened` after it. A task counts once, for the group of its latest finished run.
@@ -17,7 +17,7 @@ import { canViewCost } from "./usage";
 const { agentRuns, usageRecords, outcomes, agents } = schema;
 const FINISHED = ["done", "failed", "canceled"] as const;
 const DAY = 86_400_000;
-/** The longest window one request reads (ADR 0206): the report loads the window's runs in memory. */
+/** The longest window one request reads (ADR 0207): the report loads the window's runs in memory. */
 export const COST_PER_SUCCESS_MAX_DAYS = 92;
 
 export type CostPerSuccessMissing = "no_success" | "unknown_cost";

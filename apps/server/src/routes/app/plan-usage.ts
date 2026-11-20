@@ -176,7 +176,7 @@ export function planUsageRoutes(deps: AppDeps) {
       path: "/organizations/{orgId}/usage/cost-per-success",
       tags,
       security,
-      summary: "Cost per verified successful task, per agent, brain and model (ADR 0206; `view_usage`)",
+      summary: "Cost per verified successful task, per agent, brain and model (ADR 0207; `view_usage`)",
       request: {
         params: OrgParams,
         query: z.object({ from: z.iso.datetime().optional(), to: z.iso.datetime().optional() }),

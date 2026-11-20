@@ -15662,7 +15662,7 @@ export const ptBR = {
     actions: { raise: "Aumentar para {{amount}} este mês", refuse: "Recusar", see: "Ver o uso" },
   },
   usageViews: {
-    /** Cost per verified successful task (ADR 0206); its sentence comes from the server in Hong Kong Chinese. */
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
     costPerSuccess: {
       title: "Custo por sucesso verificado",
       intro:

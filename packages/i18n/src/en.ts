@@ -15692,7 +15692,7 @@ export const en = {
     actions: { raise: "Raise to {{amount}} this month", refuse: "Decline", see: "See their usage" },
   },
   usageViews: {
-    /** Cost per verified successful task (ADR 0206); its sentence comes from the server in Hong Kong Chinese. */
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
     costPerSuccess: {
       title: "Cost per verified success",
       intro:

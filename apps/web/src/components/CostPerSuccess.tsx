@@ -8,7 +8,7 @@ import { ErrorState, LoadingList } from "@/components/Loading";
 import { useOrg } from "@/components/org-context";
 
 /**
- * Cost per verified successful task (ADR 0206), measurement only: per agent, brain and model over the last 30 days.
+ * Cost per verified successful task (ADR 0207), measurement only: per agent, brain and model over the last 30 days.
  * Unknown money reads "Cost unknown", never 0; the total's sentence is the server's, in Hong Kong Chinese.
  */
 export function CostPerSuccessCard() {

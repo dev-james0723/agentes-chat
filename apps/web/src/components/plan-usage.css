@@ -477,7 +477,7 @@ html:not([data-pointer]) .plan-row__head:focus-visible {
   font-weight: 500;
 }
 
-/* Cost per verified success (ADR 0206): avatar, name, value; no meter column. */
+/* Cost per verified success (ADR 0207): avatar, name, value; no meter column. */
 .plan-api__row--cps {
   grid-template-columns: 28px minmax(0, 1fr) minmax(0, 240px);
 }

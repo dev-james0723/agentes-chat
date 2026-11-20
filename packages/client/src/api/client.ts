@@ -611,7 +611,7 @@ export interface ApiClient {
     usageReport(orgId: string, since?: string): Promise<UsageReport>;
     /** Every plan account by computer and the API per agent, this month (ADR 0063). */
     planUsage(orgId: string): Promise<OrgPlanUsage>;
-    /** Cost per verified successful task, last 30 days by default (ADR 0206; `view_usage`). */
+    /** Cost per verified successful task, last 30 days by default (ADR 0207; `view_usage`). */
     costPerSuccess(orgId: string, window?: { from?: string; to?: string }): Promise<CostPerSuccessReport>;
     /** Uso › Pessoas (ADR 0141): each person's use, their limit and what they do now (`view_usage`). */
     peopleUsage(orgId: string, period?: { since?: string; until?: string }): Promise<PeopleUsage>;
