@@ -185,6 +185,24 @@ subscription can authorize API fallback. The source must prove subscription sign
 account ownership and fresh probe/turn telemetry. Model-specific limits, generic throttles, stale observations and
 already-reset windows do not authorize API spending.
 
+Before selecting an API route, the executor derives a minimum model tier from the resolved source model's explicit
+catalog tier and the strongest existing durable task choice (`autoModel` or Model Inspector's handoff selection).
+Tool work requires at least the medium tier. A fixed source model supplies a conservative no-downgrade floor when
+there is no existing task judgment. Both the source and candidate must have an explicit known catalog tier; price,
+route ID and provider name do not establish quality. The ordinary nearest-tier mapper is not used because it can
+choose a smaller model. Unranked source or candidate models remain ineligible until separately qualified.
+
+The selected minimum tier, supported reasoning effort and capability set are retained on the native credit
+checkpoint, carried through the gateway and saved in each reservation. Codex `xhigh` and `max` normalize to `high`
+under the same existing Codex runner contract. Claude Code preserves those distinct native settings, so an explicit
+Claude `xhigh` or `max` refuses automatic API fallback until an equivalent API capability is qualified. The current
+API adapter's `high` setting is not assumed equivalent. No extra JEV call is made to choose a credit route. Restart
+cannot replace the retained requirement with a weaker default. Admission and dispatch compare the requirement
+with the durable run under the existing row lock, recheck the candidate's current catalog qualification and require
+the same requirement for an idempotent attempt. A changed requirement or unknown quality prevents transport. The ledger's rejection itself
+does not release or replay an existing reservation; the gateway may still close a proven-unsent attempt through
+its existing no-charge path. Accepted or ambiguous obligations remain retained for reconciliation.
+
 API admission happens at an existing safe turn boundary. The transaction rechecks the source session actually
 allocated by the resolver, agent configuration/ownership, current native lease, pending approvals, uncertainty
 markers and unmatched native tool receipts. It retains the original agent, run, task, channel and goal. Only portable

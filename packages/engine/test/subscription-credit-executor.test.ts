@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { MACHINE_PROTOCOL_VERSION, noPlatformCredentials } from "@agenteschat/adapters";
 import { eq, schema, sql } from "@agenteschat/db";
-import { annotateProviderFailure, type ModelProvider, ProviderError } from "@agenteschat/providers";
+import { annotateProviderFailure, type ModelProvider, type ModelTier, ProviderError } from "@agenteschat/providers";
 import { createFakeProvider } from "@agenteschat/providers/testing";
 import {
   type Brain,
@@ -19,6 +19,7 @@ import {
   type ToolSource,
 } from "../src";
 import {
+  type CreditNeed,
   createCreditRouteQualifier,
   registerCreditPool,
   registerCreditRoute,
@@ -50,6 +51,11 @@ type Provider = "anthropic" | "openai";
 type Options = {
   provider?: Provider;
   sourceKind?: Kind;
+  sourceModel?: string;
+  sourceEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "auto" | null;
+  routeModel?: string;
+  routeId?: string;
+  taskTier?: ModelTier;
   healthyAlternate?: boolean;
   limited?: boolean;
   creditOff?: boolean;
@@ -68,9 +74,10 @@ async function fixture(o: Options = {}) {
   const sourceKind = o.sourceKind ?? "claude_code";
   const alternate: Kind = sourceKind === "claude_code" ? "codex" : "claude_code";
   const providerId = o.provider ?? "anthropic";
-  const model = MODELS[providerId];
+  const model = o.routeModel ?? MODELS[providerId];
   const trace: string[] = [],
     qualifyingRuns: string[] = [];
+  const qualifyingNeeds: CreditNeed[] = [];
   const paired = await pairMachine({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, {
     name: "Fixture Mac",
     hostname: "fixture",
@@ -87,7 +94,8 @@ async function fixture(o: Options = {}) {
     .set({
       machineId,
       brain: sourceKind,
-      brainModel: sourceKind === "claude_code" ? "sonnet" : MODELS.openai,
+      brainModel: o.sourceModel ?? (sourceKind === "claude_code" ? "sonnet" : MODELS.openai),
+      ...(o.sourceEffort !== undefined ? { brainEffort: o.sourceEffort } : {}),
       brainExtraUsage: false,
       brainFallback: false,
     })
@@ -142,23 +150,29 @@ async function fixture(o: Options = {}) {
     grantAmountNanoUsd: 200 * USD,
     observedRemainingNanoUsd: 200 * USD,
   });
-  const routeId = await registerCreditRoute(f.db, f.org.id, {
-    poolId,
-    credentialId: key.id,
-    model,
-    supportsTools: true,
-    maxPromptBytes: 400_000,
-    routeKind: providerId === "openai" ? "openai_responses" : "anthropic_messages",
-    accountEvidenceRef: "fixture-key-account-binding",
-    capabilities: ["text", "client_tools"],
-    pricingEvidence: {
-      evidenceRef: "fixture-standard-price-sheet",
-      verifiedAt: new Date(now - 1000),
-      validUntil: new Date(now + 3_600_000),
-      profileHash: creditPricingProfile(model).profileHash,
-    },
-  });
-  if (!o.routeOff) await setCreditRouteEnabled(f.db, f.org.id, routeId, true);
+  const addRoute = async (nextModel: string, enabled = true, fixtureId?: string) => {
+    const createdId = await registerCreditRoute(f.db, f.org.id, {
+      poolId,
+      credentialId: key.id,
+      model: nextModel,
+      supportsTools: true,
+      maxPromptBytes: 400_000,
+      routeKind: providerId === "openai" ? "openai_responses" : "anthropic_messages",
+      accountEvidenceRef: "fixture-key-account-binding",
+      capabilities: ["text", "client_tools"],
+      pricingEvidence: {
+        evidenceRef: "fixture-standard-price-sheet",
+        verifiedAt: new Date(now - 1000),
+        validUntil: new Date(now + 3_600_000),
+        profileHash: creditPricingProfile(nextModel).profileHash,
+      },
+    });
+    const id = fixtureId ?? createdId;
+    if (fixtureId) await f.db.update(schema.creditRoutes).set({ id }).where(eq(schema.creditRoutes.id, createdId));
+    if (enabled) await setCreditRouteEnabled(f.db, f.org.id, id, true);
+    return id;
+  };
+  const routeId = await addRoute(model, !o.routeOff, o.routeId);
   const fake = createFakeProvider(
     o.reply ?? (() => ({ chunks: ["Verified fixture answer."], usage: { inputTokens: 100, outputTokens: 10 } })),
   );
@@ -227,7 +241,14 @@ async function fixture(o: Options = {}) {
         name: judge.name,
         async ask(request: JudgeRequest) {
           await o.beforeJudge?.(request);
-          return judge.ask(request);
+          const answers = await judge.ask(request);
+          return request.kind === "auto_model" && o.taskTier
+            ? {
+                ...answers,
+                tier: { choice: o.taskTier, probabilities: { [o.taskTier]: 1 } },
+                effort: { choice: "high", probabilities: { high: 1 } },
+              }
+            : answers;
         },
       },
     },
@@ -257,6 +278,7 @@ async function fixture(o: Options = {}) {
             async qualify(input: Parameters<typeof credits.qualify>[0] & { runId?: string }) {
               trace.push(`credit:${input.provider ?? "any"}`);
               if (input.runId) qualifyingRuns.push(input.runId);
+              qualifyingNeeds.push(structuredClone(input.need));
               return credits.qualify(input);
             },
           },
@@ -270,6 +292,9 @@ async function fixture(o: Options = {}) {
     alternateTurns,
     trace,
     qualifyingRuns,
+    qualifyingNeeds,
+    addRoute,
+    sourceKind,
     poolId,
     routeId,
     model,
@@ -348,7 +373,17 @@ for (const provider of ["anthropic", "openai"] as const)
     expect(x.fake.calls).toHaveLength(1);
     expect(x.fake.calls[0]?.request).toMatchObject({ model: x.model, noTransportRetries: true });
     expect(x.fake.countCalls).toHaveLength(0);
-    expect(run.transcript?.creditRoute).toMatchObject({ provider, model: x.model, routeId: x.routeId });
+    expect(run.transcript?.creditRoute).toMatchObject({
+      provider,
+      model: x.model,
+      routeId: x.routeId,
+      minimumTier: "medium",
+      capabilities: ["text"],
+    });
+    const savedEffort = (run.transcript?.creditRoute as { effort?: CreditNeed["effort"] } | undefined)?.effort;
+    expect(["low", "medium", "high"]).toContain(savedEffort ?? "missing");
+    expect(x.fake.calls[0]?.request.effort).toBe(savedEffort);
+    expect((await attempts())[0]?.reservationNeed).toMatchObject({ minimumTier: "medium", effort: savedEffort });
     const sourceSession = (run.transcript?.creditRoute as { sourceSessionId?: string } | undefined)?.sourceSessionId;
     expect(sourceSession).toBeString();
     expect(run.brainSessionId).not.toBe(sourceSession ?? "");
@@ -415,11 +450,21 @@ test("two API turns preserve the run and existing task, charge actual usage, and
   });
   expect(x.fake.calls).toHaveLength(2);
   expect(effects).toBe(1);
+  expect(x.fake.calls.every((call) => call.request.tools?.some((tool) => tool.name === "record_once"))).toBe(true);
+  expect(run.transcript?.creditRoute).toMatchObject({
+    minimumTier: "medium",
+    capabilities: ["client_tools", "text"],
+  });
   expect(checkpointPhases).toEqual(["response"]);
   expect(JSON.stringify(x.fake.calls[1]?.request.messages)).toContain("WORK_RECEIPT_ONE");
   expect(new Set(x.qualifyingRuns)).toEqual(new Set([run.id]));
   const receipts = await attempts();
   expect(receipts).toHaveLength(2);
+  for (const receipt of receipts)
+    expect(receipt.reservationNeed).toMatchObject({
+      minimumTier: "medium",
+      capabilities: ["client_tools", "text"],
+    });
   expect(
     receipts.every((a) => a.state === "settled" && a.actualNanoUsd !== null && a.actualNanoUsd <= a.amountNanoUsd),
   ).toBe(true);
@@ -608,4 +653,209 @@ test("a lease lost during JEV acceptance cannot publish a final answer or mark d
   expect(held.status).toBe("waiting_input");
   expect(held.transcript?.creditHold).toMatchObject({ nextSafeAction: "reconcile_usage_and_action_receipts" });
   expect(x.fake.calls).toHaveLength(1);
+}, 60_000);
+
+const WEAKER_MODELS = { anthropic: "claude-haiku-5-5", openai: "gpt-6-luna" } as const;
+
+for (const provider of ["anthropic", "openai"] as const) {
+  const sourceKind = provider === "openai" ? "codex" : "claude_code";
+  test(`${provider} refuses a weaker grant model without reserving or sending`, async () => {
+    const x = await fixture({ provider, sourceKind, routeModel: WEAKER_MODELS[provider] });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    expect(x.fake.calls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+    expect((await onlyRun()).status).toBe("waiting_input");
+    expect(x.qualifyingNeeds.length).toBeGreaterThan(0);
+    expect(x.qualifyingNeeds.every((need) => need.minimumTier === "medium")).toBe(true);
+    expect((await cycle()).spentAutomaticNanoUsd).toBe(0);
+    expect((await cycle()).heldAutomaticNanoUsd).toBe(0);
+  }, 60_000);
+
+  for (const sourceEffort of provider === "openai" ? (["high", "xhigh"] as const) : (["high"] as const))
+    test(`${provider} skips the first weaker route and preserves fixed ${sourceEffort} effort`, async () => {
+      const x = await fixture({
+        provider,
+        sourceKind,
+        sourceEffort,
+        routeModel: WEAKER_MODELS[provider],
+        routeId: "00000000-0000-4000-8000-000000000001",
+      });
+      const strongerRoute = await x.addRoute(MODELS[provider], true, "ffffffff-ffff-4fff-bfff-ffffffffffff");
+      expect(x.routeId.localeCompare(strongerRoute)).toBeLessThan(0);
+      await post();
+      await drainOutbox(f.db, x.handlers);
+      const run = await onlyRun();
+      expect(run.status).toBe("done");
+      expect(x.fake.calls).toHaveLength(1);
+      expect(x.fake.calls[0]?.request).toMatchObject({ model: MODELS[provider], effort: "high" });
+      expect(run.transcript?.creditRoute).toMatchObject({
+        routeId: strongerRoute,
+        minimumTier: "medium",
+        effort: "high",
+        capabilities: ["text"],
+      });
+      expect((await attempts())[0]?.reservationNeed).toMatchObject({
+        minimumTier: "medium",
+        effort: "high",
+        capabilities: ["text"],
+      });
+    }, 60_000);
+
+  test(`${provider} cannot infer an unranked source model's quality from its price`, async () => {
+    const x = await fixture({
+      provider,
+      sourceKind,
+      sourceModel: provider === "openai" ? "gpt-6-astra" : "claude-fable-5-1",
+    });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    expect(x.fake.calls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+    expect((await onlyRun()).status).toBe("waiting_input");
+    expect(x.qualifyingNeeds).toHaveLength(0);
+  }, 60_000);
+
+  test(`${provider} preserves an existing large task decision instead of accepting a medium API route`, async () => {
+    const x = await fixture({ provider, sourceKind, sourceEffort: "auto", taskTier: "large" });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    const run = await onlyRun();
+    expect(run.transcript?.autoModel).toMatchObject({ tier: "large", source: "judge" });
+    expect(x.qualifyingNeeds.length).toBeGreaterThan(0);
+    expect(x.qualifyingNeeds.every((need) => need.minimumTier === "large")).toBe(true);
+    expect(run.status).toBe("waiting_input");
+    expect(x.fake.calls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+  }, 60_000);
+}
+
+for (const sourceEffort of ["xhigh", "max"] as const)
+  test(`Claude ${sourceEffort} stays in its native wait without verified API effort equivalence`, async () => {
+    const x = await fixture({ sourceEffort });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    const run = await onlyRun();
+    expect({ status: run.status, brain: run.brain }).toEqual({ status: "waiting_input", brain: "claude_code" });
+    expect(x.fake.calls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+    expect(x.qualifyingNeeds).toHaveLength(0);
+    expect((await cycle()).spentAutomaticNanoUsd).toBe(0);
+    expect((await cycle()).heldAutomaticNanoUsd).toBe(0);
+  }, 60_000);
+
+/** A durable turn boundary after handoff, before the first API intent/transport: no fabricated success or receipt. */
+async function queueCreditCheckpoint(
+  x: Awaited<ReturnType<typeof fixture>>,
+  change?: (transcript: Record<string, unknown>, credit: Record<string, unknown>) => void,
+) {
+  const run = await onlyRun();
+  expect(run.status).toBe("waiting_input");
+  expect(x.fake.calls).toHaveLength(0);
+  expect(await attempts()).toHaveLength(0);
+  const [route] = await f.db.select().from(schema.creditRoutes).where(eq(schema.creditRoutes.id, x.routeId));
+  if (!route) throw new Error("missing checkpoint route");
+  const grant = await cycle();
+  const provider = x.sourceKind === "codex" ? "openai" : "anthropic";
+  const credit: Record<string, unknown> = {
+    schema: "credit-route/1",
+    routeId: route.id,
+    poolId: route.poolId,
+    cycleId: grant.id,
+    provider,
+    product: provider === "openai" ? "openai_pro_api" : "claude_ultra_api",
+    routeKind: provider === "openai" ? "openai_responses" : "anthropic_messages",
+    credentialId: route.credentialId,
+    credentialVersion: route.credentialVersion,
+    model: route.model,
+    sourceKind: x.sourceKind,
+    sourceModel: x.sourceKind === "codex" ? MODELS.openai : "sonnet",
+    sourceSessionId: run.brainSessionId,
+    minimumTier: "medium",
+    effort: "high",
+    capabilities: ["client_tools", "text"],
+    evidenceRef: "fixture-provider-billing",
+    selectedAt: Date.now(),
+    bucket: "automatic",
+  };
+  const transcript: Record<string, unknown> = { ...run.transcript, creditRoute: credit };
+  delete transcript.waitingForBrain;
+  delete transcript.usageWait;
+  delete transcript.quotaCliHandoff;
+  delete transcript.fallback;
+  change?.(transcript, credit);
+  await setCreditRouteEnabled(f.db, f.org.id, route.id, true);
+  await f.db
+    .update(schema.agentRuns)
+    .set({ status: "queued", brain: "model", brainSessionId: null, waitingMachineId: null, transcript })
+    .where(eq(schema.agentRuns.id, run.id));
+  return run.id;
+}
+
+for (const provider of ["anthropic", "openai"] as const)
+  test(`${provider} restart retains the saved quality floor and effort when current settings are weaker`, async () => {
+    const x = await fixture({
+      provider,
+      sourceKind: provider === "openai" ? "codex" : "claude_code",
+      sourceEffort: "low",
+      routeOff: true,
+      routeModel: provider === "anthropic" ? "claude-opus-5-5" : MODELS.openai,
+    });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    const minimumTier = provider === "anthropic" ? "large" : "medium";
+    const id = await queueCreditCheckpoint(x, (_transcript, credit) => {
+      credit.minimumTier = minimumTier;
+    });
+    await restartWake(x.restart(), id, 101);
+    const run = await onlyRun();
+    expect(run.status).toBe("done");
+    expect(x.fake.calls).toHaveLength(1);
+    expect(x.fake.calls[0]?.request).toMatchObject({ model: x.model, effort: "high" });
+    expect(run.transcript?.creditRoute).toMatchObject({
+      minimumTier,
+      effort: "high",
+      capabilities: ["client_tools", "text"],
+    });
+    expect((await attempts())[0]?.reservationNeed).toMatchObject({
+      minimumTier,
+      effort: "high",
+      capabilities: ["client_tools", "text"],
+    });
+  }, 60_000);
+
+for (const missing of ["minimumTier", "effort", "capabilities", "sourceModel"] as const)
+  test(`a legacy restart missing ${missing} waits without API spend`, async () => {
+    const x = await fixture({ routeOff: true });
+    await post();
+    await drainOutbox(f.db, x.handlers);
+    const id = await queueCreditCheckpoint(x, (_transcript, credit) => {
+      delete credit[missing];
+    });
+    await restartWake(x.restart(), id, 102);
+    const run = await onlyRun();
+    expect(run.status).toBe("waiting_input");
+    expect(run.transcript?.creditRoute).toMatchObject({ ended: "unsupported_capability" });
+    expect(x.fake.calls).toHaveLength(0);
+    expect(await attempts()).toHaveLength(0);
+  }, 60_000);
+
+test("a stronger durable task requirement is saved before restart qualification and cannot be downgraded", async () => {
+  const x = await fixture({ routeOff: true });
+  await post();
+  await drainOutbox(f.db, x.handlers);
+  const id = await queueCreditCheckpoint(x, (transcript) => {
+    transcript.autoModel = { tier: "large", effort: "high", source: "judge", reason: "Fixture demanding task" };
+  });
+  await restartWake(x.restart(), id, 103);
+  const run = await onlyRun();
+  expect(run.status).toBe("waiting_input");
+  expect(run.transcript?.creditRoute).toMatchObject({
+    minimumTier: "large",
+    effort: "high",
+    ended: "unsupported_capability",
+  });
+  expect(x.qualifyingNeeds.at(-1)).toMatchObject({ minimumTier: "large", effort: "high" });
+  expect(x.fake.calls).toHaveLength(0);
+  expect(await attempts()).toHaveLength(0);
 }, 60_000);
