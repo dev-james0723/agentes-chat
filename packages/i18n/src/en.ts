@@ -7,6 +7,68 @@ import type { Widen } from "./widen";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const en = {
+  creditContinuity: {
+    title: "API credit continuity",
+    refresh: "Refresh status",
+    unavailable: "Credit status is unavailable. No grant allowance has been verified here.",
+    intro: "Suitable subscriptions are used first. API fallback uses verified grants within the shared cycle limits.",
+    status: {
+      unavailable: "Credit status is unavailable. Automatic spending is not verified.",
+      disabled: "Automatic API fallback is disabled. Recorded spending and pending costs remain shown.",
+      unverified: "No eligible API grants have been verified. Automatic allowance is $0.",
+      blocked: "API fallback is waiting for current evidence, budget or reconciliation.",
+      available: "API fallback is available within the recorded grant limits.",
+    },
+    caption: "API grants and cycle budgets",
+    columns: {
+      provider: "Provider",
+      state: "State",
+      automatic: "Automatic available / limit",
+      costs: "Spent / pending",
+      reserve: "Owner reserve",
+      buffer: "Safety buffer",
+      expires: "Grant expires",
+      forecast: "Historical p95",
+    },
+    provider: {
+      openai: "ChatGPT API",
+      anthropic: "Claude API",
+    },
+    unknown: "Unknown",
+    state: {
+      unavailable: "Unavailable",
+      unverified: "Not verified",
+      expired: "Grant expired",
+      stale: "Evidence needs updating",
+      disabled: "Disabled",
+      paused: "Paused",
+      pricingExpired: "Pricing expired",
+      pricingChanged: "Pricing changed",
+      pricingUnverified: "Pricing not verified",
+      noRoute: "No eligible API route",
+      budgetUnavailable: "Budget unavailable",
+      ready: "Ready",
+      reserveAvailable: "Owner reserve available",
+      billingBlocked: "Billing blocked",
+      reconciliation: "Reconciliation required",
+      blocked: "Blocked",
+    },
+    evidence: "Evidence: {{date}}",
+    approvedAvailable: "Approved available: {{amount}}",
+    approvals_one: "{{count}} active owner approval",
+    approvals_other: "{{count}} active owner approvals",
+    ownerApproval: "Owner approval",
+    historyHigh: "{{count}} settled units. High uncertainty.",
+    historyMedium: "{{count}} settled units. Medium uncertainty.",
+    historyUnknown: "{{count}} settled units. Uncertainty is unknown.",
+    insufficientHistory: "Insufficient history",
+    obligations_one:
+      "{{count}} API call has reserved or unresolved costs. Emergency reserves require owner approval. This feature does not enable paid top-ups.",
+    obligations_other:
+      "{{count}} API calls have reserved or unresolved costs. Emergency reserves require owner approval. This feature does not enable paid top-ups.",
+    evidenceNote:
+      "Grant eligibility uses owner-recorded provider billing evidence. Historical forecasts do not authorize spending. Status read: {{date}}.",
+  },
   app: { name: "agentes" },
   privatePublication: {
     title: "Review sharing a private draft",
@@ -7403,6 +7465,19 @@ export const en = {
     offlineText: "This page opens by itself when you're back online.",
   },
   scopes: {
+    colab_read: {
+      label: "Read Colab",
+      description: "See the subscription plan, available runtime options and session names.",
+    },
+    colab_run: {
+      label: "Run Colab jobs",
+      description:
+        "Access runtime credentials, create runtimes and sessions, run code and close sessions. Uses Colab compute units.",
+    },
+    colab_delete: {
+      label: "Delete Colab runtimes",
+      description: "Permanently delete a runtime and all its files and sessions.",
+    },
     context_read: {
       label: "Read context",
       description: "Search messages, summaries and facts in the agent's channels.",
@@ -12113,7 +12188,7 @@ export const en = {
     how: {
       oneClick: "One click: you authorize on the service's page",
       oauthOrKey: "You authorize on the service's page, or use an API key",
-      oauthSetup: "Sign-in needs to be configured on this server.",
+      oauthSetup: "Sign-in for this connector needs to be set up.",
       key: "Needs an API key",
       appPassword: "Needs an app password",
       addressPassword: "Needs the database address and a password",
@@ -13306,6 +13381,16 @@ export const en = {
     },
   },
   errors: {
+    brainSetup: {
+      invalidMachine: "Choose a computer for your personal AI sign-in.",
+      personalSubscription: "Personal subscriptions keep API fallback and paid extra usage turned off.",
+      unavailable: "That AI is not available on the selected computer. Check its connection and sign-in.",
+    },
+    credit: {
+      conflict: "A credit record already exists. Refresh to check its status.",
+      disabled: "Credit fallback is turned off.",
+      resumeRefused: "This run cannot resume yet. Review its credit hold and pending actions.",
+    },
     /** A new-password link an owner can't make (ADR 0158). */
     passwordLink: {
       email: "This server sends email: they ask for their own link in Forgot password.",
@@ -13388,6 +13473,9 @@ export const en = {
       audienceEmpty: "Choose who sees it.",
     },
     connector: {
+      colabOauthRequired: "Connect Google Colab from the connector catalog and sign in with Google.",
+      colabRefreshRequired: "Reconnect Google Colab and allow it to stay connected when you are away.",
+      colabScopeRequired: "Reconnect Google Colab and allow the requested Colab permission.",
       labelTaken: "Another connector already has this name.",
       labelInvalid: "The name needs 1 to 80 characters.",
       otherAccount: "You signed in to another account. To connect it, use Add another account.",
@@ -16115,6 +16203,7 @@ export const en = {
         listingRoutines: "Looked at the routines",
         checkingComputer: "Checked the PC",
         checkingUsage: "Checked its usage",
+        checkingModels: "Checked model availability",
         findingAgent: "Looked up a teammate",
         writingWiki: "Wrote in the wiki",
         readingWiki: "Read the wiki",
@@ -16232,6 +16321,7 @@ export const en = {
       listingRoutines: "looking at the routines",
       checkingComputer: "checking the PC",
       checkingUsage: "checking its usage",
+      checkingModels: "checking model availability",
       findingAgent: "looking up a teammate",
       writingWiki: "writing in the wiki",
       readingWiki: "reading the wiki",

@@ -1,4 +1,61 @@
 {
+  "creditContinuity": {
+    "title": "API 赠送额度续接",
+    "refresh": "刷新状态",
+    "unavailable": "无法获取额度状态。此处尚未核实任何赠送额度的可用金额。",
+    "intro": "优先使用适用的订阅。API 回退使用已核实的赠送额度，并遵守计费周期的共享限额。",
+    "status": {
+      "unavailable": "无法获取额度状态。自动支出尚未核实。",
+      "disabled": "API 自动回退已停用。已记录的支出和待结算费用仍会显示。",
+      "unverified": "尚未核实任何符合条件的 API 赠送额度。自动可用金额为 $0。",
+      "blocked": "API 回退正在等待最新凭证、预算或对账。",
+      "available": "可在已记录的赠送额度限额内使用 API 回退。"
+    },
+    "caption": "API 赠送额度和周期预算",
+    "columns": {
+      "provider": "服务商",
+      "state": "状态",
+      "automatic": "自动可用金额 / 限额",
+      "costs": "已花费 / 待结算",
+      "reserve": "所有者储备额度",
+      "buffer": "安全缓冲额度",
+      "expires": "赠送额度到期时间",
+      "forecast": "历史 p95"
+    },
+    "provider": {
+      "openai": "ChatGPT 的 API",
+      "anthropic": "Claude 的 API"
+    },
+    "unknown": "未知",
+    "state": {
+      "unavailable": "不可用",
+      "unverified": "尚未核实",
+      "expired": "赠送额度已到期",
+      "stale": "凭证需要更新",
+      "disabled": "已停用",
+      "paused": "已暂停",
+      "pricingExpired": "价格已过期",
+      "pricingChanged": "价格已变更",
+      "pricingUnverified": "价格尚未核实",
+      "noRoute": "无符合条件的 API 路由",
+      "budgetUnavailable": "预算不可用",
+      "ready": "已就绪",
+      "reserveAvailable": "所有者储备额度可用",
+      "billingBlocked": "计费已被阻止",
+      "reconciliation": "需要对账",
+      "blocked": "已阻止"
+    },
+    "evidence": "凭证：{{date}}",
+    "approvedAvailable": "已批准的可用金额：{{amount}}",
+    "approvals_other": "{{count}} 项有效的所有者批准",
+    "ownerApproval": "所有者批准",
+    "historyHigh": "{{count}} 个已结算工作单元。不确定性高。",
+    "historyMedium": "{{count}} 个已结算工作单元。不确定性中等。",
+    "historyUnknown": "{{count}} 个已结算工作单元。不确定性未知。",
+    "insufficientHistory": "历史记录不足",
+    "obligations_other": "{{count}} 次 API 调用存在已预留或尚未解决的费用。动用紧急储备额度需要所有者批准。此功能不会启用付费充值。",
+    "evidenceNote": "赠送额度资格依据所有者记录的服务商账单凭证进行核实。历史预测不构成支出授权。状态读取时间：{{date}}。"
+  },
   "app": {
     "name": "agentes"
   },
@@ -6854,6 +6911,18 @@
     "offlineText": "恢复联网后此页面会自动打开。"
   },
   "scopes": {
+    "colab_read": {
+      "label": "读取 Colab",
+      "description": "查看订阅方案、可用的运行环境选项和会话名称。"
+    },
+    "colab_run": {
+      "label": "运行 Colab 任务",
+      "description": "访问凭据，创建运行环境和会话，运行代码并关闭会话。会消耗 Colab 计算单元。"
+    },
+    "colab_delete": {
+      "label": "删除 Colab 运行环境",
+      "description": "永久删除运行环境及其所有文件和会话。"
+    },
     "context_read": {
       "label": "读取上下文",
       "description": "搜索智能体所在频道中的消息、摘要和事实。"
@@ -11463,7 +11532,7 @@
     "how": {
       "oneClick": "一键完成：在服务的页面上授权",
       "oauthOrKey": "在服务的页面上授权，或使用 API 密钥",
-      "oauthSetup": "需要先在此服务器上配置登录。",
+      "oauthSetup": "需要配置此连接器的登录方式。",
       "key": "需要 API 密钥",
       "appPassword": "需要应用专用密码",
       "addressPassword": "需要数据库地址和密码",
@@ -12854,6 +12923,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "请选择已连接的电脑，用于登录你的个人 AI 账户。",
+      "personalSubscription": "个人订阅会保持 API 备用调用和付费额外用量关闭。",
+      "unavailable": "所选电脑无法使用这个 AI。请检查连接和登录状态。"
+    },
+    "credit": {
+      "conflict": "信用额度记录已存在。请刷新查看状态。",
+      "disabled": "信用额度备用调用已关闭。",
+      "resumeRefused": "此运行暂时无法恢复。请核对保留的信用额度和待处理操作。"
+    },
     "passwordLink": {
       "email": "这台服务器会发送邮件：对方可以在「忘记密码」中自己申请链接。",
       "serverOwner": "安装这台服务器的人在运行它的电脑上直接登录，不需要链接。",
@@ -12929,6 +13008,9 @@
       "audienceEmpty": "请选择谁能看到。"
     },
     "connector": {
+      "colabOauthRequired": "请从连接器目录连接 Google Colab，并通过 Google 登录。",
+      "colabRefreshRequired": "请重新连接 Google Colab，并允许它在你离开时保持连接。",
+      "colabScopeRequired": "请重新连接 Google Colab，并授予所请求的 Colab 权限。",
       "labelTaken": "已有其他连接器使用这个名称。",
       "labelInvalid": "名称需为 1 到 80 个字符。",
       "otherAccount": "你登录的是另一个账号。要连接它，请使用“添加另一个账号”。",
@@ -15473,6 +15555,7 @@
         "listingRoutines": "查看了例行工作",
         "checkingComputer": "检查了电脑",
         "checkingUsage": "查看了自己的用量",
+        "checkingModels": "已检查模型可用性",
         "findingAgent": "查找了队友",
         "writingWiki": "在 Wiki 中写了内容",
         "readingWiki": "阅读了 Wiki",
@@ -15590,6 +15673,7 @@
       "listingRoutines": "查看例行工作",
       "checkingComputer": "检查电脑",
       "checkingUsage": "查看自己的用量",
+      "checkingModels": "正在检查模型可用性",
       "findingAgent": "查找队友",
       "writingWiki": "在 Wiki 中写内容",
       "readingWiki": "阅读 Wiki",

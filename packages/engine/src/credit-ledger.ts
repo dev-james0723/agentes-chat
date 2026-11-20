@@ -16,7 +16,8 @@ import {
   type CreditRefusalReason,
   CreditRouteRefusal,
 } from "./credit-route";
-import { assertActiveMembership, getMembership } from "./organizations";
+import { assertActiveMembership, getMembership, lockOrgMembers } from "./organizations";
+import { closedRefusal, STANDING_COLUMNS } from "./standing";
 
 type Pool = typeof schema.creditPools.$inferSelect;
 type Cycle = typeof schema.creditGrantCycles.$inferSelect;
@@ -910,6 +911,17 @@ export async function registerCreditPool(
 ): Promise<string> {
   validateEvidence(evidence, now());
   return db.transaction(async (tx) => {
+    // The same lock and row lock as workspace close/purge: a pool cannot appear after deletion's initial
+    // no-ledger check and before external account cleanup. If registration wins first, purge retains it.
+    await lockOrgMembers(tx, orgId);
+    const [workspace] = await tx
+      .select(STANDING_COLUMNS)
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, orgId))
+      .for("update");
+    if (!workspace) throw new CreditRouteRefusal("account_mismatch");
+    const closed = closedRefusal(workspace);
+    if (closed) throw closed;
     await owner(tx, orgId, evidence.verifiedByUserId);
     const [pool] = await tx
       .insert(schema.creditPools)

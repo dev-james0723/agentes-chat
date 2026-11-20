@@ -1,4 +1,65 @@
 {
+  "creditContinuity": {
+    "title": "Continuità con crediti API",
+    "refresh": "Aggiorna stato",
+    "unavailable": "Lo stato dei crediti non è disponibile. Qui non è stato verificato alcun credito concesso.",
+    "intro": "Vengono usati prima gli abbonamenti idonei. Il ricorso all’API usa crediti concessi e verificati entro i limiti condivisi del ciclo.",
+    "status": {
+      "unavailable": "Lo stato dei crediti non è disponibile. La spesa automatica non è verificata.",
+      "disabled": "Il ricorso automatico all’API è disattivato. La spesa registrata e i costi in sospeso restano visibili.",
+      "unverified": "Non sono stati verificati crediti API idonei. L’importo disponibile automaticamente è di $0.",
+      "blocked": "Il ricorso all’API attende prove aggiornate, disponibilità di budget o riconciliazione.",
+      "available": "Il ricorso all’API è disponibile entro i limiti dei crediti registrati."
+    },
+    "caption": "Crediti API concessi e budget del ciclo",
+    "columns": {
+      "provider": "Fornitore",
+      "state": "Stato",
+      "automatic": "Disponibile automatico / limite",
+      "costs": "Speso / in sospeso",
+      "reserve": "Riserva del proprietario",
+      "buffer": "Margine di sicurezza",
+      "expires": "Scadenza del credito",
+      "forecast": "p95 storico"
+    },
+    "provider": {
+      "openai": "API di ChatGPT",
+      "anthropic": "API di Claude"
+    },
+    "unknown": "Sconosciuto",
+    "state": {
+      "unavailable": "Non disponibile",
+      "unverified": "Non verificato",
+      "expired": "Credito scaduto",
+      "stale": "Prove da aggiornare",
+      "disabled": "Disattivato",
+      "paused": "In pausa",
+      "pricingExpired": "Prezzi scaduti",
+      "pricingChanged": "Prezzi modificati",
+      "pricingUnverified": "Prezzi non verificati",
+      "noRoute": "Nessun percorso API idoneo",
+      "budgetUnavailable": "Budget non disponibile",
+      "ready": "Pronto",
+      "reserveAvailable": "Riserva del proprietario disponibile",
+      "billingBlocked": "Fatturazione bloccata",
+      "reconciliation": "Riconciliazione necessaria",
+      "blocked": "Bloccato"
+    },
+    "evidence": "Prove: {{date}}",
+    "approvedAvailable": "Disponibile approvato: {{amount}}",
+    "approvals_one": "{{count}} approvazione attiva del proprietario",
+    "approvals_many": "{{count}} approvazioni attive del proprietario",
+    "approvals_other": "{{count}} approvazioni attive del proprietario",
+    "ownerApproval": "Approvazione del proprietario",
+    "historyHigh": "{{count}} unità contabilizzate. Incertezza elevata.",
+    "historyMedium": "{{count}} unità contabilizzate. Incertezza media.",
+    "historyUnknown": "{{count}} unità contabilizzate. Incertezza sconosciuta.",
+    "insufficientHistory": "Dati storici insufficienti",
+    "obligations_one": "{{count}} chiamata API ha costi riservati o non risolti. Le riserve di emergenza richiedono l’approvazione del proprietario. Questa funzione non abilita ricariche a pagamento.",
+    "obligations_many": "{{count}} chiamate API hanno costi riservati o non risolti. Le riserve di emergenza richiedono l’approvazione del proprietario. Questa funzione non abilita ricariche a pagamento.",
+    "obligations_other": "{{count}} chiamate API hanno costi riservati o non risolti. Le riserve di emergenza richiedono l’approvazione del proprietario. Questa funzione non abilita ricariche a pagamento.",
+    "evidenceNote": "L’idoneità dei crediti concessi si basa sulle prove di fatturazione del fornitore registrate dal proprietario. Le previsioni storiche non autorizzano spese. Stato consultato: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -7304,6 +7365,18 @@
     "offlineText": "Questa pagina si riapre da sola quando torni online."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Leggere Colab",
+      "description": "Vedere il piano di abbonamento, le opzioni di ambiente disponibili e i nomi delle sessioni."
+    },
+    "colab_run": {
+      "label": "Eseguire attività Colab",
+      "description": "Accedere alle credenziali, creare ambienti e sessioni, eseguire codice e chiudere sessioni. Consuma unità di calcolo Colab."
+    },
+    "colab_delete": {
+      "label": "Eliminare ambienti Colab",
+      "description": "Eliminare definitivamente un ambiente con tutti i suoi file e sessioni."
+    },
     "context_read": {
       "label": "Leggere il contesto",
       "description": "Cercare messaggi, riepiloghi e fatti nei canali dell'agente."
@@ -12302,7 +12375,7 @@
     "how": {
       "oneClick": "Un clic: autorizzi nella pagina del servizio",
       "oauthOrKey": "Autorizzi nella pagina del servizio, oppure usi una chiave API",
-      "oauthSetup": "L'accesso deve essere configurato su questo server.",
+      "oauthSetup": "Occorre configurare l’accesso per questo connettore.",
       "key": "Richiede una chiave API",
       "appPassword": "Richiede una password per app",
       "addressPassword": "Richiede l'indirizzo del database e una password",
@@ -13767,6 +13840,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Scegli un computer connesso per accedere al tuo account personale di IA.",
+      "personalSubscription": "Gli abbonamenti personali mantengono disattivati il ripiego tramite API e l’uso aggiuntivo a pagamento.",
+      "unavailable": "Questa IA non è disponibile sul computer scelto. Controlla la connessione e l’accesso."
+    },
+    "credit": {
+      "conflict": "Esiste già un record di credito. Aggiorna per verificarne lo stato.",
+      "disabled": "Il ripiego sui crediti è disattivato.",
+      "resumeRefused": "Questa esecuzione non può ancora riprendere. Controlla il credito trattenuto e le azioni in sospeso."
+    },
     "passwordLink": {
       "email": "Questo server invia email: la persona chiede il proprio link in Password dimenticata.",
       "serverOwner": "Chi ha installato questo server accede dal computer dove gira, senza link.",
@@ -13842,6 +13925,9 @@
       "audienceEmpty": "Scegli chi lo vede."
     },
     "connector": {
+      "colabOauthRequired": "Collega Google Colab dal catalogo dei connettori e accedi con Google.",
+      "colabRefreshRequired": "Ricollega Google Colab e consenti di restare connesso quando non sei presente.",
+      "colabScopeRequired": "Ricollega Google Colab e concedi l’autorizzazione Colab richiesta.",
       "labelTaken": "Un altro connettore ha già questo nome.",
       "labelInvalid": "Il nome deve avere da 1 a 80 caratteri.",
       "otherAccount": "Hai effettuato l'accesso a un altro account. Per collegarlo, usa Aggiungi un altro account.",
@@ -16462,6 +16548,7 @@
         "listingRoutines": "Ha guardato le routine",
         "checkingComputer": "Ha controllato il PC",
         "checkingUsage": "Ha controllato il suo utilizzo",
+        "checkingModels": "Ha verificato la disponibilità dei modelli",
         "findingAgent": "Ha cercato un collega",
         "writingWiki": "Ha scritto nel wiki",
         "readingWiki": "Ha letto il wiki",
@@ -16579,6 +16666,7 @@
       "listingRoutines": "guardando le routine",
       "checkingComputer": "controllando il PC",
       "checkingUsage": "controllando il suo utilizzo",
+      "checkingModels": "verificando la disponibilità dei modelli",
       "findingAgent": "cercando un collega",
       "writingWiki": "scrivendo nel wiki",
       "readingWiki": "leggendo il wiki",

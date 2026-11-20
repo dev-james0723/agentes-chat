@@ -1,4 +1,61 @@
 {
+  "creditContinuity": {
+    "title": "Kelanjutan dengan kredit API",
+    "refresh": "Perbarui status",
+    "unavailable": "Status kredit tidak tersedia. Belum ada alokasi kredit pemberian yang diverifikasi di sini.",
+    "intro": "Langganan yang sesuai digunakan terlebih dahulu. Pengalihan ke API menggunakan kredit yang diberikan dan telah diverifikasi, dalam batas bersama untuk satu siklus.",
+    "status": {
+      "unavailable": "Status kredit tidak tersedia. Pengeluaran otomatis belum diverifikasi.",
+      "disabled": "Pengalihan otomatis ke API dinonaktifkan. Pengeluaran yang tercatat dan biaya tertunda tetap ditampilkan.",
+      "unverified": "Belum ada kredit API yang memenuhi syarat dan telah diverifikasi. Alokasi otomatis adalah $0.",
+      "blocked": "Pengalihan ke API menunggu bukti terkini, anggaran, atau rekonsiliasi.",
+      "available": "Pengalihan ke API tersedia dalam batas kredit pemberian yang tercatat."
+    },
+    "caption": "Kredit API yang diberikan dan anggaran siklus",
+    "columns": {
+      "provider": "Penyedia",
+      "state": "Status",
+      "automatic": "Otomatis tersedia / batas",
+      "costs": "Terpakai / tertunda",
+      "reserve": "Cadangan pemilik",
+      "buffer": "Penyangga keamanan",
+      "expires": "Kredit berakhir",
+      "forecast": "p95 historis"
+    },
+    "provider": {
+      "openai": "API untuk ChatGPT",
+      "anthropic": "API untuk Claude"
+    },
+    "unknown": "Tidak diketahui",
+    "state": {
+      "unavailable": "Tidak tersedia",
+      "unverified": "Belum diverifikasi",
+      "expired": "Kredit kedaluwarsa",
+      "stale": "Bukti perlu diperbarui",
+      "disabled": "Dinonaktifkan",
+      "paused": "Dijeda",
+      "pricingExpired": "Harga kedaluwarsa",
+      "pricingChanged": "Harga berubah",
+      "pricingUnverified": "Harga belum diverifikasi",
+      "noRoute": "Tidak ada jalur API yang memenuhi syarat",
+      "budgetUnavailable": "Anggaran tidak tersedia",
+      "ready": "Siap",
+      "reserveAvailable": "Cadangan pemilik tersedia",
+      "billingBlocked": "Penagihan diblokir",
+      "reconciliation": "Perlu rekonsiliasi",
+      "blocked": "Diblokir"
+    },
+    "evidence": "Bukti: {{date}}",
+    "approvedAvailable": "Tersedia dan disetujui: {{amount}}",
+    "approvals_other": "{{count}} persetujuan aktif dari pemilik",
+    "ownerApproval": "Persetujuan pemilik",
+    "historyHigh": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian tinggi.",
+    "historyMedium": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian sedang.",
+    "historyUnknown": "{{count}} unit telah diselesaikan pembiayaannya. Tingkat ketidakpastian tidak diketahui.",
+    "insufficientHistory": "Riwayat tidak cukup",
+    "obligations_other": "{{count}} panggilan API memiliki biaya yang dicadangkan atau belum diselesaikan. Cadangan darurat memerlukan persetujuan pemilik. Fitur ini tidak mengaktifkan isi ulang berbayar.",
+    "evidenceNote": "Kelayakan kredit pemberian menggunakan bukti penagihan penyedia yang dicatat oleh pemilik. Perkiraan berdasarkan riwayat tidak memberikan izin pengeluaran. Status diperiksa: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -6843,6 +6900,18 @@
     "offlineText": "Halaman ini terbuka sendiri saat kamu kembali online."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Baca Colab",
+      "description": "Lihat paket langganan, pilihan lingkungan yang tersedia, dan nama sesi."
+    },
+    "colab_run": {
+      "label": "Jalankan tugas Colab",
+      "description": "Akses kredensial, buat lingkungan dan sesi, jalankan kode, dan tutup sesi. Menggunakan unit komputasi Colab."
+    },
+    "colab_delete": {
+      "label": "Hapus lingkungan Colab",
+      "description": "Hapus lingkungan beserta semua file dan sesinya secara permanen."
+    },
     "context_read": {
       "label": "Baca konteks",
       "description": "Cari pesan, ringkasan, dan fakta di kanal agen."
@@ -11455,7 +11524,7 @@
     "how": {
       "oneClick": "Sekali klik: kamu memberi izin di halaman layanan",
       "oauthOrKey": "Kamu memberi izin di halaman layanan, atau pakai kunci API",
-      "oauthSetup": "Login perlu disiapkan di server ini.",
+      "oauthSetup": "Cara masuk konektor ini perlu disiapkan.",
       "key": "Butuh kunci API",
       "appPassword": "Butuh kata sandi aplikasi",
       "addressPassword": "Butuh alamat database dan kata sandi",
@@ -12846,6 +12915,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Pilih komputer yang terhubung untuk masuk ke akun AI pribadimu.",
+      "personalSubscription": "Langganan pribadi tetap menonaktifkan cadangan melalui API dan penggunaan tambahan berbayar.",
+      "unavailable": "AI itu tidak tersedia di komputer yang dipilih. Periksa koneksi dan akun yang masuk."
+    },
+    "credit": {
+      "conflict": "Catatan kredit sudah ada. Muat ulang untuk memeriksa statusnya.",
+      "disabled": "Cadangan dengan kredit dinonaktifkan.",
+      "resumeRefused": "Proses ini belum bisa dilanjutkan. Periksa kredit yang ditahan dan tindakan yang tertunda."
+    },
     "passwordLink": {
       "email": "Server ini mengirim email: orang itu meminta tautannya sendiri di Lupa kata sandi.",
       "serverOwner": "Orang yang memasang server ini masuk dari komputer tempat server berjalan, tanpa tautan.",
@@ -12921,6 +13000,9 @@
       "audienceEmpty": "Pilih siapa yang melihat."
     },
     "connector": {
+      "colabOauthRequired": "Hubungkan Google Colab dari katalog konektor dan masuk dengan Google.",
+      "colabRefreshRequired": "Hubungkan ulang Google Colab dan izinkan tetap terhubung saat kamu tidak aktif.",
+      "colabScopeRequired": "Hubungkan ulang Google Colab dan berikan izin Colab yang diminta.",
       "labelTaken": "Konektor lain sudah memakai nama ini.",
       "labelInvalid": "Nama harus terdiri dari 1 sampai 80 karakter.",
       "otherAccount": "Kamu masuk ke akun lain. Untuk menghubungkannya, pakai Tambah akun lain.",
@@ -15460,6 +15542,7 @@
         "listingRoutines": "Melihat rutinitas",
         "checkingComputer": "Memeriksa komputer",
         "checkingUsage": "Memeriksa pemakaiannya",
+        "checkingModels": "Memeriksa ketersediaan model",
         "findingAgent": "Mencari rekan tim",
         "writingWiki": "Menulis di wiki",
         "readingWiki": "Membaca wiki",
@@ -15577,6 +15660,7 @@
       "listingRoutines": "melihat rutinitas",
       "checkingComputer": "memeriksa komputer",
       "checkingUsage": "memeriksa pemakaiannya",
+      "checkingModels": "sedang memeriksa ketersediaan model",
       "findingAgent": "mencari rekan tim",
       "writingWiki": "menulis di wiki",
       "readingWiki": "membaca wiki",

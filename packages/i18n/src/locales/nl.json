@@ -1,4 +1,63 @@
 {
+  "creditContinuity": {
+    "title": "Doorgaan met API-tegoed",
+    "refresh": "Status bijwerken",
+    "unavailable": "De tegoedstatus is niet beschikbaar. Hier is nog geen toegekend tegoed geverifieerd.",
+    "intro": "Geschikte abonnementen worden eerst gebruikt. De API-uitwijkmogelijkheid gebruikt geverifieerd toegekend tegoed binnen de gedeelde limieten van de factureringsperiode.",
+    "status": {
+      "unavailable": "De tegoedstatus is niet beschikbaar. Automatische uitgaven zijn niet geverifieerd.",
+      "disabled": "Automatisch uitwijken naar de API is uitgeschakeld. Geregistreerde uitgaven en openstaande kosten blijven zichtbaar.",
+      "unverified": "Er is geen geschikt API-tegoed geverifieerd. Het automatisch beschikbare bedrag is $0.",
+      "blocked": "Uitwijken naar de API wacht op actueel bewijs, budget of afstemming.",
+      "available": "Uitwijken naar de API is beschikbaar binnen de geregistreerde tegoedlimieten."
+    },
+    "caption": "Toegekend API-tegoed en periodebudgetten",
+    "columns": {
+      "provider": "Aanbieder",
+      "state": "Status",
+      "automatic": "Automatisch beschikbaar / limiet",
+      "costs": "Uitgegeven / openstaand",
+      "reserve": "Reserve van de eigenaar",
+      "buffer": "Veiligheidsmarge",
+      "expires": "Tegoed verloopt",
+      "forecast": "Historische p95"
+    },
+    "provider": {
+      "openai": "API van ChatGPT",
+      "anthropic": "API van Claude"
+    },
+    "unknown": "Onbekend",
+    "state": {
+      "unavailable": "Niet beschikbaar",
+      "unverified": "Niet geverifieerd",
+      "expired": "Tegoed verlopen",
+      "stale": "Bewijs moet worden bijgewerkt",
+      "disabled": "Uitgeschakeld",
+      "paused": "Gepauzeerd",
+      "pricingExpired": "Tarieven verlopen",
+      "pricingChanged": "Tarieven gewijzigd",
+      "pricingUnverified": "Tarieven niet geverifieerd",
+      "noRoute": "Geen geschikte API-route",
+      "budgetUnavailable": "Budget niet beschikbaar",
+      "ready": "Gereed",
+      "reserveAvailable": "Reserve van de eigenaar beschikbaar",
+      "billingBlocked": "Facturering geblokkeerd",
+      "reconciliation": "Afstemming vereist",
+      "blocked": "Geblokkeerd"
+    },
+    "evidence": "Bewijs: {{date}}",
+    "approvedAvailable": "Goedgekeurd beschikbaar: {{amount}}",
+    "approvals_one": "{{count}} actieve goedkeuring van de eigenaar",
+    "approvals_other": "{{count}} actieve goedkeuringen van de eigenaar",
+    "ownerApproval": "Goedkeuring van de eigenaar",
+    "historyHigh": "{{count}} afgerekende werkeenheden. Hoge onzekerheid.",
+    "historyMedium": "{{count}} afgerekende werkeenheden. Gemiddelde onzekerheid.",
+    "historyUnknown": "{{count}} afgerekende werkeenheden. Onzekerheid onbekend.",
+    "insufficientHistory": "Onvoldoende historische gegevens",
+    "obligations_one": "{{count}} API-aanroep heeft gereserveerde of onopgeloste kosten. Noodreserves vereisen goedkeuring van de eigenaar. Deze functie schakelt betaald opwaarderen niet in.",
+    "obligations_other": "{{count}} API-aanroepen hebben gereserveerde of onopgeloste kosten. Noodreserves vereisen goedkeuring van de eigenaar. Deze functie schakelt betaald opwaarderen niet in.",
+    "evidenceNote": "De geschiktheid van toegekend tegoed wordt bepaald aan de hand van factureringsbewijs van de aanbieder dat de eigenaar heeft vastgelegd. Historische prognoses geven geen toestemming om geld uit te geven. Status geraadpleegd: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -7101,6 +7160,18 @@
     "offlineText": "Deze pagina opent vanzelf zodra je weer online bent."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Colab lezen",
+      "description": "Het abonnement, beschikbare runtime-opties en sessienamen bekijken."
+    },
+    "colab_run": {
+      "label": "Colab-taken uitvoeren",
+      "description": "Inloggegevens gebruiken, runtimes en sessies maken, code uitvoeren en sessies sluiten. Verbruikt Colab-rekeneenheden."
+    },
+    "colab_delete": {
+      "label": "Colab-runtimes verwijderen",
+      "description": "Een runtime met alle bestanden en sessies definitief verwijderen."
+    },
     "context_read": {
       "label": "Context lezen",
       "description": "Berichten, samenvattingen en feiten zoeken in de kanalen van de agent."
@@ -11926,7 +11997,7 @@
     "how": {
       "oneClick": "Eén klik: je geeft toestemming op de pagina van de dienst",
       "oauthOrKey": "Je geeft toestemming op de pagina van de dienst, of gebruikt een API-sleutel",
-      "oauthSetup": "Inloggen moet op deze server worden ingesteld.",
+      "oauthSetup": "Het inloggen voor deze connector moet worden ingesteld.",
       "key": "Heeft een API-sleutel nodig",
       "appPassword": "Heeft een app-wachtwoord nodig",
       "addressPassword": "Heeft het adres van de database en een wachtwoord nodig",
@@ -13354,6 +13425,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Kies een verbonden computer om met je persoonlijke AI-account in te loggen.",
+      "personalSubscription": "Bij persoonlijke abonnementen blijven API-terugval en betaald extra gebruik uitgeschakeld.",
+      "unavailable": "Die AI is niet beschikbaar op de gekozen computer. Controleer de verbinding en aanmelding."
+    },
+    "credit": {
+      "conflict": "Er bestaat al een kredietregistratie. Vernieuw de pagina om de status te bekijken.",
+      "disabled": "Terugvallen op krediet is uitgeschakeld.",
+      "resumeRefused": "Deze uitvoering kan nog niet verder. Controleer het vastgehouden krediet en de openstaande acties."
+    },
     "passwordLink": {
       "email": "Deze server verstuurt e-mail: de persoon vraagt zelf een link aan bij Wachtwoord vergeten.",
       "serverOwner": "Wie deze server installeerde, meldt zich aan op de computer waarop hij draait, zonder link.",
@@ -13429,6 +13510,9 @@
       "audienceEmpty": "Kies wie het ziet."
     },
     "connector": {
+      "colabOauthRequired": "Verbind Google Colab via de connectorcatalogus en log in met Google.",
+      "colabRefreshRequired": "Verbind Google Colab opnieuw en sta toe dat de verbinding actief blijft als je weg bent.",
+      "colabScopeRequired": "Verbind Google Colab opnieuw en geef de gevraagde Colab-toestemming.",
       "labelTaken": "Een andere connector heeft deze naam al.",
       "labelInvalid": "De naam moet 1 tot 80 tekens hebben.",
       "otherAccount": "Je bent ingelogd met een ander account. Gebruik Nog een account toevoegen om het te koppelen.",
@@ -16011,6 +16095,7 @@
         "listingRoutines": "De routines bekeken",
         "checkingComputer": "De pc gecontroleerd",
         "checkingUsage": "Het eigen gebruik gecontroleerd",
+        "checkingModels": "Modelbeschikbaarheid gecontroleerd",
         "findingAgent": "Een teamgenoot opgezocht",
         "writingWiki": "In de wiki geschreven",
         "readingWiki": "De wiki gelezen",
@@ -16128,6 +16213,7 @@
       "listingRoutines": "de routines aan het bekijken",
       "checkingComputer": "de pc aan het controleren",
       "checkingUsage": "het eigen gebruik aan het controleren",
+      "checkingModels": "controleert modelbeschikbaarheid",
       "findingAgent": "een teamgenoot aan het opzoeken",
       "writingWiki": "in de wiki aan het schrijven",
       "readingWiki": "de wiki aan het lezen",

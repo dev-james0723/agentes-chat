@@ -6,6 +6,18 @@ import type { TFunction } from "i18next";
  * pt-BR. Other languages build a name from the verb and nouns (`toolName` in `tool-review.ts`).
  */
 const LABELS: Record<string, readonly [en: string, ptBR: string]> = {
+  // Model availability and Google Colab.
+  get_model_inspector_status: ["Check model availability", "Conferir disponibilidade dos modelos"],
+  get_subscription: ["See subscription", "Ver assinatura"],
+  list_runtime_specs: ["See runtime options", "Ver opções de ambiente"],
+  list_runtimes: ["List runtimes", "Listar ambientes"],
+  get_runtime: ["See runtime", "Ver ambiente"],
+  list_sessions: ["List sessions", "Listar sessões"],
+  create_runtime: ["Create runtime", "Criar ambiente"],
+  create_session: ["Create session", "Criar sessão"],
+  execute_code: ["Run code", "Executar código"],
+  delete_session: ["Close session", "Encerrar sessão"],
+  delete_runtime: ["Delete runtime", "Apagar ambiente"],
   // GitHub and GitLab: repositories, code, branches
   git_clone: ["Clone repository", "Clonar repositório"],
   create_repository: ["Create repository", "Criar repositório"],

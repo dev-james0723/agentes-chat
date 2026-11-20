@@ -21,7 +21,9 @@ import {
   startCreditGrantCycle,
 } from "../src/credit-ledger";
 import { creditPricingProfile, creditReceiptCost } from "../src/credit-pricing";
+import { purgeWorkspace, scheduleDeletion } from "../src/workspace-deletion";
 import { addMember, type Fixture, setup } from "./fixtures";
+import { pairMachine } from "./machine-fixtures";
 
 let f: Fixture;
 afterEach(async () => {
@@ -887,3 +889,200 @@ test("dashboard reserve availability counts only usable owner approvals and reta
     activeReserveApprovalCount: 1,
   });
 });
+
+test.each(["held", "unknown", "settled"] as const)(
+  "an overdue workspace purge preserves %s credit evidence and retired secret protection",
+  async (state) => {
+    f = await setup();
+    const r = await route();
+    const c = await claim();
+    const approvalId = await approveCreditReserve(
+      f.db,
+      f.org.id,
+      r.poolId,
+      f.owner.id,
+      {
+        cycleId: r.cycleId,
+        amountNanoUsd: 10 * USD,
+        validUntil: new Date("2026-11-20T12:30Z"),
+        decisionKey: "purge-retention-fixture",
+        evidenceRef: "synthetic-owner-decision",
+      },
+      NOW,
+    );
+    const a = await admitCreditCall(f.db, { ...admission(r, c, 10 * USD), bucket: "emergency", approvalId });
+    if (state !== "held") {
+      await markCreditAttemptDispatched(f.db, f.org.id, a.attemptId, { ...c, now: NOW });
+      await settleCreditAttempt(
+        f.db,
+        f.org.id,
+        a.attemptId,
+        state === "unknown"
+          ? { kind: "unknown", reason: "lost provider response before workspace deletion" }
+          : { kind: "settled", actualNanoUsd: USD, providerRequestId: "synthetic-final-receipt" },
+        NOW,
+      );
+    }
+    // An actual account is a sentinel for releaseOrgAccounts: the financial hold must run before its mutation.
+    const { machineId } = await pairMachine({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, {
+      name: "purge sentinel",
+    });
+    const accountId = crypto.randomUUID();
+    await f.db.insert(schema.machineAccounts).values({
+      id: accountId,
+      orgId: f.org.id,
+      machineId,
+      kind: "claude_code",
+      label: "synthetic retained account",
+      status: "active",
+      createdBy: f.owner.id,
+    });
+    // Local revocation is not evidence that an upstream key can no longer spend through another workspace.
+    await f.db
+      .update(schema.providerCredentials)
+      .set({ revokedAt: NOW() })
+      .where(eq(schema.providerCredentials.id, r.credentialId));
+    await scheduleDeletion({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "owner");
+    await f.db
+      .update(schema.organizations)
+      .set({ deletionDueAt: new Date(0) })
+      .where(eq(schema.organizations.id, f.org.id));
+    const retained = async () =>
+      Promise.all([
+        f.db.select().from(schema.creditPools),
+        f.db.select().from(schema.creditGrantCycles),
+        f.db.select().from(schema.creditRoutes),
+        f.db.select().from(schema.creditReserveApprovals),
+        f.db.select().from(schema.creditWorkUnits),
+        f.db.select().from(schema.creditAttempts),
+      ]);
+    const before = await retained();
+    const warnings: string[] = [];
+    const deps = {
+      db: f.db,
+      log: { info: () => {}, warn: (message: string) => warnings.push(message) },
+      get connectors(): never {
+        throw new Error("external connector cleanup must not start");
+      },
+      get mail(): never {
+        throw new Error("external mail cleanup must not start");
+      },
+      get githubApp(): never {
+        throw new Error("external GitHub cleanup must not start");
+      },
+    };
+    expect(await purgeWorkspace(deps, f.org.id)).toBe(false);
+    expect(await purgeWorkspace(deps, f.org.id, { finalAttempt: true })).toBe(false);
+    expect(await retained()).toEqual(before);
+    expect(
+      await f.db
+        .select({ id: schema.machineAccounts.id, status: schema.machineAccounts.status })
+        .from(schema.machineAccounts)
+        .where(eq(schema.machineAccounts.id, accountId)),
+    ).toEqual([{ id: accountId, status: "active" }]);
+    expect(before[5]?.[0]).toMatchObject({ id: a.attemptId, state });
+    expect(before[2]?.[0]?.credentialFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(
+      await f.db
+        .select({ id: schema.organizations.id })
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, f.org.id)),
+    ).toHaveLength(1);
+    expect(warnings).toEqual([
+      "workspace deletion waits for API credit reconciliation and upstream credential revocation",
+      "workspace deletion waits for API credit reconciliation and upstream credential revocation",
+    ]);
+  },
+);
+
+test("workspace closing wins before pool registration, so purge cannot acquire a new credit liability", async () => {
+  f = await setup();
+  await scheduleDeletion({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, "owner");
+  await expect(registerCreditPool(f.db, f.org.id, evidence(), NOW)).rejects.toMatchObject({ code: "org.deleting" });
+  expect(await f.db.select().from(schema.creditPools)).toHaveLength(0);
+  expect(await f.db.select().from(schema.creditGrantCycles)).toHaveLength(0);
+  await f.db
+    .update(schema.organizations)
+    .set({ deletionDueAt: new Date(0) })
+    .where(eq(schema.organizations.id, f.org.id));
+  expect(await purgeWorkspace({ db: f.db }, f.org.id)).toBe(true);
+  expect(
+    await f.db
+      .select({ id: schema.organizations.id })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.id, f.org.id)),
+  ).toHaveLength(0);
+});
+
+postgresTest(
+  "real PostgreSQL serializes workspace close against a simultaneous grant pool registration",
+  async () => {
+    f = await setup();
+    const { createDatabase, rowsOf, sql } = await import("@agenteschat/db");
+    const { lockOrgMembers } = await import("../src/organizations");
+    const [identity] = rowsOf<{ name: string }>(await f.db.execute(sql`select current_database() as name`));
+    if (!identity?.name) throw new Error("isolated database identity missing");
+    const url = new URL(process.env.TEST_DATABASE_URL ?? "");
+    url.pathname = "/" + identity.name;
+    const closer = createDatabase({ url: url.toString(), poolMax: 1 });
+    const registrar = createDatabase({ url: url.toString(), poolMax: 1 });
+    let locked!: () => void;
+    let release!: () => void;
+    const acquired = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let close: Promise<unknown> | undefined;
+    let registration: Promise<{ ok: boolean; code?: string }> | undefined;
+    try {
+      close = closer.db.transaction(async (tx) => {
+        await lockOrgMembers(tx, f.org.id);
+        await tx
+          .update(schema.organizations)
+          .set({ deletionDueAt: new Date(0) })
+          .where(eq(schema.organizations.id, f.org.id));
+        locked();
+        await released;
+      });
+      await acquired;
+      let finished = false;
+      registration = registerCreditPool(registrar.db, f.org.id, evidence(), NOW)
+        .then(
+          () => ({ ok: true }),
+          (error: unknown) => ({ ok: false, code: (error as { code?: string }).code }),
+        )
+        .finally(() => {
+          finished = true;
+        });
+      const deadline = Date.now() + 5000;
+      let waiting = false;
+      while (!waiting && Date.now() < deadline) {
+        const [row] = rowsOf<{ waiting: boolean }>(
+          await f.db.execute(sql`
+          select exists (select 1 from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'
+              and query like '%pg_advisory_xact_lock%') as waiting`),
+        );
+        waiting = row?.waiting ?? false;
+        if (!waiting) await Bun.sleep(10);
+      }
+      expect(waiting).toBe(true);
+      expect(finished).toBe(false);
+      expect(await f.db.select().from(schema.creditPools)).toHaveLength(0);
+      release();
+      await close;
+      expect(await registration).toEqual({ ok: false, code: "org.deleting" });
+      expect(await f.db.select().from(schema.creditPools)).toHaveLength(0);
+      expect(await f.db.select().from(schema.creditGrantCycles)).toHaveLength(0);
+      expect(await purgeWorkspace({ db: f.db }, f.org.id)).toBe(true);
+    } finally {
+      release();
+      await Promise.allSettled([close, registration].filter(Boolean));
+      await closer.close();
+      await registrar.close();
+    }
+  },
+  30_000,
+);

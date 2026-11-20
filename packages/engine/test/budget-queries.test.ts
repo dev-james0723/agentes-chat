@@ -71,7 +71,7 @@ async function mentionRun(options: { askAgent?: boolean } = {}) {
   return { beforeModel, total: p.total.queries, runId: p.runId };
 }
 
-test("claim → model request stays within 19 statements; a whole mention run within 43", async () => {
+test("claim → model request stays within 21 statements; a whole mention run within 45", async () => {
   const run = await mentionRun();
   // 11 since every agent has a budget (ADR 0026): the call always reserves (one statement on the fast path).
   // 12 since the run stores the brain it runs with (ADR 0053 §10).
@@ -84,7 +84,10 @@ test("claim → model request stays within 19 statements; a whole mention run wi
   // 18 since it says the person's app language (ADR 0122; one statement, read with the rest, no round trip of its own).
   // 19 since a run held on an uncertain effect (an unsettled computer bridge epoch or an approval that ran without a
   // result) never starts a model turn: one read before the claim, for a row recovery finds still marked running.
-  expect(run.beforeModel).toBeLessThanOrEqual(19);
+  // 21: availability adds one fresh provider/credential protection read, and dispatch independently adds one
+  // for provider/credential/retained secret aliases (ADR 0209). Neither verdict can use the credential cache.
+  // Exact deployed-baseline/candidate SQL traces prove 19 -> 21 before the call and 43 -> 45 for the whole run.
+  expect(run.beforeModel).toBeLessThanOrEqual(21);
   // 22 since the reply carries how many tool calls the run made, so the apps leave "Ver o que ele fez" out at 0.
   // 23 with the open tasks, 24 with the work handed off, 25 with what other runs here hold.
   // 30 since every turn's end is decided and recorded (ADR 0097): the judgment through the gateway, its step, and
@@ -100,10 +103,11 @@ test("claim → model request stays within 19 statements; a whole mention run wi
   // 40 with the uncertain-effect hold read before the model call above.
   // 43 since every run's end records its outcome (feat/run-outcomes): the insert in a savepoint of its own (3), so an
   // outcome that can't be written never undoes the run's terminal status.
-  expect(run.total).toBeLessThanOrEqual(43);
+  // 45 with the two fresh credit-protection reads above.
+  expect(run.total).toBeLessThanOrEqual(45);
 });
 
-test("with tools, as every production run has them (find_agent among them): within 25 before the model call, 50 in all", async () => {
+test("with tools, as every production run has them (find_agent among them): within 27 before the model call, 52 in all", async () => {
   const run = await mentionRun({ askAgent: true });
   // 4 more, all for the tool list and the prompt: who is behind the run (2, the Tool Gateway's policy), the connectors
   // it lacks (1) and whether the person may talk to agents ("# Your team", 1, beside the context's other reads).
@@ -115,7 +119,8 @@ test("with tools, as every production run has them (find_agent among them): with
   // 23 with the devices people connected (one statement the prompt's list and the tool lists share, `deviceRoster`).
   // 24 with what other agents already asked the person behind the message (ADR 0172; one statement, read beside them).
   // 25 with the uncertain-effect hold read above.
-  expect(run.beforeModel).toBeLessThanOrEqual(25);
+  // 27 with the same independent availability and dispatch reads above.
+  expect(run.beforeModel).toBeLessThanOrEqual(27);
   // 36: the browser profile release above, and the turn-end judge naming the teammates the person may reach (ADR 0109):
   // whether they may talk to agents, read again because a resumed run has no context of its own to carry it from.
   // Who is behind the run comes from the run in memory, and the calls it tried are read only when it made some.
@@ -127,7 +132,8 @@ test("with tools, as every production run has them (find_agent among them): with
   // 46 with the agent's approvals level, read fresh where its tools are listed (ADR 0173).
   // 47 with the uncertain-effect hold read before the model call above.
   // 50 with the run's outcome recorded at its end, in its own savepoint (3), as above.
-  expect(run.total).toBeLessThanOrEqual(50);
+  // 52 with the two fresh credit-protection reads above, measured against the unchanged deployed baseline.
+  expect(run.total).toBeLessThanOrEqual(52);
 });
 
 test("the run keeps its stage profile in its transcript, for the operator's analytics, and adds no step", async () => {

@@ -1,7 +1,7 @@
 import { createRequester } from "@agenteschat/client";
 import { formatUsd } from "@agenteschat/client/lib/format";
 import { can } from "@agenteschat/client/lib/permissions";
-import { Button, Card, CardHeader } from "@agenteschat/ui";
+import { Button, Card, CardHeader, ProviderLogo } from "@agenteschat/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ErrorState, LoadingList } from "@/components/Loading";
@@ -41,75 +41,86 @@ const requester = createRequester();
 export const mayReadCreditContinuity = (org: { permissions?: readonly string[] }) =>
   can(org, "manage_agents") && can(org, "view_usage");
 
-export function CreditContinuityView({
-  status,
-  locale = "en-US",
-}: {
-  status: CreditContinuityViewStatus;
-  locale?: string;
-}) {
+export function CreditContinuityView({ status, locale }: { status: CreditContinuityViewStatus; locale?: string }) {
+  const { t, i18n } = useTranslation();
+  const language = locale ?? i18n.language;
   const money = (nano: number | null) =>
-    nano === null || !Number.isFinite(nano) ? "Unknown" : formatUsd(locale, nano / 1e9);
+    nano === null || !Number.isFinite(nano) ? t("creditContinuity.unknown") : formatUsd(language, nano / 1e9);
   const date = (value: string | null) =>
-    value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(locale) : "Unknown";
+    value && Number.isFinite(Date.parse(value))
+      ? new Date(value).toLocaleString(language)
+      : t("creditContinuity.unknown");
   const state = (p: CreditContinuityViewStatus["pools"][number]) => {
-    if (p.evidenceStatus === "unavailable") return "Unavailable";
-    if (p.evidenceStatus !== "verified") return p.evidenceStatus === "unverified" ? "Not verified" : p.evidenceStatus;
-    if (!status.enabled || !p.enabled) return "Disabled";
-    if (p.paused) return "Paused";
+    if (p.evidenceStatus === "unavailable") return t("creditContinuity.state.unavailable");
+    if (p.evidenceStatus === "expired") return t("creditContinuity.state.expired");
+    if (p.evidenceStatus === "stale") return t("creditContinuity.state.stale");
+    if (p.evidenceStatus !== "verified") return t("creditContinuity.state.unverified");
+    if (!status.enabled || !p.enabled) return t("creditContinuity.state.disabled");
+    if (p.paused) return t("creditContinuity.state.paused");
     if (p.pricingStatus !== "verified")
       return p.pricingStatus === "expired"
-        ? "Pricing expired"
+        ? t("creditContinuity.state.pricingExpired")
         : p.pricingStatus === "changed"
-          ? "Pricing changed"
-          : "Pricing not verified";
-    if (p.eligibleRouteCount < 1) return "No eligible API route";
-    if (p.automaticAvailableNanoUsd <= 0 && p.approvedEmergencyAvailableNanoUsd <= 0) return "Budget unavailable";
+          ? t("creditContinuity.state.pricingChanged")
+          : t("creditContinuity.state.pricingUnverified");
+    if (p.status === "reconciliation_required") return t("creditContinuity.state.reconciliation");
+    if (p.status === "billing_blocked") return t("creditContinuity.state.billingBlocked");
+    if (p.status === "expired") return t("creditContinuity.state.expired");
+    if (p.eligibleRouteCount < 1) return t("creditContinuity.state.noRoute");
+    if (p.automaticAvailableNanoUsd <= 0 && p.approvedEmergencyAvailableNanoUsd <= 0)
+      return t("creditContinuity.state.budgetUnavailable");
     return p.status === "available"
       ? p.automaticAvailableNanoUsd > 0
-        ? "Ready"
-        : "Owner reserve available"
-      : p.status;
+        ? t("creditContinuity.state.ready")
+        : t("creditContinuity.state.reserveAvailable")
+      : t("creditContinuity.state.blocked");
   };
   return (
     <>
-      <p className="small muted">
-        Suitable subscriptions are used first. API fallback uses verified grants within the shared cycle limits.
-      </p>
+      <p className="small muted">{t("creditContinuity.intro")}</p>
       <p className="small" role="status">
         {status.state === "unavailable"
-          ? "Credit status is unavailable; automatic spending is not verified."
+          ? t("creditContinuity.status.unavailable")
           : !status.enabled
-            ? "Automatic API fallback is disabled. Recorded spending and pending costs remain shown."
+            ? t("creditContinuity.status.disabled")
             : status.state === "unverified"
-              ? "No eligible API grants have been verified. Automatic allowance is $0."
+              ? t("creditContinuity.status.unverified")
               : status.state === "blocked"
-                ? "API fallback is waiting for current evidence, budget or reconciliation."
-                : "API fallback is available within the recorded grant limits."}
+                ? t("creditContinuity.status.blocked")
+                : t("creditContinuity.status.available")}
       </p>
       <TableBox>
         <table>
-          <caption>API grants and cycle budgets</caption>
+          <caption>{t("creditContinuity.caption")}</caption>
           <thead>
             <tr>
-              <th scope="col">Provider</th>
-              <th scope="col">State</th>
-              <th scope="col">Automatic available / limit</th>
-              <th scope="col">Spent / pending</th>
-              <th scope="col">Owner reserve</th>
-              <th scope="col">Safety buffer</th>
-              <th scope="col">Grant expires</th>
-              <th scope="col">Historical p95</th>
+              <th scope="col">{t("creditContinuity.columns.provider")}</th>
+              <th scope="col">{t("creditContinuity.columns.state")}</th>
+              <th scope="col">{t("creditContinuity.columns.automatic")}</th>
+              <th scope="col">{t("creditContinuity.columns.costs")}</th>
+              <th scope="col">{t("creditContinuity.columns.reserve")}</th>
+              <th scope="col">{t("creditContinuity.columns.buffer")}</th>
+              <th scope="col">{t("creditContinuity.columns.expires")}</th>
+              <th scope="col">{t("creditContinuity.columns.forecast")}</th>
             </tr>
           </thead>
           <tbody>
             {status.pools.map((p) => (
               <tr key={p.provider}>
-                <th scope="row">{p.provider === "openai" ? "OpenAI API" : "Claude API"}</th>
+                <th scope="row">
+                  <span className="ac-iconline">
+                    <ProviderLogo id={p.provider} size="sm" />
+                    {t(
+                      p.provider === "openai"
+                        ? "creditContinuity.provider.openai"
+                        : "creditContinuity.provider.anthropic",
+                    )}
+                  </span>
+                </th>
                 <td>
                   {state(p)}
                   <br />
-                  <span className="small muted">Evidence: {date(p.verifiedAt)}</span>
+                  <span className="small muted">{t("creditContinuity.evidence", { date: date(p.verifiedAt) })}</span>
                 </td>
                 <td className="tabular">
                   {money(p.automaticAvailableNanoUsd)} / {money(p.automaticLimitNanoUsd)}
@@ -123,13 +134,14 @@ export function CreditContinuityView({
                   <span className="small muted">
                     {p.activeReserveApprovalCount > 0 ? (
                       <>
-                        Approved available: {money(p.approvedEmergencyAvailableNanoUsd)}
+                        {t("creditContinuity.approvedAvailable", {
+                          amount: money(p.approvedEmergencyAvailableNanoUsd),
+                        })}
                         <br />
-                        {p.activeReserveApprovalCount} active owner{" "}
-                        {p.activeReserveApprovalCount === 1 ? "approval" : "approvals"}
+                        {t("creditContinuity.approvals", { count: p.activeReserveApprovalCount })}
                       </>
                     ) : (
-                      "Owner approval"
+                      t("creditContinuity.ownerApproval")
                     )}
                   </span>
                 </td>
@@ -141,11 +153,18 @@ export function CreditContinuityView({
                       {money(p.forecast.p95NanoUsd)}
                       <br />
                       <span className="small muted">
-                        {p.forecast.sampleCount} settled units; {p.forecast.uncertainty} uncertainty
+                        {t(
+                          p.forecast.uncertainty === "high"
+                            ? "creditContinuity.historyHigh"
+                            : p.forecast.uncertainty === "medium"
+                              ? "creditContinuity.historyMedium"
+                              : "creditContinuity.historyUnknown",
+                          { count: p.forecast.sampleCount },
+                        )}
                       </span>
                     </>
                   ) : (
-                    "Insufficient history"
+                    t("creditContinuity.insufficientHistory")
                   )}
                 </td>
               </tr>
@@ -153,14 +172,8 @@ export function CreditContinuityView({
           </tbody>
         </table>
       </TableBox>
-      <p className="small muted">
-        {status.unresolvedCount} API calls have reserved or unresolved costs. Emergency reserves require owner approval;
-        this feature does not enable paid top-ups.
-      </p>
-      <p className="small muted">
-        Grant eligibility uses owner-recorded provider billing evidence. Historical forecasts do not authorize spending.
-        Status read: {date(status.observedAt)}.
-      </p>
+      <p className="small muted">{t("creditContinuity.obligations", { count: status.unresolvedCount })}</p>
+      <p className="small muted">{t("creditContinuity.evidenceNote", { date: date(status.observedAt) })}</p>
     </>
   );
 }
@@ -168,7 +181,7 @@ export function CreditContinuityView({
 /** The existing AI and usage screen reads stored status; opening or refreshing this card never probes a provider. */
 export function CreditContinuityCard() {
   const { org } = useOrg();
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const allowed = mayReadCreditContinuity(org);
   const query = useQuery({
     queryKey: ["org", org.id, "model-inspector-credit-status"],
@@ -187,10 +200,10 @@ export function CreditContinuityCard() {
       <CardHeader
         id="sec-credit-continuity"
         icon="chart"
-        title="API credit continuity"
+        title={t("creditContinuity.title")}
         action={
           <Button size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}>
-            Refresh status
+            {t("creditContinuity.refresh")}
           </Button>
         }
       />
@@ -198,7 +211,7 @@ export function CreditContinuityCard() {
       {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
       {query.data?.credits && <CreditContinuityView status={query.data.credits} locale={i18n.language} />}
       {!query.isLoading && !query.isError && !query.data?.credits && (
-        <p className="small muted">Credit status is unavailable. No grant allowance has been verified here.</p>
+        <p className="small muted">{t("creditContinuity.unavailable")}</p>
       )}
     </Card>
   );

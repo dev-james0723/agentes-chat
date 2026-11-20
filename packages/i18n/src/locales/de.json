@@ -1,4 +1,63 @@
 {
+  "creditContinuity": {
+    "title": "Weiterarbeiten mit API-Guthaben",
+    "refresh": "Status aktualisieren",
+    "unavailable": "Der Guthabenstatus ist nicht verfügbar. Hier wurde noch kein gewährtes Guthaben verifiziert.",
+    "intro": "Geeignete Abonnements werden zuerst genutzt. Der API-Ersatz nutzt verifiziertes, gewährtes Guthaben innerhalb der gemeinsamen Grenzen des Abrechnungszeitraums.",
+    "status": {
+      "unavailable": "Der Guthabenstatus ist nicht verfügbar. Automatische Ausgaben sind nicht verifiziert.",
+      "disabled": "Der automatische API-Ersatz ist deaktiviert. Erfasste Ausgaben und ausstehende Kosten bleiben sichtbar.",
+      "unverified": "Es wurde noch kein zulässiges API-Guthaben verifiziert. Automatisch verfügbar sind $0.",
+      "blocked": "Der API-Ersatz wartet auf aktuelle Nachweise, Budget oder einen Abgleich.",
+      "available": "Der API-Ersatz ist innerhalb der erfassten Guthabengrenzen verfügbar."
+    },
+    "caption": "Gewährtes API-Guthaben und Budgets je Abrechnungszeitraum",
+    "columns": {
+      "provider": "Anbieter",
+      "state": "Zustand",
+      "automatic": "Automatisch verfügbar / Grenze",
+      "costs": "Ausgegeben / ausstehend",
+      "reserve": "Reserve des Eigentümers",
+      "buffer": "Sicherheitspuffer",
+      "expires": "Guthaben verfällt",
+      "forecast": "Historischer p95"
+    },
+    "provider": {
+      "openai": "API von ChatGPT",
+      "anthropic": "API von Claude"
+    },
+    "unknown": "Unbekannt",
+    "state": {
+      "unavailable": "Nicht verfügbar",
+      "unverified": "Nicht verifiziert",
+      "expired": "Guthaben verfallen",
+      "stale": "Nachweise müssen aktualisiert werden",
+      "disabled": "Deaktiviert",
+      "paused": "Pausiert",
+      "pricingExpired": "Preise abgelaufen",
+      "pricingChanged": "Preise geändert",
+      "pricingUnverified": "Preise nicht verifiziert",
+      "noRoute": "Kein zulässiger API-Zugangsweg",
+      "budgetUnavailable": "Budget nicht verfügbar",
+      "ready": "Bereit",
+      "reserveAvailable": "Reserve des Eigentümers verfügbar",
+      "billingBlocked": "Abrechnung blockiert",
+      "reconciliation": "Abgleich erforderlich",
+      "blocked": "Blockiert"
+    },
+    "evidence": "Nachweise: {{date}}",
+    "approvedAvailable": "Genehmigt verfügbar: {{amount}}",
+    "approvals_one": "{{count}} aktive Genehmigung des Eigentümers",
+    "approvals_other": "{{count}} aktive Genehmigungen des Eigentümers",
+    "ownerApproval": "Genehmigung des Eigentümers",
+    "historyHigh": "{{count}} abgerechnete Einheiten. Hohe Unsicherheit.",
+    "historyMedium": "{{count}} abgerechnete Einheiten. Mittlere Unsicherheit.",
+    "historyUnknown": "{{count}} abgerechnete Einheiten. Unsicherheit unbekannt.",
+    "insufficientHistory": "Nicht genügend Verlaufsdaten",
+    "obligations_one": "{{count}} API-Aufruf hat reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "obligations_other": "{{count}} API-Aufrufe haben reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "evidenceNote": "Die Zulässigkeit des gewährten Guthabens wird anhand der vom Eigentümer erfassten Abrechnungsnachweise des Anbieters geprüft. Historische Prognosen genehmigen keine Ausgaben. Status abgerufen: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -7061,6 +7120,18 @@
     "offlineText": "Diese Seite öffnet sich von selbst, sobald du wieder online bist."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Colab lesen",
+      "description": "Aboplan, verfügbare Laufzeitoptionen und Sitzungsnamen ansehen."
+    },
+    "colab_run": {
+      "label": "Colab-Aufgaben ausführen",
+      "description": "Auf Zugangsdaten zugreifen, Laufzeiten und Sitzungen erstellen, Code ausführen und Sitzungen schließen. Verbraucht Colab-Recheneinheiten."
+    },
+    "colab_delete": {
+      "label": "Colab-Laufzeiten löschen",
+      "description": "Eine Laufzeit mit allen Dateien und Sitzungen dauerhaft löschen."
+    },
     "context_read": {
       "label": "Kontext lesen",
       "description": "Nachrichten, Zusammenfassungen und Fakten in den Kanälen des Agenten durchsuchen."
@@ -11864,7 +11935,7 @@
     "how": {
       "oneClick": "Ein Klick: Du autorisierst auf der Seite des Dienstes",
       "oauthOrKey": "Du autorisierst auf der Seite des Dienstes oder nutzt einen API-Schlüssel",
-      "oauthSetup": "Die Anmeldung muss auf diesem Server eingerichtet werden.",
+      "oauthSetup": "Die Anmeldung für diesen Konnektor muss eingerichtet werden.",
       "key": "Braucht einen API-Schlüssel",
       "appPassword": "Braucht ein App-Passwort",
       "addressPassword": "Braucht die Adresse der Datenbank und ein Passwort",
@@ -13292,6 +13363,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Wähle einen verbundenen Computer für deine persönliche KI-Anmeldung.",
+      "personalSubscription": "Bei persönlichen Abos bleiben API-Ausweichnutzung und kostenpflichtige Zusatznutzung ausgeschaltet.",
+      "unavailable": "Diese KI ist auf dem gewählten Computer nicht verfügbar. Prüfe Verbindung und Anmeldung."
+    },
+    "credit": {
+      "conflict": "Ein Guthabeneintrag ist bereits vorhanden. Aktualisiere die Seite, um seinen Status zu prüfen.",
+      "disabled": "Die Ausweichnutzung von Guthaben ist ausgeschaltet.",
+      "resumeRefused": "Dieser Lauf kann noch nicht fortgesetzt werden. Prüfe das zurückgehaltene Guthaben und die ausstehenden Aktionen."
+    },
     "passwordLink": {
       "email": "Dieser Server verschickt E-Mails: Die Person fordert ihren eigenen Link unter Passwort vergessen an.",
       "serverOwner": "Wer diesen Server installiert hat, meldet sich auf dem Computer an, auf dem er läuft, ohne Link.",
@@ -13367,6 +13448,9 @@
       "audienceEmpty": "Wähle, wer es sieht."
     },
     "connector": {
+      "colabOauthRequired": "Verbinde Google Colab über den Katalog und melde dich mit Google an.",
+      "colabRefreshRequired": "Verbinde Google Colab erneut und erlaube die Verbindung auch während deiner Abwesenheit.",
+      "colabScopeRequired": "Verbinde Google Colab erneut und erlaube den angefragten Colab-Zugriff.",
       "labelTaken": "Ein anderer Konnektor hat schon diesen Namen.",
       "labelInvalid": "Der Name braucht 1 bis 80 Zeichen.",
       "otherAccount": "Du hast dich bei einem anderen Konto angemeldet. Um es zu verbinden, nutze „Weiteres Konto hinzufügen“.",
@@ -15944,6 +16028,7 @@
         "listingRoutines": "Die Routinen angesehen",
         "checkingComputer": "Den PC geprüft",
         "checkingUsage": "Die eigene Nutzung geprüft",
+        "checkingModels": "Modellverfügbarkeit geprüft",
         "findingAgent": "Ein Teammitglied gesucht",
         "writingWiki": "Im Wiki geschrieben",
         "readingWiki": "Das Wiki gelesen",
@@ -16061,6 +16146,7 @@
       "listingRoutines": "Ansehen der Routinen",
       "checkingComputer": "Prüfen des PCs",
       "checkingUsage": "Prüfen der eigenen Nutzung",
+      "checkingModels": "prüft die Modellverfügbarkeit",
       "findingAgent": "Suchen eines Teammitglieds",
       "writingWiki": "Schreiben im Wiki",
       "readingWiki": "Lesen im Wiki",

@@ -7,6 +7,73 @@ import type { LocaleStrings } from "./plurals";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const ptBR = {
+  creditContinuity: {
+    title: "Continuidade de créditos da API",
+    refresh: "Atualizar status",
+    unavailable: "O status dos créditos está indisponível. Nenhum saldo de concessão foi verificado aqui.",
+    intro:
+      "Assinaturas compatíveis são usadas primeiro. A alternativa pela API usa concessões verificadas dentro dos limites compartilhados do ciclo.",
+    status: {
+      unavailable: "O status dos créditos está indisponível. O gasto automático não foi verificado.",
+      disabled:
+        "A alternativa automática pela API está desativada. Os gastos registrados e os custos pendentes continuam visíveis.",
+      unverified: "Nenhuma concessão elegível de API foi verificada. O limite automático é de US$ 0.",
+      blocked: "A alternativa pela API aguarda evidências atuais, orçamento ou conciliação.",
+      available: "A alternativa pela API está disponível dentro dos limites registrados da concessão.",
+    },
+    caption: "Concessões de API e orçamentos por ciclo",
+    columns: {
+      provider: "Provedor",
+      state: "Estado",
+      automatic: "Disponível automático / limite",
+      costs: "Gasto / pendente",
+      reserve: "Reserva do dono",
+      buffer: "Margem de segurança",
+      expires: "Vencimento da concessão",
+      forecast: "p95 histórico",
+    },
+    provider: {
+      openai: "API do ChatGPT",
+      anthropic: "API do Claude",
+    },
+    unknown: "Desconhecido",
+    state: {
+      unavailable: "Indisponível",
+      unverified: "Não verificado",
+      expired: "Concessão vencida",
+      stale: "Evidências precisam de atualização",
+      disabled: "Desativado",
+      paused: "Pausado",
+      pricingExpired: "Preços vencidos",
+      pricingChanged: "Preços alterados",
+      pricingUnverified: "Preços não verificados",
+      noRoute: "Nenhuma rota de API elegível",
+      budgetUnavailable: "Orçamento indisponível",
+      ready: "Pronto",
+      reserveAvailable: "Reserva do dono disponível",
+      billingBlocked: "Cobrança bloqueada",
+      reconciliation: "Conciliação necessária",
+      blocked: "Bloqueado",
+    },
+    evidence: "Evidências: {{date}}",
+    approvedAvailable: "Disponível aprovado: {{amount}}",
+    approvals_one: "{{count}} aprovação ativa do dono",
+    approvals_other: "{{count}} aprovações ativas do dono",
+    approvals_many: "{{count}} aprovações ativas do dono",
+    ownerApproval: "Aprovação do dono",
+    historyHigh: "{{count}} unidades conciliadas. Incerteza alta.",
+    historyMedium: "{{count}} unidades conciliadas. Incerteza média.",
+    historyUnknown: "{{count}} unidades conciliadas. Incerteza desconhecida.",
+    insufficientHistory: "Histórico insuficiente",
+    obligations_one:
+      "{{count}} chamada de API tem custos reservados ou não conciliados. Reservas de emergência exigem aprovação do dono. Este recurso não ativa recargas pagas.",
+    obligations_other:
+      "{{count}} chamadas de API têm custos reservados ou não conciliados. Reservas de emergência exigem aprovação do dono. Este recurso não ativa recargas pagas.",
+    obligations_many:
+      "{{count}} chamadas de API têm custos reservados ou não conciliados. Reservas de emergência exigem aprovação do dono. Este recurso não ativa recargas pagas.",
+    evidenceNote:
+      "A elegibilidade da concessão usa comprovantes de cobrança do provedor registrados pelo dono. Previsões históricas não autorizam gastos. Status consultado: {{date}}.",
+  },
   app: { name: "agentes" },
   privatePublication: {
     title: "Revisar compartilhamento de rascunho privado",
@@ -7406,6 +7473,19 @@ export const ptBR = {
     offlineText: "Esta página abre sozinha quando a internet voltar.",
   },
   scopes: {
+    colab_read: {
+      label: "Ler Colab",
+      description: "Ver o plano da assinatura, as opções de ambiente disponíveis e os nomes das sessões.",
+    },
+    colab_run: {
+      label: "Executar no Colab",
+      description:
+        "Acessar credenciais, criar ambientes e sessões, executar código e encerrar sessões. Usa unidades de computação do Colab.",
+    },
+    colab_delete: {
+      label: "Apagar ambientes do Colab",
+      description: "Apagar permanentemente um ambiente e todos os seus arquivos e sessões.",
+    },
     context_read: { label: "Ler o contexto", description: "Buscar mensagens, resumos e fatos nos canais do agente." },
     memory_write: { label: "Lembrar", description: "Guardar e esquecer as próprias notas (memórias)." },
     drive_read: { label: "Ler arquivos", description: "Ler arquivos do Drive." },
@@ -12163,7 +12243,7 @@ export const ptBR = {
     how: {
       oneClick: "Um clique: você autoriza na página do serviço",
       oauthOrKey: "Você autoriza na página do serviço, ou usa uma chave de API",
-      oauthSetup: "O login precisa ser configurado neste servidor.",
+      oauthSetup: "O login deste conector precisa ser configurado.",
       key: "Precisa de uma chave de API",
       appPassword: "Precisa de uma senha de app",
       addressPassword: "Precisa do endereço do banco e de uma senha",
@@ -13340,6 +13420,16 @@ export const ptBR = {
     },
   },
   errors: {
+    brainSetup: {
+      invalidMachine: "Escolha um computador conectado para entrar na sua conta pessoal de IA.",
+      personalSubscription: "Assinaturas pessoais mantêm o uso alternativo por API e o uso extra pago desligados.",
+      unavailable: "Essa IA não está disponível no computador escolhido. Confira a conexão e o login.",
+    },
+    credit: {
+      conflict: "Já existe um registro de crédito. Atualize para conferir o estado dele.",
+      disabled: "O uso alternativo de créditos está desligado.",
+      resumeRefused: "Esta execução ainda não pode retomar. Confira a retenção de crédito e as ações pendentes.",
+    },
     /** A new-password link an owner can't make (ADR 0158). */
     passwordLink: {
       email: "Este servidor manda e-mail: a pessoa pede o link dela mesma em Esqueci a senha.",
@@ -13423,6 +13513,10 @@ export const ptBR = {
       audienceEmpty: "Escolha quem vê.",
     },
     connector: {
+      colabOauthRequired: "Conecte o Google Colab pelo catálogo de conectores e entre com o Google.",
+      colabRefreshRequired:
+        "Reconecte o Google Colab e permita que ele continue conectado quando você estiver ausente.",
+      colabScopeRequired: "Reconecte o Google Colab e permita o acesso solicitado ao Colab.",
       labelTaken: "Já existe um conector com esse nome.",
       labelInvalid: "O nome precisa ter de 1 a 80 letras.",
       otherAccount: "Você entrou em outra conta. Para conectá-la, use Adicionar outra conta.",
@@ -16104,6 +16198,7 @@ export const ptBR = {
         listingRoutines: "Viu as rotinas",
         checkingComputer: "Conferiu o PC",
         checkingUsage: "Conferiu o próprio uso",
+        checkingModels: "Conferiu a disponibilidade dos modelos",
         findingAgent: "Procurou um colega",
         writingWiki: "Escreveu na wiki",
         readingWiki: "Leu a wiki",
@@ -16221,6 +16316,7 @@ export const ptBR = {
       listingRoutines: "vendo as rotinas",
       checkingComputer: "conferindo o PC",
       checkingUsage: "conferindo o próprio uso",
+      checkingModels: "conferindo a disponibilidade dos modelos",
       findingAgent: "procurando um colega",
       writingWiki: "escrevendo na wiki",
       readingWiki: "lendo a wiki",

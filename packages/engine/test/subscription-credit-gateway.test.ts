@@ -4,6 +4,7 @@ import { eq, schema } from "@agenteschat/db";
 import { customModelId, MODEL_CATALOG, type ModelProvider, ProviderError } from "@agenteschat/providers";
 import { createFakeProvider } from "@agenteschat/providers/testing";
 import { createAgent } from "../src/agents";
+import { enableCaches } from "../src/cache";
 import { createCredential, rotateCredential } from "../src/credentials";
 import {
   CREDIT_USD,
@@ -21,6 +22,7 @@ import { type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
 afterEach(async () => {
+  enableCaches(false);
   await f?.close();
   f = undefined as unknown as Fixture;
 });
@@ -738,5 +740,33 @@ test("registered grant identity remains protected after local key rotation and r
     }),
   ).rejects.toMatchObject({ reason: "reserved_credential" });
   expect(provider.calls).toHaveLength(0);
+  expect(await attempts()).toHaveLength(0);
+});
+
+test("a newly registered pool blocks a warm default credential cache while fallback is disabled", async () => {
+  f = await setup();
+  enableCaches();
+  const provider = verified();
+  const gateway = gatewayOf(provider, false);
+  const ordinary = {
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    agent: { ...f.agent, credentialId: null },
+    system: "sys",
+    messages: [{ role: "user" as const, content: "hello" }],
+    maxTokens: 10,
+    onDelta: () => {},
+  };
+  await gateway.stream(ordinary);
+  expect(provider.calls).toHaveLength(1);
+  // This write does not invalidate the credential cache. The fresh admission guard must observe it.
+  await f.db.insert(schema.creditPools).values({
+    orgId: f.org.id,
+    upstreamNamespace: "anthropic",
+    upstreamAccount: "warm-cache-credit-fixture",
+  });
+  await expect(gateway.stream(ordinary)).rejects.toMatchObject({ reason: "reserved_credential" });
+  expect(await gateway.hasModelCredential(ordinary.agent)).toBe(false);
+  expect(provider.calls).toHaveLength(1);
   expect(await attempts()).toHaveLength(0);
 });

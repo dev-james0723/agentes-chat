@@ -1,4 +1,65 @@
 {
+  "creditContinuity": {
+    "title": "Continuidad con créditos de API",
+    "refresh": "Actualizar estado",
+    "unavailable": "El estado de los créditos no está disponible. Aquí no se ha verificado ningún crédito concedido.",
+    "intro": "Primero se usan las suscripciones adecuadas. El recurso a la API utiliza créditos concedidos y verificados dentro de los límites compartidos del ciclo.",
+    "status": {
+      "unavailable": "El estado de los créditos no está disponible. El gasto automático no está verificado.",
+      "disabled": "El recurso automático a la API está desactivado. Se siguen mostrando el gasto registrado y los costes pendientes.",
+      "unverified": "No se han verificado créditos de API que cumplan los requisitos. El importe automático disponible es de $0.",
+      "blocked": "El recurso a la API está a la espera de pruebas actualizadas, presupuesto o conciliación.",
+      "available": "El recurso a la API está disponible dentro de los límites de crédito registrados."
+    },
+    "caption": "Créditos concedidos para la API y presupuestos del ciclo",
+    "columns": {
+      "provider": "Proveedor",
+      "state": "Estado",
+      "automatic": "Disponible automático / límite",
+      "costs": "Gastado / pendiente",
+      "reserve": "Reserva del titular",
+      "buffer": "Margen de seguridad",
+      "expires": "Vencimiento del crédito",
+      "forecast": "p95 histórico"
+    },
+    "provider": {
+      "openai": "API de ChatGPT",
+      "anthropic": "API de Claude"
+    },
+    "unknown": "Desconocido",
+    "state": {
+      "unavailable": "No disponible",
+      "unverified": "Sin verificar",
+      "expired": "Crédito vencido",
+      "stale": "Hay que actualizar las pruebas",
+      "disabled": "Desactivado",
+      "paused": "En pausa",
+      "pricingExpired": "Precios vencidos",
+      "pricingChanged": "Precios modificados",
+      "pricingUnverified": "Precios sin verificar",
+      "noRoute": "Ninguna ruta de API cumple los requisitos",
+      "budgetUnavailable": "Presupuesto no disponible",
+      "ready": "Listo",
+      "reserveAvailable": "Reserva del titular disponible",
+      "billingBlocked": "Facturación bloqueada",
+      "reconciliation": "Se requiere conciliación",
+      "blocked": "Bloqueado"
+    },
+    "evidence": "Pruebas: {{date}}",
+    "approvedAvailable": "Disponible aprobado: {{amount}}",
+    "approvals_one": "{{count}} aprobación activa del titular",
+    "approvals_many": "{{count}} aprobaciones activas del titular",
+    "approvals_other": "{{count}} aprobaciones activas del titular",
+    "ownerApproval": "Aprobación del titular",
+    "historyHigh": "{{count}} unidades liquidadas. Incertidumbre alta.",
+    "historyMedium": "{{count}} unidades liquidadas. Incertidumbre media.",
+    "historyUnknown": "{{count}} unidades liquidadas. Incertidumbre desconocida.",
+    "insufficientHistory": "Historial insuficiente",
+    "obligations_one": "{{count}} llamada a la API tiene costes reservados o sin resolver. Las reservas de emergencia requieren la aprobación del titular. Esta función no habilita recargas de pago.",
+    "obligations_many": "{{count}} llamadas a la API tienen costes reservados o sin resolver. Las reservas de emergencia requieren la aprobación del titular. Esta función no habilita recargas de pago.",
+    "obligations_other": "{{count}} llamadas a la API tienen costes reservados o sin resolver. Las reservas de emergencia requieren la aprobación del titular. Esta función no habilita recargas de pago.",
+    "evidenceNote": "Los requisitos de los créditos concedidos se verifican con las pruebas de facturación del proveedor registradas por el titular. Las previsiones históricas no autorizan gastos. Estado consultado: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -7245,6 +7306,18 @@
     "offlineText": "Esta página se abre sola cuando vuelvas a tener conexión."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Leer Colab",
+      "description": "Ver el plan de suscripción, las opciones de entorno disponibles y los nombres de las sesiones."
+    },
+    "colab_run": {
+      "label": "Ejecutar tareas en Colab",
+      "description": "Acceder a credenciales, crear entornos y sesiones, ejecutar código y cerrar sesiones. Consume unidades de cómputo de Colab."
+    },
+    "colab_delete": {
+      "label": "Eliminar entornos de Colab",
+      "description": "Eliminar permanentemente un entorno con todos sus archivos y sesiones."
+    },
     "context_read": {
       "label": "Leer contexto",
       "description": "Buscar mensajes, resúmenes y datos en los canales del agente."
@@ -12221,7 +12294,7 @@
     "how": {
       "oneClick": "Un clic: autorizas en la página del servicio",
       "oauthOrKey": "Autorizas en la página del servicio o usas una clave de API",
-      "oauthSetup": "Hay que configurar el inicio de sesión en este servidor.",
+      "oauthSetup": "Es necesario configurar el inicio de sesión de este conector.",
       "key": "Necesita una clave de API",
       "appPassword": "Necesita una contraseña de app",
       "addressPassword": "Necesita la dirección de la base de datos y una contraseña",
@@ -13686,6 +13759,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Elige una computadora conectada para iniciar sesión en tu cuenta personal de IA.",
+      "personalSubscription": "Las suscripciones personales mantienen desactivados el respaldo por API y el uso adicional de pago.",
+      "unavailable": "Esa IA no está disponible en la computadora elegida. Revisa su conexión y el inicio de sesión."
+    },
+    "credit": {
+      "conflict": "Ya existe un registro de crédito. Actualiza para revisar su estado.",
+      "disabled": "El respaldo con créditos está desactivado.",
+      "resumeRefused": "Esta ejecución todavía no puede continuar. Revisa el crédito retenido y las acciones pendientes."
+    },
     "passwordLink": {
       "email": "Este servidor envía correos: la persona pide su propio enlace en Olvidé la contraseña.",
       "serverOwner": "Quien instaló este servidor entra desde el ordenador donde funciona, sin enlace.",
@@ -13761,6 +13844,9 @@
       "audienceEmpty": "Elige quién lo ve."
     },
     "connector": {
+      "colabOauthRequired": "Conecta Google Colab desde el catálogo de conectores e inicia sesión con Google.",
+      "colabRefreshRequired": "Vuelve a conectar Google Colab y permite que siga conectado cuando no estés.",
+      "colabScopeRequired": "Vuelve a conectar Google Colab y concede el permiso de Colab solicitado.",
       "labelTaken": "Otro conector ya tiene este nombre.",
       "labelInvalid": "El nombre necesita de 1 a 80 caracteres.",
       "otherAccount": "Iniciaste sesión en otra cuenta. Para conectarla, usa Agregar otra cuenta.",
@@ -16376,6 +16462,7 @@
         "listingRoutines": "Miró las rutinas",
         "checkingComputer": "Revisó la computadora",
         "checkingUsage": "Revisó su uso",
+        "checkingModels": "Revisó la disponibilidad de modelos",
         "findingAgent": "Buscó a un compañero",
         "writingWiki": "Escribió en la wiki",
         "readingWiki": "Leyó la wiki",
@@ -16493,6 +16580,7 @@
       "listingRoutines": "mirando las rutinas",
       "checkingComputer": "revisando la computadora",
       "checkingUsage": "revisando su uso",
+      "checkingModels": "revisando la disponibilidad de modelos",
       "findingAgent": "buscando a un compañero",
       "writingWiki": "escribiendo en la wiki",
       "readingWiki": "leyendo la wiki",

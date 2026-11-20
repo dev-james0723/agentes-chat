@@ -759,7 +759,7 @@ export async function connectCustomServer(
   if (url.hostname === "colaboratory.googleapis.com") {
     if (!isColabMcpEndpoint(serverUrl) || input.apiKey?.trim() || input.connectionId) {
       throw new ValidationError(
-        "Connect Google Colab from the connector catalog and sign in with Google. Use https://colaboratory.googleapis.com/mcp without a pasted token; reconnect an existing account from its Colab card.",
+        "Connect Google Colab from the connector catalog and sign in with Google. Use https://colaboratory.googleapis.com/mcp without a pasted token. Reconnect an existing account from its Colab card.",
         "connector.colab_oauth_required",
       );
     }

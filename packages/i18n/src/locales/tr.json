@@ -1,4 +1,63 @@
 {
+  "creditContinuity": {
+    "title": "API kredileriyle süreklilik",
+    "refresh": "Durumu yenile",
+    "unavailable": "Kredi durumu kullanılamıyor. Burada henüz tanınan bir kredi hakkı doğrulanmadı.",
+    "intro": "Önce uygun abonelikler kullanılır. API’ye yedek geçiş, döngünün ortak sınırları içinde doğrulanmış kredi haklarını kullanır.",
+    "status": {
+      "unavailable": "Kredi durumu kullanılamıyor. Otomatik harcama doğrulanmadı.",
+      "disabled": "API’ye otomatik yedek geçiş devre dışı. Kaydedilmiş harcamalar ve bekleyen maliyetler gösterilmeye devam eder.",
+      "unverified": "Uygun bir API kredi hakkı doğrulanmadı. Otomatik kullanım hakkı $0.",
+      "blocked": "API’ye yedek geçiş güncel kanıt, bütçe veya mutabakat bekliyor.",
+      "available": "API’ye yedek geçiş, kaydedilmiş kredi sınırları içinde kullanılabilir."
+    },
+    "caption": "API kredi hakları ve döngü bütçeleri",
+    "columns": {
+      "provider": "Sağlayıcı",
+      "state": "Durum",
+      "automatic": "Otomatik kullanılabilir / sınır",
+      "costs": "Harcanan / bekleyen",
+      "reserve": "Sahibin rezervi",
+      "buffer": "Güvenlik payı",
+      "expires": "Kredinin bitişi",
+      "forecast": "Geçmiş p95"
+    },
+    "provider": {
+      "openai": "ChatGPT için API",
+      "anthropic": "Claude için API"
+    },
+    "unknown": "Bilinmiyor",
+    "state": {
+      "unavailable": "Kullanılamıyor",
+      "unverified": "Doğrulanmadı",
+      "expired": "Kredi süresi doldu",
+      "stale": "Kanıt güncellenmeli",
+      "disabled": "Devre dışı",
+      "paused": "Duraklatıldı",
+      "pricingExpired": "Fiyatların geçerliliği doldu",
+      "pricingChanged": "Fiyatlar değişti",
+      "pricingUnverified": "Fiyatlar doğrulanmadı",
+      "noRoute": "Uygun API yolu yok",
+      "budgetUnavailable": "Bütçe kullanılamıyor",
+      "ready": "Hazır",
+      "reserveAvailable": "Sahibin rezervi kullanılabilir",
+      "billingBlocked": "Faturalandırma engellendi",
+      "reconciliation": "Mutabakat gerekiyor",
+      "blocked": "Engellendi"
+    },
+    "evidence": "Kanıt: {{date}}",
+    "approvedAvailable": "Onaylanmış kullanılabilir tutar: {{amount}}",
+    "approvals_one": "{{count}} etkin sahip onayı",
+    "approvals_other": "{{count}} etkin sahip onayı",
+    "ownerApproval": "Sahip onayı",
+    "historyHigh": "Maliyeti kesinleşen iş birimi sayısı: {{count}}. Belirsizlik yüksek.",
+    "historyMedium": "Maliyeti kesinleşen iş birimi sayısı: {{count}}. Belirsizlik orta düzeyde.",
+    "historyUnknown": "Maliyeti kesinleşen iş birimi sayısı: {{count}}. Belirsizlik düzeyi bilinmiyor.",
+    "insufficientHistory": "Geçmiş veriler yetersiz",
+    "obligations_one": "{{count}} API çağrısının ayrılmış veya çözümlenmemiş maliyetleri var. Acil durum rezervleri sahibin onayını gerektirir. Bu özellik ücretli bakiye yüklemelerini etkinleştirmez.",
+    "obligations_other": "{{count}} API çağrısının ayrılmış veya çözümlenmemiş maliyetleri var. Acil durum rezervleri sahibin onayını gerektirir. Bu özellik ücretli bakiye yüklemelerini etkinleştirmez.",
+    "evidenceNote": "Kredi hakkının uygunluğu, sahibin kaydettiği sağlayıcı faturalandırma kanıtına göre belirlenir. Geçmişe dayalı tahminler harcama yetkisi vermez. Durumun okunma zamanı: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -7021,6 +7080,18 @@
     "offlineText": "Yeniden çevrimiçi olduğunuzda bu sayfa kendiliğinden açılır."
   },
   "scopes": {
+    "colab_read": {
+      "label": "Colab okuma",
+      "description": "Abonelik planını, kullanılabilir çalışma ortamlarını ve oturum adlarını görme."
+    },
+    "colab_run": {
+      "label": "Colab görevlerini çalıştırma",
+      "description": "Kimlik bilgilerine erişme, çalışma ortamları ve oturumlar oluşturma, kod çalıştırma ve oturumları kapatma. Colab hesaplama birimlerini kullanır."
+    },
+    "colab_delete": {
+      "label": "Colab çalışma ortamlarını silme",
+      "description": "Bir çalışma ortamını tüm dosyaları ve oturumlarıyla kalıcı olarak silme."
+    },
     "context_read": {
       "label": "Bağlamı okuma",
       "description": "Ajanın kanallarındaki mesajlarda, özetlerde ve bilgilerde arama."
@@ -11799,7 +11870,7 @@
     "how": {
       "oneClick": "Tek tık: hizmetin sayfasında yetki verirsiniz",
       "oauthOrKey": "Hizmetin sayfasında yetki verirsiniz ya da bir API anahtarı kullanırsınız",
-      "oauthSetup": "Bu sunucuda oturum açmanın yapılandırılması gerekiyor.",
+      "oauthSetup": "Bu bağlayıcı için girişin ayarlanması gerekiyor.",
       "key": "API anahtarı gerekir",
       "appPassword": "Uygulama şifresi gerekir",
       "addressPassword": "Veritabanı adresi ve şifre gerekir",
@@ -13227,6 +13298,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "Kişisel yapay zekâ hesabınıza giriş yapmak için bağlı bir bilgisayar seçin.",
+      "personalSubscription": "Kişisel aboneliklerde API üzerinden yedek kullanım ve ücretli ek kullanım kapalı kalır.",
+      "unavailable": "Bu yapay zekâ seçilen bilgisayarda kullanılamıyor. Bağlantıyı ve hesap girişini kontrol edin."
+    },
+    "credit": {
+      "conflict": "Bir kredi kaydı zaten var. Durumunu kontrol etmek için yenileyin.",
+      "disabled": "Krediyle yedek kullanım kapalı.",
+      "resumeRefused": "Bu çalışma henüz devam edemez. Bekletilen krediyi ve bekleyen işlemleri inceleyin."
+    },
     "passwordLink": {
       "email": "Bu sunucu e-posta gönderiyor: kişi kendi bağlantısını Şifremi unuttum bölümünden ister.",
       "serverOwner": "Bu sunucuyu kuran kişi, sunucunun çalıştığı bilgisayardan bağlantısız girer.",
@@ -13302,6 +13383,9 @@
       "audienceEmpty": "Kimlerin göreceğini seçin."
     },
     "connector": {
+      "colabOauthRequired": "Bağlayıcı kataloğundan Google Colab'ı bağlayın ve Google ile giriş yapın.",
+      "colabRefreshRequired": "Google Colab'ı yeniden bağlayın ve siz yokken de bağlı kalmasına izin verin.",
+      "colabScopeRequired": "Google Colab'ı yeniden bağlayın ve istenen Colab iznini verin.",
       "labelTaken": "Bu ad başka bir bağlayıcıda zaten var.",
       "labelInvalid": "Ad 1 ile 80 karakter arasında olmalı.",
       "otherAccount": "Başka bir hesaba giriş yaptınız. Onu bağlamak için Başka bir hesap ekle seçeneğini kullanın.",
@@ -15873,6 +15957,7 @@
         "listingRoutines": "Rutinlere baktı",
         "checkingComputer": "Bilgisayarı kontrol etti",
         "checkingUsage": "Kullanımını kontrol etti",
+        "checkingModels": "Model kullanılabilirliği kontrol edildi",
         "findingAgent": "Bir ekip arkadaşı aradı",
         "writingWiki": "Wiki'ye yazdı",
         "readingWiki": "Wiki'yi okudu",
@@ -15990,6 +16075,7 @@
       "listingRoutines": "rutinlere bakıyor",
       "checkingComputer": "bilgisayarı kontrol ediyor",
       "checkingUsage": "kullanımını kontrol ediyor",
+      "checkingModels": "model kullanılabilirliği kontrol ediliyor",
       "findingAgent": "ekip arkadaşı arıyor",
       "writingWiki": "wiki'ye yazıyor",
       "readingWiki": "wiki'yi okuyor",

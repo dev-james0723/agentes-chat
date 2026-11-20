@@ -86,6 +86,7 @@ export type ActivityKind =
   | "requestingSecret"
   | "queryingDatabase"
   | "checkingUsage"
+  | "checkingModels"
   | "findingAgent"
   | "searchingWeb"
   | "readingWeb"
@@ -243,6 +244,7 @@ const BUILTIN: Record<string, ActivityKind> = {
   use_tool: "findingTools",
   follow_up: "followingUp",
   get_my_usage: "checkingUsage",
+  get_model_inspector_status: "checkingModels",
   get_my_profile: "gettingContext",
   shared_budget_authorize: "requestingApproval",
   find_agent: "findingAgent",
