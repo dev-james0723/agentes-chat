@@ -16142,6 +16142,14 @@
       "oldSub": "Consumi di prima che l'account venisse registrato",
       "ofMonth": "{{percent}} del mese",
       "shareLabel": "{{source}}: {{percent}} del mese"
+    },
+    "costPerSuccess": {
+      "title": "Costo per successo verificato",
+      "intro": "Ultimi 30 giorni. Un successo è un'attività i cui criteri di accettazione sono stati spuntati da una persona e che nessuno ha riaperto da allora. Ogni esecuzione conta nel costo.",
+      "perSuccess": "{{cost}} per successo",
+      "unknown": "Costo sconosciuto",
+      "noSuccess": "Ancora nessun successo verificato",
+      "line": "{{runs}} esecuzioni · {{successes}} verificate · {{failed}} non riuscite · {{retries}} nuovi tentativi"
     }
   },
   "budget": {

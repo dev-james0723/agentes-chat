@@ -16138,6 +16138,14 @@
       "oldSub": "Utilisation d'avant l'enregistrement du compte",
       "ofMonth": "{{percent}} du mois",
       "shareLabel": "{{source}} : {{percent}} du mois"
+    },
+    "costPerSuccess": {
+      "title": "Coût par réussite vérifiée",
+      "intro": "30 derniers jours. Une réussite est une tâche dont une personne a coché les critères d'acceptation et que personne n'a rouverte depuis. Chaque exécution compte dans le coût.",
+      "perSuccess": "{{cost}} par réussite",
+      "unknown": "Coût inconnu",
+      "noSuccess": "Aucune réussite vérifiée pour l'instant",
+      "line": "{{runs}} exécutions · {{successes}} vérifiées · {{failed}} en échec · {{retries}} nouvelles tentatives"
     }
   },
   "budget": {

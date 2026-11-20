@@ -68,3 +68,17 @@ test("Uso › Pessoas: admins see each person's use, its CSV and the limits; mem
   };
   expect(raised.limit).toMatchObject({ limitUsd: 15, limitFrom: "raised" });
 });
+
+test("cost per verified success (ADR 0206): admins read it, a run with no verified task counts toward cost only", async () => {
+  const w = await workspace();
+  await w.owner(`/channels/${w.channelId}/messages`, { json: { body: "@dev status?" } });
+  await t.drain();
+
+  type Report = { groups: { runs: number; verifiedSuccesses: number; costPerSuccessUsd: number | null }[] };
+  const res = await w.owner("/usage/cost-per-success");
+  expect(res.status).toBe(200);
+  const report = (await res.json()) as Report;
+  expect(report.groups[0]).toMatchObject({ runs: 1, verifiedSuccesses: 0, costPerSuccessUsd: null });
+  expect((await w.owner("/usage/cost-per-success?from=2026-01-01T00:00:00Z&to=2025-01-01T00:00:00Z")).status).toBe(400);
+  expect((await w.member("/usage/cost-per-success")).status).toBe(403);
+});

@@ -45246,5 +45246,23 @@
   },
   "feedback.offer.askFirst": {
     "value": "Ask before sending"
+  },
+  "usageViews.costPerSuccess.title": {
+    "value": "Cost per verified success"
+  },
+  "usageViews.costPerSuccess.intro": {
+    "value": "Last 30 days. A success is a task whose acceptance criteria a person checked and nobody reopened since. Every run counts toward cost."
+  },
+  "usageViews.costPerSuccess.perSuccess": {
+    "value": "{{cost}} per success"
+  },
+  "usageViews.costPerSuccess.unknown": {
+    "value": "Cost unknown"
+  },
+  "usageViews.costPerSuccess.noSuccess": {
+    "value": "No verified success yet"
+  },
+  "usageViews.costPerSuccess.line": {
+    "value": "{{runs}} runs · {{successes}} verified · {{failed}} failed · {{retries}} retries"
   }
 }

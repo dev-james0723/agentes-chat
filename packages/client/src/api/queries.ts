@@ -2946,6 +2946,12 @@ export const usePlanUsage = (orgId: string) => {
   return useQuery({ queryKey: keys.planUsage(orgId), queryFn: () => api.orgs.planUsage(orgId) });
 };
 
+/** Cost per verified successful task (ADR 0206); only for those who may see usage. */
+export const useCostPerSuccess = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.costPerSuccess(orgId), queryFn: () => api.orgs.costPerSuccess(orgId), enabled });
+};
+
 /** Uso › Pessoas (ADR 0141): each person's use; "Agora" stays live while the page is open. */
 export const usePeopleUsage = (orgId: string, period: { since?: string; until?: string } = {}, enabled = true) => {
   const api = useApi();

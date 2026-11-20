@@ -1,4 +1,4 @@
-import { agentPlanUsage, orgPlanUsage } from "@agenteschat/engine";
+import { agentPlanUsage, costPerSuccess, orgPlanUsage } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
 import { type AppDeps, createAppRouter, errors, json, OrgParams, requireSession, security } from "./context";
 import { AccountKind, PlanUsage, PlanWindow } from "./schemas";
@@ -97,6 +97,40 @@ const AgentPlanUsage = z
   })
   .openapi("AgentPlanUsage");
 
+const CostPerSuccessRow = z.object({
+  runs: z.number(),
+  failedRuns: z.number().openapi({ description: "Finished runs that failed or were stopped." }),
+  retries: z.number().openapi({ description: "Runs on a task after its first in the window." }),
+  verifiedSuccesses: z
+    .number()
+    .openapi({ description: "Tasks people checked every criterion of (`criteria_met`) and nobody reopened since." }),
+  tokens: z.number(),
+  costUsd: z
+    .number()
+    .nullable()
+    .openapi({ description: "Null: unknown (a plan turn or a run with no usage), never 0." }),
+  unknownCostRuns: z.number(),
+  costPerSuccessUsd: z.number().nullable(),
+  missing: z.enum(["no_success", "unknown_cost"]).nullable(),
+  text: z.string().openapi({ description: "The number in plain Hong Kong Chinese." }),
+});
+
+const CostPerSuccessReport = z
+  .object({
+    from: z.string(),
+    to: z.string(),
+    groups: z.array(
+      CostPerSuccessRow.extend({
+        agentId: z.uuid(),
+        agentName: z.string(),
+        brain: z.string(),
+        model: z.string().nullable(),
+      }),
+    ),
+    total: CostPerSuccessRow,
+  })
+  .openapi("CostPerSuccessReport");
+
 /**
  * The usage views (ADR 0063): every plan account by computer with the API per
  * agent, and an agent's month by account. Any member; money only with
@@ -133,6 +167,26 @@ export function planUsageRoutes(deps: AppDeps) {
     async (c) => {
       const { orgId, agentId } = c.req.valid("param");
       return c.json(await agentPlanUsage(db, c.get("user").id, orgId, agentId), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/usage/cost-per-success",
+      tags,
+      security,
+      summary: "Cost per verified successful task, per agent, brain and model (ADR 0206; `view_usage`)",
+      request: {
+        params: OrgParams,
+        query: z.object({ from: z.iso.datetime().optional(), to: z.iso.datetime().optional() }),
+      },
+      responses: { 200: json(CostPerSuccessReport), ...errors },
+    }),
+    async (c) => {
+      const { from, to } = c.req.valid("query");
+      const window = { from: from ? new Date(from) : undefined, to: to ? new Date(to) : undefined };
+      return c.json(await costPerSuccess(db, c.get("user").id, c.req.valid("param").orgId, window), 200);
     },
   );
 

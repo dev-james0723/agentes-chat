@@ -15644,6 +15644,14 @@
       "oldSub": "Verbrauch von vor der Erfassung des Kontos",
       "ofMonth": "{{percent}} des Monats",
       "shareLabel": "{{source}}: {{percent}} des Monats"
+    },
+    "costPerSuccess": {
+      "title": "Kosten pro bestätigtem Erfolg",
+      "intro": "Letzte 30 Tage. Ein Erfolg ist eine Aufgabe, deren Abnahmekriterien eine Person abgehakt hat und die seitdem niemand wieder geöffnet hat. Jeder Lauf zählt zu den Kosten.",
+      "perSuccess": "{{cost}} pro Erfolg",
+      "unknown": "Kosten unbekannt",
+      "noSuccess": "Noch kein bestätigter Erfolg",
+      "line": "{{runs}} Läufe · {{successes}} bestätigt · {{failed}} fehlgeschlagen · {{retries}} Wiederholungen"
     }
   },
   "budget": {

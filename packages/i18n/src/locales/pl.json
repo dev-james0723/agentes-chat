@@ -16632,6 +16632,14 @@
       "oldSub": "Zużycie sprzed zarejestrowania konta",
       "ofMonth": "{{percent}} miesiąca",
       "shareLabel": "{{source}}: {{percent}} miesiąca"
+    },
+    "costPerSuccess": {
+      "title": "Koszt na zweryfikowany sukces",
+      "intro": "Ostatnie 30 dni. Sukces to zadanie, którego kryteria akceptacji zaznaczyła osoba i którego nikt od tego czasu nie otworzył ponownie. Każde uruchomienie wlicza się do kosztu.",
+      "perSuccess": "{{cost}} na sukces",
+      "unknown": "Koszt nieznany",
+      "noSuccess": "Brak zweryfikowanych sukcesów",
+      "line": "Uruchomienia: {{runs}} · zweryfikowane: {{successes}} · nieudane: {{failed}} · ponowienia: {{retries}}"
     }
   },
   "budget": {
