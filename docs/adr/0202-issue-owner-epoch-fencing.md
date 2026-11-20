@@ -24,12 +24,17 @@ A task changes hands: a person reassigns it, an agent hands it to another, it is
 
 5. **Scope: one task, nothing else waits.** Only the issue a run is tied to is fenced for that run. Other issues, and child tasks (each has its own epoch, untouched when its parent changes hands), are not. People's own writes (the app, the API) are not fenced. Runs tied before this change have no epoch (`issue_epoch` null) and are never fenced. No lock is held beyond one short transaction, so unrelated work is never serialized.
 
+6. **A short grace after a handoff, none after a cancellation.** A task handed over while its run is mid-turn would otherwise lose the run's closing words (its last comment, the status it reached). So after a claim or handoff, the old run may keep writing the task for `OWNER_HANDOFF_GRACE_MS` (2 minutes), counted from `issues.owner_handoff_at`. This holds only while the run is still live (`finished_at` is null) and the issue is exactly one epoch past the run's. The grace allows comments, status, criteria and other edits. It never allows a change of owner: a claim, a reassignment or a cancellation by that run is refused at the write under the row lock, so duplicate claims still give one owner. After the window, when the run has ended, or after a second handoff, writes are refused as in §4. A cancellation clears `owner_handoff_at`, so it gives no grace and the old run is refused at once. Stopped background work counts as a cancellation.
+
+   Why: in the 14 days before this change, the live workspace saw 10 assignee changes, 2 of them while a run tied to that issue was still active. In 1 of those, the active run belonged to a different agent than the new assignee. Rare, but that is exactly the run whose closing comment would otherwise be lost.
+
 ## What it does not cover
 
 - Writes that don't go through our task code: a computer brain's shell, a connected app or a person's other tools. Those are collaboration, not enforcement, as before.
 - Effects outside the task itself (a pull request opened, a deploy) before the refusal. The fence stops the task's own state from being overwritten by a stale run; it cannot undo something already sent.
 - `commentIssue` and `setCriterion` check without holding the row lock across the post; a handoff that lands between the check and the post can let one last comment through. `updateIssue`, which changes status and owner, checks under the lock.
 - No lease or heartbeat: the epoch moves only when a person or an agent changes the owner, so a run that is merely slow is never fenced on its own.
+- The grace is a fixed time window, not "until the run's current turn ends": a turn has no durable end marker the task code can read. Two minutes covers a closing tool call; a run that is still working after that is refused and says so.
 
 ## Alternatives considered
 
@@ -39,4 +44,4 @@ A task changes hands: a person reassigns it, an agent hands it to another, it is
 
 ## Migration
 
-Additive only: `issues.owner_epoch integer not null default 0`, `agent_runs.issue_epoch integer`. Existing tasks start at 0 and existing runs stay unfenced.
+Additive only: `issues.owner_epoch integer not null default 0`, `issues.owner_handoff_at timestamptz`, `agent_runs.issue_epoch integer`. Existing tasks start at 0 and existing runs stay unfenced.

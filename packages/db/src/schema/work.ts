@@ -112,6 +112,11 @@ export const issues = pgTable(
      * refused at the Tool Gateway and at the write.
      */
     ownerEpoch: integer().notNull().default(0),
+    /**
+     * When the epoch last moved by a claim or handoff (ADR 0202 §6): the old run's grace to close its turn runs from
+     * here. Cleared by a cancellation, which gives no grace.
+     */
+    ownerHandoffAt: timestamp({ withTimezone: true }),
     labels: text().array().notNull().default(sql`'{}'::text[]`),
     dueDate: date({ mode: "string" }),
     /** `[{ id, text, done }]`. */

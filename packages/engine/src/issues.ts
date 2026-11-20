@@ -1328,17 +1328,27 @@ export async function updateIssue(
         (current.assigneeType ?? null) + (current.assigneeId ?? "")) ||
     (set.status === "canceled" && current.status !== "canceled");
   const expectedEpoch = owner.expectedOwnerEpoch ?? current.ownerEpoch;
-  if (handsOver) set.ownerEpoch = sql`${issues.ownerEpoch} + 1` as unknown as number;
+  if (handsOver) {
+    set.ownerEpoch = sql`${issues.ownerEpoch} + 1` as unknown as number;
+    // A cancellation gives the old run no grace; a claim or handoff lets it close its turn (ADR 0202 §6).
+    set.ownerHandoffAt = set.status === "canceled" ? null : new Date();
+  }
   const row = await db.transaction(async (tx) => {
     // An agent's run writes only at the epoch it started under, read under the row's lock (a stale writer).
     const fenced = actor.type === "agent" && Boolean(actor.runId);
     if (set.status === "done" || fenced) {
       const [locked] = await tx
-        .select({ id: issues.id, number: issues.number, ownerEpoch: issues.ownerEpoch })
+        .select({
+          id: issues.id,
+          number: issues.number,
+          ownerEpoch: issues.ownerEpoch,
+          ownerHandoffAt: issues.ownerHandoffAt,
+        })
         .from(issues)
         .where(eq(issues.id, current.id))
         .for("update");
-      if (locked && fenced) await assertOwnerEpoch(tx, actor, locked);
+      // In its grace a run may close its turn, never change who owns the task.
+      if (locked && fenced) await assertOwnerEpoch(tx, actor, locked, handsOver);
       if (set.status === "done" && (await hasPendingCapabilityWork(tx, orgId, current.id)))
         throw new ValidationError("This task still has a required capability evaluation in progress.");
     }
@@ -2151,7 +2161,7 @@ export async function setWorkIssueState(
         updatedAt: now,
         ...(status !== current.status ? { status, columnId: null, boardRank: topRank() } : {}),
         // Stopped work: its runs may no longer write the task (ADR 0202).
-        ...(ended === "canceled" ? { ownerEpoch: sql`${issues.ownerEpoch} + 1` } : {}),
+        ...(ended === "canceled" ? { ownerEpoch: sql`${issues.ownerEpoch} + 1`, ownerHandoffAt: null } : {}),
       })
       .where(eq(issues.id, current.id))
       .returning();

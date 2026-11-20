@@ -1,5 +1,5 @@
 {
-  "id": "772ab14a-cd74-43eb-a177-56df71ef53e8",
+  "id": "a811f930-e840-4de8-9761-bf948b7f8277",
   "prevId": "14b7d5b2-3346-4b3e-a188-6640b55f0850",
   "version": "7",
   "dialect": "postgresql",
@@ -28459,6 +28459,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "owner_handoff_at": {
+          "name": "owner_handoff_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "labels": {
           "name": "labels",
