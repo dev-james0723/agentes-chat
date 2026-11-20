@@ -3026,6 +3026,8 @@
     "atOnceHelp": "Berapa banyak pekerjaan yang tidak diminta siapa pun yang dikerjakannya bersamaan. Sisanya menunggu giliran.",
     "prs": "Pull request per jam",
     "prsHelp": "Paling banyak yang dibuka pekerjaannya sendiri dalam satu jam.",
+    "shots": "Tangkapan layar per tugas",
+    "shotsHelp": "Jumlah terbanyak yang boleh diambil satu pekerjaannya. Naikkan untuk agen yang memeriksa tampilan halaman. Tangkapan layar baru juga dijeda saat disk komputernya hampir penuh.",
     "call": "Agen yang boleh dipanggil",
     "callHelp": "Siapa yang boleh disebut atau diberi pekerjaan.",
     "callAll": "Semua",

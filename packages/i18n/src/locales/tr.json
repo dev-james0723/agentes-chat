@@ -3113,6 +3113,8 @@
     "atOnceHelp": "Kimsenin istemediği kaç işi aynı anda yapacağı. Diğerleri sırasını bekler.",
     "prs": "Saatte pull request",
     "prsHelp": "Kendi işinin bir saatte açabileceği en fazla sayı.",
+    "shots": "Görev başına ekran görüntüsü",
+    "shotsHelp": "Bir işinin alabileceği en fazla sayı. Sayfaların görünüşünü kontrol eden bir ajan için artır. Bilgisayarının diski neredeyse dolduğunda yeni ekran görüntüleri de duraklatılır.",
     "call": "Çağırabileceği ajanlar",
     "callHelp": "Kimden bahsedebileceği veya kime iş devredebileceği.",
     "callAll": "Hepsi",

@@ -1,4 +1,5 @@
 import { and, type Database, eq, isNotNull, schema, sql } from "@agenteschat/db";
+import { AUTONOMY_DEFAULTS, autonomySettings } from "./autonomy-settings";
 
 type MachineLoadRecord = schema.MachineLoadRecord;
 
@@ -50,7 +51,7 @@ export async function machinePressure(db: Database, orgId: string, machineId: st
 /** The words a capture gets back when it is refused or space is short; null when there is room. */
 export function pressureLine(p: ReturnType<typeof pressureOf>, what: "screenshot" | "recording"): string | null {
   if (p.level === "critical")
-    return `Not taken: the computer's disk is nearly full (${p.freeGb} GB free). A ${what} is optional: finish the work without it, or ask a person to make room.`;
+    return `Screenshots and recordings are paused on this computer: its disk is nearly full (${p.freeGb} GB free). This ${what} was not taken. Finish the work without it, or ask a person to make room. Nothing was deleted.`;
   if (p.level === "low")
     return `Space is short on this computer (${p.freeGb} GB free): take only the ${what}s the work needs.`;
   return null;
@@ -72,8 +73,18 @@ export async function capturesInRun(db: Database, orgId: string, runId: string, 
   return row?.n ?? 0;
 }
 
-/** A run's screenshot budget (ADR 0200): enough for every check that matters, not a frame per step. */
-export const MAX_SCREENSHOTS_PER_RUN = 60;
+/** A run's screenshot budget unless its agent's settings say otherwise (ADR 0200): every check that matters, not a frame per step. */
+export const MAX_SCREENSHOTS_PER_RUN = AUTONOMY_DEFAULTS.maxScreenshotsPerRun;
+
+/** The agent's own budget: its brakes (`agents.autonomy_brakes.maxScreenshotsPerRun`), else the default. */
+export async function screenshotBudget(db: Database, orgId: string, agentId: string | null | undefined) {
+  if (!agentId) return MAX_SCREENSHOTS_PER_RUN;
+  const [row] = await db
+    .select({ brakes: schema.agents.autonomyBrakes })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.id, agentId)));
+  return autonomySettings(row?.brakes).maxScreenshotsPerRun;
+}
 
 /**
  * Before a screenshot or recording: refused on a nearly full disk, or past the run's screenshot budget; otherwise
@@ -81,7 +92,7 @@ export const MAX_SCREENSHOTS_PER_RUN = 60;
  */
 export async function captureGate(
   db: Database,
-  ctx: { orgId: string; runId?: string | null },
+  ctx: { orgId: string; agentId?: string | null; runId?: string | null },
   machineId: string | null | undefined,
   what: "screenshot" | "recording",
 ): Promise<{ refused: string } | { warning: string | null }> {
@@ -89,10 +100,13 @@ export async function captureGate(
   const line = pressureLine(pressure, what);
   if (pressure.level === "critical" && line) return { refused: line };
   if (what === "screenshot" && ctx.runId) {
-    const taken = await capturesInRun(db, ctx.orgId, ctx.runId, "image");
-    if (taken >= MAX_SCREENSHOTS_PER_RUN)
+    const [taken, budget] = await Promise.all([
+      capturesInRun(db, ctx.orgId, ctx.runId, "image"),
+      screenshotBudget(db, ctx.orgId, ctx.agentId),
+    ]);
+    if (taken >= budget)
       return {
-        refused: `Not taken: this work has ${taken} screenshots already. Keep the ones that prove a check; to know what a page or screen says, read it instead.`,
+        refused: `Not taken: this work has ${taken} screenshots already, the limit in your settings. Keep the ones that prove a check. To know what a page or screen says, read it instead.`,
       };
   }
   return { warning: line };

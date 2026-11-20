@@ -3127,6 +3127,8 @@
     "atOnceHelp": "Hoeveel klussen waar niemand om vroeg hij tegelijk doet. De rest wacht op zijn beurt.",
     "prs": "Pull requests per uur",
     "prsHelp": "Het hoogste aantal dat zijn eigen werk in een uur opent.",
+    "shots": "Schermafbeeldingen per taak",
+    "shotsHelp": "Het maximum dat één stuk werk mag maken. Verhoog het voor een agent die controleert hoe pagina’s eruitzien. Nieuwe schermafbeeldingen pauzeren ook als de schijf van zijn computer bijna vol is.",
     "call": "Agents die hij mag roepen",
     "callHelp": "Wie hij mag noemen of aan wie hij werk mag doorgeven.",
     "callAll": "Alle",

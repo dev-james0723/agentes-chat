@@ -3124,6 +3124,8 @@
     "atOnceHelp": "Wie viele Aufgaben, um die niemand gebeten hat, er gleichzeitig erledigt. Die anderen warten, bis sie dran sind.",
     "prs": "Pull Requests pro Stunde",
     "prsHelp": "Höchstens so viele öffnet seine eigene Arbeit in einer Stunde.",
+    "shots": "Screenshots pro Aufgabe",
+    "shotsHelp": "So viele darf eine seiner Arbeiten höchstens machen. Erhöhe den Wert für einen Agenten, der prüft, wie Seiten aussehen. Neue Screenshots pausieren außerdem, wenn die Festplatte seines Computers fast voll ist.",
     "call": "Agenten, die er rufen darf",
     "callHelp": "Wen er erwähnen oder wem er Arbeit übergeben darf.",
     "callAll": "Alle",

@@ -3260,6 +3260,9 @@ export const ptBR = {
     atOnceHelp: "Quantos trabalhos que ninguém pediu ele faz ao mesmo tempo. Os outros esperam a vez.",
     prs: "Pull requests por hora",
     prsHelp: "O máximo que o próprio trabalho dele abre em uma hora.",
+    shots: "Capturas de tela por tarefa",
+    shotsHelp:
+      "O máximo que um trabalho dele pode tirar. Aumente para um agente que confere a aparência de páginas. Novas capturas também pausam quando o disco do computador está quase cheio.",
     call: "Agentes que pode chamar",
     callHelp: "Quem ele pode mencionar ou para quem pode passar trabalho.",
     callAll: "Todos",

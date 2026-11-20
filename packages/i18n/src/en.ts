@@ -3331,6 +3331,9 @@ export const en = {
     atOnceHelp: "How many jobs nobody asked for it runs at the same time. The others wait their turn.",
     prs: "Pull requests an hour",
     prsHelp: "The most its own work opens in an hour.",
+    shots: "Screenshots per task",
+    shotsHelp:
+      "The most one piece of its work may take. Raise it for an agent that checks how pages look. New screenshots also pause while its computer's disk is nearly full.",
     call: "Agents it may call",
     callHelp: "Who it may mention or hand work to.",
     callAll: "All",

@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, schema } from "@agenteschat/db";
+import { autonomySettings } from "../src/autonomy-settings";
 import {
   approveCleanup,
   approveFileCleanup,
@@ -474,7 +475,9 @@ describe("approving and running a cleanup", () => {
         .where(eq(schema.machines.id, paired.machineId));
     await load(10);
     const ctx = { orgId: fx.org.id, runId: null };
-    expect(await captureGate(fx.db, ctx, paired.machineId, "recording")).toMatchObject({ refused: expect.any(String) });
+    expect(await captureGate(fx.db, ctx, paired.machineId, "recording")).toMatchObject({
+      refused: expect.stringMatching(/paused on this computer.*Nothing was deleted/),
+    });
     await load(20);
     expect(await captureGate(fx.db, ctx, paired.machineId, "screenshot")).toMatchObject({
       warning: expect.stringMatching(/short/),
@@ -510,5 +513,20 @@ describe("approving and running a cleanup", () => {
     expect(await captureGate(fx.db, { orgId: fx.org.id, runId: run.id }, paired.machineId, "screenshot")).toMatchObject(
       { refused: expect.stringMatching(/screenshots already/) },
     );
+    // The default is 60 for every agent that never set its own.
+    expect(MAX_SCREENSHOTS_PER_RUN).toBe(60);
+    expect(autonomySettings({}).maxScreenshotsPerRun).toBe(60);
+    const gate = (agentId: string) =>
+      captureGate(fx.db, { orgId: fx.org.id, agentId, runId: run.id }, paired.machineId, "screenshot");
+    expect(await gate(fx.agent.id)).toMatchObject({ refused: expect.stringMatching(/limit in your settings/) });
+    // An agent set for visual checks gets more: its own setting, through the agent's brakes.
+    await fx.db
+      .update(schema.agents)
+      .set({ autonomyBrakes: { maxScreenshotsPerRun: 250 } })
+      .where(eq(schema.agents.id, fx.agent.id));
+    expect(await gate(fx.agent.id)).toEqual({ warning: null });
+    // A nearly full disk still stops it, whatever the setting.
+    await load(10);
+    expect(await gate(fx.agent.id)).toMatchObject({ refused: expect.stringMatching(/paused/) });
   });
 });

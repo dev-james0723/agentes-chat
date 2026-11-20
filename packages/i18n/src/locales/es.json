@@ -3221,6 +3221,8 @@
     "atOnceHelp": "Cuántos trabajos que nadie pidió hace al mismo tiempo. Los demás esperan su turno.",
     "prs": "Pull requests por hora",
     "prsHelp": "Lo máximo que su propio trabajo abre en una hora.",
+    "shots": "Capturas de pantalla por tarea",
+    "shotsHelp": "Lo máximo que puede tomar un trabajo suyo. Súbelo para un agente que revisa cómo se ven las páginas. Las capturas nuevas también se pausan cuando el disco de su ordenador está casi lleno.",
     "call": "Agentes a los que puede llamar",
     "callHelp": "A quién puede mencionar o pasar trabajo.",
     "callAll": "Todos",

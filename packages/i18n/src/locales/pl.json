@@ -3324,6 +3324,8 @@
     "atOnceHelp": "Ile zadań, o które nikt nie prosił, wykonuje jednocześnie. Pozostałe czekają na swoją kolej.",
     "prs": "Pull requesty na godzinę",
     "prsHelp": "Najwięcej, ile jego własna praca otwiera w godzinę.",
+    "shots": "Zrzuty ekranu na zadanie",
+    "shotsHelp": "Najwięcej, ile może zrobić jedna jego praca. Zwiększ dla agenta, który sprawdza wygląd stron. Nowe zrzuty są też wstrzymywane, gdy dysk jego komputera jest prawie pełny.",
     "call": "Agenci, których może wołać",
     "callHelp": "Kogo może wspomnieć lub komu przekazać pracę.",
     "callAll": "Wszyscy",
