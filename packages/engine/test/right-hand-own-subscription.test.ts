@@ -129,7 +129,23 @@ test("a personal named plan can move to its owner's explicit Codex sign-in and r
   const [machine] = await fx.db.select().from(schema.machines).where(eq(schema.machines.id, machineId));
   if (!machine) throw new Error("Missing machine");
   const plan = await resolveBrain(
-    { db: fx.db, machines: { status: async () => ({ ...machine, lastSeenAt: machine.lastSeenAt?.toISOString() ?? null }) } },
+    {
+      db: fx.db,
+      machines: {
+        status: async () => ({
+          id: machine.id,
+          orgId: machine.orgId,
+          name: machine.name,
+          online: machine.online,
+          execAllowed: machine.execAllowed,
+          os: machine.os,
+          protocol: machine.protocol,
+          executors: machine.executors,
+          pairedByUserId: machine.pairedByUserId,
+          lastSeenAt: machine.lastSeenAt?.toISOString() ?? null,
+        }),
+      },
+    },
     agent,
     run,
     dm.id,
