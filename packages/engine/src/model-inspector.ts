@@ -29,6 +29,8 @@ import {
 } from "./brains/select";
 import type { BrainKind } from "./brains/types";
 import { caches } from "./cache";
+import { type CreditWorkForecast, creditWorkForecast } from "./credit-admission";
+import { creditLedgerSnapshot } from "./credit-ledger";
 import { publishAgentsChanged } from "./events";
 import type { Judge } from "./judge";
 import { refreshAiAccounts } from "./machine-accounts";
@@ -39,6 +41,176 @@ import { chooseModelInspectorRoute, type ModelInspectorCandidate } from "./model
 import { agentUsageFor } from "./plan-usage";
 import { createQuotaCliQualifier, hasCredentialText } from "./quota-qualifier";
 import { personalBrain, thinkingAgent } from "./right-hand";
+
+export interface ModelInspectorCreditPool {
+  provider: "openai" | "anthropic";
+  poolId: string | null;
+  enabled: boolean;
+  paused: boolean;
+  status: string;
+  evidenceStatus: "unverified" | "verified" | "expired" | "stale" | "unavailable";
+  pricingStatus: "verified" | "expired" | "changed" | "unverified";
+  eligibleRouteCount: number;
+  verifiedAt: string | null;
+  validUntil: string | null;
+  grantExpiresAt: string | null;
+  grantAmountNanoUsd: number | null;
+  conservativeRemainingNanoUsd: number | null;
+  automaticLimitNanoUsd: number;
+  emergencyLimitNanoUsd: number;
+  safetyBufferNanoUsd: number;
+  automaticAvailableNanoUsd: number;
+  approvedEmergencyAvailableNanoUsd: number;
+  activeReserveApprovalCount: number;
+  spentNanoUsd: number | null;
+  heldNanoUsd: number | null;
+  unresolvedCount: number;
+  forecast: CreditWorkForecast;
+}
+export interface ModelInspectorCreditStatus {
+  enabled: boolean;
+  state: "disabled" | "unverified" | "available" | "blocked" | "unavailable";
+  observedAt: string;
+  /** Verification means current owner-recorded provider billing evidence, not a live provider balance call. */
+  evidenceSource: "owner_recorded_provider_billing";
+  emergencyRequiresOwnerApproval: true;
+  paidTopUpsEnabled: false;
+  unresolvedCount: number;
+  pools: ModelInspectorCreditPool[];
+}
+const creditProviders = ["openai", "anthropic"] as const;
+function missingCreditSchema(error: unknown): boolean {
+  let current = error;
+  for (let i = 0; i < 5 && current && typeof current === "object"; i++) {
+    if ((current as { code?: unknown }).code === "42P01") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+/** Read-only, allowlisted durable projection. Disabling admission does not hide debts or release holds. */
+export async function readModelInspectorCredits(
+  db: Database,
+  orgId: string,
+  enabled: boolean,
+  now: () => Date = () => new Date(),
+): Promise<ModelInspectorCreditStatus> {
+  const at = now();
+  const emptyPool = (provider: "openai" | "anthropic", unavailable = false): ModelInspectorCreditPool => ({
+    provider,
+    poolId: null,
+    enabled: false,
+    paused: false,
+    status: unavailable ? "unavailable" : "unverified",
+    evidenceStatus: unavailable ? "unavailable" : "unverified",
+    pricingStatus: "unverified",
+    eligibleRouteCount: 0,
+    verifiedAt: null,
+    validUntil: null,
+    grantExpiresAt: null,
+    grantAmountNanoUsd: unavailable ? null : 0,
+    conservativeRemainingNanoUsd: unavailable ? null : 0,
+    automaticLimitNanoUsd: 0,
+    emergencyLimitNanoUsd: 0,
+    safetyBufferNanoUsd: 0,
+    automaticAvailableNanoUsd: 0,
+    approvedEmergencyAvailableNanoUsd: 0,
+    activeReserveApprovalCount: 0,
+    spentNanoUsd: unavailable ? null : 0,
+    heldNanoUsd: unavailable ? null : 0,
+    unresolvedCount: 0,
+    forecast: creditWorkForecast({ samples: [], now: at.getTime(), remainingNanoUsd: 0, nextUnitBoundNanoUsd: null }),
+  });
+  const base = {
+    enabled,
+    observedAt: at.toISOString(),
+    evidenceSource: "owner_recorded_provider_billing" as const,
+    emergencyRequiresOwnerApproval: true as const,
+    paidTopUpsEnabled: false as const,
+  };
+  try {
+    const snapshot = await creditLedgerSnapshot(db, orgId, () => at);
+    const attempts = schema.creditAttempts;
+    const rows = await db
+      .select({
+        poolId: attempts.poolId,
+        workUnitKey: attempts.workUnitKey,
+        actualNanoUsd: sql<string>`sum(${attempts.actualNanoUsd})`,
+        settledAt: sql<Date>`max(${attempts.settledAt})`,
+      })
+      .from(attempts)
+      .where(
+        and(
+          eq(attempts.orgId, orgId),
+          eq(attempts.state, "settled"),
+          gte(attempts.settledAt, new Date(at.getTime() - 7 * 86_400_000)),
+        ),
+      )
+      .groupBy(attempts.poolId, attempts.workUnitKey)
+      .orderBy(desc(sql`max(${attempts.settledAt})`))
+      .limit(200);
+    const unresolvedKeys = new Set(snapshot.unresolved.map((r) => r.workUnitKey));
+    const pools = creditProviders.map((provider): ModelInspectorCreditPool => {
+      const p = snapshot.pools.find((row) => row.provider === provider);
+      if (!p) return emptyPool(provider);
+      const ready =
+        enabled && p.evidenceStatus === "verified" && p.pricingStatus === "verified" && p.eligibleRouteCount > 0;
+      const available = ready ? p.automaticAvailableNanoUsd : 0;
+      const approvedReserve = ready ? p.approvedEmergencyAvailableNanoUsd : 0;
+      const samples = rows
+        .filter((r) => r.poolId === p.poolId && !unresolvedKeys.has(r.workUnitKey))
+        .map((r) => ({
+          actualNanoUsd: Number(r.actualNanoUsd),
+          settledAt: new Date(r.settledAt).getTime(),
+          workUnitId: r.workUnitKey,
+        }));
+      return {
+        provider,
+        poolId: p.poolId,
+        enabled: p.enabled,
+        paused: p.paused,
+        status: p.status,
+        evidenceStatus: p.evidenceStatus as ModelInspectorCreditPool["evidenceStatus"],
+        pricingStatus: p.pricingStatus,
+        eligibleRouteCount: p.eligibleRouteCount,
+        verifiedAt: p.verifiedAt,
+        validUntil: p.validUntil,
+        grantExpiresAt: p.grantExpiresAt,
+        grantAmountNanoUsd: p.grantAmountNanoUsd,
+        conservativeRemainingNanoUsd: p.conservativeRemainingNanoUsd,
+        automaticLimitNanoUsd: p.automaticLimitNanoUsd,
+        emergencyLimitNanoUsd: p.emergencyLimitNanoUsd,
+        safetyBufferNanoUsd: p.safetyBufferNanoUsd,
+        automaticAvailableNanoUsd: available,
+        approvedEmergencyAvailableNanoUsd: approvedReserve,
+        activeReserveApprovalCount: p.activeReserveApprovalCount,
+        spentNanoUsd: p.spentNanoUsd,
+        heldNanoUsd: p.heldNanoUsd,
+        unresolvedCount: snapshot.unresolved.filter((r) => r.poolId === p.poolId).length,
+        forecast: creditWorkForecast({
+          samples,
+          now: at.getTime(),
+          remainingNanoUsd: available + approvedReserve,
+          nextUnitBoundNanoUsd: null,
+        }),
+      };
+    });
+    return {
+      ...base,
+      pools,
+      unresolvedCount: snapshot.unresolved.length,
+      state: !enabled
+        ? "disabled"
+        : pools.some((p) => p.automaticAvailableNanoUsd > 0 || p.approvedEmergencyAvailableNanoUsd > 0)
+          ? "available"
+          : pools.every((p) => p.evidenceStatus === "unverified")
+            ? "unverified"
+            : "blocked",
+    };
+  } catch (error) {
+    if (!missingCreditSchema(error)) throw error;
+    return { ...base, state: "unavailable", unresolvedCount: 0, pools: creditProviders.map((p) => emptyPool(p, true)) };
+  }
+}
 
 type RouteKind = ModelInspectorCandidate["kind"];
 const ROUTES: readonly RouteKind[] = ["claude_code", "codex", "grok"];
@@ -68,6 +240,7 @@ export interface ModelInspectorDeps {
   maxAgeMs?: number;
   cooldownMs?: number;
   maxSwitches?: number;
+  creditFallbackEnabled?: boolean;
   now?: () => Date;
 }
 
@@ -107,6 +280,8 @@ export interface ModelInspectorReport {
   policy: { thresholdPercent: number; maxAgeMs: number; cooldownMs: number; maxSwitches: number; intervalMs: number };
   agents: ModelInspectorAgentReport[];
   counts: { inspected: number; switched: number; boundary: number; blocked: number; unknown: number };
+  /** Always refreshed from durable records by report(), independently of the fleet cache. */
+  credits?: ModelInspectorCreditStatus;
 }
 
 type Snapshot = Awaited<ReturnType<typeof loadFleet>>;
@@ -880,8 +1055,9 @@ export function createModelInspector(deps: ModelInspectorDeps) {
     },
     async report(orgId: string): Promise<ModelInspectorReport | null> {
       if (!enabled(orgId)) return null;
+      const credits = await readModelInspectorCredits(deps.db, orgId, deps.creditFallbackEnabled === true, now);
       const last = latest.get(orgId);
-      if (last && now().getTime() - Date.parse(last.checkedAt) <= SWEEP_MS) return last;
+      if (last && now().getTime() - Date.parse(last.checkedAt) <= SWEEP_MS) return { ...last, credits };
       const fleet = await loadFleet(deps.db, orgId);
       const work = await observeModelInspectorWork({
         db: deps.db,
@@ -890,11 +1066,14 @@ export function createModelInspector(deps: ModelInspectorDeps) {
         thresholdPercent: policy.thresholdPercent,
         maxAgeMs: policy.maxAgeMs,
       });
-      return finish(
-        orgId,
-        await Promise.all(fleet.agents.map(async (a) => inspect(fleet, await forInspection(deps.db, a), work))),
-        "snapshot",
-      );
+      return {
+        ...finish(
+          orgId,
+          await Promise.all(fleet.agents.map(async (a) => inspect(fleet, await forInspection(deps.db, a), work))),
+          "snapshot",
+        ),
+        credits,
+      };
     },
   };
 }

@@ -527,6 +527,15 @@ export const envVars = {
     description: "Claude Code model a quota handoff runs on.",
     section: "Agents",
   },
+  CREDIT_FALLBACK_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "After compatible subscription routes are exhausted, permits verified OpenAI Pro or Claude Ultra API grant fallback with transactional per-cycle budgets. Off by default; registered grant keys and liabilities stay protected when off.",
+    section: "Agents",
+  },
   QUOTA_RESERVE_MAX_AGE_MS: {
     schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
     description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",

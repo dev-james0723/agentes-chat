@@ -6301,6 +6301,7 @@ export type NotificationKind =
   /** A routine's run waits for its agent's plan to reset (once per outage). Opens it in Rotinas. */
   | "routine_waiting_plan"
   | "plan_reset_unknown"
+  | "credit_continuity"
   /** ADR 0136: an agent back from its plan or budget skipped catch-ups that looked handled (its owner; `count`). */
   | "catch_up_closed"
   /** ADR 0136: who asked, when their catch-up was skipped crediting someone else (`latest.title` who, `latest.reason`). */
@@ -6506,6 +6507,9 @@ export interface NotificationActor {
 
 /** Where it lives: only the relevant ids are set. */
 export interface NotificationSource {
+  creditPoolId?: string;
+  creditCycleId?: string;
+  creditProvider?: "openai" | "anthropic";
   channelId?: string;
   threadId?: string;
   messageId?: string;
