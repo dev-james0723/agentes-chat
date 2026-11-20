@@ -163,6 +163,56 @@ test("stage rejects alternate base64 encodings, paths and metadata before adding
   expect(world.state.executions).toHaveLength(0);
 });
 
+test("stage takes plain UTF-8 text files, so a model never has to hand-encode base64", async () => {
+  const { world, source } = await ready();
+  const staged = await world.stage();
+  const proposal = await world.service.propose(world.ctx, { needKey: "receipt-normalizer/v1" });
+  if (proposal.kind !== "draft") throw new Error("expected draft");
+  const stage = named(await source.tools(world.ctx), "stage_foundry_package");
+  const text = "export function normalizeReceiptJson(inputJson) { return inputJson; } // é 中文";
+  const input = {
+    candidateId: staged.candidateId,
+    revision: proposal.candidate.revision,
+    manifestJson: JSON.stringify({ ...staged.bundle.manifest, version: "1.0.2" }),
+    files: [{ path: "tool.mjs", text }],
+  };
+  expect(await stage.checkCall?.(input, world.ctx)).toMatchObject({ ok: true });
+  const result = await stage.execute(input, world.ctx);
+  expect(result.isError).not.toBe(true);
+  const [stored] = (await f.db.select().from(schema.foundryVersions)).filter(
+    (v) => v.digest === JSON.parse(result.content).digest,
+  );
+  expect(stored).toBeDefined();
+  expect(world.state.executions).toHaveLength(0);
+});
+
+test("a refused file says which file and what to change, never more", async () => {
+  const { world, source } = await ready();
+  const staged = await world.stage();
+  const proposal = await world.service.propose(world.ctx, { needKey: "receipt-normalizer/v1" });
+  if (proposal.kind !== "draft") throw new Error("expected draft");
+  const stage = named(await source.tools(world.ctx), "stage_foundry_package");
+  const base = {
+    candidateId: staged.candidateId,
+    revision: proposal.candidate.revision,
+    manifestJson: staged.bundle.manifestJson,
+  };
+  const notCanonical = {
+    ...base,
+    files: [
+      { path: "tool.mjs", text: "x" },
+      { path: "development.json", base64: "eA" },
+    ],
+  };
+  const check = await stage.checkCall?.(notCanonical, world.ctx);
+  expect(check).toMatchObject({ ok: false, data: { code: "SCHEMA_INVALID" } });
+  expect(check && !check.ok ? check.message : "").toContain("files[1]");
+  expect(check && !check.ok ? check.message : "").toContain("text");
+  const both = { ...base, files: [{ path: "tool.mjs", text: "x", base64: "eA==" }] };
+  expect(await stage.checkCall?.(both, world.ctx)).toMatchObject({ ok: false });
+  expect((await stage.execute(both, world.ctx)).isError).toBe(true);
+});
+
 test("cached management definition checks the current native trigger before a draft mutation", async () => {
   const { world, source } = await ready();
   const propose = named(await source.tools(world.ctx), "propose_foundry_capability");
