@@ -1181,6 +1181,36 @@ test("work analytics: fleet-wide and one workspace's; 401 without the token, 400
   expect([after.input - before.input, after.output - before.output]).toEqual([40, 2]);
 });
 
+test("a deploy record is written only for the source this server runs (ADR 0204)", async () => {
+  const digest = `sha256:${"1".repeat(64)}`;
+  const app = createOperatorApp({ ...deps, sourceIdentity: async () => ({ digest, files: 10 }) }, TOKEN);
+  const post = (orgId: string, json: unknown) =>
+    app.request(`/api/operator/v1/orgs/${orgId}/deploys`, {
+      method: "POST",
+      headers: { authorization: BEARER, "content-type": "application/json" },
+      body: JSON.stringify(json),
+    });
+  const input = { repo: "acme/app", commit: "a".repeat(40), sourceDigest: digest };
+  const first = await post(acme.orgId, input);
+  expect(first.status).toBe(200);
+  const record = await body<{ id: string; commit: string }>(first);
+  expect(record.commit).toBe(input.commit);
+  expect((await body<{ id: string }>(await post(acme.orgId, input))).id).toBe(record.id);
+  // Negative controls: a digest this server doesn't run, no workspace, a bad commit, no token.
+  const other = await post(acme.orgId, { ...input, sourceDigest: `sha256:${"2".repeat(64)}` });
+  expect(other.status).toBe(409);
+  expect(await other.json()).toMatchObject({ error: { code: "deploy_not_running" } });
+  expect((await post(crypto.randomUUID(), input)).status).toBe(404);
+  expect((await post(acme.orgId, { ...input, commit: "main" })).status).toBe(400);
+  const blind = createOperatorApp(deps, TOKEN);
+  const unknown = await blind.request(`/api/operator/v1/orgs/${acme.orgId}/deploys`, {
+    method: "POST",
+    headers: { authorization: BEARER, "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  expect(unknown.status).toBe(409);
+});
+
 test("the OpenAPI document is the committed contract (ADR 0056)", async () => {
   const doc = await body(await op("/openapi.json"));
   const file = Bun.file(`${import.meta.dir}/operator-openapi.json`);

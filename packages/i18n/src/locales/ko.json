@@ -7265,6 +7265,14 @@
     "notFound": "이 작업은 없거나 접근 권한이 없어요.",
     "createdBy": "#{{number}} · {{name}}이(가) 만듦",
     "createdByShort": "{{name}}이(가) 만듦",
+    "founder": {
+      "title": "전달 상태",
+      "available": "사용 중인 앱에 반영됨",
+      "notAvailable": "사용 중인 앱에 미반영",
+      "verified": "확인됨",
+      "notVerified": "확인 안 됨",
+      "needsYou": "결정이 필요해요"
+    },
     "fromMessage": "<0>#{{channel}}의 메시지</0>에서",
     "fromAgent": "에이전트에게 보낸 요청에서",
     "subIssues_other": "하위 작업 · {{count}}",

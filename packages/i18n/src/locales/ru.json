@@ -7956,6 +7956,14 @@
     "notFound": "Такой задачи нет, или у вас нет к ней доступа.",
     "createdBy": "#{{number}} · автор: {{name}}",
     "createdByShort": "Автор: {{name}}",
+    "founder": {
+      "title": "Статус поставки",
+      "available": "В рабочем приложении",
+      "notAvailable": "Не в рабочем приложении",
+      "verified": "Проверено",
+      "notVerified": "Не проверено",
+      "needsYou": "Нужно ваше решение"
+    },
     "fromMessage": "из <0>сообщения в #{{channel}}</0>",
     "fromAgent": "из запроса к агенту",
     "subIssues_one": "Подзадачи · {{count}}",

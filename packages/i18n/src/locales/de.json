@@ -7521,6 +7521,14 @@
     "notFound": "Diese Aufgabe gibt es nicht, oder du hast keinen Zugriff.",
     "createdBy": "#{{number}} · erstellt von {{name}}",
     "createdByShort": "Erstellt von {{name}}",
+    "founder": {
+      "title": "Lieferstatus",
+      "available": "In der laufenden App",
+      "notAvailable": "Nicht in der laufenden App",
+      "verified": "Geprüft",
+      "notVerified": "Nicht geprüft",
+      "needsYou": "Braucht dich"
+    },
     "fromMessage": "aus <0>einer Nachricht in #{{channel}}</0>",
     "fromAgent": "aus einer Anfrage an einen Agent",
     "subIssues_one": "Unteraufgaben · {{count}}",

@@ -4180,6 +4180,18 @@ export const useIssueActivity = (orgId: string, id: string | undefined) => {
 };
 
 /**
+ * A task's status from stored evidence (ADR 0204). Under `issues`, so whatever refreshes the task refreshes it; its
+ * `updatedAt` in the key reads it again when the task itself changed.
+ */
+export const useIssueFounderStatus = (orgId: string, id: string, updatedAt: string) => {
+  const api = useApi();
+  return useQuery({
+    queryKey: [...keys.issueFounderStatus(orgId, id), updatedAt],
+    queryFn: () => api.issues.founderStatus(orgId, id),
+  });
+};
+
+/**
  * A live event while a task is open: a comment or an event on it (`issue.comment`) goes into its activity once, and
  * an event also refreshes the task itself (status, assignee, a linked PR). `false`: not about this task.
  */

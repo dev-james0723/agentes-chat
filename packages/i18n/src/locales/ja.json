@@ -7268,6 +7268,14 @@
     "notFound": "このタスクは存在しないか、アクセス権がありません。",
     "createdBy": "#{{number}} · 作成者: {{name}}",
     "createdByShort": "作成者: {{name}}",
+    "founder": {
+      "title": "納品状況",
+      "available": "使用中のアプリに反映済み",
+      "notAvailable": "使用中のアプリに未反映",
+      "verified": "確認済み",
+      "notVerified": "未確認",
+      "needsYou": "あなたの判断が必要"
+    },
     "fromMessage": "<0>#{{channel}}のメッセージ</0>から",
     "fromAgent": "エージェントへの依頼から",
     "subIssues_other": "サブタスク · {{count}}",

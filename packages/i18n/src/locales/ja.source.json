@@ -18214,6 +18214,24 @@
   "issues.createdByShort": {
     "value": "Created by {{name}}"
   },
+  "issues.founder.title": {
+    "value": "Delivery status"
+  },
+  "issues.founder.available": {
+    "value": "In the running app"
+  },
+  "issues.founder.notAvailable": {
+    "value": "Not in the running app"
+  },
+  "issues.founder.verified": {
+    "value": "Verified"
+  },
+  "issues.founder.notVerified": {
+    "value": "Not verified"
+  },
+  "issues.founder.needsYou": {
+    "value": "Needs you"
+  },
   "issues.fromMessage": {
     "value": "from <0>a message in #{{channel}}</0>"
   },
