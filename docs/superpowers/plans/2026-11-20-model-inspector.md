@@ -90,6 +90,8 @@
 
 - [x] Reproduce the real right-hand `no_ai` path with the actual resolver, covering known-limit startup and a no-effect provider refusal.
 - [x] Attempt qualified personal continuation before terminal no-AI handling; bind resolver override and durable admission to the real person, owner, machine and source session. Preserve locked tools and reject changed personal authority or unresolved effects.
-- [ ] Verify the focused regression plus directly affected continuation tests, engine/server type checks, formatting and boundaries on the exact combined release.
-- [ ] Build from the current verified personal-route image, activate only the app at idle, and verify exact source identity and runtime health. No further database or native-runner change is required.
-- [ ] Preserve evidence for the earlier failed no-work verification message, recover it through the existing native answer-now path, and verify personal continuity with bounded live evidence without altering quota telemetry. Record the API's actual message/run-ID behavior.
+- [x] Verify the focused regression plus directly affected continuation tests, engine/server type checks, formatting and boundaries on the exact combined release.
+- [x] Build from the current verified personal-route image, activate only the app at idle, and verify exact source identity and runtime health. No further database or native-runner change is required.
+- [x] Preserve evidence for the earlier failed no-work verification message, recover it through the existing native answer-now path, and verify personal continuity with bounded live evidence without altering quota telemetry. Record the API's actual message/run-ID behavior.
+
+**Task 5 evidence:** [Public verification record](../specs/2026-11-20-model-inspector-verification.md). Final active-personal gate: 37 passed, 0 failed, 201 assertions. The bounded live personal same-run handoff, automatic private-route restoration and final isolation/runtime snapshot passed. Hosted CI did not start because of the documented external GitHub account-billing lock.
