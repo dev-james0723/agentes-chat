@@ -470,3 +470,46 @@ describe("reading what GitHub sent", () => {
     expect(githubItemOfCall("issue_write", { owner: "acme", repo: "app", method: "update" }, "done")).toBeNull();
   });
 });
+
+describe("a merge is recorded with its commit for the task's status (ADR 0204)", () => {
+  const merged = (sender: Record<string, unknown>) => ({
+    ...base(sender),
+    action: "closed",
+    pull_request: {
+      number: 42,
+      merged: true,
+      merge_commit_sha: "c".repeat(40),
+      html_url: "https://github.com/acme/app/pull/42",
+    },
+  });
+  const merges = () =>
+    f.db
+      .select()
+      .from(schema.outcomes)
+      .where(and(eq(schema.outcomes.orgId, f.org.id), eq(schema.outcomes.kind, "pr_merged")));
+
+  test("whoever merged, the app's own bot included, and once per commit", async () => {
+    await world();
+    await queueGitHubAppEvent(f.db, {
+      event: "pull_request",
+      delivery: "d-1",
+      payload: merged({ id: 9, login: `${SLUG}[bot]`, type: "Bot" }),
+      slug: SLUG,
+    });
+    await queueGitHubAppEvent(f.db, { event: "pull_request", delivery: "d-2", payload: merged(MEMBER_GH), slug: SLUG });
+    expect(await merges()).toMatchObject([
+      { subject: "acme/app#42", source: "webhook", details: { mergeCommit: "c".repeat(40) } },
+    ]);
+  });
+
+  test("negative control: an installation bound nowhere records nothing", async () => {
+    await world();
+    await queueGitHubAppEvent(f.db, {
+      event: "pull_request",
+      delivery: "d-3",
+      payload: { ...merged(MEMBER_GH), installation: { id: 99 } },
+      slug: SLUG,
+    });
+    expect(await merges()).toEqual([]);
+  });
+});

@@ -7567,6 +7567,14 @@
     "notFound": "Deze taak bestaat niet of je hebt geen toegang.",
     "createdBy": "#{{number}} · gemaakt door {{name}}",
     "createdByShort": "Gemaakt door {{name}}",
+    "founder": {
+      "title": "Leveringsstatus",
+      "available": "In de app in gebruik",
+      "notAvailable": "Niet in de app in gebruik",
+      "verified": "Geverifieerd",
+      "notVerified": "Niet geverifieerd",
+      "needsYou": "Wacht op jou"
+    },
     "fromMessage": "uit <0>een bericht in #{{channel}}</0>",
     "fromAgent": "uit een verzoek aan een agent",
     "subIssues_one": "Subtaken · {{count}}",

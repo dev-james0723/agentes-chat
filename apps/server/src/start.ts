@@ -624,6 +624,7 @@ async function boot(
         emails: adapters.email.delivers,
         humanCheck: adapters.humanCheck,
         sessions: engine.sessions,
+        sourceIdentity,
       });
   if (operator) {
     log.info("operator API listening", { url: `http://${config.HOST}:${operator.port}${OPERATOR_API_PREFIX}` });

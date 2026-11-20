@@ -7313,6 +7313,14 @@
     "notFound": "这个任务不存在，或你无权访问。",
     "createdBy": "#{{number}} · 由 {{name}} 创建",
     "createdByShort": "由 {{name}} 创建",
+    "founder": {
+      "title": "交付状态",
+      "available": "已在使用中的应用里",
+      "notAvailable": "不在使用中的应用里",
+      "verified": "已核实",
+      "notVerified": "未核实",
+      "needsYou": "需要你"
+    },
     "fromMessage": "来自<0>#{{channel}} 中的一条消息</0>",
     "fromAgent": "来自对智能体的一个请求",
     "subIssues_other": "子任务 · {{count}}",

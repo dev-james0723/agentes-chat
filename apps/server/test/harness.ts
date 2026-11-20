@@ -115,6 +115,8 @@ export async function createTestServer(
     speechFetch?: typeof fetch;
     /** AI apps (ADR 0119): a fake fetch of apps' metadata documents (CIMD); absent = none answers. */
     appsFetchDocument?: FetchAppDocument;
+    /** The running server's source identity (`/api/health`, a task's founder status); absent: none. */
+    sourceIdentity?: () => Promise<{ digest: string; files: number }>;
   } = {},
 ) {
   const { db, close } = await createTestDatabase();
@@ -201,6 +203,7 @@ export async function createTestServer(
     version: "test",
     modules: [],
     pingDatabase: async () => {},
+    sourceIdentity: options.sourceIdentity,
     appsFetchDocument:
       options.appsFetchDocument ??
       (async () => {

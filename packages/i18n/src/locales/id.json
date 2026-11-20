@@ -7302,6 +7302,14 @@
     "notFound": "Tugas ini tidak ada atau kamu tidak punya akses.",
     "createdBy": "#{{number}} · dibuat oleh {{name}}",
     "createdByShort": "Dibuat oleh {{name}}",
+    "founder": {
+      "title": "Status pengiriman",
+      "available": "Ada di aplikasi yang dipakai",
+      "notAvailable": "Belum di aplikasi yang dipakai",
+      "verified": "Terverifikasi",
+      "notVerified": "Belum terverifikasi",
+      "needsYou": "Perlu kamu"
+    },
     "fromMessage": "dari <0>pesan di #{{channel}}</0>",
     "fromAgent": "dari permintaan ke agen",
     "subIssues_other": "Subtugas · {{count}}",

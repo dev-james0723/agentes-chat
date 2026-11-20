@@ -133,6 +133,7 @@ export * from "./file-pulls";
 export * from "./file-reader";
 export * from "./follow-through";
 export * from "./follows";
+export * from "./founder-status";
 export { startFoundryTaskRun } from "./foundry/enrollment";
 export { createNativeFoundryIntegration, type NativeFoundryIntegration } from "./foundry/integration";
 export { createFoundryToolSource } from "./foundry/tools";

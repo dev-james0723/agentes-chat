@@ -34,6 +34,8 @@ export interface AppDeps {
   /** Backend services (see `extras.ts`). */
   extras?: AppExtras;
   log?: Logger;
+  /** This process's own source identity (`runningSourceIdentity`): what a task's status checks a deploy against (ADR 0204). */
+  sourceIdentity?: () => Promise<{ digest: string; files: number }>;
 }
 
 export type AppEnv = { Variables: { user: SessionUser } };
