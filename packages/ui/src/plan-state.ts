@@ -249,6 +249,20 @@ export const extraUsageLeft = (usage: { windows: readonly PlanMeterWindow[] } | 
 /** `other` windows that are no model's own week. */
 const NOT_A_MODEL = new Set([EXTRA_USAGE_LABEL, "OAuth apps"]);
 
+/** Whether a usage window applies to this model. Shared and unattributed windows apply to every model. */
+export function planWindowAppliesToModel(w: PlanMeterWindow, model?: string | null): boolean {
+  const name = (model ?? "").toLowerCase();
+  if (w.kind === "seven_day_opus") return name.includes("opus");
+  if (w.kind === "seven_day_sonnet") return name.includes("sonnet");
+  if (w.kind === "other" && w.label && !NOT_A_MODEL.has(w.label)) return name.includes(w.label.toLowerCase());
+  return true;
+}
+
+/** A model's windows, keeping an unattributed provider refusal and the original reading intact. */
+export function planUsageForModel<T extends PlanMeterUsage>(usage: T, model?: string | null): T {
+  return { ...usage, windows: usage.windows.filter((w) => planWindowAppliesToModel(w, model)) };
+}
+
 /**
  * The window that binds long work on a run with `model`: the most used of the windows that apply to it and still
  * count now. A model's own week counts only for that model; extra usage and OAuth apps never count.
@@ -261,15 +275,13 @@ export function planBinding(
 ): { kind: string; used: number; resetsAt?: string } | null {
   if (!usage) return null;
   const now = options.now ?? Date.now();
-  const model = (options.model ?? "").toLowerCase();
+  const model = options.model;
   const read = Date.parse(usage.at);
   let top: { kind: string; used: number; resetsAt?: string } | null = null;
   for (const w of usage.windows) {
     // A model's own week (Claude's `model_scoped`, stored as `other` with the model's name) counts for that model.
-    if (w.kind === "other" && (!w.label || NOT_A_MODEL.has(w.label) || !model.includes(w.label.toLowerCase())))
-      continue;
-    if (w.kind === "seven_day_opus" && !model.includes("opus")) continue;
-    if (w.kind === "seven_day_sonnet" && !model.includes("sonnet")) continue;
+    if (w.kind === "other" && (!w.label || NOT_A_MODEL.has(w.label))) continue;
+    if (!planWindowAppliesToModel(w, model)) continue;
     const length = WINDOW_MS[w.kind] ?? 0;
     const live = w.resetsAt ? Date.parse(w.resetsAt) > now : Number.isFinite(read) && now - read < length;
     if (!live) continue;

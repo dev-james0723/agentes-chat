@@ -115,6 +115,7 @@ export const keys = {
   teamMemories: (orgId: string) => ["org", orgId, "team-memories"] as const,
   memory: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory"] as const,
   /** Under `memory`: invalidating an agent's memories also refreshes "O que sabe sobre você". */
+  memoryHistory: (orgId: string, id: string) => ["org", orgId, "memory-history", id] as const,
   memoryAboutMe: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory", "me"] as const,
   agentForYou: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "for-you"] as const,
   proposals: (orgId: string) => ["org", orgId, "proposals"] as const,
