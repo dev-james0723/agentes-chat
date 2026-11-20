@@ -301,6 +301,14 @@ type ThinkingAgent = Pick<Agent, "orgId" | "brainAccountId" | "machineId"> &
   Partial<Pick<Agent, "builtin" | "ownerUserId" | "brain" | "brainModel" | "brainEffort" | "brainAccountLentBy">> &
   Partial<Pick<Agent, "planForOthers" | "brainFallback" | "brainExtraUsage" | "credentialId">>;
 
+/** Subscription evidence for a personal computer sign-in (ADR 0208); a CLI installation alone proves no plan. */
+export function personalOwnSignIn(brain: string, executors: schema.MachineExecutors): boolean {
+  if (brain === "claude_code")
+    return executors.claude?.loggedIn === true && executors.claude.authMethod === "claude.ai";
+  if (brain === "codex") return !!executors.codex && !!executors.ownUsage?.codex?.windows.length;
+  return false;
+}
+
 /** A person's own AI for the right hand (§11): their row, null when their DM thinks with the workspace's. */
 export async function personalBrain(db: Executor, orgId: string, userId: string) {
   const [row] = await db
@@ -403,6 +411,7 @@ export async function withPersonalBrain<T extends ThinkingAgent>(
       brainEffort: own.brainEffort,
       brainAccountId: own.brainAccountId,
       brainAccountLentBy: own.brainAccountLentBy,
+      machineId: "machineId" in own ? own.machineId : null,
       brainFallback: false,
       brainExtraUsage: false,
     },
@@ -413,7 +422,8 @@ export async function withPersonalBrain<T extends ThinkingAgent>(
 /**
  * An agent as its brain sees it. The right hand is on no computer and its owner is the workspace's (`followOwner`):
  * on a plan it thinks on the computer where that plan's account is signed in, and the plan is its owner's (who pays,
- * as for any agent, ADR 0059 §3). With no account it has no computer. `person`: whose DM the run answers; their own
+ * as for any agent, ADR 0059 §3). With no account it has no computer unless this person's binding explicitly names
+ * their own subscription sign-in (ADR 0208). `person`: whose DM the run answers; their own
  * AI (§11) thinks for them in place of the workspace's. A plan thinks for someone else's DM (`planForOthers`) while it
  * serves everyone in the workspace (`machine_accounts.serves`). Every other agent is itself.
  */
@@ -424,6 +434,32 @@ export async function thinkingAgent<T extends ThinkingAgent>(
 ): Promise<T> {
   if (!isRightHand(agent)) return agent;
   const { agent: base, own } = await withPersonalBrain(db, agent, person);
+  // Only a personal binding may name a computer's own sign-in. Re-read ownership and
+  // subscription evidence for this person; a stale binding never borrows another member's login.
+  if (own && !base.brainAccountId && base.machineId && person) {
+    const [machine] = await db
+      .select({ id: schema.machines.id, executors: schema.machines.executors })
+      .from(schema.machines)
+      .innerJoin(
+        organizationMembers,
+        and(eq(organizationMembers.orgId, schema.machines.orgId), eq(organizationMembers.userId, person)),
+      )
+      .where(
+        and(
+          eq(schema.machines.orgId, agent.orgId),
+          eq(schema.machines.id, base.machineId),
+          eq(schema.machines.pairedByUserId, person),
+          isNull(schema.machines.deletedAt),
+        ),
+      );
+    const available = machine && personalOwnSignIn(base.brain ?? "model", machine.executors);
+    return {
+      ...base,
+      machineId: available ? machine.id : null,
+      ownerUserId: available ? person : null,
+      planForOthers: false,
+    };
+  }
   const [plan] = base.brainAccountId
     ? await db
         .select({

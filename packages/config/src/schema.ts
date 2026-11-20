@@ -532,6 +532,46 @@ export const envVars = {
     description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",
     section: "Agents",
   },
+  MODEL_INSPECTOR_ORG_IDS: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) => [
+        ...new Set(
+          value
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ])
+      .pipe(z.array(z.uuid()).max(100)),
+    description:
+      "Workspace IDs whose Model Inspector checks plan availability every minute and prepares task-aware switches. Comma-separated UUIDs; empty disables it. Other workspaces keep their existing model policy.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_THRESHOLD_PERCENT: {
+    schema: z.coerce.number().int().min(1).max(100).default(95),
+    description:
+      "Fresh plan usage at which the Model Inspector prepares a switch to a qualified available model. This threshold signals low capacity, not an exhausted subscription.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_MAX_AGE_MS: {
+    schema: z.coerce.number().int().min(1000).max(3600000).default(300000),
+    description:
+      "Oldest plan observation the Model Inspector may use to choose a route. Missing or older observations stay unknown and are refreshed through the connected computer.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_COOLDOWN_MS: {
+    schema: z.coerce.number().int().min(0).max(86400000).default(900000),
+    description: "Minimum time between Model Inspector switches for one agent, to prevent repeated model changes.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_MAX_SWITCHES: {
+    schema: z.coerce.number().int().min(1).max(50).default(4),
+    description:
+      "Maximum idle-agent model changes in one inspection, so a shared quota does not move the team at once.",
+    section: "Agents",
+  },
   AGENT_MAX_HOPS: {
     schema: z.coerce.number().int().min(1).max(500).default(100),
     description:

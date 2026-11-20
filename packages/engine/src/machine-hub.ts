@@ -34,7 +34,7 @@ import {
   TASKS_PROTOCOL,
   type Unsubscribe,
 } from "@agenteschat/adapters";
-import { and, type Database, eq, inArray, lt, schema } from "@agenteschat/db";
+import { and, type Database, eq, inArray, lt, schema, sql } from "@agenteschat/db";
 import type { ToolImage } from "@agenteschat/providers";
 import { getAgentCached } from "./agents";
 import { type MachinePhoneRow, publishDevicesChanged, syncMachinePhones } from "./devices";
@@ -711,8 +711,6 @@ export function createMachineHub(deps: MachineHubDeps) {
       await closeConn(old);
     }
     const now = new Date();
-    // Protocol 19: the own sign-ins' usage it knows, over the last known (a runner that just started knows none).
-    const ownUsage = { ...(machine.executors?.ownUsage ?? {}), ...(frame.ownUsage ?? {}) };
     // In single-user mode the agents' own code runs as the runner's user and can send any hello: system mode
     // is believed only from a computer's first hello, and from one that has said so ever since.
     const system = frame.mode === "system" && (machine.lastSeenAt === null || machine.executors?.mode === "system");
@@ -749,9 +747,12 @@ export function createMachineHub(deps: MachineHubDeps) {
         frame.desktopUse ||
         frame.claudeLoginMethods ||
         frame.toolchains ||
+        machine.executors?.taskModels ||
         machine.executors?.antigravity?.hostAuth
           ? {
-              executors: {
+              // Keep usage from the row being updated, not authentication's earlier snapshot.
+              // A concurrent turn refusal must survive this metadata replacement (ADR 0208).
+              executors: sql`${JSON.stringify({
                 // A runner that hasn't looked yet leaves the CLIs out: the last ones stored stand.
                 ...(frame.executors
                   ? { ...frame.executors, detectedAt: now.toISOString() }
@@ -773,12 +774,12 @@ export function createMachineHub(deps: MachineHubDeps) {
                 ...(frame.claudeLoginMethods ? { claudeLoginMethods: frame.claudeLoginMethods } : {}),
                 ...(loginBlocked ? { claudeLoginBlocked: loginBlocked } : {}),
                 ...(frame.authEgressGroup ? { authEgressGroup: true as const } : {}),
-                ...(Object.keys(ownUsage).length > 0 ? { ownUsage } : {}),
                 // A runner whose probe hasn't finished says none: the last ones stored stand.
                 ...((frame.toolchains ?? machine.executors?.toolchains)
                   ? { toolchains: { ...(frame.toolchains ?? machine.executors?.toolchains) } }
                   : {}),
-              },
+              })}::jsonb || case when ${machines.executors} ? 'ownUsage'
+                then jsonb_build_object('ownUsage', ${machines.executors}->'ownUsage') else '{}'::jsonb end`,
             }
           : {}),
         paused: conn.pause !== null,
@@ -791,6 +792,8 @@ export function createMachineHub(deps: MachineHubDeps) {
         updatedAt: now,
       })
       .where(eq(machines.id, machine.id));
+    // Protocol 19: hello follows the same freshness, refusal and CAS rules as accounts.changed.
+    if (frame.ownUsage) await storeOwnUsage({ db, pubsub }, machine.orgId, machine.id, frame.ownUsage);
     // An older socket for this machine on another replica (the runner came back elsewhere) is dropped there.
     await pubsub
       .publish(MACHINE_CONTROL_TOPIC, {

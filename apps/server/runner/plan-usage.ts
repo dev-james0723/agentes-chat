@@ -58,14 +58,14 @@ const usedIn = (u: PlanUsage | undefined, w: PlanWindow) =>
 
 /**
  * People should hear it at once: a limit hit or cleared, or a window crossing a line where its bar changes color
- * (80, 90) or 100.
+ * (80, 90), the inspector's handoff line (95), or the limit (100).
  */
 export function usageCrossed(prev: PlanUsage | undefined, next: PlanUsage): boolean {
   if (!prev || Boolean(prev.limited) !== Boolean(next.limited)) return true;
   return next.windows.some((w) => {
     const before = usedIn(prev, w) ?? 0;
-    // `PLAN_ALMOST` and `PLAN_CRITICAL` in packages/ui/src/plan-state.ts, then the limit.
-    return [80, 90, 100].some((line) => before < line !== w.usedPercent < line);
+    // UI warnings, the inspector's pre-exhaustion handoff, then the limit.
+    return [80, 90, 95, 100].some((line) => before < line !== w.usedPercent < line);
   });
 }
 

@@ -315,12 +315,15 @@ test("hello never waits on the CLIs' looks; what a look finds later reaches the 
   const c = control(home, { executors: undefined, executorRun });
   // The looks hang: hello still goes out at once, with the list the last run kept.
   const s = await c.connect();
-  expect(s.of("hello")[0]?.executors).toEqual({ codex: { version: "codex-cli 0.80.0" } });
+  expect(s.of("hello")[0]?.executors).toEqual({ codex: { version: "codex-cli 0.80.0" }, taskModels: true });
   release();
   await waitFor(() => s.of("executors.changed").length === 1);
   expect(s.of("executors.changed")[0]).toEqual({
     type: "executors.changed",
-    executors: { claude: { version: "2.1.300 (Claude Code)", loggedIn: true, authMethod: "claude.ai" } },
+    executors: {
+      claude: { version: "2.1.300 (Claude Code)", loggedIn: true, authMethod: "claude.ai" },
+      taskModels: true,
+    },
   });
   // The next start's hello has it at once.
   expect(JSON.parse(readFileSync(path.join(home, "executors.json"), "utf8"))).toMatchObject({
@@ -343,7 +346,7 @@ test("a new install's hello leaves the CLIs out until the first look, then sends
   expect(s.of("hello")[0]).not.toHaveProperty("executors");
   release();
   await waitFor(() => s.of("executors.changed").length === 1);
-  expect(s.of("executors.changed")[0]).toEqual({ type: "executors.changed", executors: {} });
+  expect(s.of("executors.changed")[0]).toEqual({ type: "executors.changed", executors: { taskModels: true } });
 });
 
 test("a service with no app still looks for the CLIs on a new install, and tells the server", async () => {
@@ -378,7 +381,7 @@ test("a service with no app still looks for the CLIs on a new install, and tells
   await waitFor(() => s.of("executors.changed").length === 1);
   expect(s.of("executors.changed")[0]).toEqual({
     type: "executors.changed",
-    executors: { codex: { version: "codex-cli 0.164.0" } },
+    executors: { codex: { version: "codex-cli 0.164.0" }, taskModels: true },
   });
   await daemon.stop();
 });
