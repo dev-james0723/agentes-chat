@@ -11839,6 +11839,8 @@
     "more": "Weitere Dienste",
     "tileConnected": "{{name}}, verbunden",
     "tileSoon": "{{name}}, bald",
+    "tileSetupRequired": "{{name}}, Einrichtung nötig",
+    "setupRequired": "Einrichtung nötig",
     "otherTitle": "Anderer Dienst",
     "otherDetail": "Jeder Dienst, der eine Verbindung für Agenten anbietet, über seine Adresse (sie beginnt mit https://).",
     "otherSteps": {
@@ -11862,6 +11864,7 @@
     "how": {
       "oneClick": "Ein Klick: Du autorisierst auf der Seite des Dienstes",
       "oauthOrKey": "Du autorisierst auf der Seite des Dienstes oder nutzt einen API-Schlüssel",
+      "oauthSetup": "Die Anmeldung muss auf diesem Server eingerichtet werden.",
       "key": "Braucht einen API-Schlüssel",
       "appPassword": "Braucht ein App-Passwort",
       "addressPassword": "Braucht die Adresse der Datenbank und ein Passwort",

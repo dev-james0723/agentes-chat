@@ -12196,6 +12196,8 @@
     "more": "Más servicios",
     "tileConnected": "{{name}}, conectado",
     "tileSoon": "{{name}}, pronto",
+    "tileSetupRequired": "{{name}}, requiere configuración",
+    "setupRequired": "Configuración necesaria",
     "otherTitle": "Otro servicio",
     "otherDetail": "Cualquier servicio que ofrezca una conexión para agentes, por su dirección (empieza con https://).",
     "otherSteps": {
@@ -12219,6 +12221,7 @@
     "how": {
       "oneClick": "Un clic: autorizas en la página del servicio",
       "oauthOrKey": "Autorizas en la página del servicio o usas una clave de API",
+      "oauthSetup": "Hay que configurar el inicio de sesión en este servidor.",
       "key": "Necesita una clave de API",
       "appPassword": "Necesita una contraseña de app",
       "addressPassword": "Necesita la dirección de la base de datos y una contraseña",

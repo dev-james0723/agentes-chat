@@ -20,6 +20,7 @@ export const CONNECTOR_BRANDS: Record<string, { file: string; color: string | nu
   github: { file: "github", color: null },
   linear: { file: "linear", color: "#5E6AD2" },
   sentry: { file: "sentry", color: null },
+  colab: { file: "plug", color: null },
   // A service without a one-color mark of its own here yet (Stitch): the generic connector glyph, not a monogram.
   plug: { file: "plug", color: null },
   notion: { file: "notion", color: null },

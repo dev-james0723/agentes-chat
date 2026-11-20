@@ -11430,6 +11430,8 @@
     "more": "Layanan lainnya",
     "tileConnected": "{{name}}, terhubung",
     "tileSoon": "{{name}}, segera",
+    "tileSetupRequired": "{{name}}, perlu penyiapan",
+    "setupRequired": "Perlu penyiapan",
     "otherTitle": "Layanan lain",
     "otherDetail": "Layanan apa pun yang menyediakan koneksi untuk agen, lewat alamatnya (diawali https://).",
     "otherSteps": {
@@ -11453,6 +11455,7 @@
     "how": {
       "oneClick": "Sekali klik: kamu memberi izin di halaman layanan",
       "oauthOrKey": "Kamu memberi izin di halaman layanan, atau pakai kunci API",
+      "oauthSetup": "Login perlu disiapkan di server ini.",
       "key": "Butuh kunci API",
       "appPassword": "Butuh kata sandi aplikasi",
       "addressPassword": "Butuh alamat database dan kata sandi",

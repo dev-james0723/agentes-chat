@@ -802,6 +802,18 @@ export const envVars = {
     description: "agentes.chat's own servers: the least a workspace's limit above may be, however few its members.",
     section: "Chat",
   },
+  CONNECTOR_COLAB_CLIENT_ID: {
+    schema: z.string().optional(),
+    description:
+      "Client id of a Google OAuth web application for the Colab connector. Set with CONNECTOR_COLAB_CLIENT_SECRET. Register {PUBLIC_URL}/api/app/connectors/oauth/callback and enable the Colab API. The connector requests the colaboratory scope with offline access; Google does not support dynamic client registration.",
+    section: "Connectors",
+  },
+  CONNECTOR_COLAB_CLIENT_SECRET: {
+    schema: z.string().optional(),
+    description: "Client secret of the Google OAuth application for Colab; stored only on the server.",
+    section: "Connectors",
+    secret: true,
+  },
   CONNECTOR_GITHUB_CLIENT_ID: {
     schema: z.string().optional(),
     description:

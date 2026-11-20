@@ -11901,6 +11901,8 @@
     "more": "Meer diensten",
     "tileConnected": "{{name}}, gekoppeld",
     "tileSoon": "{{name}}, binnenkort",
+    "tileSetupRequired": "{{name}}, instellen vereist",
+    "setupRequired": "Instellen vereist",
     "otherTitle": "Een andere dienst",
     "otherDetail": "Elke dienst die een koppeling voor agents biedt, via zijn adres (dat begint met https://).",
     "otherSteps": {
@@ -11924,6 +11926,7 @@
     "how": {
       "oneClick": "Eén klik: je geeft toestemming op de pagina van de dienst",
       "oauthOrKey": "Je geeft toestemming op de pagina van de dienst, of gebruikt een API-sleutel",
+      "oauthSetup": "Inloggen moet op deze server worden ingesteld.",
       "key": "Heeft een API-sleutel nodig",
       "appPassword": "Heeft een app-wachtwoord nodig",
       "addressPassword": "Heeft het adres van de database en een wachtwoord nodig",
