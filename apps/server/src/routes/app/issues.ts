@@ -8,6 +8,7 @@ import {
   deleteIssueColumn,
   deleteIssueProject,
   founderStatus,
+  traceability,
   getIssueDetail,
   type IssueDeps,
   issueFromMessage,
@@ -181,6 +182,43 @@ const FounderOwner = z.object({
   name: z.string().nullable(),
 });
 const RunningSource = z.object({ digest: z.string(), files: z.number() });
+const TraceChange = z.object({
+  subject: z.string(),
+  url: z.string(),
+  mergeCommit: z.string().nullable(),
+  delivery: z.string(),
+});
+const Traceability = z
+  .object({
+    requirements: z.array(
+      z.object({
+        id: z.uuid(),
+        number: z.number(),
+        title: z.string(),
+        status: z.string(),
+        state: z.enum(["no_tasks", "in_progress", "done_undelivered", "delivered", "canceled"]),
+        delivered: z.boolean(),
+        tasks: z.array(
+          z.object({
+            id: z.uuid(),
+            number: z.number(),
+            title: z.string(),
+            status: z.string(),
+            changes: z.array(TraceChange),
+          }),
+        ),
+      }),
+    ),
+    flags: z.array(
+      z.union([
+        z.object({ kind: z.literal("unlinked_merge"), subject: z.string(), mergeCommit: z.string().nullable() }),
+        z.object({ kind: z.literal("done_without_delivery"), requirementId: z.uuid(), number: z.number() }),
+        z.object({ kind: z.literal("duplicate_requirement"), numbers: z.array(z.number()) }),
+      ]),
+    ),
+  })
+  .openapi("Traceability");
+
 const FounderStatus = z
   .object({
     issueId: z.uuid(),
@@ -680,6 +718,24 @@ export function issueRoutes(deps: AppDeps) {
       const { orgId, issueId } = c.req.valid("param");
       const audience = c.req.valid("json");
       return c.json(await setIssueAudience(issues, person(c.get("user").id), orgId, issueId, audience), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/traceability",
+      tags,
+      security,
+      summary:
+        "Requirements (tasks labelled `requirement`) with their tasks, merge commits and whether this server runs them (ADR 0206), plus merged PRs no task links, requirements done but not delivered, and duplicate requirements",
+      request: { params: OrgParams },
+      responses: { 200: json(Traceability), ...errors },
+    }),
+    async (c) => {
+      const { orgId } = c.req.valid("param");
+      const running = deps.sourceIdentity ? await deps.sourceIdentity().catch(() => null) : null;
+      return c.json(await traceability(db, c.get("user").id, orgId, running), 200);
     },
   );
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { internalNotes, isPrivate } from "./check-boundaries";
+import { internalNotes, isPrivate, unrecordedPackages } from "./check-boundaries";
 
 test("only the listed docs, the prototypes and the team's rules are forbidden here", () => {
   for (const path of [
@@ -76,4 +76,24 @@ test("a hashed word is caught in any case, alone or in a hyphenated name, never 
   expect(internalNotes("Same split as AcmeCorp's dashboard", words)).toHaveLength(1);
   expect(internalNotes("the acmecorp-cloud repo", words)).toHaveLength(1);
   expect(internalNotes("acmecorporation", words)).toEqual([]);
+});
+
+// ADR 0206: a new top-level package or service needs an ADR that names it.
+test("a package an ADR names passes; a new one no ADR names fails", () => {
+  const adrs = ["# 0005\nCode: `packages/engine/src/outbox.ts`.", "Uses `@agenteschat/ui` for the kit."];
+  expect(unrecordedPackages([{ dir: "packages/engine", name: "@agenteschat/engine" }], adrs)).toEqual([]);
+  expect(unrecordedPackages([{ dir: "packages/ui", name: "@agenteschat/ui" }], adrs)).toEqual([]);
+  expect(unrecordedPackages([{ dir: "packages/shiny", name: "@agenteschat/shiny" }], adrs)).toEqual(["packages/shiny"]);
+  // A longer name that only starts with it is not a reference.
+  expect(
+    unrecordedPackages(
+      [{ dir: "packages/eng", name: "@agenteschat/eng" }],
+      ["packages/engine and @agenteschat/engine"],
+    ),
+  ).toEqual(["packages/eng"]);
+});
+
+test("every package in this repository is named by an ADR", async () => {
+  const { workspacePackages, adrTexts } = await import("./check-boundaries");
+  expect(unrecordedPackages(await workspacePackages(), await adrTexts())).toEqual([]);
 });
