@@ -7451,6 +7451,14 @@
     "notFound": "Bu görev yok ya da erişiminiz yok.",
     "createdBy": "#{{number}} · oluşturan: {{name}}",
     "createdByShort": "Oluşturan: {{name}}",
+    "founder": {
+      "title": "Teslim durumu",
+      "available": "Kullanılan uygulamada",
+      "notAvailable": "Kullanılan uygulamada değil",
+      "verified": "Doğrulandı",
+      "notVerified": "Doğrulanmadı",
+      "needsYou": "Sana ihtiyaç var"
+    },
     "fromMessage": "<0>#{{channel}} kanalındaki bir mesajdan</0>",
     "fromAgent": "bir ajana yapılan bir istekten",
     "subIssues_one": "Alt görevler · {{count}}",

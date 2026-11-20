@@ -7962,6 +7962,14 @@
     "notFound": "To zadanie nie istnieje albo nie masz do niego dostępu.",
     "createdBy": "#{{number}} · utworzone przez: {{name}}",
     "createdByShort": "Utworzone przez: {{name}}",
+    "founder": {
+      "title": "Stan dostarczenia",
+      "available": "W używanej aplikacji",
+      "notAvailable": "Poza używaną aplikacją",
+      "verified": "Zweryfikowane",
+      "notVerified": "Niezweryfikowane",
+      "needsYou": "Czeka na ciebie"
+    },
     "fromMessage": "z <0>wiadomości na #{{channel}}</0>",
     "fromAgent": "z prośby do agenta",
     "subIssues_one": "Podzadania · {{count}}",

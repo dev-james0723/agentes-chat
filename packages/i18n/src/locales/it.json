@@ -7747,6 +7747,14 @@
     "notFound": "Questa attività non esiste o non hai accesso.",
     "createdBy": "#{{number}} · creata da {{name}}",
     "createdByShort": "Creata da {{name}}",
+    "founder": {
+      "title": "Stato della consegna",
+      "available": "Nell'app in uso",
+      "notAvailable": "Non nell'app in uso",
+      "verified": "Verificata",
+      "notVerified": "Non verificata",
+      "needsYou": "Serve a te"
+    },
     "fromMessage": "da <0>un messaggio in #{{channel}}</0>",
     "fromAgent": "da una richiesta a un agente",
     "subIssues_one": "Sottoattività · {{count}}",
