@@ -644,6 +644,13 @@ export async function machineAgents(db: Database, orgId: string, machineId: stri
               sql`exists (select 1 from ${schema.rightHandBrains} rb join ${schema.machineAccounts} ma
                 on ma.org_id = rb.org_id and ma.id = rb.brain_account_id
                 where rb.org_id = ${agents.orgId} and ma.machine_id = ${machineId}::uuid)`,
+              // An explicit personal own sign-in still needs the right hand's locked-down native user (ADR 0208).
+              sql`exists (select 1 from ${schema.rightHandBrains} rb
+                join ${machines} own_machine on own_machine.org_id = rb.org_id and own_machine.id = rb.machine_id
+                join ${organizationMembers} member on member.org_id = rb.org_id and member.user_id = rb.user_id
+                where rb.org_id = ${agents.orgId} and rb.brain_account_id is null
+                  and rb.machine_id = ${machineId}::uuid and own_machine.paired_by_user_id = rb.user_id
+                  and own_machine.deleted_at is null)`,
             ),
           ),
         ),
