@@ -163,6 +163,21 @@ This conservative boundary prevents an unproven ordinary billing route from sile
 Preparing a live pool is therefore a deliberate owner action with a workload-availability impact; it is not a no-op
 configuration draft. No pools are registered automatically by the migration or feature flag.
 
+Credential selection retains the existing cache, but the ordinary-call protection verdict uses one fresh SQL
+statement per call. Provider-account protection, reserved credential identity and retained cross-workspace secret
+fingerprints are checked together. A newly registered pool therefore blocks the next call even if its default
+credential lookup was already cached. The availability probe separately combines provider and credential checks
+in one fresh statement without decrypting secrets. Availability is not spending authority. A warm ordinary run
+therefore adds exactly two statements, independently measured against the deployed baseline.
+
+A registered pool also holds the workspace's final deletion, including after grant expiry or local key revocation.
+The organization, allowance history, unresolved debits, reserve approvals and retained fingerprints stay intact.
+Without independent upstream revocation and a separate accounting-retention procedure, deletion must not erase a
+spend guard or permit the same upstream account to obtain a fresh allowance. The purge returns a retained result
+before account cleanup and repeats the hold under its final row lock. Pool registration takes the existing
+workspace membership lock and row lock, and refuses a workspace already closing, so registration and deletion
+cannot race across that initial check. This release does not automate removal of that financial retention hold.
+
 ## Subscription-first handoff and native recovery
 
 The executor first considers its existing compatible subscription candidates. Only a fresh, account-wide exhausted

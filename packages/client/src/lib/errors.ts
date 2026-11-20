@@ -22,6 +22,15 @@ export const REAUTH_PASSWORD = "reauth.password";
 const KNOWN = {
   // New native refusal codes reuse the existing localized reason families; raw provider details stay out.
   "brain.config_changed": "errors.said.changed",
+  "brain.invalid_machine": "errors.brainSetup.invalidMachine",
+  "brain.personal_subscription": "errors.brainSetup.personalSubscription",
+  "brain.unavailable": "errors.brainSetup.unavailable",
+  "connector.colab_oauth_required": "errors.connector.colabOauthRequired",
+  "connector.colab_refresh_required": "errors.connector.colabRefreshRequired",
+  "connector.colab_scope_required": "errors.connector.colabScopeRequired",
+  "credit.conflict": "errors.credit.conflict",
+  "credit.disabled": "errors.credit.disabled",
+  "credit.resume_refused": "errors.credit.resumeRefused",
   "delivery_binding.observation_stale": "errors.said.changed",
   "delivery_binding.release_owner_unavailable": "errors.said.changed",
   "delivery_binding.revision_conflict": "errors.said.changed",

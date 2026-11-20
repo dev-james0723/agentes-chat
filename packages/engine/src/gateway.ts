@@ -37,6 +37,7 @@ import {
   type ToolSpec,
 } from "@agenteschat/providers";
 import { type Agent, getAgent } from "./agents";
+import { caches } from "./cache";
 import { decryptCredentialWithVersion, usableCredentialRow } from "./credentials";
 import { creditAdmissionBound } from "./credit-admission";
 import { assertCreditClaim } from "./credit-continuity";
@@ -342,16 +343,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
   /** The org's default credential for a provider (cached; invalidated when keys or settings change). */
   async function orgDefaultCredentialId(orgId: string, provider: string): Promise<string | null> {
-    const load = async (): Promise<string | null> => {
-      // A key that belongs to a credit route is reserved (ADR 0209): it is never the implicit default of anything else.
-      const reserved = new Set(
-        (
-          await db
-            .select({ id: schema.creditRoutes.credentialId })
-            .from(schema.creditRoutes)
-            .where(eq(schema.creditRoutes.orgId, orgId))
-        ).map((r) => r.id),
-      );
+    return (await caches.credentials.getOrLoad(`${orgId}:default:${provider}`, async () => {
       const [settings] = await db
         .select({
           perProvider: organizationSettings.defaultCredentialIds,
@@ -368,10 +360,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
         )
         .where(eq(organizationSettings.orgId, orgId));
       const perProvider = (settings?.perProvider ?? {}) as Partial<Record<string, string>>;
-      if (perProvider[provider] && !reserved.has(perProvider[provider] as string))
-        return perProvider[provider] as string;
-      if (settings?.id && settings.provider === provider && !reserved.has(settings.id)) return settings.id;
-      const newest = await db
+      if (perProvider[provider]) return perProvider[provider] as string;
+      if (settings?.id && settings.provider === provider) return settings.id;
+      const [newest] = await db
         .select({ id: providerCredentials.id })
         .from(providerCredentials)
         .where(
@@ -382,11 +373,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           ),
         )
         .orderBy(desc(providerCredentials.createdAt))
-        .limit(reserved.size + 1);
-      return newest.find((row) => !reserved.has(row.id))?.id ?? null;
-    };
-    // Registering a route changes the answer without touching the cached keys, so with routes on it is not cached.
-    return load();
+        .limit(1);
+      return newest?.id ?? null;
+    })) as string | null;
   }
 
   /** A workspace endpoint's model names its own credential (ADR 0146): that key, whatever the agent's. */
@@ -416,6 +405,22 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     return !!route;
   };
 
+  // Availability never decrypts a key. Its provider and credential protections still need a fresh verdict,
+  // combined in one statement. Dispatch independently checks again, including the actual secret fingerprint.
+  const creditIdentityProtected = async (orgId: string, provider: string, credentialId: string | null) => {
+    const [protection] = rowsOf<{ blocked: boolean }>(
+      await db.execute(sql`select
+        exists (select 1 from ${schema.creditPools}
+          where ${schema.creditPools.orgId} = ${orgId}
+            and ${schema.creditPools.upstreamNamespace} = ${provider})
+        or exists (select 1 from ${schema.creditRoutes}
+          where ${schema.creditRoutes.orgId} = ${orgId}
+            and ${schema.creditRoutes.credentialId} = ${credentialId})
+        as blocked`),
+    );
+    return !protection || protection.blocked;
+  };
+
   /**
    * Credit routes (ADR 0209). A key that belongs to a route is reserved for it: no other call, whoever it is for,
    * may spend it. A call that asks for the route must be on exactly the credential and version qualified, on the
@@ -428,12 +433,21 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     credit: GatewayCall["credit"],
   ): Promise<void> {
     if (!credit) {
-      if (
-        (await creditProviderProtected(orgId, providerId)) ||
-        (key.credentialId && (await isCreditCredential(db, orgId, key.credentialId))) ||
-        (await creditSecretProtected(key.apiKey))
-      )
-        throw new CreditRouteRefusal("reserved_credential");
+      // Credential selection may use its existing cache, but a protection verdict never does. A pool or retained
+      // fingerprint committed after that cache was warmed must block the very next ordinary call. One fresh
+      // statement covers provider, row and cross-workspace secret aliases without three database round trips.
+      const [protection] = rowsOf<{ blocked: boolean }>(
+        await db.execute(sql`select
+          exists (select 1 from ${schema.creditPools}
+            where ${schema.creditPools.orgId} = ${orgId}
+              and ${schema.creditPools.upstreamNamespace} = ${providerId})
+          or exists (select 1 from ${schema.creditRoutes}
+            where (${schema.creditRoutes.orgId} = ${orgId}
+                and ${schema.creditRoutes.credentialId} = ${key.credentialId})
+              or ${schema.creditRoutes.credentialFingerprint} = ${sha256(key.apiKey)})
+          as blocked`),
+      );
+      if (!protection || protection.blocked) throw new CreditRouteRefusal("reserved_credential");
       return;
     }
     if (!deps.creditRoutes) throw new CreditRouteRefusal("disabled");
@@ -869,16 +883,15 @@ export function createModelGateway(deps: ModelGatewayDeps) {
      */
     async hasModelCredential(agent: Pick<Agent, "orgId" | "model" | "credentialId">): Promise<boolean> {
       const provider = modelProvider(agent.model);
-      if (!provider || !deps.providers[provider] || (await creditProviderProtected(agent.orgId, provider)))
-        return false;
-      const usable = async (id: string) =>
-        (await usableCredentialRow(db, agent.orgId, id))?.provider === provider &&
-        !(await isCreditCredential(db, agent.orgId, id));
+      if (!provider || !deps.providers[provider]) return false;
+      const usable = async (id: string) => (await usableCredentialRow(db, agent.orgId, id))?.provider === provider;
       try {
         const own = pinnedKey(agent.model) ?? agent.credentialId;
-        if (own) return await usable(own);
+        if (own) return (await usable(own)) && !(await creditIdentityProtected(agent.orgId, provider, own));
         const defaultId = await orgDefaultCredentialId(agent.orgId, provider);
-        if (defaultId && (await usable(defaultId))) return true;
+        if (defaultId && (await usable(defaultId)))
+          return !(await creditIdentityProtected(agent.orgId, provider, defaultId));
+        if (await creditIdentityProtected(agent.orgId, provider, null)) return false;
         const platform = deps.platformCredentials;
         return platform.available
           ? await platform.available(agent.orgId, provider)

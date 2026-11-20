@@ -1,4 +1,61 @@
 {
+  "creditContinuity": {
+    "title": "APIクレジットによる継続",
+    "refresh": "状態を更新",
+    "unavailable": "クレジットの状態を取得できません。ここでは付与クレジットの利用可能額がまだ確認されていません。",
+    "intro": "利用条件に合うサブスクリプションを優先します。APIへの切り替えでは、請求期間の共有上限内で確認済みの付与クレジットを使用します。",
+    "status": {
+      "unavailable": "クレジットの状態を取得できません。自動支出は確認されていません。",
+      "disabled": "APIへの自動切り替えは無効です。記録済みの支出と未確定の費用は引き続き表示されます。",
+      "unverified": "条件を満たすAPI付与クレジットはまだ確認されていません。自動利用可能額は$0です。",
+      "blocked": "APIへの切り替えは、最新の証拠、予算、または照合を待っています。",
+      "available": "記録された付与クレジットの上限内でAPIへの切り替えを利用できます。"
+    },
+    "caption": "API付与クレジットと請求期間の予算",
+    "columns": {
+      "provider": "提供元",
+      "state": "状態",
+      "automatic": "自動利用可能額 / 上限",
+      "costs": "支出済み / 未確定",
+      "reserve": "オーナーの予備枠",
+      "buffer": "安全余裕枠",
+      "expires": "クレジットの有効期限",
+      "forecast": "過去のp95"
+    },
+    "provider": {
+      "openai": "ChatGPT の API",
+      "anthropic": "Claude の API"
+    },
+    "unknown": "不明",
+    "state": {
+      "unavailable": "利用不可",
+      "unverified": "未確認",
+      "expired": "クレジットの期限切れ",
+      "stale": "証拠の更新が必要",
+      "disabled": "無効",
+      "paused": "一時停止中",
+      "pricingExpired": "料金の有効期限切れ",
+      "pricingChanged": "料金が変更されました",
+      "pricingUnverified": "料金が未確認",
+      "noRoute": "条件を満たすAPI経路がありません",
+      "budgetUnavailable": "予算を利用できません",
+      "ready": "利用可能",
+      "reserveAvailable": "オーナーの予備枠を利用可能",
+      "billingBlocked": "請求がブロックされています",
+      "reconciliation": "照合が必要",
+      "blocked": "ブロック中"
+    },
+    "evidence": "証拠: {{date}}",
+    "approvedAvailable": "承認済みの利用可能額: {{amount}}",
+    "approvals_other": "有効なオーナー承認が{{count}}件",
+    "ownerApproval": "オーナーの承認",
+    "historyHigh": "精算済みの作業単位は{{count}}件です。不確実性は高いです。",
+    "historyMedium": "精算済みの作業単位は{{count}}件です。不確実性は中程度です。",
+    "historyUnknown": "精算済みの作業単位は{{count}}件です。不確実性は不明です。",
+    "insufficientHistory": "過去のデータが不足しています",
+    "obligations_other": "{{count}}件のAPI呼び出しに、確保済みまたは未確定の費用があります。緊急予備枠の使用にはオーナーの承認が必要です。この機能は有料チャージを有効にしません。",
+    "evidenceNote": "付与クレジットの利用資格は、オーナーが記録した提供元の請求証拠に基づいて確認します。過去のデータによる予測は支出を許可するものではありません。状態の取得日時: {{date}}。"
+  },
   "app": {
     "name": "agentes"
   },
@@ -6815,6 +6872,18 @@
     "offlineText": "オンラインに戻ると、このページは自動で開きます。"
   },
   "scopes": {
+    "colab_read": {
+      "label": "Colabを読み取る",
+      "description": "サブスクリプションのプラン、利用可能なランタイムの選択肢、セッション名を確認します。"
+    },
+    "colab_run": {
+      "label": "Colabのジョブを実行する",
+      "description": "認証情報にアクセスし、ランタイムとセッションの作成、コードの実行、セッションの終了を行います。Colabのコンピューティングユニットを消費します。"
+    },
+    "colab_delete": {
+      "label": "Colabのランタイムを削除する",
+      "description": "ランタイムとすべてのファイル、セッションを完全に削除します。"
+    },
     "context_read": {
       "label": "コンテキストを読む",
       "description": "エージェントのチャンネル内のメッセージ、要約、事実を検索します。"
@@ -11401,7 +11470,7 @@
     "how": {
       "oneClick": "ワンクリック: サービスのページで承認します",
       "oauthOrKey": "サービスのページで承認するか、APIキーを使います",
-      "oauthSetup": "このサーバーでログインを設定する必要があります。",
+      "oauthSetup": "このコネクターのログイン設定が必要です。",
       "key": "APIキーが必要です",
       "appPassword": "アプリパスワードが必要です",
       "addressPassword": "データベースのアドレスとパスワードが必要です",
@@ -12792,6 +12861,16 @@
     }
   },
   "errors": {
+    "brainSetup": {
+      "invalidMachine": "個人のAIアカウントでログインする接続済みのコンピューターを選んでください。",
+      "personalSubscription": "個人向けサブスクリプションでは、APIによる代替利用と有料の追加利用はオフのままです。",
+      "unavailable": "選択したコンピューターでは、このAIを利用できません。接続とログインを確認してください。"
+    },
+    "credit": {
+      "conflict": "クレジットの記録はすでにあります。更新して状態を確認してください。",
+      "disabled": "クレジットを使う代替処理はオフです。",
+      "resumeRefused": "この実行はまだ再開できません。保留中のクレジットと未完了の操作を確認してください。"
+    },
     "passwordLink": {
       "email": "このサーバーはメールを送ります。本人が「パスワードを忘れた」から自分のリンクを依頼します。",
       "serverOwner": "このサーバーをインストールした人は、サーバーが動いているコンピューターからリンクなしで入ります。",
@@ -12867,6 +12946,9 @@
       "audienceEmpty": "閲覧できる人を選んでください。"
     },
     "connector": {
+      "colabOauthRequired": "コネクターのカタログからGoogle Colabを接続し、Googleでログインしてください。",
+      "colabRefreshRequired": "Google Colabを再接続し、不在時も接続を維持することを許可してください。",
+      "colabScopeRequired": "Google Colabを再接続し、求められたColabの権限を許可してください。",
       "labelTaken": "この名前はすでに別のコネクタで使われています。",
       "labelInvalid": "名前は1〜80文字にしてください。",
       "otherAccount": "別のアカウントでログインしました。接続するには「別のアカウントを追加」を使ってください。",
@@ -15406,6 +15488,7 @@
         "listingRoutines": "ルーティンを確認しました",
         "checkingComputer": "PCを確認しました",
         "checkingUsage": "使用量を確認しました",
+        "checkingModels": "モデルの利用可否を確認しました",
         "findingAgent": "仲間を探しました",
         "writingWiki": "Wikiに書き込みました",
         "readingWiki": "Wikiを読みました",
@@ -15523,6 +15606,7 @@
       "listingRoutines": "ルーティンを確認中",
       "checkingComputer": "PCを確認中",
       "checkingUsage": "使用量を確認中",
+      "checkingModels": "モデルの利用可否を確認しています",
       "findingAgent": "仲間を探しています",
       "writingWiki": "Wikiに書き込み中",
       "readingWiki": "Wikiを読み込み中",
