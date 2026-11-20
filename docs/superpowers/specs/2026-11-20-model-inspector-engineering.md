@@ -46,3 +46,12 @@ Make `brain_account_id` nullable and add nullable `machine_id` with the establis
 The inspector resolves only the built-in row owner's personal binding in an enabled organization. Its reporting and quota reads use that effective route. A personal migration holds the relevant row lock, revalidates the original personal binding and agent authority, checks for active work, then invokes the personal API. It never copies personal settings onto the shared agent row, chooses another member's binding, enables paid fallback, or overwrites a concurrent personal edit.
 
 Append an immutable migration and verify both legacy named rows and new own-sign-in rows. Before production activation, back up the affected bindings and migration ledger and prepare a source-verified compatibility image that understands the new schema and personal route. The old unmodified image is not a rollback target after the migration guard records the new migration. Preserve the concurrent Colab release and existing native runner.
+
+
+## Live acceptance correction: active personal quota continuity
+
+A real right-hand run exposed an older `no_ai` short circuit after an actual Grok plan refusal. Default migration and new own-Codex runs succeeded, but the current message must also receive the requested continuation. The enabled Inspector policy must attempt qualified personal quota continuation before that older no-AI terminal path, both for known exhaustion at startup and for a no-effect refusal during a turn.
+
+Keep the right hand's builtin identity, locked tools, actual DM person, source owner/machine/session, normal authentication and target quota checks. An internal qualified-personal-handoff resolver option may resolve the selected target without reapplying the source personal binding; it must be bound to the actual run/person/session and cannot be a public setting or an authority bypass. Compare both the raw global authority and the effective personal source when committing or resuming the durable handoff. Reject changed personal choices and unresolved effects.
+
+Regressions must use the real resolver/candidate admission for a personal source binding, including known-limit startup, actual refusal, concurrent edits, and continuation/resume. In production, preserve the failed no-work message's evidence and use the existing answer-now recovery only where its native no-work guard permits it. That API preserves the message but intentionally creates a new run ID and records the previous run in its audit; never describe that recovery as preserving the failed run ID.
