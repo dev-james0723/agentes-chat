@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from team_core import package_hashes, plan_task
+from team_core import package_hashes, plan_task, publication_key
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -15,7 +15,7 @@ def read_json(path):
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     sub = result.add_subparsers(dest="command", required=True)
-    for name in ("plan", "validate"):
+    for name in ("plan", "validate", "publication-key"):
         command = sub.add_parser(name)
         source = command.add_mutually_exclusive_group(required=True)
         source.add_argument("--input")
@@ -47,6 +47,9 @@ def main(argv=None):
             data = read_json(args.input) if args.input else json.loads(args.request_json)
             if args.command == "plan":
                 output = plan_task(data, catalog, roles)
+                code = 0
+            elif args.command == "publication-key":
+                output = {"key": publication_key(data), "scope": "Intent identity; record it and read back ambiguous outcomes before retrying."}
                 code = 0
             else:
                 from team_core import validate_delivery
