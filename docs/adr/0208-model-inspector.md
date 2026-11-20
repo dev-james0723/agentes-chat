@@ -84,7 +84,7 @@ each quota observation's age. Reading a snapshot is not evidence that a backgrou
 
 ## Compatibility and operation
 
-No database migration or new credential is required. The worker reuses existing account, run, routine and audit
+Migration 0282 adds an explicit own-machine route to personal right-hand bindings and makes the named account nullable; existing named rows are preserved. No new credential is required. The worker reuses existing account, run, routine and audit
 records. Workspaces outside the configured list keep their existing model behavior. The application reload enables
 configuration; it does not replace the host's native runner or other local services.
 
@@ -102,3 +102,12 @@ workspace, a completed native sweep and actual account evidence. Test results do
 ## Explicit Grok balance refusals
 
 Grok can refuse an actual turn with a plan-limit error while publishing no numeric allowance. The executor stores that account-scoped observation as `source: turn`, `limited: true`, empty windows, and its actual observation time. It does not invent a percentage or reset. For the existing thirty-minute unknown-reset interval, fleet and active-work reports retain the exhausted state across restarts and inconclusive account probes; the normal five-minute freshness rule still applies to numerical quota. A later successful turn clears only a receipt older than that turn started, so it cannot erase a newer concurrent refusal.
+
+
+## Owner personal right-hand coverage
+
+The built-in right hand uses a per-user route. Inspection resolves the configured owner's effective binding and marks it `owner_personal`; it does not report the generic global agent row as that person's actual model. A migration uses the existing `scope: mine` settings API after locking and comparing both the global authority and the personal binding. Other members' settings, global defaults, explicit effort and billing restrictions are preserved. Native agent visibility is refreshed after a successful switch.
+
+An explicit personal `machineId` with `account: null` selects that person's own verified Claude/Codex subscription. Null account without a machine retains the existing reset behavior. Named Grok remains supported with its actual account authentication. A missing owner, invalid binding or unavailable qualified route is reported as blocked.
+
+After migration 0282, a rollback image must know the new migration and resolve existing personal own-machine rows. The release procedure retains a tested API-compatible image for that purpose; the unmodified older image is not a compatible rollback target.

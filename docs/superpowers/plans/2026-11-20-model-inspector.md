@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Enable only explicitly configured organization IDs.
-- 95% proactive threshold; 60-second poll; five-minute freshness; 15-minute cooldown; four idle migrations per sweep.
+- 95% proactive threshold; 60-second poll; five-minute freshness; 15-minute cooldown; four idle migrations per rolling minute.
 - Missing/stale readings are unknown, never zero or exhausted.
 - Never reuse a foreign provider session; never replay uncertain tool effects.
 - Preserve existing roles, access, audience, work directory and billing limits.
@@ -66,4 +66,19 @@
 - Config, engine and server TypeScript checks passed with zero diagnostics.
 - Changed TypeScript files passed Biome after safe formatting/import ordering. One existing host-ACP optional-chain warning remains outside the feature logic.
 - Native runner candidate remains protocol 57, preserves the phone-disable chain, and was independently checked against the source model-forwarding changes.
-- Deployed state and real provider execution remain pending Task 3; isolated tests do not claim a live handoff.
+- Core live deployment and real Grok-refusal-to-Codex continuation were verified. The final owner personal-route revision and its post-deploy proof are tracked in Task 4.
+
+
+### Task 4: Close observed reconnect and personal-route gaps
+
+**Authority:** MI-10 and the engineering specification's personal-route revision above. This continues the original full-team requirement after production inspection identified an effective personal binding omitted by the initial fleet path.
+
+**Files and ownership:** `machine-hub.ts` and reconnect tests; DB `schema/agents.ts`, one appended migration and journal entry; `brain-settings.ts`, `right-hand.ts` and affected input schema/tests; `model-inspector.ts`, observations if needed and focused personal-route tests. Writers own disjoint paths.
+
+- [x] Prove own Grok reconnect loss with failing regressions; preserve the current database usage during metadata replacement and reuse existing usage CAS. Verify empty/invalid/stale reads and a concurrent newer refusal.
+- [x] Add the nullable personal account and explicit personal machine schema, preserving named rows; verify migration ordering, FK behavior and supported record shapes. Commit the coherent schema change.
+- [x] Extend the existing personal API and effective resolver for validated own subscriptions while retaining reset semantics, account ownership and billing settings. Test ownership, reset and effective route resolution. Commit the API change.
+- [x] Inspect the owner's effective personal binding, choose through JEV, and apply only personal settings after locked CAS and idle checks. Test another member's isolation, concurrent edits and ordinary-agent regressions. Commit the Inspector change.
+- [ ] Run affected suites, DB/engine/server type checks and boundaries on the exact combined release, including existing Colab changes.
+- [ ] Build the compatibility rollback image and final image; verify their source identities. Back up affected production state, recheck deployment ownership/idle state and activate through normal migration-on-boot.
+- [ ] Verify the owner right-hand route with the ordinary worker and an actual bounded run as needed; recheck whole-team reporting, routine/authority invariants, migration identity and runtime health. Record completed versus unavailable provider claims.
