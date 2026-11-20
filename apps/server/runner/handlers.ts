@@ -327,7 +327,10 @@ export interface HandlerContext {
   };
   /** Set per request (protocol 10): the folders allowed for the request's agent, as real paths. */
   grants?: string[];
-  /** The runner's `readsOnlyInFolders`: brain turns' CLIs read only the agent's folders where they can enforce it. */
+  /**
+   * The runner's folder allow-list in force (`foldersEnforced`, ADR 0205): brain turns' CLIs read and write only the
+   * agent's folders, each through its own enforcement; Cursor, OpenCode and Antigravity run no work turn.
+   */
   readsOnlyInFolders?: boolean;
   /** A worker (system mode): its agent's home, as a real path. */
   ownHome?: string;
@@ -1414,6 +1417,14 @@ async function doCodexTurn(
   const agy = req.kind === "antigravity";
   const name = cursor ? "Cursor" : opencode ? "OpenCode" : grok ? "Grok Build" : agy ? "Antigravity CLI" : "Codex";
   if (!codex) throw new RunnerError("bad_request", `This runner runs no ${name} brain turns`);
+  // The folder allow-list in force (ADR 0205): these CLIs can't keep their own reads (and, but Cursor's sandbox, their
+  // commands) inside the agent's folders, so they run no turn that touches files. A `chat` turn has no file tool.
+  if (ctx.readsOnlyInFolders && !chat && (cursor || opencode || agy)) {
+    throw new RunnerError(
+      "not_allowed",
+      `${name} can't keep its reads and commands inside the agent's folders, and this computer keeps agents in their folders. Use Claude Code, Codex or Grok Build for this agent, or the computer's owner can turn the folder limit off.`,
+    );
+  }
   let final: CodexBrainEvent = {
     type: "error",
     code: `${cursor ? "cursor" : opencode ? "opencode" : grok ? "grok" : agy ? "antigravity" : "codex"}_failed`,

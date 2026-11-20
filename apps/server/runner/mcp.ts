@@ -34,6 +34,7 @@ import {
 } from "@agenteschat/adapters/machine-protocol";
 import { commandApproval, lonePush, pushesOwnBranches, pushThroughProxy } from "./command-gate";
 import { RUNNER_VERSION } from "./errors";
+import { type BoundaryOptions, type BoundScope, outsideFolders } from "./folder-boundary";
 
 /**
  * The local `agentes` MCP server of a mission task (protocol 5, ADR 0029).
@@ -1050,10 +1051,12 @@ export async function permissionPrompt(
     pollMs?: number;
     sleep?: (ms: number) => Promise<void>;
     now?: () => number;
-    /** Where the task runs: plain reads are allowed here without asking. */
-    scope?: CommandScope;
+    /** Where the task runs: plain reads are allowed here without asking. With `confined`, nothing outside (ADR 0205). */
+    scope?: BoundScope;
     /** The turn's permission profile (default `work`). */
     profile?: CommandProfile;
+    /** Tests: where people's files and temp are, for the folder allow-list. */
+    boundary?: BoundaryOptions;
   } = {},
 ): Promise<PermissionAnswer> {
   const toolName = typeof args.tool_name === "string" ? args.tool_name : "";
@@ -1063,14 +1066,19 @@ export async function permissionPrompt(
       : {};
   if (!toolName) return { behavior: "deny", message: "Unknown tool." };
   const how = opts.task ? ASK_AFTER_TASK : ASK_IN_CHAT;
-  const verdict = localVerdict(toolName, input, opts.scope, opts.profile ?? "work", how);
+  // The machine's folder allow-list comes first: no plain read, rule or person lets a call out of it (ADR 0205).
+  const outside = outsideFolders(toolName, input, opts.scope, opts.boundary);
+  if (outside) return { behavior: "deny", message: outside };
+  const { confined: _confined, ...scope } = opts.scope ?? ({} as BoundScope);
+  const commandScope = opts.scope ? (scope as CommandScope) : undefined;
+  const verdict = localVerdict(toolName, input, commandScope, opts.profile ?? "work", how);
   // A background task's executor has no run_code to be pointed to: it keeps "stop and say so".
   const said = (message: string) => (opts.asks === "never" && !opts.task ? unaskedMessage(message) : message);
   if (verdict?.behavior === "deny") return { behavior: "deny", message: said(verdict.message) };
   if (verdict?.behavior === "allow") return { behavior: "allow", updatedInput: input };
   if (toolName === "Bash" && typeof input.command === "string") {
     const own = opts.branches ?? [];
-    const cwd = opts.scope?.cwd ?? null;
+    const cwd = commandScope?.cwd ?? null;
     const held = await commandApproval(input.command, { cwd, own, how, script: true });
     if (held) return { behavior: "deny", message: held.never ? held.message : said(held.message) };
     // A push alone to its own branches, or through our git proxy (which decides someone else's branch with a
@@ -1102,7 +1110,7 @@ export async function permissionPrompt(
     tool_name: toolName.slice(0, 64),
     input,
     ...(typeof args.tool_use_id === "string" ? { tool_use_id: args.tool_use_id.slice(0, 128) } : {}),
-    ...(opts.scope ? { scope: opts.scope } : {}),
+    ...(commandScope ? { scope: commandScope } : {}),
   });
   const requestId = "request_id" in out && typeof out.request_id === "string" ? out.request_id : "";
   for (;;) {
@@ -1265,10 +1273,15 @@ export function cleanRules(rules: string) {
  * Where the task runs and its folders, for our MCP process (`AGENTES_MCP_CWD`, `AGENTES_MCP_FOLDERS`), and
  * the runner's own home (`AGENTES_RUNNER_HOME`), which is never read.
  */
-export function mcpScopeFromEnv(env: NodeJS.ProcessEnv): CommandScope | undefined {
+export function mcpScopeFromEnv(env: NodeJS.ProcessEnv): BoundScope | undefined {
   const cwd = env.AGENTES_MCP_CWD?.trim();
   if (!cwd || !path.isAbsolute(cwd)) return undefined;
   const folders = (env.AGENTES_MCP_FOLDERS ?? "").split(path.delimiter).filter((f) => f && path.isAbsolute(f));
+  // The folder allow-list in force (ADR 0205): set, even empty, means nothing outside these.
+  const confined =
+    env.AGENTES_MCP_CONFINED === undefined
+      ? undefined
+      : env.AGENTES_MCP_CONFINED.split(path.delimiter).filter((f) => f && path.isAbsolute(f));
   const runnerHome = env.AGENTES_RUNNER_HOME?.trim();
   // Windows has no HOME, as a rule: the home is USERPROFILE (without one, `~` would read as the agent's folder).
   const home = env.HOME || (process.platform === "win32" ? env.USERPROFILE : undefined);
@@ -1277,6 +1290,7 @@ export function mcpScopeFromEnv(env: NodeJS.ProcessEnv): CommandScope | undefine
     folders: folders.length ? folders : [cwd],
     ...(home ? { home } : {}),
     ...(runnerHome && path.isAbsolute(runnerHome) ? { runnerHome } : {}),
+    ...(confined ? { confined } : {}),
   };
 }
 
@@ -1320,6 +1334,8 @@ export function claudeMcpConfig(input: {
   /** Where the task runs and the mission folder (plain reads there need no card). */
   cwd?: string;
   folders?: string[];
+  /** The machine's folder allow-list in force (ADR 0205): the agent's folders; every path outside them is refused. */
+  confined?: string[];
   /** Claude Code lists our tools up front instead of behind its ToolSearch. */
   alwaysLoad?: boolean;
   /** A `plan` turn: its permission prompts are answered by the computer alone (reads only). */
@@ -1348,6 +1364,7 @@ export function claudeMcpConfig(input: {
           AGENTES_MCP_SOCKET: input.socketPath,
           ...(input.cwd ? { AGENTES_MCP_CWD: input.cwd } : {}),
           ...(input.folders?.length ? { AGENTES_MCP_FOLDERS: input.folders.join(path.delimiter) } : {}),
+          ...(input.confined ? { AGENTES_MCP_CONFINED: input.confined.join(path.delimiter) } : {}),
           ...(input.profile === "plan" ? { AGENTES_MCP_PROFILE: "plan" } : {}),
           ...(input.runnerHome ? { AGENTES_RUNNER_HOME: input.runnerHome } : {}),
           ...(input.branches?.length ? { AGENTES_MCP_BRANCHES: input.branches.join(",") } : {}),
@@ -1554,16 +1571,23 @@ export function claudePermissionSettings(
   missionFolder?: string,
   opts: Parameters<typeof claudeRules>[3] & {
     /**
-     * The machine's folder allow-list (`readsOnlyInFolders` in the runner's config): Claude Code's Read, Grep, Glob
-     * and LSP refuse paths outside its working directories (its cwd and `--add-dir`s) in every mode, and a shell
-     * command naming such a path is asked about (Claude Code 2.1.257+; read only from `--settings` at launch).
+     * The machine's folder allow-list (`readsOnlyInFolders` in the runner's config, ADR 0205): Claude Code's Read,
+     * Grep, Glob and LSP refuse paths outside its working directories (its cwd and `--add-dir`s) in every mode, its
+     * file tools refuse writes there too, and a shell command naming such a path is asked about, where our prompt
+     * tool refuses it (`outsideFolders`). Claude Code 2.1.257+; read only from `--settings` at launch.
      */
     readsOnlyInFolders?: boolean;
   } = {},
 ) {
   const settings = claudeRules(mode, missionAllow, missionFolder, opts);
   if (!opts.readsOnlyInFolders) return settings;
-  return { permissions: { ...settings.permissions, blockReadsOutsideWorkingDirectories: true as const } };
+  return {
+    permissions: {
+      ...settings.permissions,
+      blockReadsOutsideWorkingDirectories: true as const,
+      blockWritesOutsideWorkingDirectories: true as const,
+    },
+  };
 }
 
 function claudeRules(
