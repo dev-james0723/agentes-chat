@@ -42,6 +42,7 @@ import {
 } from "../../runner/brain-antigravity";
 import type { CodexBrainEvent } from "../../runner/brain-codex";
 import { detectExecutors, parseAgyModels } from "../../runner/executors";
+import { handleRequest, UNENFORCED_FOLDERS_STEP } from "../../runner/handlers";
 import { CODEX_MCP_SERVER } from "../../runner/mcp";
 import { antigravityUsage, resetFromWords } from "../../runner/plan-usage";
 import type { Spawn } from "../../runner/scope-gate";
@@ -775,4 +776,42 @@ test.skipIf(!posix)(
     expect((await m.list()).find((a) => a.id === offline.id)).toMatchObject({ loggedIn: true, shared: true });
   },
   45_000,
+);
+
+test.skipIf(!posix)(
+  "the folder allow-list in force: an Antigravity turn runs as before and says the list isn't enforced for it (ADR 0205)",
+  async () => {
+    const root = tempDir("brain-agy-");
+    dirs.push(root);
+    const { ctx, home, accountDir } = turnContext(root);
+    signIn(accountDir);
+    process.env.FAKE_AGY_LOG = path.join(root, "agy.log");
+    const handler = {
+      workspaceReal: ctx.folder,
+      exec: true,
+      token: "agm_x",
+      readsOnlyInFolders: true,
+      codex: { runnerHome: home, runs: new Map(), accounts: ctx.accounts, mcp: ctx.mcp, spawn: ctx.spawn },
+    };
+    const frames: { type: string; event?: CodexBrainEvent }[] = [];
+    const scope = { signal: new AbortController().signal, output: () => {}, emit: (f: never) => frames.push(f) };
+    const reply = (await handleRequest(handler as never, { op: "brain.turn", ...turn() } as never, scope as never)) as {
+      final: CodexBrainEvent;
+    };
+    const events = frames.flatMap((f) => (f.type === "brain.event" && f.event ? [f.event] : []));
+    expect(events[0]).toMatchObject({
+      type: "tool_call",
+      name: UNENFORCED_FOLDERS_STEP,
+      executed: { isError: true, content: expect.stringContaining("Antigravity") },
+    });
+    if (process.platform === "linux") {
+      // The CLI ran and answered, as without the allow-list.
+      expect(reply.final).toMatchObject({ type: "done", text: "Let me check. All good." });
+      expect(existsSync(path.join(root, "agy.log"))).toBe(true);
+    } else {
+      // Elsewhere Antigravity's own handler says it runs on Linux only: the allow-list refused nothing.
+      expect(reply.final).toMatchObject({ type: "error", code: "unsupported" });
+    }
+  },
+  20_000,
 );

@@ -40,10 +40,15 @@ export interface RunnerConfig {
    * Brain turns' CLIs read and write only the agent's folders and the folders allowed it (`access.folders`), enforced
    * by each CLI itself: Claude Code (`blockReadsOutsideWorkingDirectories`, `blockWritesOutsideWorkingDirectories`,
    * and our prompt tool for its shell), Codex (a permission profile), Grok Build (`--sandbox strict`); a CLI that
-   * can't enforce it runs no work turn (ADR 0205). Applied at startup. Absent: on; only the owner's `false` turns it
+   * can't enforce it runs with a warning step, or not at all with `refuseUnenforcedClis` (ADR 0205). Applied at startup. Absent: on; only the owner's `false` turns it
    * off (`foldersEnforced`).
    */
   readsOnlyInFolders?: boolean;
+  /**
+   * With the allow-list in force, Cursor, OpenCode and Antigravity, which can't enforce it, run no work turn
+   * (ADR 0205). Absent: they run as before and each run says the list isn't enforced for that CLI.
+   */
+  refuseUnenforcedClis?: true;
   /** Background tasks at once on this computer (default 3). */
   maxConcurrentTasks?: number;
   /** A background task is stopped after this many seconds (default 4 h). */
@@ -236,6 +241,7 @@ export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
     ...(hostMcp ? { hostMcp: hostMcp as HostMcpConfig } : {}),
     ...(raw.phonesDisabled === true ? { phonesDisabled: true as const } : {}),
     ...(typeof raw.readsOnlyInFolders === "boolean" ? { readsOnlyInFolders: raw.readsOnlyInFolders } : {}),
+    ...(raw.refuseUnenforcedClis === true ? { refuseUnenforcedClis: true as const } : {}),
     ...(positive(raw.maxConcurrentTasks) ? { maxConcurrentTasks: positive(raw.maxConcurrentTasks) } : {}),
     ...(positive(raw.taskMaxSeconds) ? { taskMaxSeconds: positive(raw.taskMaxSeconds) } : {}),
     ...(positive(raw.brainIdleMinutes) ? { brainIdleMinutes: positive(raw.brainIdleMinutes) } : {}),

@@ -329,9 +329,11 @@ export interface HandlerContext {
   grants?: string[];
   /**
    * The runner's folder allow-list in force (`foldersEnforced`, ADR 0205): brain turns' CLIs read and write only the
-   * agent's folders, each through its own enforcement; Cursor, OpenCode and Antigravity run no work turn.
+   * agent's folders, each through its own enforcement; Cursor, OpenCode and Antigravity run with a warning step.
    */
   readsOnlyInFolders?: boolean;
+  /** The owner's `refuseUnenforcedClis`: with the allow-list in force, Cursor, OpenCode and Antigravity run no work turn. */
+  refuseUnenforcedClis?: boolean;
   /** A worker (system mode): its agent's home, as a real path. */
   ownHome?: string;
   /** Protocol 12: the agents' browsers (ADR 0040); without it the runner refuses `browser.*`. */
@@ -1418,8 +1420,10 @@ async function doCodexTurn(
   const name = cursor ? "Cursor" : opencode ? "OpenCode" : grok ? "Grok Build" : agy ? "Antigravity CLI" : "Codex";
   if (!codex) throw new RunnerError("bad_request", `This runner runs no ${name} brain turns`);
   // The folder allow-list in force (ADR 0205): these CLIs can't keep their own reads (and, but Cursor's sandbox, their
-  // commands) inside the agent's folders, so they run no turn that touches files. A `chat` turn has no file tool.
-  if (ctx.readsOnlyInFolders && !chat && (cursor || opencode || agy)) {
+  // commands) inside the agent's folders. They run as before, and the run says so, unless the owner chose to refuse
+  // them (`refuseUnenforcedClis`). A `chat` turn has no file tool.
+  const unenforced = Boolean(ctx.readsOnlyInFolders && !chat && unenforcedCli(req.kind));
+  if (unenforced && ctx.refuseUnenforcedClis) {
     throw new RunnerError(
       "not_allowed",
       `${name} can't keep its reads and commands inside the agent's folders, and this computer keeps agents in their folders. Use Claude Code, Codex or Grok Build for this agent, or the computer's owner can turn the folder limit off.`,
@@ -1453,6 +1457,19 @@ async function doCodexTurn(
     }
     scope.emit?.({ type: "brain.event", runId, event });
   };
+  if (unenforced) {
+    // A step of the run, before the CLI's own (the task page and the run's steps show it).
+    emit({
+      type: "tool_call",
+      id: `${UNENFORCED_FOLDERS_STEP}-${runId}`.slice(0, 128),
+      name: UNENFORCED_FOLDERS_STEP,
+      input: {},
+      executed: {
+        isError: true,
+        content: `The folder allow-list isn't enforced for ${name}: it can read and run commands outside the agent's folders on this computer. Claude Code, Codex and Grok Build keep to them. The computer's owner can refuse ${name} turns here (refuseUnenforcedClis).`,
+      },
+    });
+  }
   if (cursor || opencode || grok || agy) {
     turnOnlyRuns.set(runId, cursor ? "Cursor" : opencode ? "OpenCode" : grok ? "Grok Build" : "Antigravity CLI");
   }
@@ -1689,6 +1706,12 @@ const isRecordLike = (v: unknown): v is Record<string, unknown> => typeof v === 
 export type RequestOutcome =
   | { ok: true; data: unknown }
   | { ok: false; error: { code: MachineErrorCode; message: string } };
+
+/** The run step that says the folder allow-list isn't enforced for the turn's CLI (ADR 0205). */
+export const UNENFORCED_FOLDERS_STEP = "folder_allow_list_not_enforced";
+
+/** The CLIs the machine's folder allow-list can't bind (ADR 0205): no enforcement of their own covers reads. */
+export const unenforcedCli = (kind: unknown) => kind === "cursor" || kind === "opencode" || kind === "antigravity";
 
 /** Sees every request start and end (the desktop app's jobs and the activity log). */
 export interface RequestObserver {

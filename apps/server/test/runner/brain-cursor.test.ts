@@ -20,7 +20,7 @@ import {
   writeCursorMcp,
 } from "../../runner/brain-cursor";
 import { detectExecutors, parseCursorModels } from "../../runner/executors";
-import { handleRequest } from "../../runner/handlers";
+import { handleRequest, UNENFORCED_FOLDERS_STEP, unenforcedCli } from "../../runner/handlers";
 import { CODEX_MCP_SERVER } from "../../runner/mcp";
 import { agentWorkspace } from "../../runner/paths";
 import type { Spawn } from "../../runner/scope-gate";
@@ -442,19 +442,54 @@ test.skipIf(!posix)(
 );
 
 test.skipIf(!posix)(
-  "the folder allow-list in force: Cursor, OpenCode and Antigravity work turns are refused before they start (ADR 0205)",
+  "the folder allow-list in force: Cursor runs as before and its run says the list isn't enforced for it (ADR 0205)",
+  async () => {
+    const root = tempDir("brain-cursor-");
+    dirs.push(root);
+    const { ctx } = turnContext(root);
+    mkdirSync(path.join(root, ".cursor"));
+    writeFileSync(path.join(root, ".cursor", "auth.json"), "{}");
+    process.env.FAKE_CURSOR_LOG = path.join(root, "cursor.log");
+    const frames: { type: string; event?: CodexBrainEvent }[] = [];
+    const scope = { signal: new AbortController().signal, output: () => {}, emit: (f: never) => frames.push(f) };
+    const enforced = { ...ctx, readsOnlyInFolders: true };
+    const reply = (await handleRequest(enforced as never, turn(), scope as never)) as { final: CodexBrainEvent };
+    expect(reply.final).toMatchObject({ type: "done", text: "Let me check. All good." });
+    const events = frames.flatMap((f) => (f.type === "brain.event" && f.event ? [f.event] : []));
+    expect(events[0]).toMatchObject({
+      type: "tool_call",
+      name: UNENFORCED_FOLDERS_STEP,
+      executed: { isError: true, content: expect.stringContaining("Cursor") },
+    });
+    // A chat turn has no file tool: no warning.
+    frames.length = 0;
+    const chat = {
+      permissions: { mode: "chat" },
+      cwd: "..",
+      prompt: "BRIDGE_ONLY hello",
+      runId: RUN.replace(/1$/, "3"),
+    };
+    await handleRequest(enforced as never, turn(chat), scope as never);
+    const chatEvents = frames.flatMap((f) => (f.type === "brain.event" && f.event ? [f.event] : []));
+    expect(chatEvents.some((e) => e.type === "tool_call" && e.name === UNENFORCED_FOLDERS_STEP)).toBe(false);
+  },
+  20_000,
+);
+
+test.skipIf(!posix)(
+  "the owner's refuseUnenforcedClis: Cursor, OpenCode and Antigravity work and plan turns are refused before they start",
   async () => {
     const root = tempDir("brain-cursor-");
     dirs.push(root);
     const { ctx } = turnContext(root);
     const log = path.join(root, "cursor.log");
     process.env.FAKE_CURSOR_LOG = log;
-    const enforced = { ...ctx, readsOnlyInFolders: true };
+    const strict = { ...ctx, readsOnlyInFolders: true, refuseUnenforcedClis: true };
     const scope = { signal: new AbortController().signal, output: () => {}, emit: () => {} };
     for (const kind of ["cursor", "opencode", "antigravity"]) {
       for (const mode of ["work", "plan"]) {
         await expect(
-          handleRequest(enforced as never, turn({ kind, permissions: { mode } }), scope as never),
+          handleRequest(strict as never, turn({ kind, permissions: { mode } }), scope as never),
         ).rejects.toMatchObject({ code: "not_allowed", message: expect.stringContaining("folders") });
       }
     }
@@ -462,6 +497,11 @@ test.skipIf(!posix)(
     expect(existsSync(log)).toBe(false);
   },
 );
+
+test("only Cursor, OpenCode and Antigravity are CLIs the allow-list can't bind; Codex, Grok and Claude Code are", () => {
+  for (const kind of ["cursor", "opencode", "antigravity"]) expect(unenforcedCli(kind)).toBe(true);
+  for (const kind of ["codex", "grok", "claude", undefined]) expect(unenforcedCli(kind)).toBe(false);
+});
 
 test.skipIf(!posix)("Cursor turned off on the computer refuses the turn", async () => {
   const root = tempDir("brain-cursor-");

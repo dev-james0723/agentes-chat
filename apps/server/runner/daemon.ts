@@ -248,6 +248,7 @@ export function configFromGrant(
     ...(same && prev?.orgId && prev.orgId === grant.org.id && prev.hostMcp ? { hostMcp: prev.hostMcp } : {}),
     ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
     ...(typeof prev?.readsOnlyInFolders === "boolean" ? { readsOnlyInFolders: prev.readsOnlyInFolders } : {}),
+    ...(prev?.refuseUnenforcedClis ? { refuseUnenforcedClis: true as const } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
     ...(prev?.networkMark ? { networkMark: prev.networkMark } : {}),
@@ -1509,6 +1510,7 @@ export class RunnerDaemon implements RequestObserver {
       hostMcp,
       workspaceReal,
       ...(foldersEnforced(config) ? { readsOnlyInFolders: true } : {}),
+      ...(config.refuseUnenforcedClis ? { refuseUnenforcedClis: true } : {}),
       ...(paperclip ? { paperclip } : {}),
       get exec() {
         return daemon.access().tools.commands;

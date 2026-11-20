@@ -23,6 +23,9 @@ test("config: readsOnlyInFolders is kept only when true, and survives pairing ag
   expect(normalizeStored({})).toEqual({});
   // ADR 0205: the owner's explicit `false` is kept too (the one way to turn the allow-list off).
   expect(normalizeStored({ readsOnlyInFolders: false })).toEqual({ readsOnlyInFolders: false });
+  // The owner's opt-in to refuse CLIs the list can't bind (ADR 0205): kept only when true.
+  expect(normalizeStored({ refuseUnenforcedClis: true })).toEqual({ refuseUnenforcedClis: true });
+  expect(normalizeStored({ refuseUnenforcedClis: "yes" })).toEqual({});
   const again = configFromGrant(
     { readsOnlyInFolders: true },
     {
