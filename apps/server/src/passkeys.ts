@@ -135,9 +135,19 @@ export function passkeyPlugins(deps: { config: Config; db: Database; rateLimiter
         ],
         after: [
           {
-            matcher: (ctx: { path?: string }) => ctx.path === REGISTER_OPTIONS,
+            matcher: (ctx: { path?: string }) => ctx.path === REGISTER_OPTIONS || ctx.path === AUTHENTICATE_OPTIONS,
             handler: createAuthMiddleware(async (ctx) => {
-              const returned = ctx.context.returned as { user?: { id: string }; challenge?: string } | null;
+              const returned = ctx.context.returned as {
+                user?: { id: string };
+                challenge?: string;
+                allowCredentials?: unknown[];
+              } | null;
+              if (ctx.path === AUTHENTICATE_OPTIONS && returned?.challenge) {
+                // An allow-list permits a null userHandle. Keep reauthentication discoverable too
+                // so every assertion must identify the account (WebAuthn section 6.3.3, ADR 0209).
+                returned.allowCredentials = [];
+                return;
+              }
               const accountId = ctx.context.session?.user.id;
               if (returned?.user && returned.challenge && accountId) {
                 returned.user.id = userHandle(accountId);

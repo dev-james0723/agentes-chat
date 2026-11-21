@@ -563,3 +563,15 @@ test("unauthenticated option and verification requests have bounded per-IP budge
   for (let i = 0; i < 10; i++) expect((await anonymous(AUTHENTICATE, { json: { response: {} } })).status).toBe(400);
   expect((await anonymous(AUTHENTICATE, { json: { response: {} } })).status).toBe(429);
 });
+
+test("signed-in reauthentication uses discoverable options that require a user handle", async () => {
+  t = await createTestServer();
+  const owner = browser(t);
+  await signUp(owner, "reauth@example.com");
+  const { key, userHandle } = await register(owner);
+  const options = await authenticationOptions(owner);
+  expect(options.allowCredentials ?? []).toEqual([]);
+  expect(options.userVerification).toBe("required");
+  const response = await owner(AUTHENTICATE, { json: { response: key.assertion(options, userHandle) } });
+  expect(response.status).toBe(200);
+});

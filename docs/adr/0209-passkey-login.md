@@ -14,7 +14,7 @@ Use the official Better Auth Passkey plugin at the same patched, pinned version 
 
 The relying-party ID is the hostname of PUBLIC_URL; the accepted origin is its exact origin including the port. Request headers never select either value. Insecure or IP-literal configurations do not advertise this feature; explicit localhost is supported outside production. Existing local HTTP login protections remain unchanged.
 
-Require discoverable credentials and user verification for registration and authentication. User verification may be Touch ID, Face ID, a device passcode or another authenticator-approved method. The server stores the credential's public key and metadata, never fingerprints, face data or private keys.
+Require discoverable credentials and user verification for registration and authentication. Authentication always sends an empty allowCredentials list, including reauthentication; WebAuthn then requires a user handle. An allow-list would permit a valid authenticator to omit it. User verification may be Touch ID, Face ID, a device passcode or another authenticator-approved method. The server stores the credential's public key and metadata, never fingerprints, face data or private keys.
 
 The plugin does not persist and validate its generated user handle. Use an opaque stable SHA-256 digest of a versioned namespace and the server-generated random account ID; check that handle against the credential owner before session creation. Do not use an email address or a session-secret-dependent handle, and preserve the namespace for existing credentials.
 
