@@ -64,7 +64,7 @@ import {
   Switch,
   Textarea,
 } from "@agenteschat/ui";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -166,14 +166,24 @@ export function MissionPlanCard({
     fetched?.id === meta.missionId && fetched.threadId === threadId && fetched.channelId === channelId
       ? fetched
       : undefined;
-  const folder = useMissionRepositoryFolder(meta.missionId, m);
+  // A timeline card may outlive its original task binding. Watch the thread's existing cache.
+  const threadMission = useThreadMission(org.id, threadId, false);
+  const qc = useQueryClient();
+  const matchesBinding = (current: Mission | null | undefined) =>
+    current === undefined ||
+    (current?.id === meta.missionId && current.threadId === threadId && current.channelId === channelId);
+  const isCurrentBinding = () => matchesBinding(qc.getQueryData(keys.threadMission(org.id, threadId ?? "")));
+  const bound = matchesBinding(threadMission.data);
+  const ownsPlan = bound && m?.role === "owner";
+  const mayAdjust = bound && m?.canAct;
+  const folder = useMissionRepositoryFolder(meta.missionId, bound ? m : undefined, isCurrentBinding);
   const agentName = dir.agentById.get(m?.agentId ?? "")?.name ?? "";
   const current = m?.executor ?? meta.executor;
   const executor = executorName(current, agentName);
   // "do Claude Code", "da Ada": its words in Portuguese.
   const xg = agentGrammar(executor);
   // Before Start the owner may switch who programs, among those the computer can run.
-  const choices = m?.role === "owner" && m.status === "proposed" ? (m.machine?.executors ?? []) : [];
+  const choices = ownsPlan && m?.status === "proposed" ? (m.machine?.executors ?? []) : [];
   const items = (plan.data?.current?.items ?? []).filter((i) => i.status !== "dropped");
   const computer = m?.machine?.name ?? meta.computer;
   // The computer by its name only where the workspace has more than one; else its state only when it's offline.
@@ -209,7 +219,7 @@ export function MissionPlanCard({
     );
   }
   const start = () => {
-    if (waitPlan || control.isPending || folder.blocksStart()) return;
+    if (!isCurrentBinding() || waitPlan || control.isPending || folder.blocksStart()) return;
     control.mutate(
       { missionId: meta.missionId, action: "start" },
       {
@@ -230,7 +240,7 @@ export function MissionPlanCard({
   const findings = m?.findings ?? [];
   const investigated = findings.length > 0;
   const adjust =
-    m?.canAct && actions?.replyToMission
+    mayAdjust && actions?.replyToMission
       ? () => navigate(() => actions.replyToMission?.(meta.missionId, t("missions.plan.label")))
       : null;
   return (
@@ -333,7 +343,7 @@ export function MissionPlanCard({
             />
           </div>
         )}
-        {m?.canAct && (
+        {m && mayAdjust && (
           <div className="mi-plan__meta">
             <span className="mi-plan__label">
               <Icon name="shield" size={14} />
@@ -349,7 +359,7 @@ export function MissionPlanCard({
           <>
             {/* Start first, then Adjust: the plan's own card (below) and every request card lead with the main action. */}
             <div className="mi-plan__foot mi-findings__foot">
-              {m?.role === "owner" && (
+              {ownsPlan && (
                 <Button
                   variant="primary"
                   size="sm"
@@ -374,7 +384,7 @@ export function MissionPlanCard({
           </>
         ) : (
           <div className="mi-plan__foot">
-            {m?.role === "owner" && (
+            {ownsPlan && (
               <Button
                 variant="primary"
                 size="sm"
@@ -386,12 +396,12 @@ export function MissionPlanCard({
                 {t("missions.plan.start")}
               </Button>
             )}
-            {m?.canAct && actions?.replyToMission && (
+            {mayAdjust && actions?.replyToMission && (
               <Button size="sm" icon="edit" onClick={adjust ?? undefined}>
                 {t("missions.plan.change")}
               </Button>
             )}
-            {m?.role === "owner" && waitPlan && <span className="mi-hint">{t("missions.plan.waitPlan")}</span>}
+            {ownsPlan && waitPlan && <span className="mi-hint">{t("missions.plan.waitPlan")}</span>}
             {m && m.role !== "owner" && owner && (
               <span className="mi-hint">{t("missions.plan.ownerStarts", { name: owner })}</span>
             )}

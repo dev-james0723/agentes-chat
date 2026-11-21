@@ -3,7 +3,14 @@ import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
 
-import { ApiError, keys, type Mission, type MissionPlanVersion, type ThreadInfo } from "@agenteschat/client";
+import {
+  type ApiClient,
+  ApiError,
+  keys,
+  type Mission,
+  type MissionPlanVersion,
+  type ThreadInfo,
+} from "@agenteschat/client";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { ADA_ID, createFakeApi, ENG_ID, ORG_ID, seedState } from "./fake-api";
 import { renderApp, screen, settle } from "./render";
@@ -142,6 +149,23 @@ async function openReview() {
   return within(screen().getByRole("dialog", { name: TITLE }));
 }
 
+function historicalPlan() {
+  const card = document.querySelector<HTMLElement>(".mi-plan");
+  if (!card) throw new Error("The historical plan card is missing");
+  return within(card);
+}
+
+function replaceMission(api: ApiClient) {
+  return api.missions.create(ORG_ID, {
+    agentId: ADA_ID,
+    channelId: ENG_ID,
+    threadId: ROOT,
+    title: TITLE,
+    goal: "Verify the replacement checkout",
+    folder: "repos/replacement",
+  });
+}
+
 const repositoryFolder = (scope: ReturnType<typeof screen>) =>
   scope.getByRole<HTMLInputElement>("textbox", { name: REPOSITORY_LABEL });
 const saveFolderButton = (scope: ReturnType<typeof screen>) =>
@@ -253,9 +277,7 @@ describe("the mission plan repository folder", () => {
       patch: { findings: [{ kind: "read", text: "Read the native preview plan" }] },
       saveFolder: () => pending,
     });
-    const historicalCard = document.querySelector<HTMLElement>(".mi-plan");
-    if (!historicalCard) throw new Error("The historical plan card is missing");
-    const historical = within(historicalCard);
+    const historical = historicalPlan();
     const historicalStart = startButton(historical);
     const historicalInput = repositoryFolder(historical);
     const review = await openReview();
@@ -357,6 +379,38 @@ describe("the mission plan repository folder", () => {
     expect(state.calls.filter((c) => c.method === "missions.control")).toHaveLength(0);
   });
 
+  test("reopening the sole plan during Save keeps the submitted draft and the eventual refusal", async () => {
+    let refuse!: (error: Error) => void;
+    const pending = new Promise<string>((_, reject) => {
+      refuse = reject;
+    });
+    const { state, mission } = await taskMission({ saveFolder: () => pending });
+    const review = await openReview();
+    fireEvent.change(repositoryFolder(review), { target: { value: RECOVERY_FOLDER } });
+    await settle();
+    await act(async () => fireEvent.click(saveFolderButton(review)));
+    await settle();
+    expect(state.calls.filter((c) => c.method === "missions.setMachine")).toEqual([
+      { method: "missions.setMachine", args: [ORG_ID, mission.id, "machine_1", RECOVERY_FOLDER] },
+    ]);
+
+    await act(async () => fireEvent.click(review.getByRole("button", { name: "Fechar" })));
+    await settle();
+    expect(screen().queryAllByRole("dialog", { name: TITLE })).toHaveLength(0);
+    const reopened = await openReview();
+    const reopenedFolder = repositoryFolder(reopened).value;
+    await act(async () => refuse(new ApiError(400, "mission.bad_folder", "Server refused this folder")));
+    await settle();
+
+    expect(reopenedFolder).toBe(RECOVERY_FOLDER);
+    expect(repositoryFolder(reopened).value).toBe(RECOVERY_FOLDER);
+    expect(reopened.getByRole("alert").textContent).toBe("A pasta precisa ficar dentro da pasta do agente.");
+    expect(saveFolderButton(reopened).disabled).toBe(false);
+    expect(startButton(reopened).disabled).toBe(true);
+    fireEvent.click(startButton(reopened));
+    expect(state.calls.filter((c) => c.method === "missions.control")).toHaveLength(0);
+  });
+
   test.each(["/Users/james/checkout", String.raw`C:\checkout`, "repos/../checkout", String.raw`..\checkout`, "   "])(
     "blocks Save and Start for an invalid folder (%j)",
     async (invalidFolder) => {
@@ -412,14 +466,7 @@ describe("the mission plan repository folder", () => {
     await settle();
     await act(async () => fireEvent.click(saveFolderButton(review)));
 
-    const next = await api.missions.create(ORG_ID, {
-      agentId: ADA_ID,
-      channelId: ENG_ID,
-      threadId: ROOT,
-      title: TITLE,
-      goal: "Verify the replacement checkout",
-      folder: "repos/replacement",
-    });
+    const next = await replaceMission(api);
     await act(async () => services.queryClient.setQueryData(keys.threadMission(ORG_ID, ROOT), next));
     await settle();
     await act(async () => finish(RECOVERY_FOLDER));
@@ -454,6 +501,88 @@ describe("the mission plan repository folder", () => {
     expect(startButton(review).disabled).toBe(false);
   });
 
+  test("the historical card cannot save its dirty draft once a replacement is bound", async () => {
+    const { api, state, services } = await taskMission({ historicalCard: true });
+    const historical = historicalPlan();
+    const input = repositoryFolder(historical);
+    const form = input.closest("form");
+    if (!form) throw new Error("The repository folder form is missing");
+    fireEvent.change(input, { target: { value: RECOVERY_FOLDER } });
+    await settle();
+    expect(saveFolderButton(historical).disabled).toBe(false);
+
+    const next = await replaceMission(api);
+    await act(async () => {
+      services.queryClient.setQueryData(keys.threadMission(ORG_ID, ROOT), next);
+      fireEvent.submit(form);
+    });
+    await settle();
+
+    expect(state.calls.filter((c) => c.method === "missions.setMachine")).toHaveLength(0);
+    expect(historical.queryAllByRole("textbox", { name: REPOSITORY_LABEL })).toHaveLength(0);
+    expect(historical.queryAllByRole("button", { name: "Começar" })).toHaveLength(0);
+    const nextReview = await openReview();
+    expect(repositoryFolder(nextReview).value).toBe("repos/replacement");
+    expect(startButton(nextReview).disabled).toBe(false);
+  });
+
+  test.each(["replaced", "cleared"] as const)(
+    "the clean historical card cannot Start after the binding is %s",
+    async (change) => {
+      const { api, state, services } = await taskMission({ historicalCard: true });
+      const historical = historicalPlan();
+      const start = startButton(historical);
+      expect(start.disabled).toBe(false);
+
+      const next = change === "replaced" ? await replaceMission(api) : null;
+      await act(async () => {
+        services.queryClient.setQueryData(keys.threadMission(ORG_ID, ROOT), next);
+        fireEvent.click(start);
+      });
+      await settle();
+
+      expect(state.calls.filter((c) => c.method === "missions.control")).toHaveLength(0);
+      expect(historical.queryAllByRole("button", { name: "Começar" })).toHaveLength(0);
+      expect(historical.queryAllByRole("textbox", { name: REPOSITORY_LABEL })).toHaveLength(0);
+      expect(bar()?.dataset.taskMission).toBe(next?.id);
+    },
+  );
+
+  test.each(["replaced", "cleared"] as const)(
+    "a delayed Start keeps the task binding %s while confirming the original mission",
+    async (change) => {
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const { api, state, mission, services } = await taskMission({ historicalCard: true, start: () => pending });
+      const historical = historicalPlan();
+      const review = await openReview();
+      await act(async () => fireEvent.click(startButton(review)));
+      await settle();
+
+      const next = change === "replaced" ? await replaceMission(api) : null;
+      await act(async () => services.queryClient.setQueryData(keys.threadMission(ORG_ID, ROOT), next));
+      await settle();
+      await act(async () => finish());
+      await settle();
+
+      expect(state.calls.filter((c) => c.method === "missions.control")).toEqual([
+        { method: "missions.control", args: [ORG_ID, mission.id, "start"] },
+      ]);
+      expect(historical.getByText("Plano começou").textContent).toBe("Plano começou");
+      expect(bar()?.dataset.taskMission).toBe(next?.id);
+      if (next) {
+        const nextReview = await openReview();
+        expect(repositoryFolder(nextReview).value).toBe("repos/replacement");
+        expect(startButton(nextReview).disabled).toBe(false);
+      } else {
+        // Both a cleared task and an active mission hide review, so inspect the binding itself.
+        expect(services.queryClient.getQueryData(keys.threadMission(ORG_ID, ROOT)) === null).toBe(true);
+      }
+    },
+  );
+
   test("a replacement mission discards the previous mission's open draft", async () => {
     const { api, state, services } = await taskMission();
     const review = await openReview();
@@ -461,14 +590,7 @@ describe("the mission plan repository folder", () => {
     await settle();
     expect(startButton(review).disabled).toBe(true);
 
-    const next = await api.missions.create(ORG_ID, {
-      agentId: ADA_ID,
-      channelId: ENG_ID,
-      threadId: ROOT,
-      title: TITLE,
-      goal: "Verify the replacement checkout",
-      folder: "repos/replacement",
-    });
+    const next = await replaceMission(api);
     await act(async () => services.queryClient.setQueryData(keys.threadMission(ORG_ID, ROOT), next));
     await settle();
 

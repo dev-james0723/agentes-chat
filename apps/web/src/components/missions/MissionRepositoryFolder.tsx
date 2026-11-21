@@ -35,17 +35,26 @@ interface FolderDraft {
   error?: string;
 }
 
-export function useMissionRepositoryFolder(missionId: string, mission: Mission | undefined) {
+/** The persistent task review and its cards share one draft for the exact repository binding. */
+export function useMissionRepositoryDraft(orgId: string, missionId: string, mission: Mission | undefined) {
+  const machineId = mission?.machine?.id;
+  const savedFolder = mission?.repoDir ?? "";
+  const draftKey = ["mission-folder-draft", orgId, missionId, machineId, savedFolder] as const;
+  const { data: draft } = useQuery<FolderDraft | null>({ queryKey: draftKey, queryFn: skipToken, gcTime: 0 });
+  return { draft, draftKey, machineId, savedFolder };
+}
+
+export function useMissionRepositoryFolder(
+  missionId: string,
+  mission: Mission | undefined,
+  isCurrentBinding: () => boolean,
+) {
   const { t } = useTranslation();
   const { org, me } = useOrg();
   const api = useApi();
   const qc = useQueryClient();
   const missionKey = keys.mission(org.id, missionId);
-  const machineId = mission?.machine?.id;
-  const savedFolder = mission?.repoDir ?? "";
-  // The timeline card and the review dialog share the draft while either is mounted on this binding.
-  const draftKey = ["mission-folder-draft", org.id, missionId, machineId, savedFolder] as const;
-  const { data: draft } = useQuery<FolderDraft | null>({ queryKey: draftKey, queryFn: skipToken, gcTime: 0 });
+  const { draft, draftKey, machineId, savedFolder } = useMissionRepositoryDraft(org.id, missionId, mission);
   const mutationKey = ["mission-folder-save", org.id, missionId] as const;
   const pendingFilter = { mutationKey, exact: true };
   const startFilter = { mutationKey: keys.missionPart(org.id, missionId, "control"), exact: true };
@@ -58,10 +67,7 @@ export function useMissionRepositoryFolder(missionId: string, mission: Mission |
     mutationFn: (input: { machineId: string; folder: string; draftKey: typeof draftKey }) =>
       api.missions.setMachine(org.id, missionId, input.machineId, input.folder),
     onSuccess: (saved, input) => {
-      const current = qc.getQueryData<Mission | null>(keys.threadMission(org.id, saved.threadId));
-      // A save can finish after the task has bound a different mission.
-      if (current !== undefined && current?.id !== saved.id) qc.setQueryData(keys.mission(org.id, saved.id), saved);
-      else cacheMission(qc, org.id, saved);
+      cacheMission(qc, org.id, saved, { preserveThreadBinding: true });
       qc.setQueryData<FolderDraft | null>(input.draftKey, (draft) => (draft ? null : undefined));
     },
     onError: (error, input) =>
@@ -73,6 +79,7 @@ export function useMissionRepositoryFolder(missionId: string, mission: Mission |
     const current = qc.getQueryData<Mission>(missionKey);
     const folder = qc.getQueryData<FolderDraft | null>(draftKey)?.value;
     if (
+      !isCurrentBinding() ||
       !mission ||
       !current ||
       !machineId ||
@@ -118,7 +125,7 @@ export function useMissionRepositoryFolder(missionId: string, mission: Mission |
           defaultValue={value}
           disabled={pending || startPending}
           onChange={(event) => {
-            if (mutationPending()) return;
+            if (!isCurrentBinding() || mutationPending()) return;
             const value = event.target.value;
             qc.setQueryData<FolderDraft | null>(draftKey, value === savedFolder ? null : { value });
           }}
