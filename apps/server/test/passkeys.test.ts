@@ -575,3 +575,106 @@ test("signed-in reauthentication uses discoverable options that require a user h
   const response = await owner(AUTHENTICATE, { json: { response: key.assertion(options, userHandle) } });
   expect(response.status).toBe(200);
 });
+
+test("a canonical HTTPS passkey sign-in hands off once to the local HTTP desktop with host-only cookies", async () => {
+  const publicOrigin = "https://passkey.example.test:8445";
+  const localOrigin = "http://localhost:3000";
+  t = await createTestServer({ env: { PUBLIC_URL: publicOrigin, LOCAL_HTTP_LOGIN: "true" } });
+  // Exercise the production origin and CSRF checks that Better Auth otherwise skips in tests.
+  const context = await t.auth.$context;
+  context.skipOriginCheck = false;
+  context.skipCSRFCheck = false;
+  const at = (origin: string) => {
+    const cookies = new Map<string, string>();
+    return async (path: string, body?: unknown, headers: Record<string, string> = {}) => {
+      const response = await t.app.fetch(
+        new Request(`${origin}${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            host: new URL(origin).host,
+            origin,
+            cookie: Array.from(cookies.values()).join("; "),
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+            ...headers,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+      );
+      for (const cookie of response.headers.getSetCookie()) {
+        const pair = cookie.split(";")[0];
+        const name = pair?.split("=")[0];
+        if (pair && name) cookies.set(name, pair);
+      }
+      return response;
+    };
+  };
+  const site = at(publicOrigin);
+  const desktop = at(localOrigin);
+  const credentials = { email: "desktop-passkey@example.test", password: "correct horse battery", name: "Owner" };
+  expect((await site("/api/auth/sign-up/email", credentials)).status).toBe(200);
+  const registrationResponse = await site(OPTIONS);
+  expect(registrationResponse.status).toBe(200);
+  const registration = (await registrationResponse.json()) as RegistrationOptions;
+  expect(registration.rp.id).toBe("passkey.example.test");
+  const key = authenticator();
+  expect(
+    (
+      await site(REGISTER, {
+        response: key.registration(registration, { origin: publicOrigin }),
+      })
+    ).status,
+  ).toBe(200);
+  expect((await site("/api/auth/sign-out", {})).status).toBe(200);
+  expect(await t.db.select().from(schema.sessions)).toHaveLength(0);
+
+  const verifier = randomBytes(32).toString("base64url");
+  const opened = await desktop("/api/auth/desktop/open", { challenge: base64(sha256(verifier)) });
+  expect(opened.status).toBe(200);
+  const { requestId, code } = (await opened.json()) as { requestId: string; code: string };
+  expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  expect(await (await desktop("/api/auth/desktop/redeem", { verifier })).json()).toEqual({ signedIn: false });
+  // Local password login remains allowed; this alias must still refuse a passkey ceremony.
+  expect((await desktop(AUTH_OPTIONS)).status).toBe(403);
+
+  const optionsResponse = await site(AUTH_OPTIONS);
+  expect(optionsResponse.status).toBe(200);
+  const options = (await optionsResponse.json()) as AuthenticationOptions;
+  const authenticated = await site(AUTHENTICATE, {
+    response: key.assertion(options, registration.user.id, { origin: publicOrigin }),
+  });
+  expect(authenticated.status).toBe(200);
+  const account = (await authenticated.json()) as { user: { id: string; email: string } };
+  const browserCookie = authenticated.headers.getSetCookie().find((cookie) => cookie.includes("session_token="));
+  expect(browserCookie).toBeDefined();
+  expect(/; secure(?:;|$)/i.test(browserCookie ?? "")).toBe(true);
+  expect(/; domain=/i.test(browserCookie ?? "")).toBe(false);
+
+  // Reading the matching code alone transfers nothing. The browser must explicitly confirm.
+  expect(await (await site("/api/auth/desktop/request", { requestId })).json()).toEqual({ code });
+  expect(await (await desktop("/api/auth/desktop/redeem", { verifier })).json()).toEqual({ signedIn: false });
+  expect(await (await site("/api/auth/desktop/handoff", { requestId })).json()).toEqual({ ok: true });
+  expect((await desktop("/api/auth/desktop/redeem", { verifier }, { origin: "http://localhost:3001" })).status).toBe(
+    403,
+  );
+
+  const redeemed = await desktop("/api/auth/desktop/redeem", { verifier });
+  expect(redeemed.status).toBe(200);
+  expect(await redeemed.json()).toEqual({ signedIn: true });
+  const localCookie = redeemed.headers.getSetCookie().find((cookie) => cookie.includes("session_token="));
+  expect(localCookie).toBeDefined();
+  expect(/; secure(?:;|$)/i.test(localCookie ?? "")).toBe(false);
+  expect(/; domain=/i.test(localCookie ?? "")).toBe(false);
+  expect(localCookie?.split(";")[0]).not.toBe(browserCookie?.split(";")[0]);
+  const me = await desktop("/api/app/me");
+  expect(me.status).toBe(200);
+  expect(await me.json()).toMatchObject({ user: { id: account.user.id, email: credentials.email } });
+  const sessions = await t.db.select().from(schema.sessions);
+  expect(sessions).toHaveLength(2);
+  expect(sessions.every((session) => session.userId === account.user.id)).toBe(true);
+
+  const replay = await at(localOrigin)("/api/auth/desktop/redeem", { verifier });
+  expect(await replay.json()).toEqual({ signedIn: false });
+  expect(replay.headers.getSetCookie().some((cookie) => cookie.includes("session_token="))).toBe(false);
+  expect(await (await site("/api/auth/desktop/handoff", { requestId })).json()).toEqual({ ok: false });
+  expect(await t.db.select().from(schema.sessions)).toHaveLength(2);
+});
