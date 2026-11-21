@@ -4666,7 +4666,9 @@ export const TimelineMessage = memo(function TimelineMessage({
                 enabled={Date.now() - Date.parse(m.createdAt) < HELD_RECENT_MS}
               />
             )}
-            {missionPlan && <MissionPlanCard plan={missionPlan} />}
+            {missionPlan && (
+              <MissionPlanCard plan={missionPlan} threadId={m.threadId ?? null} channelId={m.channelId} />
+            )}
             {missionReview && <MissionReviewCard message={missionReview} />}
             {missionSetup && <MissionSetupCard setup={missionSetup} threadId={m.threadId ?? null} />}
             {missionReport && <MissionReportExtras report={missionReport} message={m} />}

@@ -8337,6 +8337,8 @@
       "draftingNoComputer": "{{executor}} klasörü okuyor ve planı hazırlıyor",
       "empty": "Henüz öğe yok. Yine de başlatabilir ya da “Bir şeyi değiştir” ile plan isteyebilirsiniz.",
       "waitPlan": "Plan gelince açılır",
+      "repositoryFolder": "Depo klasörü",
+      "repositoryFolderRelative": "Ajanın çalışma klasörüne göre göreli yol, ör. repos/project.",
       "adjusts": "{{executor}} listeyi yol boyunca güncellemeye devam eder",
       "switched": "Artık {{executor}} programlıyor. Plan baştan başlıyor.",
       "more_one": "+{{count}} öğe",

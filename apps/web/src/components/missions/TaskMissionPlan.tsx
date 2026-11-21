@@ -30,6 +30,8 @@ export function TaskMissionPlan({ mission, thread }: { mission: Mission; thread:
       <Dialog open={open} onOpenChange={setOpen} title={mission.title} closeLabel={t("common.close")}>
         <DialogBody>
           <MissionPlanCard
+            threadId={thread.id}
+            channelId={thread.channelId}
             onNavigate={(navigate) => {
               setOpen(false);
               setTimeout(navigate, 0);

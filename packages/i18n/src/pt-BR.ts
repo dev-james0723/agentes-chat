@@ -8688,6 +8688,8 @@ export const ptBR = {
       draftingNoComputer_female: "A {{executor}} está lendo a pasta e montando o plano",
       empty: "Ainda sem itens. Dá para começar assim mesmo ou pedir um plano em “Mudar algo”.",
       waitPlan: "Libera quando o plano chegar",
+      repositoryFolder: "Pasta do repositório",
+      repositoryFolderRelative: "Caminho relativo à pasta do agente, por exemplo, repos/projeto.",
       adjusts: "o {{executor}} vai ajustando a lista conforme avança",
       adjusts_female: "a {{executor}} vai ajustando a lista conforme avança",
       switched: "Agora quem programa é {{executor}}. O plano recomeça.",

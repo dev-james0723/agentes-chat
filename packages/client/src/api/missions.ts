@@ -328,10 +328,11 @@ export function useSetAgentMissionDefault(orgId: string, missionId: string, agen
 }
 
 /** Começar, Pausar, Retomar, Parar. Errors are the caller's to say (translated by code). */
-export function useMissionControl(orgId: string) {
+export function useMissionControl(orgId: string, boundMissionId?: string) {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: boundMissionId ? keys.missionPart(orgId, boundMissionId, "control") : undefined,
     meta: { silent: true },
     mutationFn: ({ missionId, action }: { missionId: string; action: MissionControl }) =>
       api.missions.control(orgId, missionId, action),

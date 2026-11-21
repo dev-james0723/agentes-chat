@@ -8429,6 +8429,8 @@
       "draftingNoComputer_female": "{{executor}} leest de map en stelt het plan op",
       "empty": "Nog geen items. Je kunt toch starten of om een plan vragen met „Iets wijzigen”.",
       "waitPlan": "Opent zodra het plan er is",
+      "repositoryFolder": "Repositorymap",
+      "repositoryFolderRelative": "Pad relatief aan de werkmap van de agent, bijvoorbeeld repos/project.",
       "adjusts": "{{executor}} past de lijst onderweg steeds aan",
       "adjusts_female": "{{executor}} past de lijst onderweg steeds aan",
       "switched": "{{executor}} programmeert nu. Het plan begint opnieuw.",

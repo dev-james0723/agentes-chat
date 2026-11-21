@@ -8903,6 +8903,8 @@
       "draftingNoComputer": "{{executor}} czyta folder i przygotowuje plan",
       "empty": "Na razie brak punktów. Możesz mimo to zacząć albo poprosić o plan przez „Zmień coś”.",
       "waitPlan": "Otworzy się, gdy przyjdzie plan",
+      "repositoryFolder": "Folder repozytorium",
+      "repositoryFolderRelative": "Ścieżka względem folderu roboczego agenta, np. repos/projekt.",
       "adjusts": "{{executor}} dopasowuje listę na bieżąco",
       "switched": "Teraz programuje {{executor}}. Plan zaczyna się od nowa.",
       "more_one": "+{{count}} punkt",

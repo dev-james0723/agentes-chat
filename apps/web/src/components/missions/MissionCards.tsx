@@ -90,6 +90,7 @@ import {
   useMissionPanel,
 } from "./MissionBits";
 import { BlockedCommands } from "./MissionCommandCard";
+import { useMissionRepositoryFolder } from "./MissionRepositoryFolder";
 import { SessionRows } from "./MissionSessions";
 
 /**
@@ -139,9 +140,13 @@ const PLAN_SHOWN = 5;
 
 export function MissionPlanCard({
   plan: meta,
+  threadId,
+  channelId,
   onNavigate,
 }: {
   plan: MissionPlanMeta;
+  threadId: string | null;
+  channelId: string;
   /** A surrounding dialog closes before an action moves to the composer or the mission files. */
   onNavigate?: (navigate: () => void) => void;
 }) {
@@ -153,10 +158,15 @@ export function MissionPlanCard({
   const actions = useChannelActions();
   const mission = useMission(org.id, meta.missionId);
   const plan = useMissionPlan(org.id, meta.missionId);
-  const control = useMissionControl(org.id);
+  const control = useMissionControl(org.id, meta.missionId);
   const switchExecutor = useSetMissionExecutor(org.id);
   const stamp = useStamp();
-  const m = mission.data;
+  const fetched = mission.data;
+  const m =
+    fetched?.id === meta.missionId && fetched.threadId === threadId && fetched.channelId === channelId
+      ? fetched
+      : undefined;
+  const folder = useMissionRepositoryFolder(meta.missionId, m);
   const agentName = dir.agentById.get(m?.agentId ?? "")?.name ?? "";
   const current = m?.executor ?? meta.executor;
   const executor = executorName(current, agentName);
@@ -198,7 +208,8 @@ export function MissionPlanCard({
       </div>
     );
   }
-  const start = () =>
+  const start = () => {
+    if (waitPlan || control.isPending || folder.blocksStart()) return;
     control.mutate(
       { missionId: meta.missionId, action: "start" },
       {
@@ -213,6 +224,7 @@ export function MissionPlanCard({
         onError: (error) => toast.show(errorText(t, error), "error"),
       },
     );
+  };
   const owner = m?.ownerId ? dir.memberById.get(m.ownerId)?.name : undefined;
   // Proposed already investigated (ADR 0037 round 2): what it read, the numbers, the one decision left.
   const findings = m?.findings ?? [];
@@ -330,6 +342,7 @@ export function MissionPlanCard({
             <PlanApprovalSelect mission={m} />
           </div>
         )}
+        {folder.editor}
       </div>
       <Locked when={control.isPending}>
         {investigated ? (
@@ -342,7 +355,7 @@ export function MissionPlanCard({
                   size="sm"
                   icon="check"
                   loading={control.isPending}
-                  disabled={waitPlan}
+                  disabled={waitPlan || folder.startBlocked}
                   onClick={start}
                 >
                   {t("missions.findings.start")}
@@ -367,7 +380,7 @@ export function MissionPlanCard({
                 size="sm"
                 icon="check"
                 loading={control.isPending}
-                disabled={waitPlan}
+                disabled={waitPlan || folder.startBlocked}
                 onClick={start}
               >
                 {t("missions.plan.start")}

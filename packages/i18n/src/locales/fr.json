@@ -8659,6 +8659,8 @@
       "draftingNoComputer": "{{executor}} lit le dossier et rédige le plan",
       "empty": "Pas encore d'éléments. Vous pouvez démarrer quand même ou demander un plan avec « Changer quelque chose ».",
       "waitPlan": "S'ouvre quand le plan arrive",
+      "repositoryFolder": "Dossier du dépôt",
+      "repositoryFolderRelative": "Chemin relatif au dossier de travail de l’agent, par exemple repos/projet.",
       "adjusts": "{{executor}} continue d'ajuster la liste en cours de route",
       "switched": "{{executor}} programme désormais. Le plan repart de zéro.",
       "more_one": "+{{count}} élément",

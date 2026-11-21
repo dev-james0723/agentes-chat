@@ -8096,6 +8096,8 @@
       "draftingNoComputer": "{{executor}}이(가) 폴더를 읽고 계획을 작성하는 중",
       "empty": "아직 항목이 없어요. 그대로 시작하거나 “변경 요청”으로 계획을 요청할 수 있어요.",
       "waitPlan": "계획이 도착하면 열려요",
+      "repositoryFolder": "저장소 폴더",
+      "repositoryFolderRelative": "에이전트 작업 폴더의 상대 경로입니다. 예: repos/project",
       "adjusts": "{{executor}}이(가) 진행하면서 목록을 계속 조정해요",
       "switched": "이제 {{executor}}이(가) 프로그래밍해요. 계획을 처음부터 다시 세워요.",
       "more_other": "+{{count}}개 항목",
