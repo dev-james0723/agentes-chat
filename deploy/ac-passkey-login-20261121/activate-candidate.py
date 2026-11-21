@@ -230,7 +230,9 @@ class Activation:
         # An unrelated container using the target name must never be overwritten.
         if self.args.container not in names:
             result = subprocess.run(self.docker + ["container", "inspect", "--format", "{{.Id}}", self.args.container], text=True, capture_output=True)
-            missing = {"Error: No such container: " + self.args.container, "Error: No such object: " + self.args.container}
+            missing = {"Error: No such container: " + self.args.container,
+                       "Error: No such object: " + self.args.container,
+                       "Error response from daemon: No such container: " + self.args.container}
             require(result.returncode == 1 and not result.stdout.strip() and result.stderr.strip() in missing,
                     "Unable to establish that the scoped app container is absent")
 

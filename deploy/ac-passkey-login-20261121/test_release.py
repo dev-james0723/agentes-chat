@@ -375,5 +375,46 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assert_build_context_routing("fixture-ci")
 
 
+    def missing_container_fixture(self):
+        instance = activate.Activation.__new__(activate.Activation)
+        instance.args = SimpleNamespace(project="fixture", service="agentes", container="fixture-agentes-1")
+        instance.docker = ["/fixture/docker", "--context", "fixture-live"]
+        return instance
+
+    def test_absent_container_accepts_exact_docker_daemon_error_formats(self):
+        instance = self.missing_container_fixture()
+        formats = ("Error: No such container: ", "Error: No such object: ",
+                   "Error response from daemon: No such container: ")
+        for prefix in formats:
+            result = SimpleNamespace(returncode=1, stdout="\n", stderr=prefix + instance.args.container + "\n")
+            with self.subTest(prefix=prefix), patch.object(activate.build, "output", return_value=""), \
+                    patch.object(activate.subprocess, "run", return_value=result) as inspect:
+                instance.containers((build.BASE,))
+                self.assertEqual(inspect.call_args.args[0][-1], instance.args.container)
+
+    def test_absent_container_rejects_unrelated_errors_or_ambiguous_results(self):
+        instance = self.missing_container_fixture()
+        known = "Error response from daemon: No such container: " + instance.args.container
+        cases = (
+            (1, "", "Error response from daemon: permission denied"),
+            (1, "", "Cannot connect to the Docker daemon"),
+            (1, "", "Error response from daemon: No such container: another-app"),
+            (0, "", known),
+            (1, "unexpected-container-id", known),
+        )
+        for code, stdout, stderr in cases:
+            result = SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
+            with self.subTest(error=stderr, code=code), patch.object(activate.build, "output", return_value=""), \
+                    patch.object(activate.subprocess, "run", return_value=result), self.assertRaises(RuntimeError):
+                instance.containers((build.BASE,))
+
+    def test_required_running_container_still_rejects_absence(self):
+        instance = self.missing_container_fixture()
+        with patch.object(activate.build, "output", return_value=""), \
+                patch.object(activate.subprocess, "run") as inspect, self.assertRaises(RuntimeError):
+            instance.containers((build.BASE,), require_running=True)
+        inspect.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
