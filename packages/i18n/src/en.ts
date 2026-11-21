@@ -8674,6 +8674,8 @@ export const en = {
       draftingNoComputer: "{{executor}} is reading the folder and drafting the plan",
       empty: "No items yet. You can start anyway or ask for a plan with “Change something”.",
       waitPlan: "Opens when the plan arrives",
+      repositoryFolder: "Repository folder",
+      repositoryFolderRelative: "Path relative to the agent’s workspace, e.g. repos/project.",
       adjusts: "{{executor}} keeps adjusting the list along the way",
       switched: "{{executor}} programs now. The plan starts over.",
       more_one: "+{{count}} item",

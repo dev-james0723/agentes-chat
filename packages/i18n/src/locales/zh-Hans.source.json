@@ -20257,6 +20257,12 @@
   "missions.plan.waitPlan": {
     "value": "Opens when the plan arrives"
   },
+  "missions.plan.repositoryFolder": {
+    "value": "Repository folder"
+  },
+  "missions.plan.repositoryFolderRelative": {
+    "value": "Path relative to the agent’s workspace, e.g. repos/project."
+  },
   "missions.plan.adjusts": {
     "value": "{{executor}} keeps adjusting the list along the way"
   },

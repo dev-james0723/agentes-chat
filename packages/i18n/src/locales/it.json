@@ -8666,6 +8666,8 @@
       "draftingNoComputer_female": "{{executor}} sta leggendo la cartella e preparando il piano",
       "empty": "Ancora nessun punto. Puoi avviare comunque o chiedere un piano con “Cambia qualcosa”.",
       "waitPlan": "Si apre quando arriva il piano",
+      "repositoryFolder": "Cartella del repository",
+      "repositoryFolderRelative": "Percorso relativo alla cartella di lavoro dell’agente, ad esempio repos/progetto.",
       "adjusts": "{{executor}} continua ad aggiustare l'elenco strada facendo",
       "adjusts_female": "{{executor}} continua ad aggiustare l'elenco strada facendo",
       "switched": "Ora programma {{executor}}. Il piano ricomincia da capo.",

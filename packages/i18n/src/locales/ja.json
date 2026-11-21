@@ -8100,6 +8100,8 @@
       "draftingNoComputer": "{{executor}}がフォルダを読み、計画を作成しています",
       "empty": "まだ項目がありません。このまま開始するか、「変更を依頼」で計画を頼めます。",
       "waitPlan": "計画が届くと開きます",
+      "repositoryFolder": "リポジトリのフォルダー",
+      "repositoryFolderRelative": "エージェントの作業フォルダーからの相対パス（例: repos/project）。",
       "adjusts": "{{executor}}が進めながらリストを調整していきます",
       "switched": "これからは{{executor}}がプログラムを書きます。計画は最初からやり直しです。",
       "more_other": "+{{count}}項目",

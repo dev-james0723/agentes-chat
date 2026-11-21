@@ -8383,6 +8383,8 @@
       "draftingNoComputer_female": "{{executor}} liest den Ordner und entwirft den Plan",
       "empty": "Noch keine Punkte. Du kannst trotzdem starten oder mit „Etwas ändern“ um einen Plan bitten.",
       "waitPlan": "Öffnet sich, wenn der Plan da ist",
+      "repositoryFolder": "Repository-Ordner",
+      "repositoryFolderRelative": "Pfad relativ zum Arbeitsordner des Agenten, z. B. repos/projekt.",
       "adjusts": "{{executor}} passt die Liste unterwegs weiter an",
       "adjusts_female": "{{executor}} passt die Liste unterwegs weiter an",
       "switched": "{{executor}} programmiert jetzt. Der Plan beginnt von vorn.",

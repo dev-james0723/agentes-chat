@@ -8145,6 +8145,8 @@
       "draftingNoComputer": "{{executor}} 正在读取文件夹并起草计划",
       "empty": "还没有任何项目。你可以直接开始，或通过“修改一下”要求制定计划。",
       "waitPlan": "计划到达后打开",
+      "repositoryFolder": "仓库文件夹",
+      "repositoryFolderRelative": "相对于智能体工作文件夹的路径，例如 repos/project。",
       "adjusts": "{{executor}} 会在过程中持续调整列表",
       "switched": "现在由 {{executor}} 编程。计划重新开始。",
       "more_other": "+{{count}} 项",
