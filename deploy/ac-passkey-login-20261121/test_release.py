@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import copy
+from contextlib import ExitStack, redirect_stdout
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -281,6 +284,95 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertEqual(instance.up.call_count, 1)
         self.assertIn(b"ANOTHER_WRITER=new", instance.env_path.read_bytes())
         self.assertEqual(json.loads(instance.record_path.read_text())["state"], "rollback-required")
+
+
+    def assert_build_context_routing(self, alternate):
+        """Exercise main through receipt creation with every external process mocked."""
+        repo, evidence = self.root / "repo", self.root / "evidence"
+        repo.mkdir()
+        paths = ("package.json", "bun.lock", "bunfig.toml", build.JOURNAL,
+                 "apps/server/src/auth.ts", "apps/web/src/auth/better-auth.ts")
+        for name in paths:
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}" if name.endswith(".json") else "fixture")
+        dist = repo / "apps/web/dist"
+        (dist / "runner").mkdir(parents=True)
+        (dist / "index.html").write_text("<html>fixture</html>")
+        runner = dist / "runner/agentes-runner.mjs"
+        runner.write_text("fixture runner")
+        runner_hash = build.file_sha(runner)
+        revision, image_id = "a" * 40, "sha256:" + "b" * 64
+        source = {"digest": "sha256:" + "c" * 64, "files": 3308}
+        live = ["/fixture/docker", "--context", "fixture-live"]
+        builder = ["/fixture/docker", "--context", alternate or "fixture-live"]
+        migration = {"tag": "0283_passkeys", "when": 101, "sqlSha256": "d" * 64}
+        argv = ["build-candidate.py", "--revision", revision, "--evidence-dir", str(evidence),
+                "--bun", "/fixture/bun", "--node", "/fixture/node", "--docker", "/fixture/docker",
+                "--docker-context", "fixture-live", "--container", "fixture-app", "--http-origin", "http://localhost:3000"]
+        if alternate:
+            argv += ["--build-docker-context", alternate]
+        docker_calls = []
+
+        def command(args, **_kwargs):
+            if args[:2] == ["git", "rev-parse"]:
+                return revision
+            if args[0] == "git":
+                return ""
+            if args[:2] == ["/fixture/bun", "--version"]:
+                return build.BUN_VERSION
+            if args[0] == "/fixture/bun":
+                return json.dumps(source)
+            self.assertEqual(args[:3], builder)
+            docker_calls.append(args)
+            if args[3] == "tag":
+                self.assertEqual(args[4], build.BASE)
+                return ""
+            if args[3:5] == ["image", "inspect"]:
+                return build.BASE if args[5].startswith("ac-passkey-build-base:") else image_id
+            if "runningSourceIdentity" in args[-1]:
+                return json.dumps(source)
+            if "const packages =" in args[-1]:
+                manifest_path = evidence / ("candidate-" + revision[:12]) / "assets.json"
+                manifest = json.loads(manifest_path.read_text())
+                return json.dumps({"platform": "linux", "bun": build.BUN_VERSION,
+                                   "versions": {"fixture": build.AUTH_VERSION}, "mismatches": [],
+                                   "count": len(manifest), "manifestSha256": build.file_sha(manifest_path),
+                                   "runnerSha256": runner_hash})
+            return "passkey-import-ok"
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(sys, "argv", argv))
+            stack.enter_context(patch.object(build, "REPO", repo))
+            stack.enter_context(patch.object(build, "RUNNER_SHA", runner_hash))
+            stack.enter_context(patch.object(build, "output", side_effect=command))
+            stack.enter_context(patch.object(build.subprocess, "check_output", side_effect=lambda args, **_: b"{}" if "show" in args else b""))
+            stack.enter_context(patch.object(build, "read_changes", return_value=[("M", name) for name in paths[-2:]]))
+            stack.enter_context(patch.object(build, "check_migration", return_value=migration))
+            live_checks = stack.enter_context(patch.object(build, "inspect_live"))
+            builds = stack.enter_context(patch.object(build, "run_logged"))
+            verify = stack.enter_context(patch.object(build, "verify_image"))
+            fallback = stack.enter_context(patch.object(build, "build_fallback", return_value={"imageId": "sha256:" + "e" * 64}))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            build.main()
+        self.assertEqual(live_checks.call_count, 2)
+        self.assertTrue(all(call.args[0] == live for call in live_checks.call_args_list))
+        self.assertEqual(builds.call_args_list[-1].args[0][:3], builder)
+        verify.assert_called_once_with(builder, image_id, revision, source)
+        self.assertEqual(fallback.call_args.args[0], builder)
+        self.assertGreater(len(docker_calls), 3)
+        receipt = json.loads((evidence / ("image-receipt-" + revision[:12] + ".json")).read_text())
+        self.assertEqual(receipt["liveDockerContext"], "fixture-live")
+        self.assertEqual(receipt["buildDockerContext"], alternate or "fixture-live")
+        dockerfile = (evidence / ("candidate-" + revision[:12]) / "Dockerfile").read_text()
+        self.assertIn("--production --filter @agenteschat/server --filter @agenteschat/web --no-env-file", dockerfile)
+        self.assertNotIn("rm -rf", dockerfile)
+
+    def test_default_context_builds_and_checks_same_installation(self):
+        self.assert_build_context_routing(None)
+
+    def test_separate_build_context_keeps_both_live_checks_on_original(self):
+        self.assert_build_context_routing("fixture-ci")
 
 
 if __name__ == "__main__":

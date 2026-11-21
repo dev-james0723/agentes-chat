@@ -247,10 +247,13 @@ def main():
     parser.add_argument("--node", required=True, type=Path)
     parser.add_argument("--docker", required=True, type=Path)
     parser.add_argument("--docker-context", required=True)
+    parser.add_argument("--build-docker-context", help="Build and verify on this context; live checks stay on --docker-context")
     parser.add_argument("--container", required=True)
     parser.add_argument("--http-origin", required=True)
     args = parser.parse_args()
-    docker = [str(args.docker), "--context", args.docker_context]
+    live_docker = [str(args.docker), "--context", args.docker_context]
+    build_context = args.build_docker_context or args.docker_context
+    docker = [str(args.docker), "--context", build_context]
     repo = REPO
     require(re.fullmatch(r"[0-9a-f]{40}", args.revision), "Use the full reviewed revision")
     require(output(["git", "rev-parse", "HEAD"], cwd=repo) == args.revision, "Reviewed HEAD moved")
@@ -260,7 +263,7 @@ def main():
     for directory in (repo, repo / "apps/web"):
         require(not any(path.is_file() for path in directory.glob(".env*") if path.name != ".env.example"),
                 "Do not build the candidate with local environment/credential files")
-    inspect_live(docker, args.container, args.http_origin)
+    inspect_live(live_docker, args.container, args.http_origin)
     identity = json.loads(output([str(args.bun), "scripts/runtime-identity.ts", "rev", args.revision], cwd=repo))
     source = {key: identity[key] for key in ("digest", "files")}
     changes = read_changes(repo, args.revision)
@@ -319,7 +322,8 @@ def main():
     # Docker disks; no host dependency tree, live mount or credentials enter this build.
     install = ("test \"$(bun --version)\" = \"" + BUN_VERSION + "\" && "
                "test ! -e /app/.env && test ! -e /app/.npmrc && test ! -e /root/.npmrc && "
-               "env NODE_ENV=development bun install --frozen-lockfile")
+               "bun install --frozen-lockfile --production --filter @agenteschat/server "
+               "--filter @agenteschat/web --no-env-file")
     dockerfile = (f"FROM {base_tag}\nUSER root\nWORKDIR /app\nCOPY [\"overlay/\", \"/app/\"]\n"
                   + "RUN " + json.dumps(["/bin/sh", "-c", install]) + "\n"
                   + f"COPY [\"assets.json\", \"{MANIFEST_IN_IMAGE}\"]\n"
@@ -355,9 +359,10 @@ console.log(JSON.stringify({platform:process.platform, bun:Bun.version, versions
     output(docker + ["run", "--rm", "--network=none", "--read-only", "-w", "/app/apps/server", "--entrypoint", "bun", image_id,
                     "-e", 'await import("@better-auth/passkey"); console.log("passkey-import-ok")'])
     fallback = build_fallback(docker, args.bun, repo, args.revision, migration, evidence, base_tag)
-    inspect_live(docker, args.container, args.http_origin)
+    inspect_live(live_docker, args.container, args.http_origin)
     receipt = {"schema": "ac-passkey-candidate-v1", "builtAt": now(), "revision": args.revision,
                "baseRevision": BASE_REV, "baseImageId": BASE, "baseSource": BASE_SOURCE,
+               "liveDockerContext": args.docker_context, "buildDockerContext": build_context,
                "imageId": image_id, "tag": tag, "source": source, "sourceVerified": True,
                "copiedPaths": sorted(paths), "migration": migration, "assets": verified,
                "fallback": fallback,
