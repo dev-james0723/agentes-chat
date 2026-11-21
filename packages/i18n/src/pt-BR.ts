@@ -447,13 +447,11 @@ export const ptBR = {
       passwordFallback: "Usar e-mail e senha",
       cancelled: "A verificação foi cancelada. Tente de novo ou entre com e-mail e senha.",
       unsupported:
-        "Este navegador ou dispositivo não pode usar chaves de acesso aqui. Use e-mail e senha ou abra este servidor em um navegador compatível.",
+        "Este navegador ou dispositivo não pode usar chaves de acesso aqui. Use e-mail e senha ou abra este endereço em um navegador compatível.",
       failed: "Não foi possível verificar essa chave de acesso. Tente de novo ou entre com e-mail e senha.",
       alreadyAdded: "Esta chave de acesso já foi adicionada. Você pode renomeá-la abaixo ou escolher outra.",
-      unavailable:
-        "As chaves de acesso não estão disponíveis neste servidor. Você ainda pode entrar com e-mail e senha.",
-      canonicalRequired:
-        "As chaves de acesso usam o endereço configurado deste servidor. Abra esse endereço para continuar.",
+      unavailable: "As chaves de acesso não estão disponíveis aqui. Você ainda pode entrar com e-mail e senha.",
+      canonicalRequired: "As chaves de acesso usam o endereço de login configurado. Abra esse endereço para continuar.",
       openCanonical: "Abrir o endereço das chaves de acesso",
       settingsHint: "Touch ID, Face ID ou verificação do dispositivo",
       external: "Gerenciar no navegador",

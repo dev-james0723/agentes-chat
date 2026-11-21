@@ -45165,5 +45165,134 @@
   },
   "feedback.offer.askFirst": {
     "value": "Ask before sending"
+  },
+  "auth.passkey.title": {
+    "value": "Passkeys"
+  },
+  "auth.passkey.choose": {
+    "value": "How would you like to sign in?"
+  },
+  "auth.passkey.name": {
+    "value": "a passkey"
+  },
+  "auth.passkey.signIn": {
+    "value": "Sign in with a passkey"
+  },
+  "auth.passkey.help": {
+    "value": "Use Touch ID, Face ID, a security key, or your device's approved verification method."
+  },
+  "auth.passkey.browserLead": {
+    "value": "Use your passkey in the browser, then confirm the matching code to return here."
+  },
+  "auth.passkey.passwordFallback": {
+    "value": "Use email and password"
+  },
+  "auth.passkey.cancelled": {
+    "value": "Verification was cancelled. Try again or sign in with email and password."
+  },
+  "auth.passkey.unsupported": {
+    "value": "This browser or device can't use passkeys here. Use email and password, or open this address in a supported browser."
+  },
+  "auth.passkey.failed": {
+    "value": "We couldn't verify that passkey. Try again or sign in with email and password."
+  },
+  "auth.passkey.alreadyAdded": {
+    "value": "This passkey is already registered. You can rename it below or choose another."
+  },
+  "auth.passkey.unavailable": {
+    "value": "Passkeys aren't available here. You can still sign in with email and password."
+  },
+  "auth.passkey.canonicalRequired": {
+    "value": "Passkeys use the configured sign-in address. Open that address to continue."
+  },
+  "auth.passkey.openCanonical": {
+    "value": "Open the passkey sign-in address"
+  },
+  "auth.passkey.settingsHint": {
+    "value": "Touch ID, Face ID or device verification"
+  },
+  "auth.passkey.external": {
+    "value": "Manage in your browser"
+  },
+  "auth.passkey.account": {
+    "value": "Passkeys for {{email}}"
+  },
+  "auth.passkey.settingsHelp": {
+    "value": "Add a passkey to sign in without typing your email or password. Your device keeps its fingerprint or face data."
+  },
+  "auth.passkey.empty": {
+    "value": "You haven't added any passkeys yet."
+  },
+  "auth.passkey.add": {
+    "value": "Add a passkey"
+  },
+  "auth.passkey.unnamed": {
+    "value": "Passkey"
+  },
+  "auth.passkey.nameLabel": {
+    "value": "Passkey name"
+  },
+  "auth.passkey.rename": {
+    "value": "Rename"
+  },
+  "auth.passkey.renameNamed": {
+    "value": "Rename {{name}}"
+  },
+  "auth.passkey.remove": {
+    "value": "Remove passkey"
+  },
+  "auth.passkey.removeNamed": {
+    "value": "Remove {{name}}"
+  },
+  "auth.passkey.removeConfirm": {
+    "value": "Remove {{name}}?"
+  },
+  "auth.passkey.removeHelp": {
+    "value": "Remove “{{name}}” from this account? Your other sign-in methods will still work."
+  },
+  "auth.passkey.created": {
+    "value": "Added {{date}}"
+  },
+  "auth.passkey.multiDevice": {
+    "value": "Can sync across your devices"
+  },
+  "auth.passkey.singleDevice": {
+    "value": "Kept on one device or security key"
+  },
+  "auth.passkey.backedUp": {
+    "value": "Backed up by your passkey provider"
+  },
+  "auth.passkey.notBackedUp": {
+    "value": "Not backed up by your passkey provider"
+  },
+  "auth.passkey.added": {
+    "value": "Passkey added. You can give it a name below."
+  },
+  "auth.passkey.renamed": {
+    "value": "Passkey renamed."
+  },
+  "auth.passkey.removed": {
+    "value": "Passkey removed."
+  },
+  "auth.passkey.signInAgain": {
+    "value": "Sign in again"
+  },
+  "auth.passkey.signInAgainHelp": {
+    "value": "Sign in again before changing your passkeys."
+  },
+  "auth.passkey.signedOut": {
+    "value": "Your session ended. Sign in again to manage your passkeys."
+  },
+  "auth.passkey.verifying": {
+    "value": "Complete the verification on your device."
+  },
+  "auth.passkey.saving": {
+    "value": "Saving changes…"
+  },
+  "auth.passkey.retry": {
+    "value": "Try again"
+  },
+  "auth.passkey.back": {
+    "value": "Back to workspaces"
   }
 }
