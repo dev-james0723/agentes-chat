@@ -330,6 +330,7 @@ import {
 } from "@/components/missions/MissionCards";
 import { MissionCommandCard } from "@/components/missions/MissionCommandCard";
 import { NewMissionDialog } from "@/components/missions/MissionDialogs";
+import { TaskMissionPlan } from "@/components/missions/TaskMissionPlan";
 import { NavToggle } from "@/components/NavDrawer";
 import { CHANNEL_NAME, ChannelAccessChoice, toChannelName } from "@/components/NewChannelDialog";
 import { FailedRunFix, KeyGuardDialog, NoAiBanner, NoAiCard, useNoAiAutoOpen } from "@/components/NoAi";
@@ -2640,6 +2641,9 @@ function ChannelView({
                         )}
                         <div className="channel__composer">
                           <ConnectionBanner status={status} />
+                          {chrome?.task && thread && homeMission && !org.deletion && (
+                            <TaskMissionPlan key={homeMission.id} mission={homeMission} thread={thread} />
+                          )}
                           {!chrome?.intro && !org.deletion && (
                             <NoAiBanner agentIds={channelAgents.map((a) => a.id)} dmAgentId={chrome?.dmAgentId} />
                           )}

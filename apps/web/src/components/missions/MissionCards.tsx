@@ -137,7 +137,14 @@ const sameAsTitle = (title: string, goal: string) => {
 
 const PLAN_SHOWN = 5;
 
-export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
+export function MissionPlanCard({
+  plan: meta,
+  onNavigate,
+}: {
+  plan: MissionPlanMeta;
+  /** A surrounding dialog closes before an action moves to the composer or the mission files. */
+  onNavigate?: (navigate: () => void) => void;
+}) {
   const { t } = useTranslation();
   const { org } = useOrg();
   const dir = useDirectory(org.id);
@@ -167,7 +174,8 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
     Object.values(st.runs).some((r) => r.agentId === m?.agentId && r.threadId === m?.threadId),
   );
   const waitPlan = drafting && items.length === 0;
-  const seePlan = () => panel?.openFiles(meta.missionId, "mission.md");
+  const navigate = (action: () => void) => (onNavigate ? onNavigate(action) : action());
+  const seePlan = () => navigate(() => panel?.openFiles(meta.missionId, "mission.md"));
   if (m && m.status !== "proposed") {
     return (
       <div className="mi-created">
@@ -211,7 +219,7 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
   const investigated = findings.length > 0;
   const adjust =
     m?.canAct && actions?.replyToMission
-      ? () => actions.replyToMission?.(meta.missionId, t("missions.plan.label"))
+      ? () => navigate(() => actions.replyToMission?.(meta.missionId, t("missions.plan.label")))
       : null;
   return (
     <div className={investigated ? "mi-card mi-plan mi-plan--investigated" : "mi-card mi-plan"}>
@@ -366,11 +374,7 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
               </Button>
             )}
             {m?.canAct && actions?.replyToMission && (
-              <Button
-                size="sm"
-                icon="edit"
-                onClick={() => actions.replyToMission?.(meta.missionId, t("missions.plan.label"))}
-              >
+              <Button size="sm" icon="edit" onClick={adjust ?? undefined}>
                 {t("missions.plan.change")}
               </Button>
             )}
