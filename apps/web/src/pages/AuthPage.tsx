@@ -3,7 +3,6 @@ import {
   instanceQuery,
   invitationQuery,
   type SignInOptions,
-  type SignInProvider,
   useApi,
   useAuthConfig,
 } from "@agenteschat/client";
@@ -32,6 +31,7 @@ import type { TFunction } from "i18next";
 import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/context";
+import { passkeyErrorText, passkeyOrigin } from "@/auth/passkeys";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { AuthShell } from "@/components/AuthLayout";
 import { HostingSheet } from "@/components/HostingChoice";
@@ -40,6 +40,7 @@ import { LastUsed, lastSignIn, rememberSignIn, SocialButtons, useSocialProviders
 import {
   browserSignInUrl,
   challengeOf,
+  type DesktopSignInMethod,
   desktopPicksServer,
   inDesktopApp,
   newVerifier,
@@ -159,6 +160,10 @@ export function AuthPage({
   const [error, setError] = useState<string | null>(refusal);
   const [wrong, setWrong] = useState(false);
   const [pending, setPending] = useState(false);
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  const [passkeyPending, setPasskeyPending] = useState(false);
+  const emailInput = useRef<HTMLInputElement>(null);
+  const credentialOrigin = passkeyOrigin(config.data);
   const [show, setShow] = useState(false);
   const [caps, setCaps] = useState(false);
   const [passFocus, setPassFocus] = useState(false);
@@ -192,7 +197,7 @@ export function AuthPage({
             ? t(joining.kind === "link" ? "auth.flow.toAsk" : "auth.flow.toJoin", { org: joining.orgName })
             : null;
   const [browser, setBrowser] = useState<{
-    provider: SignInProvider;
+    provider: DesktopSignInMethod;
     verifier: string;
     requestId: string;
     code: string;
@@ -239,6 +244,7 @@ export function AuthPage({
 
   const go = (next: Step) => {
     setError(null);
+    setPasskeyError(null);
     setWrong(false);
     setShow(false);
     setStep(next);
@@ -351,7 +357,7 @@ export function AuthPage({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!ready || pending) return;
+    if (!ready || pending || passkeyPending || ownerPending) return;
     if (step === "email") void lookUp();
     else if (step === "password") void signIn();
     else if (step === "name") go("newPassword");
@@ -365,17 +371,56 @@ export function AuthPage({
   };
 
   /** The Mac app: the provider in the browser; this window keeps the verifier, shows the code and waits. */
-  const signInInBrowser = async (provider: SignInProvider) => {
+  const signInInBrowser = async (provider: DesktopSignInMethod) => {
     const verifier = newVerifier();
     const challenge = await challengeOf(verifier);
     const opened = await auth.desktopOpen(challenge).catch(() => null);
-    if (!opened) return;
+    if (!opened) {
+      if (provider === "passkey") setPasskeyError(authErrorText(t, { status: 0, code: "network", message: "" }));
+      return;
+    }
     setBrowser({ provider, verifier, requestId: opened.requestId, code: opened.code });
     go("browser");
-    window.location.assign(browserSignInUrl(provider, opened.requestId, access));
+    window.location.assign(
+      browserSignInUrl(provider, opened.requestId, access, provider === "passkey" ? credentialOrigin : null),
+    );
   };
   const reopenBrowser = () => {
-    if (browser) window.location.assign(browserSignInUrl(browser.provider, browser.requestId, access));
+    if (browser)
+      window.location.assign(
+        browserSignInUrl(
+          browser.provider,
+          browser.requestId,
+          access,
+          browser.provider === "passkey" ? credentialOrigin : null,
+        ),
+      );
+  };
+
+  const signInWithPasskey = async () => {
+    if (passkeyPending || pending || !credentialOrigin) return;
+    setPasskeyPending(true);
+    setPasskeyError(null);
+    try {
+      if (desktop) {
+        await signInInBrowser("passkey");
+        return;
+      }
+      if (credentialOrigin !== window.location.origin) {
+        window.location.assign(`${credentialOrigin}/login?${new URLSearchParams({ redirect: redirect ?? "/" })}`);
+        return;
+      }
+      const result = await auth.signInPasskey();
+      if (!result.ok) {
+        setPasskeyError(passkeyErrorText(t, result));
+        return;
+      }
+      await enter(redirect ?? "/");
+    } catch {
+      setPasskeyError(authErrorText(t, { status: 0, code: "network", message: "" }));
+    } finally {
+      setPasskeyPending(false);
+    }
   };
 
   // Asks every 2 s and whenever the window comes back to the front; a full load after, so everything starts signed in.
@@ -417,7 +462,12 @@ export function AuthPage({
   const providerNames = linkedProviders.map((p) => t(`auth.provider.${p}`)).join(" · ");
   // A step with nothing to add under its question has no lead: the field and its help line say the rest.
   const bubble: Record<Step, [string, string?]> = {
-    email: start === "up" ? [t("auth.flow.emailUp")] : [t("auth.flow.email"), purpose ?? t("auth.flow.emailLead")],
+    email:
+      start === "up"
+        ? [t("auth.flow.emailUp")]
+        : credentialOrigin && !local
+          ? [t("auth.passkey.choose"), purpose ?? undefined]
+          : [t("auth.flow.email"), purpose ?? t("auth.flow.emailLead")],
     password: wrong ? [t("auth.flow.wrong")] : [t("auth.flow.password"), purpose ?? t("auth.flow.passwordLead")],
     social: [t("auth.flow.social", { providers: providerNames }), t("auth.flow.socialLead")],
     noPassword: [t("auth.flow.noPassword"), local ? t("auth.desktopOwner.text") : t("auth.flow.noPasswordLead")],
@@ -437,7 +487,9 @@ export function AuthPage({
     sent: [t("auth.flow.sent", { email: email.trim() }), t("auth.flow.sentLead")],
     browser: [
       t("auth.desktop.browser"),
-      t("auth.desktop.browserLead", { provider: browser ? t(`auth.provider.${browser.provider}`) : "" }),
+      browser?.provider === "passkey"
+        ? t("auth.passkey.browserLead")
+        : t("auth.desktop.browserLead", { provider: browser ? t(`auth.provider.${browser.provider}`) : "" }),
     ],
     ownerWaits: [t("auth.flow.ownerWaits"), t("auth.flow.ownerWaitsLead")],
   };
@@ -548,7 +600,7 @@ export function AuthPage({
           <AgentAvatar
             name="agentes.chat"
             size="lg"
-            state={pending || step === "browser" ? "writing" : undefined}
+            state={pending || passkeyPending || step === "browser" ? "writing" : undefined}
             expression={expression}
           />
           <div className="auth__bubble" key={`${shown}-${wrong}`} aria-live="polite">
@@ -559,7 +611,7 @@ export function AuthPage({
 
         {shown !== "ownerWaits" && (
           <div className="auth__step" key={shown}>
-            <Locked when={pending || ownerPending}>
+            <Locked when={pending || passkeyPending || ownerPending}>
               {who}
 
               {local && (step === "email" || step === "noPassword") && (
@@ -583,10 +635,48 @@ export function AuthPage({
                 </>
               )}
 
+              {step === "email" && start === "in" && credentialOrigin && !local && placeKnown && (
+                <div className="auth__passkey">
+                  <Button
+                    type="button"
+                    size="lg"
+                    block
+                    icon="key"
+                    loading={passkeyPending}
+                    onClick={() => void signInWithPasskey()}
+                    aria-describedby="passkey-help"
+                  >
+                    {t("auth.passkey.signIn")}
+                  </Button>
+                  <p id="passkey-help" className="auth__fine">
+                    {t("auth.passkey.help")}
+                  </p>
+                  {passkeyError && (
+                    <>
+                      <p className="auth__error" role="alert">
+                        {passkeyError}
+                      </p>
+                      <button
+                        type="button"
+                        className="auth__quiet"
+                        onClick={() => {
+                          setPasskeyError(null);
+                          emailInput.current?.focus();
+                        }}
+                      >
+                        {t("auth.passkey.passwordFallback")}
+                      </button>
+                    </>
+                  )}
+                  <div className="auth__or">{t("common.or")}</div>
+                </div>
+              )}
+
               {(step === "email" || step === "forgot") && (
                 <div className="auth__field">
                   <Input
                     className="auth__big"
+                    ref={emailInput}
                     type="email"
                     inputMode="email"
                     aria-label={t("auth.email")}

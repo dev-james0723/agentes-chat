@@ -5,6 +5,7 @@ import {
   INVITATION_TOKEN_HEADER,
 } from "@agenteschat/client/lib/guards";
 import { humanCheckHeaders } from "@agenteschat/client/lib/human-check";
+import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/client";
 import type { AuthClient, AuthResult } from "./client";
 
@@ -48,13 +49,66 @@ export function createBetterAuthClient(origin = window.location.origin, language
   const client = createAuthClient({
     baseURL: origin,
     basePath: "/api/auth",
+    plugins: [passkeyClient()],
     fetchOptions: {
       onRequest: (request) => {
         if (language) request.headers.set("accept-language", language());
       },
     },
   });
+  // The plugin catches some fetch failures as ceremony errors. Track only this ceremony's verification
+  // request so a lost connection is never presented as the person cancelling their device prompt.
+  type PasskeyFetchOptions = NonNullable<NonNullable<Parameters<typeof client.signIn.passkey>[0]>["fetchOptions"]>;
+  const ceremony = async (
+    kind: "get" | "create",
+    call: (options: PasskeyFetchOptions) => Promise<{ error?: Refusal }>,
+  ): Promise<AuthResult> => {
+    if (
+      !window.isSecureContext ||
+      typeof window.PublicKeyCredential === "undefined" ||
+      typeof navigator.credentials?.[kind] !== "function"
+    )
+      return { ok: false, status: 0, code: "passkey_unsupported", message: "" };
+    let offline = false;
+    const result = await toResult(
+      call({
+        customFetchImpl: async (input, init) => {
+          try {
+            return await fetch(input, init);
+          } catch {
+            offline = true;
+            throw new TypeError("Network request failed");
+          }
+        },
+      }),
+    );
+    return offline ? NO_ANSWER : result;
+  };
   return {
+    signInPasskey: () => ceremony("get", (fetchOptions) => client.signIn.passkey({ fetchOptions })),
+    // No nickname, automatic enrollment, or session creation: WebAuthn uses the signed-in account identity.
+    addPasskey: () => ceremony("create", (fetchOptions) => client.passkey.addPasskey({ fetchOptions })),
+    listPasskeys: async () => {
+      try {
+        const response = await client.passkey.listUserPasskeys();
+        const result = await toResult(Promise.resolve(response));
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          passkeys: (response.data ?? []).map((key) => ({
+            id: key.id,
+            name: key.name ?? null,
+            createdAt: key.createdAt ? new Date(key.createdAt).toISOString() : null,
+            deviceType: key.deviceType,
+            backedUp: key.backedUp,
+          })),
+        };
+      } catch {
+        return NO_ANSWER as Extract<AuthResult, { ok: false }>;
+      }
+    },
+    renamePasskey: (id, name) => toResult(client.passkey.updatePasskey({ id, name })),
+    deletePasskey: (id) => toResult(client.passkey.deletePasskey({ id })),
     signIn: ({ email, password }, humanCheck) =>
       toResult(client.signIn.email({ email, password, fetchOptions: { headers: humanCheckHeaders(humanCheck) } })),
     signUp: ({ name, email, password, access, invitation }, humanCheck) =>

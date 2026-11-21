@@ -378,3 +378,55 @@ html:not([data-pointer]) .auth__quiet:focus-visible {
 .auth__place-change {
   font-size: inherit;
 }
+
+/* Passkey actions keep the email fallback and credential controls comfortable on a phone. */
+.auth__passkey,
+.passkeys,
+.passkeys__feedback,
+.passkeys__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.passkeys p {
+  margin: 0;
+}
+.passkeys__account,
+.passkeys__details strong {
+  overflow-wrap: anywhere;
+}
+.passkeys__list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.passkeys__item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-section);
+}
+.passkeys__details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.passkeys__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.passkeys__actions button {
+  min-height: 44px;
+}
+fieldset.passkeys__edit {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}

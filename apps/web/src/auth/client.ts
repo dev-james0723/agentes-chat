@@ -16,9 +16,25 @@ export type AuthResult =
       cloud?: boolean;
     };
 
+/** Only the credential metadata that account settings displays; never public keys or credential IDs. */
+export interface PasskeySummary {
+  id: string;
+  name: string | null;
+  createdAt: string | null;
+  deviceType: string;
+  backedUp: boolean;
+}
+
 /** `humanCheck` on the email forms: the bot check's token, when the server has one (ADR 0075). */
 export interface AuthClient {
   signIn(input: { email: string; password: string }, humanCheck?: string): Promise<AuthResult>;
+  /** Explicit, email-free WebAuthn account selection and device verification. */
+  signInPasskey(): Promise<AuthResult>;
+  /** Registers with the account identity; a cosmetic nickname is a separate rename. */
+  addPasskey(): Promise<AuthResult>;
+  listPasskeys(): Promise<{ ok: true; passkeys: PasskeySummary[] } | Extract<AuthResult, { ok: false }>>;
+  renamePasskey(id: string, name: string): Promise<AuthResult>;
+  deletePasskey(id: string): Promise<AuthResult>;
   /**
    * Creates the account, signed in; a server that sends e-mail sends the address a link that confirms it. `access`:
    * the early-access link's token, which opens sign-up for the address it was sent to (ADR 0078). `invitation`: the
