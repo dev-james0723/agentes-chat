@@ -138,6 +138,8 @@ export interface FeedbackFile {
 }
 
 export interface AuthConfig {
+  /** Passkey support and its canonical credential origin; absent on older servers. */
+  passkeys?: { enabled: boolean; origin: string | null };
   socialProviders: { google: boolean; github: boolean; apple?: boolean };
   signupOpen: boolean;
   firstRun: boolean;

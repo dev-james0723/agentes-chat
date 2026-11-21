@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { type Database, ensureMessagePartitions, rowsOf, schema, sql } from "../src";
+import { type Database, ensureMessagePartitions, eq, rowsOf, schema, sql } from "../src";
 import { createTestDatabase } from "./pglite";
 
 let db: Database;
@@ -29,7 +29,7 @@ describe("migrations", () => {
         select t.table_name from information_schema.tables t
         where t.table_schema = 'public' and t.table_type = 'BASE TABLE'
           and t.table_name not like 'messages\\_%'
-          and t.table_name not in ('users', 'sessions', 'accounts', 'verifications', 'organizations', 'waitlist_entries', 'push_devices', 'instance_telemetry', 'instance_secrets', 'instance_push', 'push_relay_instances', 'signup_settings', 'claude_auth_settings', 'early_access_invitations', 'oauth_app_clients')
+          and t.table_name not in ('users', 'sessions', 'accounts', 'verifications', 'passkeys', 'organizations', 'waitlist_entries', 'push_devices', 'instance_telemetry', 'instance_secrets', 'instance_push', 'push_relay_instances', 'signup_settings', 'claude_auth_settings', 'early_access_invitations', 'oauth_app_clients')
           and not exists (
             select 1 from information_schema.columns c
             where c.table_name = t.table_name and c.column_name = 'org_id'
@@ -141,4 +141,24 @@ describe("constraints", () => {
       ),
     ).rejects.toThrow();
   });
+});
+
+test("passkeys keep full unsigned counters, unique credentials and cascade with their account", async () => {
+  await db.insert(schema.users).values({ id: "passkey-owner", name: "Owner", email: "owner@example.com" });
+  const credential = {
+    id: "passkey-1",
+    userId: "passkey-owner",
+    credentialID: "credential-1",
+    publicKey: "public-key",
+    counter: 0xffff_ffff,
+    deviceType: "multiDevice",
+    backedUp: true,
+  };
+  const [saved] = await db.insert(schema.passkeys).values(credential).returning();
+  expect(saved?.counter).toBe(0xffff_ffff);
+  await expect(
+    Promise.resolve(db.insert(schema.passkeys).values({ ...credential, id: "passkey-2" })),
+  ).rejects.toThrow();
+  await db.delete(schema.users).where(eq(schema.users.id, "passkey-owner"));
+  expect(await db.select().from(schema.passkeys)).toHaveLength(0);
 });
