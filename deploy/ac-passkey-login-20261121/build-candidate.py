@@ -314,11 +314,11 @@ def main():
     (context / "assets.json").write_bytes(manifest)
     base_tag = "ac-passkey-build-base:" + BASE.split(":")[1][:12]
     tag = "agentes-chat-local:passkey-" + args.revision[:12]
-    # Use the original Dockerfile's frozen install, including trusted native dependency setup,
-    # entirely in a disposable Linux layer with no host mounts, live env or credentials.
+    # Apply the frozen lockfile inside a disposable Linux layer, reusing unchanged Linux
+    # dependencies from the pinned parent. Recopying the entire monorepo exhausts small
+    # Docker disks; no host dependency tree, live mount or credentials enter this build.
     install = ("test \"$(bun --version)\" = \"" + BUN_VERSION + "\" && "
                "test ! -e /app/.env && test ! -e /app/.npmrc && test ! -e /root/.npmrc && "
-               "find /app -name node_modules -prune -exec rm -rf {} + && "
                "env NODE_ENV=development bun install --frozen-lockfile")
     dockerfile = (f"FROM {base_tag}\nUSER root\nWORKDIR /app\nCOPY [\"overlay/\", \"/app/\"]\n"
                   + "RUN " + json.dumps(["/bin/sh", "-c", install]) + "\n"
