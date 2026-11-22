@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +23,7 @@ const run = (lock: string, body: string, wait = "14400") =>
       ...process.env,
       AGENTES_CI_STATE_DIR: join(lock, "..", "host-state"),
       AGENTES_CI_MAX_PARALLEL: "2",
+      AGENTES_CI_LEGACY_EXCLUDED: "1",
       AGENTES_CI_LOCK: lock,
       AGENTES_CI_LOCK_WAIT: wait,
     },
@@ -60,7 +62,7 @@ test("with no wait allowed, a run held by a live process fails at once and leave
   const p = run(lock, "echo ran", "0");
   expect(await p.exited).toBe(1);
   expect(await new Response(p.stdout).text()).not.toContain("ran");
-  expect(existsSync(join(lock, "owner"))).toBe(true);
+  expect(existsSync(lock)).toBe(true);
   await holder.exited;
   expect(existsSync(lock)).toBe(false);
 }, 30_000);
@@ -72,7 +74,7 @@ test("a run that fails still gives the lock back", async () => {
 });
 
 /** Default admission uses a unique mutex for each checkout but one host budget. */
-function runScoped(root: string, name: string, body: string, wait = "20") {
+function runScoped(root: string, name: string, body: string, wait = "20", extraEnv: Record<string, string> = {}) {
   const cwd = join(root, name);
   mkdirSync(cwd, { recursive: true });
   return Bun.spawn(["bash", "-c", `. "${script}" && ci_lock scoped || exit $?; ${body}`], {
@@ -82,7 +84,9 @@ function runScoped(root: string, name: string, body: string, wait = "20") {
       AGENTES_CI_LOCK: "",
       AGENTES_CI_STATE_DIR: join(root, "host-state"),
       AGENTES_CI_MAX_PARALLEL: "2",
+      AGENTES_CI_LEGACY_EXCLUDED: "1",
       AGENTES_CI_LOCK_WAIT: wait,
+      ...extraEnv,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -132,7 +136,7 @@ test("a live pre-migration global CI counts toward two-slot host capacity", asyn
   await Bun.sleep(500);
   const second = runScoped(root, "new-two", "echo should-not-run", "0");
   expect(await second.exited).toBe(1);
-  expect(await new Response(second.stderr).text()).toContain("all parallel CI slots occupied");
+  expect(await new Response(second.stderr).text()).toContain("parallel limit reached");
   expect(await first.exited).toBe(0);
 }, 20_000);
 
@@ -148,3 +152,81 @@ test("a live legacy CI blocks reentry into its exact worktree", async () => {
   expect(await attempt.exited).toBe(1);
   expect(await new Response(attempt.stderr).text()).toContain("same worktree has a legacy running CI");
 }, 20_000);
+
+function worktreeLock(root: string, name: string) {
+  const cwd = realpathSync(join(root, name));
+  const key = createHash("sha256").update(cwd).digest("hex").slice(0, 24);
+  return join(root, "host-state", "ci-worktrees", `${key}.lock`);
+}
+
+test("regression: a live high-numbered slot plus a legacy runner never permits slot one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-overadmission-"));
+  dirs.push(root);
+  const legacy = join(root, "host-state", "ci.lock");
+  const slots = join(root, "host-state", "ci-slots");
+  mkdirSync(legacy, { recursive: true });
+  mkdirSync(slots, { recursive: true });
+  writeFileSync(join(legacy, "owner"), `pid=${process.pid}\ndir=${join(root, "legacy")}\n`);
+  const slotTwo = join(slots, "slot-2.lock");
+  writeFileSync(slotTwo, `pid=${process.pid}\ndir=${join(root, "other")}\ntoken=owned\n`);
+  const blocked = runScoped(root, "candidate", "echo FORBIDDEN", "0");
+  expect(await blocked.exited).toBe(1);
+  expect(await new Response(blocked.stdout).text()).not.toContain("FORBIDDEN");
+  expect(existsSync(join(slots, "slot-1.lock"))).toBe(false);
+  expect(readFileSync(slotTwo, "utf8")).toContain("token=owned");
+});
+
+test("an unmanaged legacy runner is conservatively reserved until cutover is verified", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-legacy-reserve-"));
+  dirs.push(root);
+  const first = runScoped(root, "first", "sleep 2", "15", { AGENTES_CI_LEGACY_EXCLUDED: "0" });
+  await Bun.sleep(450);
+  const next = runScoped(root, "second", "echo FORBIDDEN", "0", { AGENTES_CI_LEGACY_EXCLUDED: "0" });
+  expect(await next.exited).toBe(1);
+  expect(await new Response(next.stdout).text()).not.toContain("FORBIDDEN");
+  expect(await new Response(next.stderr).text()).toContain("reserved=1");
+  expect(await first.exited).toBe(0);
+}, 15_000);
+
+test("an atomically recorded dead lock is reclaimed; an active slot is never removed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-dead-atomic-"));
+  dirs.push(root);
+  mkdirSync(join(root, "target"), { recursive: true });
+  const lock = worktreeLock(root, "target");
+  const slots = join(root, "host-state", "ci-slots");
+  mkdirSync(join(root, "host-state", "ci-worktrees"), { recursive: true });
+  mkdirSync(slots, { recursive: true });
+  writeFileSync(lock, `pid=999999\ndir=${realpathSync(join(root, "target"))}\ntoken=old\n`);
+  writeFileSync(join(slots, "slot-1.lock"), "pid=999999\ndir=old\ntoken=old\n");
+  const p = runScoped(root, "target", "echo RECOVERED");
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stdout).text()).toContain("RECOVERED");
+  expect(existsSync(lock)).toBe(false);
+  expect(existsSync(join(slots, "slot-1.lock"))).toBe(false);
+});
+
+test("unknown owner records fail closed without deleting any unverified lock", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-unknown-owner-"));
+  dirs.push(root);
+  mkdirSync(join(root, "candidate"), { recursive: true });
+  const lock = worktreeLock(root, "candidate");
+  mkdirSync(join(root, "host-state", "ci-worktrees"), { recursive: true });
+  writeFileSync(lock, "nonstandard data: do not delete\n");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "0");
+  expect(await p.exited).toBe(1);
+  expect(readFileSync(lock, "utf8")).toBe("nonstandard data: do not delete\n");
+  expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});
+
+test("an unrecognized dead-PID lock record cannot be disposed of by recovery", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-foreign-"));
+  dirs.push(root);
+  mkdirSync(join(root, "candidate"), { recursive: true });
+  const lock = worktreeLock(root, "candidate");
+  mkdirSync(join(root, "host-state", "ci-worktrees"), { recursive: true });
+  writeFileSync(lock, "pid=999999\nthis-is-foreign-file\n");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "0");
+  expect(await p.exited).toBe(1);
+  expect(readFileSync(lock, "utf8")).toBe("pid=999999\nthis-is-foreign-file\n");
+  expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});

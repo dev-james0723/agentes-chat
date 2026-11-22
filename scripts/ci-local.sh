@@ -5,6 +5,8 @@
 # Usage: bun run ci:local
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# The physical checkout is the only valid lock scope; never trust a caller override.
+export AGENTES_CI_SCOPE="$PWD"
 # Full CI may regenerate migrations. Never run it over an agent's uncommitted work.
 if [ -n "$(git status --porcelain)" ]; then
   echo "ci:local refused: worktree is not clean; commit or use a separate isolated checkout" >&2

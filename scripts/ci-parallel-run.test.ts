@@ -31,6 +31,7 @@ function fixture(localScript?: string) {
   const repo = join(dir, "worktree");
   mkdirSync(join(repo, "scripts"), { recursive: true });
   copyFileSync(join(scriptDir, "ci-lock.sh"), join(repo, "scripts", "ci-lock.sh"));
+  copyFileSync(join(scriptDir, "ci-atomic-admission.py"), join(repo, "scripts", "ci-atomic-admission.py"));
   writeFileSync(
     join(repo, "scripts", "ci-local.sh"),
     localScript ?? readFileSync(join(scriptDir, "ci-local.sh"), "utf8"),
