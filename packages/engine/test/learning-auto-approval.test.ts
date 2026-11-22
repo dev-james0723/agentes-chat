@@ -134,7 +134,7 @@ describe("guarded automatic acceptance of learned improvements", () => {
     expect(agent?.instructions).toBe("Answer briefly.");
   });
 
-  test("a repeated agent-discovered lesson backed by a real positive CI result can approve itself", async () => {
+  test("a generic same-subject successful CI run cannot approve an instruction it never evaluated", async () => {
     f = await setup();
     await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
     const proof = await recordOutcome(f.db, {
@@ -150,7 +150,9 @@ describe("guarded automatic acceptance of learned improvements", () => {
       evidence: [{ type: "outcome", ref: proof.id, at: new Date().toISOString() }],
     });
     const change = await proposeFromItem(f.context, item);
-    expect(change?.status).toBe("accepted");
+    expect(change?.status).toBe("pending");
+    const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+    expect(agent?.instructions).toBe("Answer briefly.");
   });
 
   test("a negative or agent-claimed outcome cannot authorize autonomous improvement", async () => {
@@ -426,4 +428,70 @@ test("a deleted linked message prevents global automatic learning admission", as
   const [withDeletedSource] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
   if (!withDeletedSource) throw new Error("missing updated lesson");
   expect((await proposeFromItem(f.context, withDeletedSource))?.status).toBe("pending");
+});
+
+test("a public agent run ID can be provenance for an owner-verified instruction, never an approval by itself", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const item = await lesson(f);
+  const messageId = item.sourceIds[0];
+  if (!messageId) throw new Error("missing owner source");
+  const [run] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: f.general.id,
+      threadRootId: messageId,
+      triggerMessageId: messageId,
+      trigger: "mention",
+      hop: 0,
+      status: "done",
+    })
+    .returning();
+  if (!run) throw new Error("missing run");
+  await f.db
+    .update(schema.contextItems)
+    .set({ sourceIds: [...item.sourceIds, run.id] })
+    .where(eq(schema.contextItems.id, item.id));
+  const [live] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
+  if (!live) throw new Error("missing live lesson");
+  expect((await proposeFromItem(f.context, live))?.status).toBe("accepted");
+});
+
+test("a private agent run cannot become an agent-global lesson through a public owner message", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const item = await lesson(f);
+  const privateChannel = await createChannel(f.db, f.owner.id, f.org.id, {
+    name: "private-run-source",
+    visibility: "private",
+  });
+  const privateMessage = await insertMessage(f.db, {
+    orgId: f.org.id,
+    channelId: privateChannel.id,
+    author: { type: "person", userId: f.owner.id },
+    body: "Internal-only context for this run",
+  });
+  const [run] = await f.db
+    .insert(schema.agentRuns)
+    .values({
+      orgId: f.org.id,
+      agentId: f.agent.id,
+      channelId: privateChannel.id,
+      threadRootId: privateMessage.id,
+      triggerMessageId: privateMessage.id,
+      trigger: "mention",
+      hop: 0,
+      status: "done",
+    })
+    .returning();
+  if (!run) throw new Error("missing run");
+  await f.db
+    .update(schema.contextItems)
+    .set({ sourceIds: [...item.sourceIds, run.id] })
+    .where(eq(schema.contextItems.id, item.id));
+  const [live] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
+  if (!live) throw new Error("missing live lesson");
+  expect((await proposeFromItem(f.context, live))?.status).toBe("pending");
 });

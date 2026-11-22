@@ -9294,7 +9294,7 @@
     "undoUpdate": "Urungkan pembaruan",
     "undone": "{{name}} kembali ke versi {{version}}.",
     "autoApproveLearning": "Setujui otomatis perbaikan pembelajaran terverifikasi",
-    "autoApproveLearningHelp": "Agen dapat menerapkan perbaikan singkat yang berulang kali terverifikasi pada instruksinya sendiri tanpa meminta persetujuan. Diperlukan koreksi manusia atau bukti pengujian/CI berhasil serta pemeriksaan keamanan independen. Ini tidak pernah menyetujui alat, izin, skrip, atau rilis.",
+    "autoApproveLearningHelp": "Agen hanya boleh menerapkan otomatis instruksi singkat yang berulang kali diverifikasi dan dinyatakan persis oleh pemiliknya di kanal publik, setelah pemeriksaan keamanan independen. Hasil CI umum tidak mengizinkan perubahan; usulan lain memerlukan tinjauan manusia. Ini tidak memberikan akses alat, izin, skrip, atau rilis.",
     "autoApproveLearningFailed": "Tidak dapat mengubah kebijakan persetujuan pembelajaran.",
     "agentsImprove": "Agen memperbaiki skill sendiri",
     "agentsImproveHelp": "Saat agen menemukan skill yang salah atau kurang satu langkah, agen langsung memperbaikinya: versi baru yang bisa kamu urungkan, dan pembuat skill diberi tahu.",

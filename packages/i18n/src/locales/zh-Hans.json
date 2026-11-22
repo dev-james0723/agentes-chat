@@ -9290,7 +9290,7 @@
     "undoUpdate": "撤销更新",
     "undone": "{{name}} 已回到版本 {{version}}。",
     "autoApproveLearning": "自动批准经验证的学习改进",
-    "autoApproveLearningHelp": "Agent 可以将经过反复验证的简短改进直接加入自己的指令，无须逐次人工批准。必须有人工纠正记录或成功的测试／CI 证据，并经过独立安全审查。不会自动批准工具、权限、脚本或部署。",
+    "autoApproveLearningHelp": "Agent 只能在独立安全检查通过后，自动采用所有者在公开频道明确说出、且经过反复验证的简短指令。普通 CI 成功结果不构成自动批准依据；其他提案仍须人工审核。这不会授予工具、权限、脚本或部署许可。",
     "autoApproveLearningFailed": "无法更改学习批准策略。",
     "agentsImprove": "智能体自行改进技能",
     "agentsImproveHelp": "智能体发现技能有误或缺少步骤时，会立即修正：生成一个可撤销的新版本，并通知技能的创建者。",

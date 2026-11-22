@@ -9952,7 +9952,7 @@
     "undoUpdate": "Annuler la mise à jour",
     "undone": "{{name}} est revenue à la version {{version}}.",
     "autoApproveLearning": "Approuver automatiquement les améliorations d’apprentissage vérifiées",
-    "autoApproveLearningHelp": "Les agents peuvent intégrer sans demander de confirmation des améliorations courtes et vérifiées à plusieurs reprises dans leurs propres instructions. Une correction humaine ou des tests/CI réussis et un contrôle de sécurité indépendant sont requis. Cela n’autorise jamais les outils, permissions, scripts ou déploiements.",
+    "autoApproveLearningHelp": "Les agents peuvent adopter automatiquement de courtes instructions vérifiées à plusieurs reprises, formulées exactement par leur responsable dans un canal public, après un contrôle de sécurité indépendant. Un simple résultat CI ne suffit pas; les autres propositions nécessitent une validation humaine. Cela ne donne aucun accès aux outils, permissions, scripts ou déploiements.",
     "autoApproveLearningFailed": "Impossible de modifier la politique d’approbation de l’apprentissage.",
     "agentsImprove": "Les agents améliorent les compétences eux-mêmes",
     "agentsImproveHelp": "Quand un agent trouve une compétence fausse ou incomplète, il la corrige tout de suite : une nouvelle version que vous pouvez annuler, et la personne qui l'a créée est prévenue.",
