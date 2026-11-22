@@ -53,6 +53,24 @@ def occupied_legacy(path):
         return True, realpath(owner.get("dir"))
     return alive(owner["pid"]), realpath(owner.get("dir"))
 
+def unverified_owner(path):
+    """An ambiguous lock is a hard operator/reconciliation gate, never a retry."""
+    p = pathlib.Path(path)
+    if not p.exists():
+        return False
+    owner = record(p)
+    if not owner.get("pid"):
+        return True
+    if p.is_file():
+        return not owner.get("token") or not owner.get("dir")
+    if p.is_dir():
+        try:
+            return sorted(x.name for x in p.iterdir()) != ["owner"]
+        except OSError:
+            return True
+    return True
+
+
 def remove_provably_dead(path, recovered):
     """Only new-style *files* or a proven dead legacy owner directory."""
     p = pathlib.Path(path)
@@ -119,6 +137,8 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
     legacy_same = False
     global_active = False
     global_path = root / "ci.lock"
+    if unverified_owner(global_path):
+        raise ValueError("unverified_legacy_global_lock: manual reconciliation required: " + str(global_path))
     global_active, global_scope = occupied_legacy(global_path)
     if global_active:
         legacy_count += 1
@@ -126,6 +146,8 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
     for p in (root / "parallel-worktrees").glob("*.lock"):
         if str(p) == str(worktree):
             continue
+        if unverified_owner(p):
+            raise ValueError("unverified_legacy_transition_lock: manual reconciliation required: " + str(p))
         used, old_scope = occupied_legacy(p)
         if used:
             legacy_count += 1
@@ -135,6 +157,8 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
     slot_root = root / "ci-slots"
     for p in slot_root.glob("slot-*.lock"):
         remove_provably_dead(p, recovered)
+        if unverified_owner(p):
+            raise ValueError("unverified_host_slot: manual reconciliation required: " + str(p))
         if p.exists():
             active_slots += 1
 
@@ -146,6 +170,8 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
 def acquire(root, scope, worktree, max_parallel, pid, label, legacy_excluded):
     recovered = []
     remove_provably_dead(worktree, recovered)
+    if unverified_owner(worktree):
+        raise ValueError("unverified_worktree_lock: manual reconciliation required: " + str(worktree))
     if pathlib.Path(worktree).exists():
         old = record(worktree)
         print("BUSY=worktree busy, pid=" + old.get("pid", "unknown"))

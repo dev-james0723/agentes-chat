@@ -213,7 +213,8 @@ test("unknown owner records fail closed without deleting any unverified lock", a
   mkdirSync(join(root, "host-state", "ci-worktrees"), { recursive: true });
   writeFileSync(lock, "nonstandard data: do not delete\n");
   const p = runScoped(root, "candidate", "echo FORBIDDEN", "0");
-  expect(await p.exited).toBe(1);
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_worktree_lock");
   expect(readFileSync(lock, "utf8")).toBe("nonstandard data: do not delete\n");
   expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
 });
@@ -226,7 +227,44 @@ test("an unrecognized dead-PID lock record cannot be disposed of by recovery", a
   mkdirSync(join(root, "host-state", "ci-worktrees"), { recursive: true });
   writeFileSync(lock, "pid=999999\nthis-is-foreign-file\n");
   const p = runScoped(root, "candidate", "echo FORBIDDEN", "0");
-  expect(await p.exited).toBe(1);
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_worktree_lock");
   expect(readFileSync(lock, "utf8")).toBe("pid=999999\nthis-is-foreign-file\n");
   expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});
+
+test("ownerless legacy global directory is diagnosed immediately, never silently removed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-ownerless-global-"));
+  dirs.push(root);
+  const legacy = join(root, "host-state", "ci.lock");
+  mkdirSync(legacy, { recursive: true });
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_legacy_global_lock");
+  expect(existsSync(legacy)).toBe(true);
+  expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});
+
+test("ownerless legacy slot is diagnosed immediately without deleting foreign state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-ownerless-slot-"));
+  dirs.push(root);
+  const slot = join(root, "host-state", "ci-slots", "slot-1.lock");
+  mkdirSync(slot, { recursive: true });
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_host_slot");
+  expect(existsSync(slot)).toBe(true);
+});
+
+test("ambiguous legacy lock with unexpected files is never force-removed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-legacy-unverified-"));
+  dirs.push(root);
+  const legacy = join(root, "host-state", "ci.lock");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, "owner"), "pid=999999\nlabel=old\n");
+  writeFileSync(join(legacy, "unknown-extra"), "KEEP UNKNOWN");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_legacy_global_lock");
+  expect(readFileSync(join(legacy, "unknown-extra"), "utf8")).toBe("KEEP UNKNOWN");
 });
