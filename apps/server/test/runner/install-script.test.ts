@@ -984,6 +984,12 @@ test.skipIf(process.platform === "win32")(
     CHROMIUM_LINUX.forEach((exe, i) => {
       script = script.replace(` ${shQuote(exe)}`, ` ${shQuote(mine[i] as string)}`);
     });
+    // The simulated Linux host must not accidentally discover Chrome installed
+    // on the *real* macOS test machine through this absolute fallback path.
+    script = script.replace(
+      '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"',
+      `"${pc.home}/none/host-mac-chrome"`,
+    );
     const r = pc.install(script);
     expect(r.status).toBe(0);
     expect(r.out).toContain(CHROMIUM_NEEDED);
