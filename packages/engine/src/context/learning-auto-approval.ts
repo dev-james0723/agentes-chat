@@ -107,22 +107,26 @@ async function outcomeBackedInstruction(db: Database, item: ContextItem) {
  * The query runs again inside the acceptance transaction before any instruction write.
  */
 async function hasPublicLearningSources(db: Database, item: ContextItem): Promise<boolean> {
-  const messageIds = item.sourceIds.filter((id) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
-  );
-  const messages = messageIds.length
-    ? await db
-        .select({ channelId: schema.messages.channelId })
-        .from(schema.messages)
-        .where(and(eq(schema.messages.orgId, item.orgId), inArray(schema.messages.id, messageIds)))
-    : [];
-  const outcomes = messageIds.length
-    ? await db
-        .select({ channelId: schema.outcomes.channelId })
-        .from(schema.outcomes)
-        .where(and(eq(schema.outcomes.orgId, item.orgId), inArray(schema.outcomes.id, messageIds)))
-        .for("share")
-    : [];
+  // Every linked source must resolve within this organization. An unknown, deleted,
+  // cross-organization, or opaque source is not evidence for global propagation.
+  const sourceIds = [...new Set(item.sourceIds)];
+  if (
+    !sourceIds.length ||
+    sourceIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+  )
+    return false;
+  const messages = await db
+    .select({ id: schema.messages.id, channelId: schema.messages.channelId, deletedAt: schema.messages.deletedAt })
+    .from(schema.messages)
+    .where(and(eq(schema.messages.orgId, item.orgId), inArray(schema.messages.id, sourceIds)))
+    .for("share");
+  const outcomes = await db
+    .select({ id: schema.outcomes.id, channelId: schema.outcomes.channelId })
+    .from(schema.outcomes)
+    .where(and(eq(schema.outcomes.orgId, item.orgId), inArray(schema.outcomes.id, sourceIds)))
+    .for("share");
+  const resolved = new Set([...messages.map((m) => m.id), ...outcomes.map((o) => o.id)]);
+  if (resolved.size !== sourceIds.length || messages.some((m) => m.deletedAt !== null)) return false;
   const ids = [
     ...new Set([
       ...item.channelIds,

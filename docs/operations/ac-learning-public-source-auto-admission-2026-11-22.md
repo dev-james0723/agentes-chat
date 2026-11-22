@@ -14,8 +14,9 @@ The initial reviewed PR #78 accepts some authenticated owner messages or indepen
 - GREEN: the same regression passes with the public-source gate. Proof: `pr78-private-evidence-green.log`.
 - Private linked message cannot be laundered by a legitimate external CI outcome; public-to-private reclassification during judge evaluation forces `pending`. Proof: `pr78-source-privacy-golden.log` (3 passed).
 - RED: an independent CI outcome from private channel was incorrectly `accepted` when the item did not declare its channel. Proof: `pr78-private-outcome-red.log`.
+- RED/GREEN: a missing or deleted extra source ID could previously be ignored while a legitimate public owner message passed the gate. Every linked UUID source must now resolve to an extant, non-deleted, same-organization message or outcome, with read locks; unrecognized/opaque sources retain manual review. Proof: `pr79-source-identity-red.log` and `pr79-source-identity-green.log`.
 - GREEN: outcome source-channel verification makes that case pending. Proof: `pr78-private-outcome-green.log`.
-- Full current-branch feature suite: **22 passed, 0 failed, 45 assertions**; TypeScript and Module Boundaries both exit 0 at base `b27553d`. Evidence: `pr78-privacy-all-tests.log`, `pr78-privacy-tsc.log`, `pr78-privacy-boundaries.log`, and SHA256 receipt `pr78-privacy-all-gates.receipt`. These are PGlite/native fixture tests, not a production canary.
+- Full current-branch feature suite: **24 passed, 0 failed, 47 assertions** on the amended security patch; TypeScript exits 0. Final exact-code test receipt: `pr79-identity-final.receipt`; regression RED/GREEN: `pr79-source-identity-red.log` and `pr79-source-identity-green.log`; TypeScript and Module Boundaries both exit 0 at base `b27553d`. Evidence: `pr78-privacy-all-tests.log`, `pr78-privacy-tsc.log`, `pr78-privacy-boundaries.log`, and SHA256 receipt `pr78-privacy-all-gates.receipt`. These are PGlite/native fixture tests, not a production canary.
 
 Evidence folder: `~/Documents/Agentes-Handoffs/ac-self-creating-skills-20261122/`.
 

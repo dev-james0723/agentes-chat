@@ -394,3 +394,36 @@ test("private-channel CI outcomes cannot be laundered by omitting the channel li
   });
   expect((await proposeFromItem(f.context, item))?.status).toBe("pending");
 });
+
+test("an unresolved linked source ID prevents global automatic learning admission", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const item = await lesson(f);
+  await f.db
+    .update(schema.contextItems)
+    .set({ sourceIds: [...item.sourceIds, crypto.randomUUID()] })
+    .where(eq(schema.contextItems.id, item.id));
+  const [withExtraSource] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
+  if (!withExtraSource) throw new Error("missing updated lesson");
+  expect((await proposeFromItem(f.context, withExtraSource))?.status).toBe("pending");
+});
+
+test("a deleted linked message prevents global automatic learning admission", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const item = await lesson(f);
+  const additional = await insertMessage(f.db, {
+    orgId: f.org.id,
+    channelId: f.general.id,
+    author: { type: "person", userId: f.owner.id },
+    body: "Former source was withdrawn.",
+  });
+  await f.db
+    .update(schema.contextItems)
+    .set({ sourceIds: [...item.sourceIds, additional.id] })
+    .where(eq(schema.contextItems.id, item.id));
+  await f.db.update(schema.messages).set({ deletedAt: new Date() }).where(eq(schema.messages.id, additional.id));
+  const [withDeletedSource] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
+  if (!withDeletedSource) throw new Error("missing updated lesson");
+  expect((await proposeFromItem(f.context, withDeletedSource))?.status).toBe("pending");
+});
