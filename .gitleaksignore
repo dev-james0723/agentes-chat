@@ -1,0 +1,3 @@
+# One historical synthetic OAuth test fixture; no real credential and no network use.
+# Pin commit, file, rule and line so future edits and other findings remain checked.
+0bb54303274efad10e2a857afa59083563aef1b3:scripts/colab/import-google-oauth.test.mjs:generic-api-key:14
