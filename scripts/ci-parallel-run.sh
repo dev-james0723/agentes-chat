@@ -17,8 +17,11 @@ root=$(git -C "$repo" rev-parse --show-toplevel) || exit 2
 [ "$root" = "$repo" ] || { echo "ci parallel: exact repository root required" >&2; exit 2; }
 command -v bun >/dev/null || { echo "ci parallel: Bun is unavailable" >&2; exit 2; }
 if [ -n "$(git -C "$repo" status --porcelain)" ]; then
-  echo "ci parallel: worktree has changes; CI is not immutable-SHA release proof" >&2
+  echo "ci parallel: refusing dirty worktree: full CI can update generated migrations" >&2
+  exit 2
 fi
+# Bind every admission to the actual canonical worktree, not caller input.
+export AGENTES_CI_SCOPE="$repo"
 # Parallel-aware checkouts already perform scoped + host admission natively.
 # Never inherit a caller-supplied mutex bypass for this guarded launcher.
 unset AGENTES_CI_LOCK

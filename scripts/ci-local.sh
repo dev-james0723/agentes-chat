@@ -5,6 +5,11 @@
 # Usage: bun run ci:local
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# Full CI may regenerate migrations. Never run it over an agent's uncommitted work.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ci:local refused: worktree is not clean; commit or use a separate isolated checkout" >&2
+  exit 2
+fi
 log=$(mktemp "${TMPDIR:-/tmp}/agentes-ci-local.XXXXXX")
 export CI=true
 results=()
@@ -47,9 +52,24 @@ step "geometry check's own test" "bun test scripts/geometry/check.test.ts"
 step "dependency licenses" "bun test scripts/check-licenses.test.ts && bun run check:licenses"
 step "typecheck" "bun run typecheck"
 step "build web and server" "bun run build"
-# A drift check that finds a difference leaves the generated files behind; they are removed so the tree stays as it was.
-step "migrations up to date with the schema" \
-  "bun run db:generate ci-drift-check < /dev/null; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
+# Regeneration must be fail-closed and non-destructive. Keep any drift visible
+# for the integration owner rather than deleting generated or concurrent files.
+# shellcheck disable=SC2329
+check_migration_drift() {
+  local changed
+  changed=$(git status --porcelain -- packages/db/migrations)
+  if [ -n "$changed" ]; then
+    echo "migration check blocked: pre-existing generated or uncommitted migration files" >&2
+    return 1
+  fi
+  bun run db:generate ci-drift-check < /dev/null || return 1
+  changed=$(git status --porcelain -- packages/db/migrations)
+  if [ -n "$changed" ]; then
+    printf "migration drift detected; generated files preserved for review:\n%s\n" "$changed" >&2
+    return 1
+  fi
+}
+step "migrations up to date with the schema" "check_migration_drift"
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"
