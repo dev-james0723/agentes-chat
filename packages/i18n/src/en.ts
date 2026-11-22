@@ -1422,6 +1422,7 @@ export const en = {
     keyInvalid: {
       anthropic: "Claude API keys start with sk-ant-. Check it and paste it again.",
       openai: "OpenAI keys start with sk-. Check it and paste it again.",
+      xai: "xAI (Grok) API keys start with xai-. Check it and paste it again.",
       gemini: "Gemini API keys start with AQ. or AIza. Check it and paste it again.",
       deepseek: "DeepSeek keys start with sk-. Check it and paste it again.",
       moonshot: "Kimi keys start with sk-. Check it and paste it again.",

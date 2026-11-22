@@ -3221,6 +3221,9 @@
   "onboarding.keyInvalid.openrouter": {
     "value": "OpenRouter keys start with sk-or-v1-. Check it and paste it again."
   },
+  "onboarding.keyInvalid.xai": {
+    "value": "xAI (Grok) API keys start with xai-. Check it and paste it again."
+  },
   "onboarding.keyFromOther": {
     "value": "Is it from another provider?"
   },
