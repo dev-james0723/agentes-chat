@@ -1,4 +1,4 @@
-# ADR 0206: Guarded automatic approval of verified learning
+# ADR 0208: Guarded automatic approval of verified learning
 
 **Date:** 2026-11-22
 **Status:** Implemented in a feature worktree; not enabled in existing workspaces or released
