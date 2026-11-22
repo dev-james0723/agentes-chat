@@ -29,7 +29,10 @@ need bun "https://bun.sh"
 need shellcheck "brew install shellcheck, or apt-get install shellcheck"
 need gitleaks "brew install gitleaks, or https://github.com/gitleaks/gitleaks/releases"
 
-# One full run at a time on this computer (scripts/ci-lock.sh): runs side by side time each other's tests out.
+# Bounded parallel CI: up to two independent worktrees at once (configurable
+# via AGENTES_CI_MAX_PARALLEL); still only one full run per worktree.
+# Legacy global-lock holders count against capacity. Shared external fixtures
+# must have their own named resource locks instead of bypassing this guard.
 # shellcheck source=scripts/ci-lock.sh
 . scripts/ci-lock.sh
 ci_lock "ci-local $(git rev-parse --short HEAD)" || exit 2
