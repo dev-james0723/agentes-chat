@@ -9,17 +9,17 @@ AC learns from conversations, outcomes, recurring technical lessons and skills, 
 
 ## Decision
 
-Add **Auto-accept verified learning improvements** to Settings → Skills, stored in `organization_settings.auto_approve_learning`, default **off**. Only a person with `manage_agents` may enable or disable it. Every change of the setting has a person-attributed audit record.
+Add **Auto-accept verified learning improvements** to Settings → Skills, stored in `organization_settings.auto_approve_learning`, default **off**. Only a person with `manage_agents` may enable or disable it. Every change of the setting and its person-attributed audit record commit atomically or both roll back.
 
-Reuse `proposeFromItem` and `context_proposals`. In the opt-in lane, accept *only* a short, verified, repeatedly observed, high-trust, undisputed **agent-local lesson** promoted to a non-executable bullet in that same agent's own instructions. The lesson must be supported by an actual human correction, or an independently persisted positive test/CI/criteria outcome (matching organization and agent). A claim that a run finished is not proof. Never auto-accept org-wide context, access, roles, settings, skills containing scripts, or executable commands.
+Reuse `proposeFromItem` and `context_proposals`. In the opt-in lane, accept *only* a short, verified, repeatedly observed, high-trust, undisputed **agent-local lesson** promoted to a non-executable bullet in that same agent's own instructions. The lesson must be supported by a matching, still-present message authored by the agent's human owner, or a recently recorded positive test/CI event from an independent webhook/operator with the same agent, organization and subject, linked explicitly to the lesson source. An agent-written evidence label alone is never proof. A claim that a run finished is not proof. Never auto-accept org-wide context, access, roles, settings, skills containing scripts, or executable commands.
 
 Admission requires:
 1. Existing promotion guard and a live `auto_approve_learning` setting.
 2. Agent-local, active, high-trust, `verified`, non-disputed `lesson`; at least two observations/uses.
-3. Human evidence, or a matching, positive and independently recorded CI/test/criteria outcome from an approved source.
+3. Verify the source ID and evidence reference against an actual owner-authored message with exactly matching normalized text, or a recent CI/test outcome matching org, agent and subject from a trusted webhook/operator. Agent-created tool claims and unrelated passing tests do not qualify.
 4. A bounded, single-line, non-executable text; deny obvious secrets, credentials, elevated-rights instructions, external actions and code.
-5. A live independent `permission_change` semantic check. Absent or errored judge: manual review (fail closed).
-6. Recheck the enabled policy and original instruction SHA under database locks; a stale change becomes a pending proposal rather than overwriting newer instructions.
+5. Both independent `permission_change` and data-sensitivity/external-effect semantic checks must allow the change. Ambiguous, missing or errored judgments fall back to human review.
+6. Re-read the authoritative lesson and all its evidence fields after claiming the row in a transaction, check its identity and audited evidence again under transaction locks, verify the exact vetted bullet equals the proposed instructions, then recheck the enabled policy and original instruction SHA. A stale change becomes pending instead of overwriting newer instructions. An OFF operation commits after any already in-flight admission that acquired its lock; all later admissions see OFF.
 
 On success the existing proposal is persisted as `accepted` in the same transaction as the agent update, the promoted memory is archived, search is re-indexed, caches are invalidated, and an audit record with **system** actor is written (`learning.proposal_auto_accepted`). No user ID is forged in `decided_by_user_id`. All other cases retain the existing human-review process.
 
@@ -31,9 +31,9 @@ Instruction edits are reversible by restoring their previous text through the ex
 
 ## Rollout and verification
 
-- Deploy database migration `0282_learning_auto_approval.sql` before enabling the API and switch.
+- Deploy database migration `0282_learning_auto_approval.sql` before enabling the API and switch. A policy read fails closed to OFF during a rolling schema upgrade, allowing the pre-existing manual proposal path to continue.
 - Verify old workspaces retain `false` until an administrator opts in.
-- Test both policy states, legitimate evidence, negative/claimed outcomes, unauthorized setting changes, scope isolation, dangerous lessons, absent/negative judge, and the Settings switch.
+- Test both policy states, legitimate owner messages and same-subject positive CI outcomes, forged labels, unrelated and tool-claimed outcomes, unauthorized setting changes, stale lesson snapshots, scope isolation, sensitive external effects, absent/negative judge, and the Settings switch.
 - Preserve existing CI/merge guards; run tests locally. Do not bypass branch protection or independently deploy this change.
 - Once independently reviewed and integrated, an admin can activate only the intended organization and observe `learning.proposal_auto_accepted` receipts, then disable immediately if behavior degrades.
 

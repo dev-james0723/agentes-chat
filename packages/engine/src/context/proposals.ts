@@ -70,7 +70,12 @@ import {
   itemWords,
   REFUSED_CHANGE,
 } from "./items";
-import { autoLearningEnabled, safeForAutomaticLearning } from "./learning-auto-approval";
+import {
+  autoLearningEnabled,
+  lowRiskLearningLesson,
+  safeForAutomaticLearning,
+  verifiedLearningEvidence,
+} from "./learning-auto-approval";
 
 const {
   agentRuns,
@@ -208,15 +213,47 @@ export async function proposeFromItem(
     (await autoLearningEnabled(db, item.orgId)) &&
     (await safeForAutomaticLearning(db, item, deps.judge));
   const [proposal] = await db.transaction(async (tx) => {
-    const claimed = await tx
+    const [claimed] = await tx
       .update(contextItems)
       .set({ proposedAt: new Date() })
-      .where(and(eq(contextItems.id, item.id), eq(contextItems.status, "active"), isNull(contextItems.proposedAt)))
-      .returning({ id: contextItems.id });
-    if (claimed.length === 0) return [];
+      .where(
+        and(
+          eq(contextItems.id, item.id),
+          eq(contextItems.orgId, item.orgId),
+          eq(contextItems.status, "active"),
+          isNull(contextItems.proposedAt),
+        ),
+      )
+      .returning();
+    if (!claimed) return [];
+    // The update claimed the authoritative row; the pre-vetted in-memory object is not trusted alone.
+    // ProposedAt was set by this claim only, so clear it in the admission view.
+    const liveItem = { ...claimed, proposedAt: null };
+    const sameEvidence =
+      claimed.version === item.version &&
+      claimed.updatedAt.getTime() === item.updatedAt.getTime() &&
+      claimed.agentId === item.agentId &&
+      claimed.subjectKey === item.subjectKey &&
+      claimed.content === item.content &&
+      claimed.trust === item.trust &&
+      claimed.verified === item.verified &&
+      claimed.recurrence === item.recurrence &&
+      claimed.useCount === item.useCount &&
+      claimed.disputed === item.disputed &&
+      claimed.createdByKind === item.createdByKind &&
+      JSON.stringify(claimed.evidence) === JSON.stringify(item.evidence) &&
+      JSON.stringify(claimed.sourceIds) === JSON.stringify(item.sourceIds) &&
+      JSON.stringify(claimed.channelIds) === JSON.stringify(item.channelIds);
     let auto = false;
-    if (autoCandidate && agentId) {
-      // Serialize policy-off against in-flight automatic decisions (the kill switch must win).
+    if (
+      autoCandidate &&
+      agentId &&
+      sameEvidence &&
+      claimed.agentId === agentId &&
+      lowRiskLearningLesson(liveItem) === autoCandidate
+    ) {
+      // Serialize policy changes. Once OFF commits, new admissions are impossible.
+      // An already committed admission can precede an in-flight OFF transaction.
       const [policy] = await tx
         .select({ enabled: schema.organizationSettings.autoApproveLearning })
         .from(schema.organizationSettings)
@@ -235,7 +272,11 @@ export async function proposeFromItem(
             ),
           )
           .for("update");
-        auto = !!current && sha256(current.instructions) === baseHash;
+        auto =
+          !!current &&
+          sha256(current.instructions) === baseHash &&
+          proposedText === withLearnedBullet(current.instructions, autoCandidate) &&
+          (await verifiedLearningEvidence(tx as unknown as Database, liveItem, autoCandidate));
       }
     }
     const [created] = await tx

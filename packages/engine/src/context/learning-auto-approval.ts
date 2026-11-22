@@ -1,4 +1,4 @@
-import { and, type Database, eq, inArray, schema } from "@agenteschat/db";
+import { and, type Database, eq, gte, inArray, isNull, schema } from "@agenteschat/db";
 import { recordAudit } from "../audit";
 import type { Judge } from "../judge";
 import { triesToChangePermissions } from "../judge";
@@ -6,13 +6,12 @@ import { requirePermission } from "../organizations";
 import { type ContextItem, itemWords, looksLikeSecret } from "./items";
 
 /**
- * Self-learning approvals are a narrow, opt-in policy lane, NOT permission grants.
- * Only a verified, repeated, human-supported lesson for the same agent may append one
- * short non-executable bullet to that agent's own instructions. Every other proposal
- * follows the existing human review path. The model cannot change this policy.
+ * Opt-in, fail-closed admission of one small agent-local learning instruction.
+ * Neither an LLM-provided evidence label nor an arbitrary completed task is proof.
+ * Nothing in this module grants a tool permission, scope, or an approval rule.
  */
 const UNSAFE_EFFECT =
-  /\b(?:sudo|chmod|chown|curl|wget|exec|shell|terminal|deploy|publish|release|merge|push|delete|erase|transfer|payment|purchase|checkout|refund|email|message|send|upload|export|credential|password|secret|token|api[ _-]?key|scope|permission|approval|authorize|grant|admin|override|ignore|bypass|disable|unrestricted)\b|權限|授權|批准|審批|部署|合併|推送|發送|上載|刪除|付款|密碼|憑證|密鑰|金鑰|繞過|忽略安全|取消限制|自動批准|无需批准|無需批准/i;
+  /\b(?:sudo|chmod|chown|curl|wget|exec|execute|shell|terminal|deploy(?:ment|ments|ed|s)?|publish(?:ing|ed|es)?|release|merge|push|pull|delete|remove|erase|transfer|payment|purchase|checkout|refund|email|message|send|upload|download|export|import|sync|install|copy|share|forward|move|write|modify|update|access|credential|password|secret|token|api[ _-]?key|scope|permission(?:s)?|approv(?:al|als|e|es|ed|ing)|authoriz(?:e|ed|ation)|grant|admin(?:istrator|istration)?|override|ignore|bypass|disable|unrestricted|private|confidential|sensitive|customer|client|patient|personal|financial|medical|health|record(?:s)?|database)\b|權限|授權|批准|審批|部署|合併|推送|發送|上載|下載|刪除|付款|密碼|憑證|密鑰|金鑰|繞過|忽略安全|取消限制|自動批准|无需批准|無需批准|個人資料|客戶資料|私隱|敏感資料|轉移|分享/i;
 const EXECUTABLE_SHAPE =
   /```|https?:\/\/|\$\(|\$\{|[;&|]{2}|<\/?[a-z]+\b|(?:^|\s)(?:bash|python|node|bun|npm|git|docker|rm)\s/i;
 
@@ -37,7 +36,7 @@ export function lowRiskLearningLesson(item: ContextItem): string | null {
     how === "refused" ||
     !line ||
     line.length > 220 ||
-    /[\r\n]/.test(line) ||
+    /[\r\n\u2028\u2029]/.test(line) ||
     EXECUTABLE_SHAPE.test(line) ||
     UNSAFE_EFFECT.test(line) ||
     looksLikeSecret(line)
@@ -46,48 +45,112 @@ export function lowRiskLearningLesson(item: ContextItem): string | null {
   return line;
 }
 
-/** Requiring a live independent semantic check, and failing closed if unavailable. */
+const normalized = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+
+/** A type:"human" label alone is never proof: verify the owner's exact live message. */
+async function ownerBackedInstruction(db: Database, item: ContextItem, lesson: string) {
+  if (!item.agentId || !item.channelIds.length) return false;
+  const refs = item.evidence.filter((e) => e.type === "human" && item.sourceIds.includes(e.ref)).map((e) => e.ref);
+  if (!refs.length) return false;
+  const [agent] = await db
+    .select({ ownerUserId: schema.agents.ownerUserId })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, item.orgId), eq(schema.agents.id, item.agentId)))
+    .limit(1);
+  if (!agent?.ownerUserId) return false;
+  const rows = await db
+    .select({ channelId: schema.messages.channelId, body: schema.messages.body })
+    .from(schema.messages)
+    .where(
+      and(
+        eq(schema.messages.orgId, item.orgId),
+        eq(schema.messages.authorType, "person"),
+        eq(schema.messages.authorUserId, agent.ownerUserId),
+        isNull(schema.messages.deletedAt),
+        inArray(schema.messages.id, refs),
+        inArray(schema.messages.channelId, item.channelIds),
+      ),
+    )
+    .limit(20)
+    .for("share");
+  return rows.some((m) => normalized(m.body.replace(/^@[\w-]+\s+/, "")) === normalized(lesson));
+}
+
+/** Only a same-subject, recently verified, independent webhook/operator CI outcome qualifies. */
+async function outcomeBackedInstruction(db: Database, item: ContextItem) {
+  if (!item.agentId || !item.subjectKey) return false;
+  const refs = item.evidence.filter((e) => e.type === "outcome" && item.sourceIds.includes(e.ref)).map((e) => e.ref);
+  if (!refs.length) return false;
+  const [proof] = await db
+    .select({ id: schema.outcomes.id })
+    .from(schema.outcomes)
+    .where(
+      and(
+        eq(schema.outcomes.orgId, item.orgId),
+        eq(schema.outcomes.agentId, item.agentId),
+        inArray(schema.outcomes.id, refs),
+        eq(schema.outcomes.polarity, "positive"),
+        inArray(schema.outcomes.kind, ["tests_passed", "ci_passed"]),
+        inArray(schema.outcomes.source, ["webhook", "operator"]),
+        eq(schema.outcomes.subject, item.subjectKey),
+        gte(schema.outcomes.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+      ),
+    )
+    .limit(1)
+    .for("share");
+  return !!proof;
+}
+
+/** Re-read actual proof before the independent judge and again under the write transaction. */
+export async function verifiedLearningEvidence(db: Database, item: ContextItem, lesson: string) {
+  return (await ownerBackedInstruction(db, item, lesson)) || (await outcomeBackedInstruction(db, item));
+}
+
+/** Evaluate permission changes AND non-permission data/external effects; missing answers fail closed. */
 export async function safeForAutomaticLearning(
   db: Database,
   item: ContextItem,
   judge: Judge | undefined,
 ): Promise<string | null> {
   const lesson = lowRiskLearningLesson(item);
-  if (!lesson || !judge || !item.agentId) return null;
-  // A real recorded successful CI/test outcome may stand in for a prior human correction.
-  // Never treat agent claims, a completed chat turn, negative outcomes, or outside data as proof.
-  if (!item.evidence.some((e) => e.type === "human")) {
-    const ids = item.evidence.filter((e) => e.type === "outcome").map((e) => e.ref);
-    if (ids.length === 0) return null;
-    const [proof] = await db
-      .select({ id: schema.outcomes.id })
-      .from(schema.outcomes)
-      .where(
-        and(
-          eq(schema.outcomes.orgId, item.orgId),
-          eq(schema.outcomes.agentId, item.agentId),
-          inArray(schema.outcomes.id, ids),
-          eq(schema.outcomes.polarity, "positive"),
-          inArray(schema.outcomes.kind, ["tests_passed", "ci_passed", "criteria_met"]),
-          inArray(schema.outcomes.source, ["tool", "webhook", "operator"]),
-        ),
-      )
-      .limit(1);
-    if (!proof) return null;
-  }
+  if (!lesson || !judge || !item.agentId || !(await verifiedLearningEvidence(db, item, lesson))) return null;
   try {
-    return (await triesToChangePermissions(judge, { orgId: item.orgId, text: lesson })) ? null : lesson;
+    if (await triesToChangePermissions(judge, { orgId: item.orgId, text: lesson })) return null;
+    const answers = await judge.ask({
+      orgId: item.orgId,
+      kind: "learning_auto_external_effect",
+      state: { candidate_lesson: lesson },
+      questions: {
+        unsafe_effect: {
+          type: "noul",
+          instructions:
+            "Could following this instruction modify external resources, call outside services, read/share sensitive or private data, publish, transfer or copy data, spend money, change permissions, or affect production? Treat ambiguous cases as unsafe. Allow only a harmless internal checklist, formatting rule or verification/documentation method.",
+          criteria: {
+            true: "It could have an external, data-sensitive, privileged, destructive or ambiguous effect.",
+            false: "Only a bounded internal work-method improvement with no outside effects.",
+          },
+        },
+      },
+    });
+    const risk = answers.unsafe_effect?.noul;
+    return typeof risk === "number" && Number.isFinite(risk) && risk < 0.2 ? lesson : null;
   } catch {
     return null;
   }
 }
 
 export async function autoLearningEnabled(db: Database, orgId: string): Promise<boolean> {
-  const [setting] = await db
-    .select({ enabled: schema.organizationSettings.autoApproveLearning })
-    .from(schema.organizationSettings)
-    .where(eq(schema.organizationSettings.orgId, orgId));
-  return setting?.enabled ?? false;
+  // Deploy-safe: if an older database has not applied migration 0282 yet,
+  // do not block the existing human proposal flow. Unknown means OFF.
+  try {
+    const [setting] = await db
+      .select({ enabled: schema.organizationSettings.autoApproveLearning })
+      .from(schema.organizationSettings)
+      .where(eq(schema.organizationSettings.orgId, orgId));
+    return setting?.enabled ?? false;
+  } catch {
+    return false;
+  }
 }
 
 export async function getLearningApprovalSettings(db: Database, actorId: string, orgId: string) {
@@ -95,7 +158,7 @@ export async function getLearningApprovalSettings(db: Database, actorId: string,
   return { autoApproveLearning: await autoLearningEnabled(db, orgId) };
 }
 
-/** Only a person with manage_agents can opt the workspace in or out. */
+/** A managing person's policy change and its audit either both commit or both roll back. */
 export async function setLearningApprovalSettings(
   db: Database,
   actorId: string,
@@ -103,18 +166,20 @@ export async function setLearningApprovalSettings(
   input: { autoApproveLearning: boolean },
 ) {
   await requirePermission(db, actorId, orgId, "manage_agents");
-  await db
-    .insert(schema.organizationSettings)
-    .values({ orgId, autoApproveLearning: input.autoApproveLearning })
-    .onConflictDoUpdate({
-      target: schema.organizationSettings.orgId,
-      set: { autoApproveLearning: input.autoApproveLearning, updatedAt: new Date() },
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(schema.organizationSettings)
+      .values({ orgId, autoApproveLearning: input.autoApproveLearning })
+      .onConflictDoUpdate({
+        target: schema.organizationSettings.orgId,
+        set: { autoApproveLearning: input.autoApproveLearning, updatedAt: new Date() },
+      });
+    await recordAudit(tx, {
+      orgId,
+      actor: { type: "person", id: actorId },
+      action: input.autoApproveLearning ? "learning.auto_approval_on" : "learning.auto_approval_off",
+      target: { type: "organization", id: orgId },
     });
-  await recordAudit(db, {
-    orgId,
-    actor: { type: "person", id: actorId },
-    action: input.autoApproveLearning ? "learning.auto_approval_on" : "learning.auto_approval_off",
-    target: { type: "organization", id: orgId },
   });
   return input;
 }
