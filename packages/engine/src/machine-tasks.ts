@@ -343,14 +343,12 @@ async function remapChildInbox(db: Executor, row: MachineTaskRow, sessionId: str
 }
 
 async function recordChildRoute(db: Executor, row: MachineTaskRow, route: ModelInspectorChildRoute) {
-  await db
-    .insert(schema.missionEvents)
-    .values({
-      orgId: row.orgId,
-      missionId: route.missionId,
-      kind: CHILD_ROUTE_EVENT,
-      data: { ...route, taskId: row.id, executor: row.executor, sessionId: row.sessionId },
-    });
+  await db.insert(schema.missionEvents).values({
+    orgId: row.orgId,
+    missionId: route.missionId,
+    kind: CHILD_ROUTE_EVENT,
+    data: { ...route, taskId: row.id, executor: row.executor, sessionId: row.sessionId },
+  });
 }
 
 /** A launched native session's account/model are historical facts, even after its main mission moves again. */
