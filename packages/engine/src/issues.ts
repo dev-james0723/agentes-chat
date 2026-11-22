@@ -32,6 +32,7 @@ import {
 } from "./events";
 import { cutText } from "./format";
 import { boardColumns, columnForMove, columnOf, topRank } from "./issue-columns";
+import { deliveryAllowsDone } from "./issue-delivery";
 import { type IssueProjectRef, projectForTask, projectsById } from "./issue-projects";
 import type { IssueWorkMeta } from "./issue-work";
 import { fileIdsOf, getMessage, insertMessage, type MessageView, messageView, postPersonMessage } from "./messages";
@@ -1319,6 +1320,11 @@ export async function updateIssue(
     }
     const [updated] = await tx.update(issues).set(set).where(eq(issues.id, current.id)).returning();
     if (!updated) throw new NotFoundError("Issue not found");
+    // Check the proposed row, including simultaneous criteria/assignee edits; a rejection rolls the transaction back.
+    if (actor.type === "agent" && set.status === "done" && !(await deliveryAllowsDone(tx, orgId, current.id)))
+      throw new ValidationError(
+        "This delivery still needs independent QA or the owner's final acceptance. Use its delivery workflow; a status change cannot approve it.",
+      );
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
     // Done work taken back to the board: against the agent it was assigned to (a cancel is not a reopen).
     if (current.status === "done" && updated.status !== "done" && updated.status !== "canceled")
@@ -1722,7 +1728,7 @@ export async function askAgentToImplement(
    * The right hand handing it on for `userId` from its run (ADR 0137 §13): the start is written as it, never in the
    * person's name, and is a `note` row of that run, so what comes of it goes back to their DM (`reportHandOffs`).
    */
-  by?: { agentId: string; runId: string; hop: number },
+  by?: { agentId: string; runId: string; hop: number; instruction?: string },
 ): Promise<IssueView> {
   const { db } = deps;
   if (!deps.pubsub) throw new Error("askAgentToImplement needs pub/sub");
@@ -1748,12 +1754,11 @@ export async function askAgentToImplement(
       channelId: conversation.channelId,
       threadId: conversation.rootId,
       author: by ? { type: "agent", agentId: by.agentId, runId: by.runId, hop: by.hop } : { type: "person", userId },
-      body: `Please implement issue #${issue.number}.`,
+      body: by?.instruction ?? `Please implement issue #${issue.number}.`,
       meta: {
         issueId: issue.id,
         issueWorkStart: true,
-        bodyCode: "issue_work_start",
-        bodyParams: { number: issue.number },
+        ...(!by?.instruction ? { bodyCode: "issue_work_start", bodyParams: { number: issue.number } } : {}),
         ...(by ? { agentNote: { runId: by.runId }, consultation: { id: consultationId } } : {}),
       },
     });
@@ -2054,6 +2059,7 @@ export async function setWorkIssueState(
       if (
         current.status !== "in_review" &&
         current.criteria.every((criterion) => criterion.done) &&
+        (await deliveryAllowsDone(tx, work.orgId, current.id)) &&
         !(await hasPendingCapabilityWork(tx, work.orgId, current.id))
       )
         status = "done";
