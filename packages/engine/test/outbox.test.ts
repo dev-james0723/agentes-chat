@@ -15,6 +15,7 @@ import {
   LANE_SLOW_FOR_MS,
   laneAlarm,
   laneLimits,
+  lockJobClaim,
   MissingCredentialError,
   memoryBudget,
   PermanentJobError,
@@ -154,6 +155,24 @@ test("renewLease does not extend a job another worker took over", async () => {
   expect(await renewLease(db, owned, DEFAULT_LEASE_MS, at(DEFAULT_LEASE_MS * 5))).toBe(false);
   expect((await rows())[0]?.lockedUntil?.getTime()).toBe(b?.lockedUntil?.getTime());
   expect(await renewLease(db, b as NonNullable<typeof b>)).toBe(true);
+});
+
+test("lockJobClaim fences the exact live claim with a timestamp usable by PostgreSQL", async () => {
+  const now = new Date("2026-01-02T03:04:05.123Z");
+  await enqueue(db, job("lease-fence", { runAt: new Date(now.getTime() - 1_000) }));
+  const [claimed] = await claimJobs(db, { workerId: "owner", now, leaseMs: 60_000 });
+  if (!claimed?.lockedUntil) throw new Error("Expected a claimed job with an expiry");
+  const expires = claimed.lockedUntil;
+  expect(await db.transaction((tx) => lockJobClaim(tx, claimed, now))).toBe(true);
+  expect(await db.transaction((tx) => lockJobClaim(tx, { ...claimed, lockedBy: "other" }, now))).toBe(false);
+  expect(await db.transaction((tx) => lockJobClaim(tx, { ...claimed, attempts: claimed.attempts + 1 }, now))).toBe(
+    false,
+  );
+  expect(await db.transaction((tx) => lockJobClaim(tx, claimed, new Date(expires.getTime() - 1)))).toBe(true);
+  expect(await db.transaction((tx) => lockJobClaim(tx, claimed, expires))).toBe(false);
+  expect(await db.transaction((tx) => lockJobClaim(tx, claimed, new Date(expires.getTime() + 1)))).toBe(false);
+  expect((await rows())[0]).toMatchObject({ status: "processing", lockedBy: "owner", attempts: claimed.attempts });
+  expect((await rows())[0]?.lockedUntil?.getTime()).toBe(expires.getTime());
 });
 
 test("future jobs wait for their time", async () => {
