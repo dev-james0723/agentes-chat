@@ -24,7 +24,9 @@ const WIDTHS = [1280, 320, 390];
  * One browser each: tabs on the same file:// origin share a renderer, so they'd lay out one at a time.
  * `GEOMETRY_BROWSERS` raises it on a machine with more cores to spare (CI's runner).
  */
-const BROWSERS = Math.max(1, Number(process.env.GEOMETRY_BROWSERS) || 4);
+// On the developer Mac keep this background visual check from saturating
+// the computer while other agents and human desktop work are active.
+const BROWSERS = Math.max(1, Number(process.env.GEOMETRY_BROWSERS) || (process.platform === "darwin" ? 1 : 4));
 /**
  * Fewer than this means the capture broke, and an empty run must not read as a clean one. `GEOMETRY_MIN_STATES` lowers
  * it for a local run over a few test files.
@@ -101,9 +103,11 @@ export function playwrightChromes() {
   const home = process.env.HOME ?? "";
   return [join(home, "Library/Caches/ms-playwright"), join(home, ".cache/ms-playwright")].flatMap((dir) => {
     try {
-      const found = ["chromium-*/chrome-*/*.app/Contents/MacOS/*", "chromium-*/chrome-*/chrome"].flatMap((p) => [
-        ...new Bun.Glob(p).scanSync({ cwd: dir, onlyFiles: true }),
-      ]);
+      const found = [
+        "chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell",
+        "chromium-*/chrome-*/*.app/Contents/MacOS/*",
+        "chromium-*/chrome-*/chrome",
+      ].flatMap((p) => [...new Bun.Glob(p).scanSync({ cwd: dir, onlyFiles: true })]);
       return found
         .sort()
         .reverse()
@@ -117,12 +121,14 @@ export function playwrightChromes() {
 export function findChrome() {
   const known = [
     process.env.CHROME_BIN,
+    // Prefer an isolated headless binary: full desktop Chrome may be busy with
+    // the person's own windows and can stall macOS CDP layout runs indefinitely.
+    ...playwrightChromes(),
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     Bun.which("google-chrome"),
     Bun.which("google-chrome-stable"),
     Bun.which("chromium"),
     Bun.which("chromium-browser"),
-    ...playwrightChromes(),
   ];
   const bin = known.find((p) => p && Bun.file(p).size > 0);
   if (!bin) throw new Error("No Chrome found: set CHROME_BIN");
@@ -178,6 +184,21 @@ export function writeFrame(out: string, css: string, reverse: string) {
   return { url: `file://${join(out, "frame.html")}`, reverse: `file://${join(out, "frame-rev.html")}` };
 }
 
+/** Bound browser startup and CDP calls: a stalled renderer must never hold local CI indefinitely. */
+async function bounded<T>(operation: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, fail) => {
+        timer = setTimeout(() => fail(new Error(`${label} exceeded ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function launch(bin: string, profile: string) {
   const chrome = Bun.spawn(
     [
@@ -186,7 +207,6 @@ export async function launch(bin: string, profile: string) {
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
       "--allow-file-access-from-files",
-      // Text advances as on every machine, not hinted to this one's pixels.
       "--font-render-hinting=none",
       "--hide-scrollbars",
       "--no-first-run",
@@ -195,42 +215,98 @@ export async function launch(bin: string, profile: string) {
     ],
     { stderr: "pipe", stdout: "ignore" },
   );
-  let log = "";
-  const reader = chrome.stderr.getReader();
-  const decoder = new TextDecoder();
-  let url: string | undefined;
-  while (!url) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error(`Chrome exited: ${log.slice(-500)}`);
-    log += decoder.decode(value);
-    url = log.match(/ws:\/\/\S+/)?.[0];
+  let ws: WebSocket | null = null;
+  try {
+    let log = "";
+    const reader = chrome.stderr.getReader();
+    const decoder = new TextDecoder();
+    let url: string | undefined;
+    while (!url) {
+      const { value, done } = await bounded(reader.read(), 30_000, "Chrome debugger startup");
+      if (done) throw new Error(`Chrome exited: ${log.slice(-500)}`);
+      log += decoder.decode(value);
+      url = log.match(/ws:\/\/\S+/)?.[0];
+    }
+    // Keep draining stderr so Chrome cannot block if the pipe fills up.
+    void (async () => {
+      while (!(await reader.read()).done);
+    })().catch(() => {});
+    ws = new WebSocket(url);
+    const socket = ws;
+    await bounded(
+      new Promise<void>((ok, fail) => {
+        socket.onopen = () => ok();
+        socket.onerror = () => fail(new Error("Chrome debugger WebSocket refused connection"));
+      }),
+      30_000,
+      "Chrome debugger connection",
+    );
+    let id = 0;
+    let closed = false;
+    const waiting = new Map<number, { ok: (v: never) => void; fail: (e: Error) => void }>();
+    const rejectWaiting = () => {
+      for (const call of waiting.values()) call.fail(new Error("Chrome debugger connection closed"));
+      waiting.clear();
+    };
+    socket.onclose = rejectWaiting;
+    socket.onerror = rejectWaiting;
+    socket.onmessage = (e) => {
+      const m = JSON.parse(String(e.data));
+      const call = waiting.get(m.id);
+      if (!call) return;
+      waiting.delete(m.id);
+      if (m.error) call.fail(new Error(m.error.message));
+      else call.ok(m.result as never);
+    };
+    const send = <T = Record<string, never>>(method: string, params: object = {}, sessionId?: string) =>
+      new Promise<T>((ok, fail) => {
+        if (closed || socket.readyState !== WebSocket.OPEN) {
+          fail(new Error(`Chrome debugger is closed: ${method}`));
+          return;
+        }
+        const requestId = ++id;
+        const timer = setTimeout(() => {
+          waiting.delete(requestId);
+          fail(new Error(`Chrome debugger ${method} timed out`));
+        }, 60_000);
+        waiting.set(requestId, {
+          ok: (v) => {
+            clearTimeout(timer);
+            ok(v);
+          },
+          fail: (error) => {
+            clearTimeout(timer);
+            fail(error);
+          },
+        });
+        try {
+          socket.send(JSON.stringify({ id: requestId, method, params, sessionId }));
+        } catch (error) {
+          waiting.delete(requestId);
+          clearTimeout(timer);
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      rejectWaiting();
+      try {
+        socket.close();
+      } finally {
+        chrome.kill("SIGTERM");
+      }
+    };
+    return { send, close };
+  } catch (error) {
+    try {
+      ws?.close();
+    } catch {
+      // The debugger may still be CONNECTING; always stop the Chrome child.
+    }
+    chrome.kill("SIGTERM");
+    throw error;
   }
-  // Kept draining: a full stderr pipe would block Chrome mid-run (Linux runners log to it freely).
-  void (async () => {
-    while (!(await reader.read()).done);
-  })();
-  const ws = new WebSocket(url);
-  await new Promise((ok, fail) => {
-    ws.onopen = ok;
-    ws.onerror = fail;
-  });
-  let id = 0;
-  const waiting = new Map<number, { ok: (v: never) => void; fail: (e: Error) => void }>();
-  ws.onmessage = (e) => {
-    const m = JSON.parse(String(e.data));
-    const call = waiting.get(m.id);
-    if (!call) return;
-    waiting.delete(m.id);
-    if (m.error) call.fail(new Error(m.error.message));
-    else call.ok(m.result as never);
-  };
-  const send = <T = Record<string, never>>(method: string, params: object = {}, sessionId?: string) =>
-    new Promise<T>((ok, fail) => {
-      id += 1;
-      waiting.set(id, { ok: ok as (v: never) => void, fail });
-      ws.send(JSON.stringify({ id, method, params, sessionId }));
-    });
-  return { send, close: () => chrome.kill() };
 }
 
 type Send = Awaited<ReturnType<typeof launch>>["send"];
@@ -450,10 +526,12 @@ async function main() {
   const textSizes = value("--text-size")?.split(",").filter(Boolean) ?? [];
 
   const out = mkdtempSync(join(tmpdir(), "geometry-"));
-  const browsers = await Promise.all(
-    Array.from({ length: BROWSERS }, (_, i) => launch(findChrome(), join(out, `profile-${i}`))),
-  );
+  const browsers: Awaited<ReturnType<typeof launch>>[] = [];
   try {
+    // Starting one at a time lets `finally` shut down earlier browsers if a
+    // later launch fails; Promise.all previously left successful ones orphaned.
+    const bin = findChrome();
+    for (let i = 0; i < BROWSERS; i++) browsers.push(await launch(bin, join(out, `profile-${i}`)));
     const frames = writeFrame(out, await bundleCss(out), await bundleCss(out, "reverse"));
     // Each browser lays a screen out twice: in the app's CSS order and in the reverse one, for `cascadeorder`.
     const pairs = await Promise.all(

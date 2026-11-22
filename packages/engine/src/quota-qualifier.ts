@@ -1,4 +1,5 @@
 import { and, desc, type Executor, eq, isNull, schema, sql } from "@agenteschat/db";
+import { type PlanMeterUsage, planState } from "@agenteschat/ui/plan-state";
 import type { EngineDeps, QuotaCliQualification, QuotaHandoffKind } from "./executor";
 import type { MachineCaller } from "./machine-hub";
 
@@ -59,6 +60,66 @@ export async function planAccountFor(
   return row?.id ?? null;
 }
 
+/**
+ * A subscription account explicitly shared with the agent owner's own agents.
+ * We do not infer paid plans from a CLI binary or from an API-key sign-in.
+ * This is a candidate discovery step; the executor re-checks authorization.
+ */
+export async function ownerSharedSubscriptionAccount(
+  db: Executor,
+  orgId: string,
+  machineId: string,
+  agentId: string,
+  kind: QuotaHandoffKind,
+): Promise<string | null> {
+  const [agent] = await db
+    .select({ ownerUserId: schema.agents.ownerUserId })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, orgId), eq(schema.agents.id, agentId)))
+    .limit(1);
+  if (!agent?.ownerUserId) return null;
+  const accounts = schema.machineAccounts;
+  const matches = await db
+    .select({ id: accounts.id, usage: accounts.usage })
+    .from(accounts)
+    .innerJoin(
+      schema.organizationMembers,
+      and(
+        eq(schema.organizationMembers.orgId, accounts.orgId),
+        eq(schema.organizationMembers.userId, accounts.createdBy),
+      ),
+    )
+    .where(
+      and(
+        eq(accounts.orgId, orgId),
+        eq(accounts.machineId, machineId),
+        eq(accounts.kind, kind),
+        eq(accounts.status, "active"),
+        eq(accounts.createdBy, agent.ownerUserId),
+        eq(accounts.shared, true),
+        eq(accounts.authMethod, "cli_login"),
+        isNull(accounts.keyHint),
+        isNull(accounts.provider),
+      ),
+    )
+    .orderBy(desc(accounts.lastSuccessAt), desc(accounts.lastUsedAt), desc(accounts.createdAt))
+    .limit(32);
+  // A fresh usage reading takes priority over an unknown one, and a full
+  // subscription is excluded. The resolver checks real-time availability once
+  // more immediately before dispatch; unknown readings are not claimed free.
+  const now = Date.now();
+  const ranked = matches.flatMap((row) => {
+    const u = row.usage as PlanMeterUsage | null;
+    const at = u ? Date.parse(u.at) : Number.NaN;
+    const fresh = u && Number.isFinite(at) && at <= now && now - at < 15 * 60_000;
+    if (!fresh) return [{ id: row.id, used: 101 }];
+    const state = planState(u, now);
+    return state.state === "limited" ? [] : [{ id: row.id, used: state.used }];
+  });
+  ranked.sort((a, b) => a.used - b.used || a.id.localeCompare(b.id));
+  return ranked[0]?.id ?? null;
+}
+
 export function createQuotaCliQualifier(o: {
   db?: Executor;
   machines: Pick<MachineCaller, "status">;
@@ -82,13 +143,47 @@ export function createQuotaCliQualifier(o: {
       let evidence: string;
       if (kind === "claude_code") {
         const claude = status.executors?.claude;
-        if (!claude || claude.loggedIn !== true || claude.authMethod !== "claude.ai") return null;
-        const org = claude.claudeOrgId && /^[A-Za-z0-9-]{1,64}$/.test(claude.claudeOrgId) ? claude.claudeOrgId : "own";
-        pool = `claude_code:${input.machineId}:${org}`;
-        evidence = "runner-claude-auth-claude.ai";
+        const ownPlan = claude?.loggedIn === true && claude.authMethod === "claude.ai";
+        // A separate account's login can be available even when the host's
+        // own Claude login is missing or uses a paid API key.
+        const shared =
+          o.db && status.online
+            ? await ownerSharedSubscriptionAccount(o.db, input.orgId, input.machineId, input.agentId, kind).catch(
+                () => null,
+              )
+            : null;
+        if (!ownPlan && !shared) return null;
+        if (shared) {
+          accountId = shared;
+          pool = `claude_code:${input.machineId}:${shared}`;
+          evidence = "owner-shared-claude-subscription";
+        } else {
+          const org =
+            claude?.claudeOrgId && /^[A-Za-z0-9-]{1,64}$/.test(claude.claudeOrgId) ? claude.claudeOrgId : "own";
+          pool = `claude_code:${input.machineId}:${org}`;
+          evidence = "runner-claude-auth-claude.ai";
+        }
       } else if (kind === "grok") {
         if (!status.executors?.grok || !o.db) return null;
-        accountId = await planAccountFor(o.db, input.orgId, input.machineId, "grok").catch(() => null);
+        accountId = await ownerSharedSubscriptionAccount(o.db, input.orgId, input.machineId, input.agentId, kind).catch(
+          () => null,
+        );
+        // Preserve the legacy named Grok plan only when it belongs to the
+        // requesting agent and is admitted again by resolveBrain.
+        if (!accountId) {
+          const legacy = await planAccountFor(o.db, input.orgId, input.machineId, kind).catch(() => null);
+          const [owner] = legacy
+            ? await o.db
+                .select({ createdBy: schema.machineAccounts.createdBy, provider: schema.machineAccounts.provider })
+                .from(schema.machineAccounts)
+                .where(and(eq(schema.machineAccounts.orgId, input.orgId), eq(schema.machineAccounts.id, legacy)))
+            : [];
+          const [agent] = await o.db
+            .select({ ownerUserId: schema.agents.ownerUserId })
+            .from(schema.agents)
+            .where(and(eq(schema.agents.orgId, input.orgId), eq(schema.agents.id, input.agentId)));
+          accountId = owner?.createdBy === agent?.ownerUserId && owner?.provider == null ? legacy : null;
+        }
         if (!accountId) return null;
         pool = `grok:${input.machineId}:${accountId}`;
         evidence = "grok-account-cli-login";
@@ -96,9 +191,21 @@ export function createQuotaCliQualifier(o: {
         if (!status.executors?.codex) return null;
         const windows = (status.executors as { ownUsage?: { codex?: { windows?: unknown[] } } }).ownUsage?.codex
           ?.windows;
-        if (!Array.isArray(windows) || windows.length === 0) return null;
-        pool = `codex:${input.machineId}:own`;
-        evidence = "codex-own-plan-windows";
+        const shared =
+          o.db && status.online
+            ? await ownerSharedSubscriptionAccount(o.db, input.orgId, input.machineId, input.agentId, kind).catch(
+                () => null,
+              )
+            : null;
+        if (shared) {
+          accountId = shared;
+          pool = `codex:${input.machineId}:${shared}`;
+          evidence = "owner-shared-codex-subscription";
+        } else {
+          if (!Array.isArray(windows) || windows.length === 0) return null;
+          pool = `codex:${input.machineId}:own`;
+          evidence = "codex-own-plan-windows";
+        }
       }
       const sourcePool = `${input.sourceKind}:${input.machineId}:${input.sourceAccountId ?? "own"}`;
       if (sourcePool === pool) return null;

@@ -158,6 +158,9 @@ export function ordinalForm(locale: string, n: number): Intl.LDMLPluralRule {
   if (typeof Intl.PluralRules === "function") return new Intl.PluralRules(locale, { type: "ordinal" }).select(n);
   const code = appLocale([locale], true);
   if (code === "fr") return n === 1 ? "one" : "other";
+  // Spanish ordinal forms select "one" for numbers ending in 1 or 3,
+  // except the 11 ending (11, 111, 1011). Hermes lacks Intl.PluralRules.
+  if (code === "es") return n % 100 !== 11 && (n % 10 === 1 || n % 10 === 3) ? "one" : "other";
   if (code !== "en" || (n % 100 >= 11 && n % 100 <= 13)) return "other";
   return (["other", "one", "two", "few"] as const)[n % 10] ?? "other";
 }
