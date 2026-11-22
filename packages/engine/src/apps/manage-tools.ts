@@ -138,8 +138,8 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
     return agent;
   };
 
-  /** Bounded per-workspace lookup: a boolean should never load every skill's body. */
-  const resolveSkillDefault = async (ref: string) => {
+  /** Bounded per-workspace lookup: never treat a stale ID as somebody else's name. */
+  const resolveSkillDefault = async (ref: string, by?: "id" | "name") => {
     await requirePermission(deps.db, p.userId, p.orgId, "read");
     const columns = {
       id: schema.skills.id,
@@ -148,19 +148,22 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       defaultForNewAgents: schema.skills.defaultForNewAgents,
     };
     const scope = and(eq(schema.skills.orgId, p.orgId), isNull(schema.skills.deletedAt));
-    // A UUID-shaped skill name is valid; prefer the exact skill ID if present.
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const mode = by ?? (uuid.test(ref) ? "id" : "name");
+    if (mode === "id") {
+      if (!uuid.test(ref)) throw new ValidationError("A skill ID must be a UUID; use by: name for names.");
       const [idMatch] = await deps.db
         .select(columns)
         .from(schema.skills)
         .where(and(scope, eq(schema.skills.id, ref)));
-      if (idMatch) return idMatch;
+      if (!idMatch) throw new ValidationError(`No skill ID "${ref}" in this workspace. Refresh list_skills.`);
+      return idMatch;
     }
     const [named] = await deps.db
       .select(columns)
       .from(schema.skills)
       .where(and(scope, eq(schema.skills.name, ref.trim().toLowerCase())));
-    if (!named) throw new ValidationError(`No skill "${ref}" in this workspace. list_skills lists them.`);
+    if (!named) throw new ValidationError(`No skill name "${ref}" in this workspace. Refresh list_skills.`);
     return named;
   };
 
@@ -501,7 +504,8 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         "Checks if new agents in this authorized workspace inherit an installed skill. Does not modify any skill or agent.",
       input: z
         .object({
-          skill: z.string().min(1).max(64).describe("Skill id or name (from list_skills)"),
+          skill: z.string().min(1).max(64).describe("Skill ID (UUID) or name; UUID values are treated as IDs."),
+          by: z.enum(["id", "name"]).optional().describe("Disambiguate a UUID-shaped skill name with by: name."),
         })
         .strict(),
       readOnly: true,
@@ -510,7 +514,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const found = await resolveSkillDefault(args.skill);
+      const found = await resolveSkillDefault(args.skill, args.by);
       return {
         id: found.id,
         name: found.name,
@@ -530,7 +534,8 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         "Set the default-on assignment for FUTURE agents in this authorized workspace. Does not change existing agents, skill body or version, or other workspaces. Requires manage_agents permission and is audited.",
       input: z
         .object({
-          skill: z.string().min(1).max(64).describe("Skill id or name (from list_skills)"),
+          skill: z.string().min(1).max(64).describe("Skill ID (UUID) or name; UUID values are treated as IDs."),
+          by: z.enum(["id", "name"]).optional().describe("Disambiguate a UUID-shaped skill name with by: name."),
           enabled: z.boolean().describe("True: new agents start with this skill on; false: off by default."),
         })
         .strict(),
@@ -540,7 +545,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const found = await resolveSkillDefault(args.skill);
+      const found = await resolveSkillDefault(args.skill, args.by);
       // Authorize before touching data; exact skill resolution is restricted to this OAuth workspace.
       await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
       // Lock and reread the row in one transaction. Concurrent requests cannot double-audit

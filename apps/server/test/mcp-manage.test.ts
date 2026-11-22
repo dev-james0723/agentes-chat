@@ -443,6 +443,38 @@ describe("skills", () => {
     const rows = await t.db.select().from(schema.skills).where(eq(schema.skills.orgId, orgId));
     expect(rows.find((x) => x.id === target.id)?.defaultForNewAgents).toBe(true);
     expect(rows.find((x) => x.id === imposter.id)?.defaultForNewAgents).toBe(false);
+    // The old ID must not fall through to the still-installed skill with that UUID-shaped name.
+    await t.db
+      .update(schema.skills)
+      .set({ deletedAt: new Date() })
+      .where(eq(schema.skills.id, String(target.id)));
+    const staleRead = await callTool(t, app.access, "get_skill_default_for_new_agents", { skill: String(target.id) });
+    expect(staleRead.isError).toBe(true);
+    const staleWrite = await callTool(t, app.access, "set_skill_default_for_new_agents", {
+      skill: String(target.id),
+      enabled: true,
+    });
+    expect(staleWrite.isError).toBe(true);
+    const explicitName = data(
+      await callTool(t, app.access, "get_skill_default_for_new_agents", {
+        skill: String(target.id),
+        by: "name",
+      }),
+    );
+    expect(explicitName.id).toBe(imposter.id);
+    const explicitChange = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(target.id),
+        by: "name",
+        enabled: true,
+      }),
+    );
+    expect(explicitChange.id).toBe(imposter.id);
+    const [after] = await t.db
+      .select()
+      .from(schema.skills)
+      .where(eq(schema.skills.id, String(imposter.id)));
+    expect(after?.defaultForNewAgents).toBe(true);
   });
 
   test("a foreign workspace skill ID cannot be read or changed through this MCP grant", async () => {
