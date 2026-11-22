@@ -53,10 +53,10 @@
 - [x] Review exact combined diff against the spec and Review Focus; fix material findings with focused regression tests.
 - [ ] Run required local typecheck/lint/boundaries/licenses and project CI after migration commit. Record baseline failures distinctly.
 - [x] Run registration/login/revoke with a virtual WebAuthn authenticator and a disposable account on an isolated server.
-- [ ] Exercise desktop-mode handoff without modifying the actual owner session; inspect 1440x900, 390x844, 430x932 layouts, keyboard/errors and console/network.
-- [ ] Rehearse migration and old-app compatibility on an isolated database; build candidate image from the pinned parent with new dependency payload.
-- [ ] Verify source digest, all changed served assets and unchanged runner bytes in candidate.
-- [ ] Commit verified fixes and ADR; push a feature branch only with no private operational material.
+- [x] Exercise desktop-mode handoff without modifying the actual owner session; inspect 1440x900, 390x844, 430x932 layouts, keyboard/errors and console/network.
+- [x] Rehearse migration and old-app compatibility on an isolated database; build candidate image from the pinned parent with new dependency payload.
+- [x] Verify source digest, all changed served assets and unchanged runner bytes in candidate.
+- [x] Commit verified fixes and ADR; push a feature branch only with no private operational material.
 
 ## Task 4: Existing-target activation and owner enrollment
 **Files:** scoped deploy build/activation files following the existing reviewed workflow; untracked private evidence/state.
@@ -74,3 +74,17 @@ The current instruction explicitly requests autonomous implementation. Use separ
 Verification update: server cryptographic suite35/35 passed after a reviewed discoverable-reauthentication fix. One additional real-crypto canonical-HTTPS-to-local-desktop handoff test passed33 assertions with actual origin/CSRF enforcement. Web165 regressions passed, followed by12/12 management tests for the reviewer cache fix; final web typechecks/build passed. A real Chromium virtual authenticator passed registration, naming, email-free login, signed-in reauthentication, explicit desktop confirmation/redemption, revocation and password fallback; six viewport captures had no horizontal overflow, no page errors and no server5xx. Physical biometric enrollment is still unobserved.
 
 Release execution uses a separate clean worktree of the committed source with independently installed frozen dependencies. Development lifecycle metadata and private evidence remain outside the release source.
+
+## Release verification and cutover status
+
+Runtime candidate revision `4378edbb84468a33472fe5139cb1cf573990fd8b` passed the Linux source, dependency, built-asset and runner checks. Deployment tooling revision `dbb07ef0b3b2fd978affb774a2add55f5a621c59` adds exact Docker 29 missing-container handling with 30 passing release-guard tests; it changes no application source. Candidate and migration-compatible fallback images are available on the deployment host.
+
+An isolated restore of a fresh backup, the additive migration with all existing table counts preserved, candidate startup on an empty database, and original-application compatibility with the added migration all passed. The test environment was removed after evidence capture. A full application was never started on copied production rows. These results do not verify the owner's actual biometric hardware.
+
+All 14 locales contain the new keys. Final-candidate new-event tests passed 6/6; mobile and desktop regressions passed 1,842/1,842 across 164 files; boundaries passed. The earlier focused Passkey server and browser suites passed 36/36 and 30/30. Final locale typechecks and an explicit 2 MB Biome check passed; the Japanese catalog now exceeds Biome's default 1 MiB processing threshold and otherwise produces a skip warning.
+
+The full project CI run remains distinct from focused acceptance. Its observed failures include unchanged formatting, translation/tool wording and existing fixture/harness problems. All 12 server failures and both observed web mission-card failures were classified against the deployed parent. Four server failures were explicit five-second timeouts that passed independently on both revisions without extending deadlines. The full-history secret scanner also flags an explicitly synthetic OAuth fixture already present in the deployed parent; its failed exit is retained, with no new ignore rule. Full CI must not be reported as green or used to justify bypassing the repository's merge requirements. The large geometry phase was still running at the latest observation, with forward progress independently observed in all four workers.
+
+The read-only production preflight refused activation because real work was still running. The original app remains selected and running; no Passkey migration or owner credential has been applied to production. Activation must revalidate current source, the deployment lock, free disk space, a restored backup less than one hour old, and zero executing runs or machine work. Do not interrupt jobs or relax these conditions merely to finish this release. The pull request remains a draft while required global checks are unresolved.
+
+Implementation, image preparation and isolated protocol acceptance are complete. Live activation, live URL verification, owner enrollment and physical biometric acceptance remain pending. The owner browser was not controlled and no owner session or credential was copied. After a verified activation, provide the canonical HTTPS `/desktop/sign-in?mode=passkeys` URL; actual OS verification belongs to the owner.
