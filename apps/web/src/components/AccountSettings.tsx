@@ -1,4 +1,11 @@
-import { type AgentStyle, keys, useAiAccounts, useSetAgentStyle, useSetShowActivity } from "@agenteschat/client";
+import {
+  type AgentStyle,
+  keys,
+  useAiAccounts,
+  useAuthConfig,
+  useSetAgentStyle,
+  useSetShowActivity,
+} from "@agenteschat/client";
 import { authErrorText, emailChangeErrorText, errorText } from "@agenteschat/client/lib/errors";
 import { browserTimezone, isTimeZone, timezoneName, zoneDisplayName } from "@agenteschat/client/lib/routines";
 import { isEmail } from "@agenteschat/client/lib/text";
@@ -28,18 +35,20 @@ import { useTranslation } from "react-i18next";
 import { useApi } from "@/api/context";
 import type { AuthResult } from "@/auth/client";
 import { useAuth } from "@/auth/context";
+import { passkeyOrigin } from "@/auth/passkeys";
 import { ChangeAvatarDialog } from "@/components/AvatarBuilder";
 import { ChatLookSettings } from "@/components/ChatLookSettings";
 import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import { PrefRow } from "@/components/NoticePrefs";
 import { OpenOnPhoneDialog } from "@/components/OpenOnPhone";
 import { useOrg } from "@/components/org-context";
+import { PasskeySettings } from "@/components/PasskeySettings";
 import { MyFace } from "@/components/ProfilePhoto";
 import { ZoneSelect } from "@/components/ZoneSelect";
 import { useDirectory } from "@/hooks/useDirectory";
 import { localePatch, rememberLocale } from "@/i18n";
 import { type MenuLook, menuLook, onMenuLookChange, setMenuLook } from "@/lib/context-menu";
-import { inDesktopApp } from "@/lib/desktop";
+import { BROWSER_SIGN_IN_PATH, inDesktopApp, passkeyManagementUrl } from "@/lib/desktop";
 import { useOpenParam } from "@/lib/open-param";
 import { ownPlanLines, planMeterText } from "@/lib/plan-usage";
 import { onSoundChoiceChange, type SoundChoice, setSoundChoice, soundChoice } from "@/lib/sounds";
@@ -73,6 +82,9 @@ export function AccountSection() {
   const [profile, setProfile] = useState<"name" | "timezone" | null>(null);
   const [email, setEmail] = useState(false);
   const [phone, setPhone] = useState(false);
+  const [passkeys, setPasskeys] = useState(false);
+  const credentialOrigin = passkeyOrigin(useAuthConfig().data);
+  const externalPasskeys = inDesktopApp() || credentialOrigin !== window.location.origin;
   // Adding a password and deleting the account: their dialogs are the account button's, kept in the address so a
   // sign-in again comes back to them.
   const [, setAccount] = useOpenParam("account");
@@ -152,6 +164,18 @@ export function AccountSection() {
             status={t("shell.openOnPhoneHint")}
             onOpen={() => setPhone(true)}
           />
+          {credentialOrigin && (
+            <PrefRow
+              id="account-passkeys"
+              icon="key"
+              label={t("auth.passkey.title")}
+              status={t(externalPasskeys ? "auth.passkey.external" : "auth.passkey.settingsHint")}
+              onOpen={() => {
+                if (externalPasskeys) window.location.assign(passkeyManagementUrl(credentialOrigin));
+                else setPasskeys(true);
+              }}
+            />
+          )}
           <PrefRow
             id="account-password"
             icon="key"
@@ -284,6 +308,35 @@ export function AccountSection() {
       <ProfileDialog focus={profile} onClose={() => setProfile(null)} />
       <EmailDialog open={email} onClose={() => setEmail(false)} />
       <OpenOnPhoneDialog open={phone} onClose={() => setPhone(false)} />
+      <Dialog
+        open={passkeys}
+        onOpenChange={setPasskeys}
+        title={t("auth.passkey.title")}
+        closeLabel={t("common.close")}
+        width={520}
+      >
+        <DialogBody>
+          {passkeys && credentialOrigin && !externalPasskeys && (
+            <PasskeySettings
+              accountId={me.user.id}
+              accountEmail={me.user.email}
+              onSignInAgain={() => {
+                setPasskeys(false);
+                void navigate({
+                  to: "/login",
+                  search: {
+                    redirect: `${BROWSER_SIGN_IN_PATH}?mode=passkeys`,
+                    reauthenticate: "1",
+                  },
+                });
+              }}
+            />
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button onClick={() => setPasskeys(false)}>{t("common.close")}</Button>
+        </DialogFooter>
+      </Dialog>
     </>
   );
 }

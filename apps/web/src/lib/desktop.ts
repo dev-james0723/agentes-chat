@@ -154,9 +154,20 @@ export async function challengeOf(verifier: string) {
   return base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
 }
 
-/** `access`: an early-access link's token, for the sign-up the browser makes (DesktopSignInPage). */
-export const browserSignInUrl = (provider: SignInProvider, requestId: string, access?: string) =>
-  `${BROWSER_SIGN_IN_PATH}?${new URLSearchParams({ provider, request: requestId, ...(access ? { access } : {}) })}`;
+/** Passkeys use the same desktop exchange; social provider types stay unchanged in the shared client. */
+export type DesktopSignInMethod = SignInProvider | "passkey";
+
+/** `origin`: the validated canonical passkey origin from auth-config, including its port. */
+export const browserSignInUrl = (
+  provider: DesktopSignInMethod,
+  requestId: string,
+  access?: string,
+  origin?: string | null,
+) =>
+  `${origin ?? ""}${BROWSER_SIGN_IN_PATH}?${new URLSearchParams({ provider, request: requestId, ...(access ? { access } : {}) })}`;
+
+/** This exact native route is external even on the same server; a generic new-window link is not. */
+export const passkeyManagementUrl = (origin: string) => `${origin}${BROWSER_SIGN_IN_PATH}?mode=passkeys`;
 
 /**
  * What the site may ask of this computer (ADR 0036, `this_mac` in main_window.rs): which of this server's

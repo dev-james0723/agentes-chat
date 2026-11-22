@@ -55,6 +55,7 @@ import { rejectForwardedLocal } from "./dual-origin-guard";
 import { humanCheckRefusal } from "./http/human-check";
 import type { Logger } from "./logger";
 import { ownerSignIn } from "./owner-claim";
+import { passkeyCapability, passkeyPlugins } from "./passkeys";
 import { phoneBrowserSignIn, phoneFlowStarted } from "./phone-browser-sign-in";
 
 /**
@@ -145,6 +146,7 @@ export function createAuth(deps: {
     ],
     plugins: [
       expo(),
+      ...passkeyPlugins({ db, config, rateLimiter }),
       phoneSignIn,
       phoneBrowserSignIn(),
       desktopSignIn(),
@@ -157,6 +159,7 @@ export function createAuth(deps: {
         session: schema.sessions,
         account: schema.accounts,
         verification: schema.verifications,
+        passkey: schema.passkeys,
       },
     }),
     user: {
@@ -689,6 +692,7 @@ export const workspacePolicy = (config: Config): WorkspacePolicy => ({
 /** Sign-in options the login and sign-up pages need to render. */
 export function authUiConfig(config: Config) {
   return {
+    passkeys: passkeyCapability(config),
     socialProviders: {
       google: Boolean(config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET),
       github: Boolean(config.GITHUB_CLIENT_ID && config.GITHUB_CLIENT_SECRET),

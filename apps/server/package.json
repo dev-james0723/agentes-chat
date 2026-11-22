@@ -25,13 +25,14 @@
     "@agenteschat/providers": "workspace:*",
     "@agenteschat/setup": "workspace:*",
     "@agenteschat/tokens": "workspace:*",
-    "@better-auth/expo": "^1.7.7",
+    "@agenteschat/ui": "workspace:*",
+    "@better-auth/expo": "1.7.27",
+    "@better-auth/passkey": "1.7.27",
     "@hono/zod-openapi": "^1.6.3",
     "@scalar/hono-api-reference": "^0.12.9",
-    "better-auth": "^1.7.7",
+    "better-auth": "1.7.27",
     "hono": "^4.13.13",
-    "zod": "^4.6.5",
-    "@agenteschat/ui": "workspace:*"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

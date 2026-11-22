@@ -316,6 +316,9 @@ export function accountRoutes(deps: AppDeps) {
         200: json(
           z.object({
             socialProviders: z.object({ google: z.boolean(), github: z.boolean(), apple: z.boolean() }),
+            passkeys: z.object({ enabled: z.boolean(), origin: z.string().nullable() }).openapi({
+              description: "Passkey availability and the canonical origin where credentials are registered and used.",
+            }),
             signupOpen: z
               .boolean()
               .openapi({ description: "Offer the sign-up form (invited people can always sign up)." }),

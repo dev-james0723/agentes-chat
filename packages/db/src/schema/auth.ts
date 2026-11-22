@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
  * Tables owned by Better Auth (people signing in). Columns mirror Better
@@ -98,4 +98,26 @@ export const verifications = pgTable(
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index().on(t.identifier)],
+);
+
+/** WebAuthn credentials owned by Better Auth's passkey plugin; account-wide, independent of workspaces. */
+export const passkeys = pgTable(
+  "passkeys",
+  {
+    id: text().primaryKey(),
+    name: text(),
+    publicKey: text().notNull(),
+    userId: text()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialID: text().notNull().unique(),
+    // WebAuthn uses an unsigned 32-bit counter, which can exceed PostgreSQL's signed integer range.
+    counter: bigint({ mode: "number" }).notNull(),
+    deviceType: text().notNull(),
+    backedUp: boolean().notNull(),
+    transports: text(),
+    createdAt: timestamp({ withTimezone: true }),
+    aaguid: text(),
+  },
+  (t) => [index().on(t.userId)],
 );

@@ -1,4 +1,4 @@
-import type { AuthClient, AuthResult } from "@/auth/client";
+import type { AuthClient, AuthResult, PasskeySummary } from "@/auth/client";
 
 /** A call's arguments, with the bot check's token only when one was sent. */
 const withToken = (input: unknown, humanCheck: string | undefined) =>
@@ -8,6 +8,12 @@ export function createFakeAuth(
   options: {
     signIn?: AuthResult;
     signUp?: AuthResult;
+    passkeySignIn?: AuthResult;
+    addPasskey?: AuthResult;
+    passkeys?: PasskeySummary[];
+    listPasskeys?: Extract<AuthResult, { ok: false }>;
+    renamePasskey?: AuthResult;
+    deletePasskey?: AuthResult;
     reset?: AuthResult;
     redeem?: boolean;
     open?: { requestId: string; code: string } | null;
@@ -21,7 +27,46 @@ export function createFakeAuth(
   } = {},
 ) {
   const calls: { method: string; args: unknown[] }[] = [];
+  let passkeys = options.passkeys ?? [];
   const auth: AuthClient = {
+    signInPasskey: async () => {
+      calls.push({ method: "signInPasskey", args: [] });
+      const result = options.passkeySignIn ?? { ok: true };
+      if (result.ok) options.onSignIn?.();
+      return result;
+    },
+    addPasskey: async () => {
+      calls.push({ method: "addPasskey", args: [] });
+      const result = options.addPasskey ?? { ok: true };
+      if (result.ok)
+        passkeys = [
+          ...passkeys,
+          {
+            id: "new-passkey",
+            name: null,
+            createdAt: "2026-11-21T12:00:00.000Z",
+            deviceType: "multiDevice",
+            backedUp: true,
+          },
+        ];
+      return result;
+    },
+    listPasskeys: async () => {
+      calls.push({ method: "listPasskeys", args: [] });
+      return options.listPasskeys ?? { ok: true, passkeys };
+    },
+    renamePasskey: async (id, name) => {
+      calls.push({ method: "renamePasskey", args: [id, name] });
+      const result = options.renamePasskey ?? { ok: true };
+      if (result.ok) passkeys = passkeys.map((key) => (key.id === id ? { ...key, name } : key));
+      return result;
+    },
+    deletePasskey: async (id) => {
+      calls.push({ method: "deletePasskey", args: [id] });
+      const result = options.deletePasskey ?? { ok: true };
+      if (result.ok) passkeys = passkeys.filter((key) => key.id !== id);
+      return result;
+    },
     signIn: async (input, humanCheck) => {
       calls.push({ method: "signIn", args: withToken(input, humanCheck) });
       const result = options.signIn ?? { ok: true };

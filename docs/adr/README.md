@@ -181,3 +181,5 @@ Short records of decisions that shape the backend. One file per decision, number
 | [0178](0178-internal-database-metrics-profile.md) | Default-off, narrowly scoped internal metrics database profile with pinned addresses, restricted views and independently reviewed provisioning. |
 | [0199](0199-team-communication-skill.md) | A team communication skill the product writes (`team-communication`: hand-offs with done, left and evidence; asking when blocked; short updates; the right mention; what is not verified; closing the loop) and a workspace installs for who manages agents (`installTeamCommunicationSkill`, `bun run skills:team-communication`): on for every active agent and new ones, an agent turned off stays off, its text never rewritten (proposed) |
 | [0200](0200-colab-remote-mcp.md) | Google Colab remote compute with fixed OAuth, refreshed credentials and bounded long-call handling |
+
+| [0209](0209-passkey-login.md) | Passkey login on the canonical origin, live credential management and the existing desktop browser exchange |

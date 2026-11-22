@@ -5,10 +5,18 @@ import { AuthPage } from "@/pages/AuthPage";
 
 export const Route = createFileRoute("/login")({
   // `error`: a provider sign-in the server refused comes back here with its code.
-  validateSearch: (search: Record<string, unknown>): { redirect?: string; email?: string; error?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    redirect?: string;
+    email?: string;
+    error?: string;
+    reauthenticate?: "1";
+  } => ({
     redirect: safeRedirect(search.redirect),
     email: typeof search.email === "string" ? search.email : undefined,
     error: typeof search.error === "string" ? search.error : undefined,
+    reauthenticate: search.reauthenticate === "1" || search.reauthenticate === 1 ? "1" : undefined,
   }),
   beforeLoad: async ({ context, search }) => {
     const goal = signInFor(search.redirect);
@@ -19,7 +27,9 @@ export const Route = createFileRoute("/login")({
       goal && "invite" in goal ? context.queryClient.prefetchQuery(invitationQuery(context.api, goal.invite)) : null,
     ]);
     // An OAuth callback that waited for a sign-in (under /api/) is the server's: a full load.
-    if (me) throw redirect({ href: search.redirect ?? "/", reloadDocument: search.redirect?.startsWith("/api/") });
+    // A fresh sign-in is an explicit form submission/ceremony. Existing sessions are neither deleted nor refreshed here.
+    if (me && !search.reauthenticate)
+      throw redirect({ href: search.redirect ?? "/", reloadDocument: search.redirect?.startsWith("/api/") });
     // A brand-new instance has nobody to sign in: go straight to the first account.
     if (config.firstRun) throw redirect({ to: "/signup", search: { redirect: search.redirect } });
   },
