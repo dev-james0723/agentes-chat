@@ -502,7 +502,11 @@ test.if(posix && existsSync("/bin/bash"))(
   },
 );
 
-test.if(posix && existsSync("/bin/bash"))(
+// macOS ships Bash 3.2, which does not append history from a fresh PTY with
+// history -a; Homebrew Bash 5 follows the Linux runner's Bash behavior.
+const historyBash =
+  process.platform === "darwin" && existsSync("/opt/homebrew/bin/bash") ? "/opt/homebrew/bin/bash" : "/bin/bash";
+test.if(posix && existsSync(historyBash) && (process.platform !== "darwin" || historyBash !== "/bin/bash"))(
   "each command goes to the history file once it ran, while the shell still runs: a terminal killed with its computer keeps it",
   async () => {
     const home = tempDir("look-");
@@ -510,16 +514,17 @@ test.if(posix && existsSync("/bin/bash"))(
     const file = path.join(home, "bashrc");
     writeFileSync(file, fileOf(home, look(), `${LOOK_DIR}/bashrc`));
     writeFileSync(path.join(home, ".hushlogin"), "");
-    const shell = Bun.spawn(["/bin/bash", "--rcfile", file, "-i"], {
+    // Bash saves the command at the next interactive prompt. It needs a real
+    // PTY, as the desktop Terminal supplies, not a pipe with no controlling tty.
+    const shell = Bun.spawn([historyBash, "--rcfile", file, "-i"], {
       cwd: home,
       env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
-      stdin: "pipe",
-      stdout: "ignore",
-      stderr: "ignore",
+      terminal: { cols: 100, rows: 30, data: () => {}, exit: () => {} },
     });
     try {
-      shell.stdin.write("echo first-command\n");
-      await shell.stdin.flush();
+      const terminal = shell.terminal;
+      if (!terminal) throw Error("Bun Terminal PTY unavailable");
+      terminal.write("echo first-command\r");
       const history = path.join(home, ".bash_history");
       const deadline = Date.now() + 10_000;
       while (!(existsSync(history) && readFileSync(history, "utf8").includes("echo first-command"))) {

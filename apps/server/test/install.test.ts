@@ -86,6 +86,36 @@ async function plan(machine: Machine, args: string[] = [], o: RunOptions = {}) {
   const bin = tempDir("bin");
   const home = tempDir("home");
   const log = join(bin, "calls.log");
+  // A fake Mac must not inherit real host /opt/homebrew and /Applications probes.
+  // We still test the exact installer decisions, replacing only physical host paths
+  // in a disposable copy. Production install.sh is never changed.
+  const script = machine.os === "Darwin" ? join(bin, "install-mac-fixture.sh") : SCRIPT;
+  if (machine.os === "Darwin") {
+    const hostPaths: [string, string][] = [
+      [
+        'for d in /opt/homebrew/bin "$HOME/.orbstack/bin" /Applications/Docker.app/Contents/Resources/bin; do',
+        'for d in "$HOME/.fixture/opt/homebrew/bin" "$HOME/.orbstack/bin" "$HOME/.fixture/Applications/Docker.app/Contents/Resources/bin"; do',
+      ],
+      [
+        'if [ -d /Applications/OrbStack.app ] || [ -d "$HOME/Applications/OrbStack.app" ]; then',
+        'if [ -d "$HOME/.fixture/Applications/OrbStack.app" ] || [ -d "$HOME/Applications/OrbStack.app" ]; then',
+      ],
+      [
+        'elif [ -d /Applications/Docker.app ] || [ -d "$HOME/Applications/Docker.app" ]; then',
+        'elif [ -d "$HOME/.fixture/Applications/Docker.app" ] || [ -d "$HOME/Applications/Docker.app" ]; then',
+      ],
+      [
+        "for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do",
+        'for b in "$HOME/.fixture/opt/homebrew/bin/brew" "$HOME/.fixture/usr/local/bin/brew"; do',
+      ],
+    ];
+    let fixture = text;
+    for (const [realPath, isolatedPath] of hostPaths) {
+      if (!fixture.includes(realPath)) throw Error(`missing Mac host probe in fixture: ${realPath}`);
+      fixture = fixture.replace(realPath, isolatedPath);
+    }
+    writeFileSync(script, fixture, { mode: 0o755 });
+  }
   writeFileSync(log, "");
   const stub = (name: string, body = "") =>
     writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $*" >> "$STUB_LOG"\n${body}\n`, { mode: 0o755 });
@@ -121,7 +151,7 @@ async function plan(machine: Machine, args: string[] = [], o: RunOptions = {}) {
     symlinkSync(Bun.which(tool) as string, join(bin, tool));
   }
   const argv = [...(o.real ? [] : ["--plan"]), ...args];
-  const direct = o.piped === undefined ? ["/bin/sh", SCRIPT, ...argv] : ["/bin/sh", "-s", "--", ...argv];
+  const direct = o.piped === undefined ? ["/bin/sh", script, ...argv] : ["/bin/sh", "-s", "--", ...argv];
   const cmd = o.before ? ["/bin/sh", "-c", `${o.before} && exec "$@"`, "sh", ...direct] : direct;
   const env = { PATH: bin, HOME: home, STUB_LOG: log, ...o.env };
   let out = "";
