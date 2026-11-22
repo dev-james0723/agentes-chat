@@ -263,6 +263,25 @@ describe("guarded automatic acceptance of learned improvements", () => {
     expect((await proposeFromItem(f.context, await lesson(f)))?.status).toBe("pending");
   });
 
+  test("a negative or invalid semantic risk score cannot authorize learning", async () => {
+    f = await setup();
+    // The usual fake Judge clamps scores, so inject an out-of-contract answer
+    // to exercise this security boundary rather than merely its test adapter.
+    const original = f.context.judge;
+    if (!original) throw Error("missing judge");
+    f.context.judge = {
+      name: "malformed-score-judge",
+      ask: (request) =>
+        request.kind === "learning_auto_external_effect"
+          ? Promise.resolve({ unsafe_effect: { noul: -1 } })
+          : original.ask(request),
+    };
+    await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+    expect((await proposeFromItem(f.context, await lesson(f)))?.status).toBe("pending");
+    const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+    expect(agent?.instructions).toBe("Answer briefly.");
+  });
+
   test("no semantic judge means no automatic approval", async () => {
     f = await setup();
     await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });

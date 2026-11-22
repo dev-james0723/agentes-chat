@@ -984,6 +984,14 @@ test.skipIf(process.platform === "win32")(
     CHROMIUM_LINUX.forEach((exe, i) => {
       script = script.replace(` ${shQuote(exe)}`, ` ${shQuote(mine[i] as string)}`);
     });
+    // A fake Linux home must not accidentally find Chrome installed on the Mac
+    // running the test (the install script also checks one absolute macOS path).
+    const hostMacChrome = '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"';
+    if (!script.includes(hostMacChrome)) throw Error("Mac Chrome fallback missing from installer");
+    script = script.replace(
+      hostMacChrome,
+      shQuote(path.join(pc.home, "none/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")),
+    );
     const r = pc.install(script);
     expect(r.status).toBe(0);
     expect(r.out).toContain(CHROMIUM_NEEDED);

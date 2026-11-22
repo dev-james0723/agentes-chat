@@ -188,7 +188,7 @@ export async function safeForAutomaticLearning(
       },
     });
     const risk = answers.unsafe_effect?.noul;
-    return typeof risk === "number" && Number.isFinite(risk) && risk < 0.2 ? lesson : null;
+    return typeof risk === "number" && Number.isFinite(risk) && risk >= 0 && risk < 0.2 ? lesson : null;
   } catch {
     return null;
   }
