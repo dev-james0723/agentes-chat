@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { EventEmitter } from "node:events";
 import {
   appendFileSync,
@@ -53,6 +54,7 @@ import {
   withSignIn,
   yieldRoute,
 } from "./accounts";
+import { type ClosedArtifactBroker, TaskArtifactLifecycle } from "./artifact-lifecycle";
 import { codexThreadKey, unwrapShell } from "./brain-codex";
 import { coAuthorLines } from "./co-authors";
 import { commandApproval, ownBranches } from "./command-gate";
@@ -298,6 +300,8 @@ export interface TaskManagerOptions {
    * Without it a mission task runs without our tools.
    */
   mcp?: { socketPath: string; command: string[] };
+  /** Optional producer-only broker for trusted native artifact integrations. Off when omitted. */
+  artifactBroker?: ClosedArtifactBroker;
   /** macOS: keep the machine awake while tasks run (default on darwin). */
   caffeinate?: boolean;
   /** How a Claude Code or Codex task's wrapper starts (a worker under systemd: in the agent's AI CLIs slice). */
@@ -821,6 +825,7 @@ function readFrom(file: string, offset: number): { text: string; next: number } 
 
 interface Watch {
   timer: ReturnType<typeof setInterval>;
+  artifacts?: TaskArtifactLifecycle;
   offsets: { stdout: number; stderr: number };
   partial: { stdout: string; stderr: string };
   tail: string[];
@@ -1400,7 +1405,12 @@ export class TaskManager {
     this.journal.tasks.push(entry);
     this.save();
     if (hosted) this.hostedRuns.add(taskId);
-    await this.watch(entry, false, (signIn ? withSignIn(secrets, signIn) : secrets)?.redact);
+    await this.watch(
+      entry,
+      false,
+      (signIn ? withSignIn(secrets, signIn) : secrets)?.redact,
+      hosted || readOnly ? undefined : this.opts.artifactBroker,
+    );
     this.updateCaffeinate();
     this.log(`[${entry.agentHandle}] task ${taskId} started: ${command.slice(0, 80)}`);
     return {
@@ -1454,6 +1464,12 @@ export class TaskManager {
     };
   }
 
+  /** Runner-internal only. The caller supplies its already authenticated native agent scope. */
+  artifactLifecycle(agent: AgentScope, taskId: string): Pick<TaskArtifactLifecycle, "record"> | undefined {
+    const t = this.journal.tasks.find((entry) => entry.taskId === taskId && entry.agentId === agent.id);
+    if (t?.status === "running" && !t.canceling) return this.watches.get(taskId)?.artifacts;
+  }
+
   status(agent: AgentScope | undefined, taskId?: string): MachineReplies["task.status"] {
     const mine = this.journal.tasks.filter((t) => !agent || t.agentId === agent.id);
     return { tasks: (taskId ? mine.filter((t) => t.taskId === taskId) : mine).map((t) => this.info(t)) };
@@ -1492,6 +1508,8 @@ export class TaskManager {
     if (!t) throw new RunnerError("not_found", "No such task on this computer");
     if (t.status !== "running") return { canceled: false };
     t.canceling = true;
+    const w = this.watches.get(t.taskId);
+    w?.artifacts?.close();
     this.save();
     const dir = this.dirOf(t.taskId);
     // The wrapper polls this file every second. No SIGTERM to it right away: a wrapper that is still
@@ -1500,13 +1518,12 @@ export class TaskManager {
     try {
       writeFileSync(path.join(dir, "cancel"), "");
     } catch {}
-    const w = this.watches.get(t.taskId);
     if (w) w.cancelAt = this.now();
     if (t.hosted) this.opts.hostedStop?.(t.taskId);
     return { canceled: true };
   }
 
-  private async watch(t: Entry, resumed: boolean, redact?: (text: string) => string) {
+  private async watch(t: Entry, resumed: boolean, redact?: (text: string) => string, broker?: ClosedArtifactBroker) {
     const dir = this.dirOf(t.taskId);
     const size = (f: string) => {
       try {
@@ -1523,6 +1540,15 @@ export class TaskManager {
       ((s: string) => s);
     const w: Watch = {
       timer: setInterval(() => this.tick(t), this.opts.watchMs ?? WATCH_MS),
+      ...(broker && !this.closed && !t.canceling
+        ? {
+            artifacts: new TaskArtifactLifecycle(broker, {
+              taskId: t.taskId,
+              agentId: t.agentId,
+              executionId: randomUUID(),
+            }),
+          }
+        : {}),
       offsets: { stdout: start("stdout.log"), stderr: start("stderr.log") },
       partial: { stdout: "", stderr: "" },
       tail: [],
@@ -1672,6 +1698,7 @@ export class TaskManager {
 
   private finish(t: Entry, w: Watch, exit: ExitFile | null) {
     clearInterval(w.timer);
+    w.artifacts?.close();
     this.readOutput(t, w, this.dirOf(t.taskId));
     for (const stream of ["stdout", "stderr"] as const) {
       if (w.partial[stream]) this.onLine(t, w, w.partial[stream], stream);
@@ -1869,7 +1896,10 @@ export class TaskManager {
   /** The runner is exiting: stop watching; the tasks themselves go on. */
   close() {
     this.closed = true;
-    for (const w of this.watches.values()) clearInterval(w.timer);
+    for (const w of this.watches.values()) {
+      clearInterval(w.timer);
+      w.artifacts?.close();
+    }
     this.watches.clear();
     this.launches.clear();
     if (this.caffeinate) {

@@ -12,6 +12,7 @@ import {
   TASKS_PROTOCOL,
 } from "@agenteschat/adapters/machine-protocol";
 import { ACCOUNT_MISSING_MESSAGE, ACCOUNT_SIGNED_OUT } from "../../runner/accounts";
+import type { ArtifactActor, ArtifactEvent, ClosedArtifactBroker } from "../../runner/artifact-lifecycle";
 import { handleRequest } from "../../runner/handlers";
 import { agentWorkspace } from "../../runner/paths";
 import {
@@ -175,6 +176,7 @@ test.skipIf(!posix)(
       command: "echo one; sleep 0.3; echo two; echo warn >&2; exit 3",
     });
     expect(started.pid).toBeGreaterThan(0);
+    expect(tasks.artifactLifecycle(AGENT, id(1))).toBeUndefined();
     expect(tasks.list()).toMatchObject([{ taskId: id(1), status: "running", agentId: AGENT.id }]);
     await waitFor(() => Boolean(done(id(1))), 8000);
     const d = done(id(1));
@@ -200,6 +202,65 @@ test.skipIf(!posix)(
     expect(tasks.status(AGENT).tasks).toMatchObject([{ taskId: id(1), status: "done", exitCode: 3 }]);
   },
   15_000,
+);
+
+test.skipIf(!posix)(
+  "trusted artifact events use the running task identity and never write task or workspace files",
+  async () => {
+    const fakeStore = new Map<string, { actor: ArtifactActor; event: ArtifactEvent }>();
+    const artifactBroker: ClosedArtifactBroker = {
+      async record(actor, event) {
+        fakeStore.set(event.eventId, { actor, event });
+        return { status: "RECORDED", ...event, executionId: actor.executionId };
+      },
+    };
+    const { tasks, make, home, ws, done, send } = setup({ artifactBroker });
+    await tasks.init();
+    const taskId = id(101);
+    const { pid } = await tasks.start(AGENT, { taskId, executor: "shell", command: "echo once; sleep 30" });
+    if (pid) groups.push(pid);
+    const agentRoot = await agentWorkspace(ws, AGENT);
+    const original = path.join(agentRoot, "original.txt");
+    writeFileSync(original, "keep original");
+    const taskDir = path.join(home, "tasks", taskId);
+    const output = path.join(taskDir, "stdout.log");
+    const journal = readFileSync(tasks.journalFile, "utf8");
+    await waitFor(() => existsSync(path.join(taskDir, "child.pid")) && readFileSync(output, "utf8") === "once\n", 8000);
+    const taskFiles = readdirSync(taskDir).sort();
+
+    const scope = tasks.artifactLifecycle(AGENT, taskId);
+    expect(scope).toBeDefined();
+    expect(tasks.artifactLifecycle({ ...AGENT, id: "other-agent" }, taskId)).toBeUndefined();
+    const event: ArtifactEvent = {
+      type: "artifact_created",
+      eventId: "registered-1",
+      artifactId: "managed-scratch",
+      generation: 1,
+    };
+    expect(await scope?.record(event)).toMatchObject({ status: "RECORDED" });
+    expect(fakeStore.get(event.eventId)).toEqual({
+      actor: { taskId, agentId: AGENT.id, executionId: expect.any(String) },
+      event,
+    });
+    expect(readFileSync(original, "utf8")).toBe("keep original");
+    expect(readdirSync(agentRoot)).toEqual(["original.txt"]);
+    expect(readdirSync(taskDir).sort()).toEqual(taskFiles);
+    expect(readFileSync(tasks.journalFile, "utf8")).toBe(journal);
+
+    tasks.close();
+    const next = make();
+    await next.init();
+    next.attach(send);
+    expect(next.status(AGENT, taskId).tasks).toMatchObject([{ pid, status: "running" }]);
+    expect(next.artifactLifecycle(AGENT, taskId)).toBeUndefined();
+    expect(await scope?.record({ ...event, eventId: "late" })).toEqual({ status: "KEEP" });
+    expect(fakeStore.size).toBe(1);
+    next.cancel(AGENT, taskId);
+    await waitFor(() => Boolean(done(taskId)), 8000);
+    if (pid) groups.splice(groups.indexOf(pid), 1);
+    expect(readFileSync(output, "utf8")).toBe("once\n");
+  },
+  20_000,
 );
 
 test.skipIf(!posix)(
