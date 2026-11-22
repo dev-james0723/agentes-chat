@@ -9841,7 +9841,7 @@ export const ptBR = {
     undone: "{{name}} voltou para a versão {{version}}.",
     autoApproveLearning: "Aprovar automaticamente melhorias de aprendizado verificadas",
     autoApproveLearningHelp:
-      "Agentes podem aplicar melhorias curtas e verificadas repetidamente às próprias instruções sem pedir aprovação. Exige correção de uma pessoa ou testes/CI bem-sucedidos e revisão de segurança independente. Nunca aprova ferramentas, permissões, scripts ou lançamentos.",
+      "Agentes podem adotar automaticamente instruções curtas e repetidamente verificadas, ditas exatamente por seu responsável num canal público, após análise de segurança independente. Resultados genéricos de CI não autorizam mudanças; outras propostas aguardam revisão humana. Não concede ferramentas, permissões, scripts ou lançamentos.",
     autoApproveLearningFailed: "Não foi possível alterar a política de aprovação do aprendizado.",
     agentsImprove: "Agentes melhoram as skills sozinhos",
     agentsImproveHelp:

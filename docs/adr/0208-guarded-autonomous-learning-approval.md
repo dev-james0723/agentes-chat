@@ -40,3 +40,9 @@ Instruction edits are reversible by restoring their previous text through the ex
 ## Related
 
 ADR 0120 (agents learn on their own), ADR 0139 (proposal decisions and right-hand attribution), ADR 0167 (evidence provenance and outside-content trust), and existing skills safety rules.
+
+## Security release addendum (2026-11-22): unauthenticated CI evidence is not admission proof
+
+Independent review found that a CI success matching an agent/subject/date cannot prove the safety or correctness of a *particular newly proposed instruction*, and `source: webhook/operator` is not signer verification. Until a dedicated, server-verified per-lesson attestor is implemented, **the automatic admission path accepts only a live, owner-authored message matching the exact lesson** and all public-source restrictions, plus independent safety judgments. A generic CI-only outcome, even a genuine successful build, stays a normal human-review proposal. Existing CI records still inform agent memory and engineering checks; they do not grant permission to rewrite persistent global instructions.
+
+Future attestation must bind the normalized lesson digest, organization, agent, source scope, independent reviewer identity and immutable test revision; verify it server-side before the instruction write; and have red/green tests against reuse of unrelated CI results or a forged source label. Do not re-enable CI-based self-approval by relaxing the provenance or source-visibility gates.
