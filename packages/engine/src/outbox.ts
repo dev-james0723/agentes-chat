@@ -288,7 +288,7 @@ export async function lockJobClaim(tx: Executor, job: OutboxJob, now = new Date(
   const [row] = await tx
     .select({ id: outbox.id })
     .from(outbox)
-    .where(and(held(job), sql`${outbox.lockedUntil} > ${now}`))
+    .where(and(held(job), sql`${outbox.lockedUntil} > ${now.toISOString()}::timestamptz`))
     .for("update");
   return Boolean(row);
 }
