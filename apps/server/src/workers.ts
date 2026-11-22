@@ -54,6 +54,7 @@ import {
   reconcileWorks,
   recoverStaleRuns,
   refreshPlanModels,
+  refreshProviderModels,
   releaseJobs,
   sweepEndedInboxes,
   sweepExpiredVoice,
@@ -196,6 +197,8 @@ export const WORKER_INTERVALS_MS = {
   teamWeek: 10 * 60_000,
   /** The coding plans' public lists of models, each replica for itself: also at boot. */
   planModels: 3600_000,
+  /** New API provider models: bounded metadata feed, fails closed on bad data; also at boot. */
+  providerModels: 3600_000,
   /** Plans stuck at their limit, read again on their computers (each at most every 5 or 10 minutes). */
   planRechecks: 60_000,
 };
@@ -281,6 +284,10 @@ export function startWorkers(deps: WorkerDeps) {
 
   every("apps", WORKER_INTERVALS_MS.apps, () => purgeApps(db));
   every("planModels", WORKER_INTERVALS_MS.planModels, () => refreshPlanModels());
+  every("providerModels", WORKER_INTERVALS_MS.providerModels, async () => {
+    const result = await refreshProviderModels();
+    if (result.updated) log.info("native provider model catalog refreshed", { models: result.count });
+  });
   const machines = deps.machines;
   if (machines)
     every("planRechecks", WORKER_INTERVALS_MS.planRechecks, async () => {

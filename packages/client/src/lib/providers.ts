@@ -45,6 +45,14 @@ export const PROVIDERS = [
     credit: "platform.openai.com/settings/organization/billing/overview",
   },
   {
+    id: "xai",
+    label: "Grok (xAI)",
+    placeholder: "xai-…",
+    pattern: /^xai-[A-Za-z0-9._-]{16,}$/,
+    site: "console.x.ai/team/default/api-keys",
+    credit: "console.x.ai/team/default/billing",
+  },
+  {
     id: "gemini",
     label: "Gemini",
     placeholder: "AQ.…",

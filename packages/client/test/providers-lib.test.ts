@@ -24,7 +24,7 @@ describe("whose key is it", () => {
     // A workspace's own endpoint (`custom`) has a form of its own, never a key's.
     const ids = PROVIDERS.map((p) => p.id);
     expect([...ids].sort()).toEqual(PROVIDER_IDS.filter((id) => id !== "custom").sort());
-    expect(ids.slice(0, 4)).toEqual(["anthropic", "openai", "gemini", "openrouter"]);
+    expect(ids.slice(0, 5)).toEqual(["anthropic", "openai", "xai", "gemini", "openrouter"]);
   });
 
   test("a Gemini key, either kind AI Studio hands out, fits Gemini alone, whichever provider was chosen", () => {
@@ -39,6 +39,7 @@ describe("whose key is it", () => {
 
   test("other keys keep their providers: any sk- key could be several, Claude's and the plans' are their own", () => {
     expect(ids("sk-0123456789abcdef0123456789abcdef")).toEqual(["openai", "deepseek", "moonshot", "minimax"]);
+    expect(ids("xai-0123456789abcdef0123456789abcdef")).toContain("xai");
     expect(ids("sk-ant-api03-abcdefghijklmnop")).toEqual(["anthropic"]);
     expect(ids("0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOp")).toEqual(["zai", "minimax"]);
     // A MiniMax plan key (sk-cp-) never fits MiniMax.
