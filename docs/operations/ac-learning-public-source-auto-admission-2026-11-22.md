@@ -24,3 +24,7 @@ Evidence folder: `~/Documents/Agentes-Handoffs/ac-self-creating-skills-20261122/
 This is not executable-Skill auto-approval, not cross-agent specialist assignment, not a restoration of the revoked Qwen Summary endpoint, and not production verification. PR #78 remains governed by its independent reviewer, local CI, required `release/independent-review` protected check, final mainline integration, migration and production rollout. Leave the feature OFF by default until actual end-to-end canary and owner-authorized activation. Do not replace the stacked production image with a stripped build.
 
 Private data already written into a public source is outside this provenance-only gate; it still relies on the existing sensitive-content checks. Source channel reclassification **after** a successful acceptance requires a separate revocation policy; this patch prevents reclassification races **during** admission but makes no retroactive removal claim.
+
+## Follow-up hardening: CI must attest exact instruction
+
+A passing CI status does not itself validate a proposed instruction. Until a trusted, content-bound independent attestor is available, the security-hardening branch keeps CI-only learning proposals pending human review, even when the CI event and source channels are valid. The public-source gate remains enforced for all sources.

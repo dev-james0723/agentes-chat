@@ -9657,7 +9657,7 @@
     "undoUpdate": "Update ongedaan maken",
     "undone": "{{name}} is terug naar versie {{version}}.",
     "autoApproveLearning": "Geverifieerde leerverbeteringen automatisch goedkeuren",
-    "autoApproveLearningHelp": "Agenten kunnen korte, herhaaldelijk gecontroleerde verbeteringen in hun eigen instructies opnemen zonder toestemming te vragen. Hiervoor is een menselijke correctie of geslaagde tests/CI en een onafhankelijke veiligheidscontrole nodig. Tools, rechten, scripts en releases worden nooit goedgekeurd.",
+    "autoApproveLearningHelp": "Agenten mogen korte, herhaaldelijk geverifieerde instructies automatisch overnemen wanneer hun eigenaar die exact zo in een openbaar kanaal heeft gegeven en een onafhankelijke veiligheidscontrole is geslaagd. Algemene CI-resultaten geven geen toestemming; andere voorstellen vereisen menselijke beoordeling. Dit verleent geen toegang tot tools, rechten, scripts of releases.",
     "autoApproveLearningFailed": "Het goedkeuringsbeleid voor leerverbeteringen kon niet worden aangepast.",
     "agentsImprove": "Agents verbeteren skills zelf",
     "agentsImproveHelp": "Vindt een agent een skill fout of mist er een stap, dan verbetert hij die meteen: een nieuwe versie die je ongedaan kunt maken, en wie de skill maakte hoort het.",

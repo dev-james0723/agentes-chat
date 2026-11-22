@@ -10270,7 +10270,7 @@
     "undoUpdate": "Cofnij aktualizację",
     "undone": "{{name}}: przywrócono wersję {{version}}.",
     "autoApproveLearning": "Automatycznie zatwierdzaj zweryfikowane ulepszenia nauki",
-    "autoApproveLearningHelp": "Agenci mogą bez pytania wdrażać krótkie, wielokrotnie zweryfikowane poprawki do własnych instrukcji. Wymagana jest korekta człowieka lub udane testy/CI oraz niezależna kontrola bezpieczeństwa. Nie zatwierdza to narzędzi, uprawnień, skryptów ani wdrożeń.",
+    "autoApproveLearningHelp": "Agenci mogą automatycznie przyjmować krótkie, wielokrotnie zweryfikowane instrukcje podane dokładnie przez właściciela w kanale publicznym, po niezależnej kontroli bezpieczeństwa. Zwykły pozytywny wynik CI nie upoważnia do zmian; inne propozycje wymagają oceny człowieka. Nie przyznaje to narzędzi, uprawnień, skryptów ani prawa do wdrożenia.",
     "autoApproveLearningFailed": "Nie udało się zmienić zasad zatwierdzania nauki.",
     "agentsImprove": "Agenci sami ulepszają umiejętności",
     "agentsImproveHelp": "Gdy agent zauważy, że umiejętność jest błędna albo brakuje w niej kroku, od razu ją poprawia: nowa wersja, którą możesz cofnąć, a osoba, która ją utworzyła, dostaje informację.",

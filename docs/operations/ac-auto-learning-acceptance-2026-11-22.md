@@ -58,3 +58,7 @@ Rollback if activated: disable the switch first, then use the agent instructions
 ## Independent security review repair (2026-11-22)
 
 Grok reviewed the clean-main candidate and identified material P1 weaknesses around unverified human-evidence labels, unrelated CI proof, stale pre-vetted learning objects and sensitive-data instructions, plus P2 atomicity/kill-switch concerns. The security-repair worktree addresses these with actual source resolution, event subject binding, read-and-proof checks under transaction locks, an external-data-effect judge, conservative word filtering and atomic settings/audit transaction. Targeted tests passed: 18 engine security + 59 Memory/Proposal + 21 Skills UI + 22 localization = **120 pass, 0 fail** on the repair worktree. This is not a final full CI nor independent sign-off of the repaired HEAD. No protected merge or production deployment is claimed.
+
+## Later security tightening
+
+The full feature branch is now intentionally more conservative than the original receipt: generic positive CI outcomes cannot auto-approve instructions without a separately authenticated, exact-lesson attestation. Exact owner-authored, active public message evidence can still qualify. This local receipt is a historical checkpoint only and must not be used as proof of the current PR head or production release.

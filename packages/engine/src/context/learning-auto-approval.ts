@@ -1,4 +1,4 @@
-import { and, type Database, eq, gte, inArray, isNull, schema } from "@agenteschat/db";
+import { and, type Database, eq, inArray, isNull, schema } from "@agenteschat/db";
 import { recordAudit } from "../audit";
 import type { Judge } from "../judge";
 import { triesToChangePermissions } from "../judge";
@@ -26,7 +26,7 @@ export function lowRiskLearningLesson(item: ContextItem): string | null {
     item.kind !== "lesson" ||
     item.scopeType !== "agent" ||
     !item.agentId ||
-    !item.evidence.some((e) => e.type === "human" || e.type === "outcome") ||
+    !item.evidence.some((e) => e.type === "human") ||
     (item.recurrence < 2 && item.useCount < 2)
   )
     return null;
@@ -76,31 +76,6 @@ async function ownerBackedInstruction(db: Database, item: ContextItem, lesson: s
   return rows.some((m) => normalized(m.body.replace(/^@[\w-]+\s+/, "")) === normalized(lesson));
 }
 
-/** Only a same-subject, recently verified, independent webhook/operator CI outcome qualifies. */
-async function outcomeBackedInstruction(db: Database, item: ContextItem) {
-  if (!item.agentId || !item.subjectKey) return false;
-  const refs = item.evidence.filter((e) => e.type === "outcome" && item.sourceIds.includes(e.ref)).map((e) => e.ref);
-  if (!refs.length) return false;
-  const [proof] = await db
-    .select({ id: schema.outcomes.id })
-    .from(schema.outcomes)
-    .where(
-      and(
-        eq(schema.outcomes.orgId, item.orgId),
-        eq(schema.outcomes.agentId, item.agentId),
-        inArray(schema.outcomes.id, refs),
-        eq(schema.outcomes.polarity, "positive"),
-        inArray(schema.outcomes.kind, ["tests_passed", "ci_passed"]),
-        inArray(schema.outcomes.source, ["webhook", "operator"]),
-        eq(schema.outcomes.subject, item.subjectKey),
-        gte(schema.outcomes.createdAt, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
-      ),
-    )
-    .limit(1)
-    .for("share");
-  return !!proof;
-}
-
 /**
  * A lesson becomes an agent-global instruction; never admit private/DM/task/role-scoped
  * source material through that narrower memory boundary, even when its wording is benign.
@@ -125,16 +100,33 @@ async function hasPublicLearningSources(db: Database, item: ContextItem): Promis
     .from(schema.outcomes)
     .where(and(eq(schema.outcomes.orgId, item.orgId), inArray(schema.outcomes.id, sourceIds)))
     .for("share");
-  const resolved = new Set([...messages.map((m) => m.id), ...outcomes.map((o) => o.id)]);
+  // Turn-end learning records the actual agent run ID when the agent used tools.
+  // Treat that ID as provenance (NOT an approval) only when its org and agent match.
+  // Its original channel is part of the visibility gate, so private tool work
+  // cannot be laundered into a public instruction merely through an owner quote.
+  if (!item.agentId) return false;
+  const runs = await db
+    .select({ id: schema.agentRuns.id, channelId: schema.agentRuns.channelId })
+    .from(schema.agentRuns)
+    .where(
+      and(
+        eq(schema.agentRuns.orgId, item.orgId),
+        eq(schema.agentRuns.agentId, item.agentId),
+        inArray(schema.agentRuns.id, sourceIds),
+      ),
+    )
+    .for("share");
+  const resolved = new Set([...messages.map((m) => m.id), ...outcomes.map((o) => o.id), ...runs.map((r) => r.id)]);
   if (resolved.size !== sourceIds.length || messages.some((m) => m.deletedAt !== null)) return false;
   const ids = [
     ...new Set([
       ...item.channelIds,
       ...messages.map((message) => message.channelId),
       ...outcomes.flatMap((outcome) => (outcome.channelId ? [outcome.channelId] : [])),
+      ...runs.map((run) => run.channelId),
     ]),
   ];
-  // Truly channel-free CI outcomes remain eligible if independently verified.
+  // Channel-free sources do not bypass the separate live owner-message proof gate.
   if (ids.length === 0) return true;
   const channels = await db
     .select({
@@ -164,7 +156,9 @@ async function hasPublicLearningSources(db: Database, item: ContextItem): Promis
 /** Re-read actual proof before the independent judge and again under the write transaction. */
 export async function verifiedLearningEvidence(db: Database, item: ContextItem, lesson: string) {
   if (!(await hasPublicLearningSources(db, item))) return false;
-  return (await ownerBackedInstruction(db, item, lesson)) || (await outcomeBackedInstruction(db, item));
+  // CI-only provenance is intentionally not an approval grant until an
+  // independent test result is authenticated and bound to this exact lesson.
+  return ownerBackedInstruction(db, item, lesson);
 }
 
 /** Evaluate permission changes AND non-permission data/external effects; missing answers fail closed. */
