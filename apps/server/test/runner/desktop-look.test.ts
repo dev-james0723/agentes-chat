@@ -440,7 +440,7 @@ test("the terminal: the agent's name in the prompt and the title, from the look'
       String.raw`PS1='\[\e]0;$AGENTES_NAME: \w\a\]\[\e[1;32m\]$AGENTES_NAME\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '`,
       `[ -n "\${AGENTES_TERMINAL_NOTE-}" ] && printf '%s\\n\\n' "$AGENTES_TERMINAL_NOTE"; unset AGENTES_TERMINAL_NOTE`,
       // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameters, not a template literal
-      'PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"',
+      'if [ "$(uname -s)" = Darwin ]; then PROMPT_COMMAND="history -w${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; else PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; fi',
       "",
     ].join("\n"),
   );
@@ -510,16 +510,18 @@ test.if(posix && existsSync("/bin/bash"))(
     const file = path.join(home, "bashrc");
     writeFileSync(file, fileOf(home, look(), `${LOOK_DIR}/bashrc`));
     writeFileSync(path.join(home, ".hushlogin"), "");
+    // Exercise the same PTY-backed interactive terminal used by the runner.
+    // A piped stdin is not an interactive terminal on macOS Bash, and disables
+    // history even with -i; a real PTY is needed to verify crash durability.
     const shell = Bun.spawn(["/bin/bash", "--rcfile", file, "-i"], {
       cwd: home,
       env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
-      stdin: "pipe",
-      stdout: "ignore",
-      stderr: "ignore",
+      terminal: { cols: 80, rows: 24, data: () => {} },
     });
+    const terminal = shell.terminal;
+    if (!terminal) throw new Error("could not open terminal PTY");
     try {
-      shell.stdin.write("echo first-command\n");
-      await shell.stdin.flush();
+      terminal.write(new TextEncoder().encode("echo first-command\n"));
       const history = path.join(home, ".bash_history");
       const deadline = Date.now() + 10_000;
       while (!(existsSync(history) && readFileSync(history, "utf8").includes("echo first-command"))) {
@@ -528,6 +530,7 @@ test.if(posix && existsSync("/bin/bash"))(
       }
       expect(shell.exitCode).toBeNull();
     } finally {
+      terminal.close();
       shell.kill("SIGKILL");
     }
   },
@@ -604,8 +607,8 @@ test("files that change come with a new LOOK_VERSION: desktops that have the loo
   }
   // Changed the look on purpose? Bump LOOK_VERSION and put the new hash here.
   expect({ version: LOOK_VERSION, files: hash.digest("hex").slice(0, 16) }).toEqual({
-    version: 7,
-    files: "dd23e758f11b0aa7",
+    version: 8,
+    files: "c741b678afe0a0f9",
   });
 });
 

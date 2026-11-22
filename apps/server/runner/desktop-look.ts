@@ -34,7 +34,7 @@ import { xmlEscape, xmlUnescape } from "./xml";
  */
 
 /** Bumped whenever what `lookFiles` writes changes. */
-export const LOOK_VERSION = 7;
+export const LOOK_VERSION = 8;
 
 /** Orchis's light theme (GTK and xfwm4), else GTK's Adwaita and xfwm4's Default. */
 export type LookTheme = "orchis" | "stock";
@@ -422,8 +422,10 @@ const bashrc = (name: string) =>
     "shopt -s promptvars",
     String.raw`PS1='\[\e]0;$AGENTES_NAME: \w\a\]\[\e[1;32m\]$AGENTES_NAME\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '`,
     `[ -n "\${${TERMINAL_NOTE_ENV}-}" ] && printf '%s\\n\\n' "$${TERMINAL_NOTE_ENV}"; unset ${TERMINAL_NOTE_ENV}`,
+    // macOS's old Bash can omit appends in a fresh non-login shell; on Mac write
+    // the session's history, while Linux desktop sessions retain append-only history.
     // biome-ignore lint/suspicious/noTemplateCurlyInString: shell parameters, not a template literal
-    'PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"',
+    'if [ "$(uname -s)" = Darwin ]; then PROMPT_COMMAND="history -w${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; else PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; fi',
     "",
   ].join("\n");
 
