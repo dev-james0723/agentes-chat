@@ -23323,6 +23323,15 @@
   "skills.undone": {
     "value": "{{name}} is back to version {{version}}."
   },
+  "skills.autoApproveLearning": {
+    "value": "Auto-accept verified learning improvements"
+  },
+  "skills.autoApproveLearningHelp": {
+    "value": "Agents may automatically adopt short, repeatedly verified instructions stated exactly by their owner in a public channel, after independent safety checks. Generic CI results never authorize learning changes; other proposals await human review. This never grants tools, permissions, scripts, or releases."
+  },
+  "skills.autoApproveLearningFailed": {
+    "value": "Could not change the learning approval policy."
+  },
   "skills.agentsImprove": {
     "value": "Agents improve skills by themselves"
   },

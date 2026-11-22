@@ -182,6 +182,7 @@ import type {
   JoinClaim,
   JoinRequest,
   LearnedSkill,
+  LearningApprovalSettings,
   Machine,
   MachineAccess,
   MachineAccessReduce,
@@ -1221,6 +1222,9 @@ export interface ApiClient {
     /** The workspace's skill settings (older servers: absent). */
     settings?(orgId: string): Promise<SkillSettings>;
     saveSettings?(orgId: string, input: SkillSettings): Promise<SkillSettings>;
+    /** Opt-in for safe, verified agent-local learning only. Older servers may not offer it. */
+    learningSettings?(orgId: string): Promise<LearningApprovalSettings>;
+    saveLearningSettings?(orgId: string, input: LearningApprovalSettings): Promise<LearningApprovalSettings>;
   };
   access: {
     /** The agent's tool tree with each node's state. 404 while the backend doesn't have it. */

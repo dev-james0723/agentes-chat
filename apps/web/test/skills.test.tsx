@@ -149,6 +149,33 @@ describe("Configurações → Skills", () => {
     expect(state.calls.find((c) => c.method === "skills.update")?.args.at(-1)).toEqual({ agentsImprove: true });
   });
 
+  test("owner can turn guarded self-learning approvals on and off without granting tool approvals", async () => {
+    const state = seedState();
+    const api = createFakeApi(state);
+    let autoApproveLearning = false;
+    api.skills.learningSettings = async () => ({ autoApproveLearning });
+    api.skills.saveLearningSettings = async (orgId, input) => {
+      state.calls.push({ method: "skills.saveLearningSettings", args: [orgId, input] });
+      autoApproveLearning = input.autoApproveLearning;
+      return { autoApproveLearning };
+    };
+    const { section } = await settings(state, api);
+    const toggle = within(section()).getByRole("switch", {
+      name: "Aprovar automaticamente melhorias de aprendizado verificadas",
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await click(toggle);
+    await settle(4);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(state.calls.find((c) => c.method === "skills.saveLearningSettings")?.args).toEqual([
+      ORG_ID,
+      { autoApproveLearning: true },
+    ]);
+    await click(toggle);
+    await settle(4);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
   test("a waiting update: what each side changed, who and when, the choice and its Desfazer either way", async () => {
     const { state, section } = await settings();
     await click(within(section()).getByRole("button", { name: "Revisão de PR" }));

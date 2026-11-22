@@ -1,0 +1,1 @@
+ALTER TABLE "organization_settings" ADD COLUMN "auto_approve_learning" boolean DEFAULT false NOT NULL;

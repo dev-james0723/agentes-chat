@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { coAuthorEnv, coAuthorHooks, coAuthorLines, HOOK_SCRIPT } from "../../runner/co-authors";
@@ -242,7 +243,9 @@ describe.skipIf(!hasGit)("git in the agent's processes", () => {
 
 describe.skipIf(!hasGit)("what the agent's commands get", () => {
   const scope = (): RequestScope => ({ signal: new AbortController().signal, output: () => {} });
-  const dev = { id: "01a142cb-489d-7000-87a3-efb5adb382ca", handle: "dev" };
+  // Other runner tests arm Vault secrets for their shared fixture agent id.
+  // This co-author test must be independent of those unrelated in-memory grants.
+  const dev = { id: randomUUID(), handle: "dev" };
 
   test("work that carries the lines commits with them; the same command without them doesn't", async () => {
     const ws = tempDir();

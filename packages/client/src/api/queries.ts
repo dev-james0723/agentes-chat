@@ -131,6 +131,7 @@ import type {
   IssueStatus,
   IssuesView,
   JevKey,
+  LearningApprovalSettings,
   Machine,
   MachineAccessReduce,
   MachineTool,
@@ -4663,6 +4664,29 @@ export const useSkillSettings = (orgId: string, enabled = true) => {
     retry: false,
   });
 };
+
+/** Conservative opt-in: if the server cannot read it, the UI never represents it as active. */
+export const useLearningApprovalSettings = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.learningApprovalSettings(orgId),
+    queryFn: () => api.skills.learningSettings?.(orgId) ?? Promise.resolve({ autoApproveLearning: false }),
+    enabled: enabled && !!api.skills.learningSettings && !!api.skills.saveLearningSettings,
+    retry: false,
+  });
+};
+
+export function useSetLearningApprovalSettings(orgId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: LearningApprovalSettings) => {
+      if (!api.skills.saveLearningSettings) throw new Error("Self-learning approval policy is unavailable.");
+      return api.skills.saveLearningSettings(orgId, input);
+    },
+    onSuccess: (saved) => qc.setQueryData(keys.learningApprovalSettings(orgId), saved),
+  });
+}
 
 export const useSkill = (orgId: string, id: string | null) => {
   const api = useApi();

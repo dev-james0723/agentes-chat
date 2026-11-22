@@ -12,6 +12,7 @@ import {
   enqueue,
   ForbiddenError,
   getAgent,
+  getLearningApprovalSettings,
   listContextItems,
   listMessageReactions,
   memoryJudging,
@@ -19,6 +20,7 @@ import {
   removeReaction,
   requirePermission,
   searchForUser,
+  setLearningApprovalSettings,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
 import { appendMemoryDeletion } from "../../memory-deletion-ledger";
@@ -182,6 +184,43 @@ export function knowledgeRoutes(deps: AppDeps) {
   const searchDeps = { db, search: adapters.search, gateway: { embed: deps.extras?.embed ?? (async () => null) } };
   const ItemParams = OrgParams.extend({ itemId: z.uuid() });
   const MessageParams = OrgParams.extend({ messageId: z.uuid() });
+
+  const LearningApprovalSettings = z
+    .object({
+      autoApproveLearning: z.boolean().openapi({
+        description:
+          "Enable narrowly scoped, independently checked auto-acceptance of verified agent-local lessons. Does not grant tools, permissions, or deployment rights.",
+      }),
+    })
+    .openapi("LearningApprovalSettings");
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/learning-approval-settings",
+      tags,
+      security,
+      summary: "Read the workspace's guarded self-learning approval policy",
+      request: { params: OrgParams },
+      responses: { 200: json(LearningApprovalSettings), ...errors },
+    }),
+    async (c) => c.json(await getLearningApprovalSettings(db, c.get("user").id, c.req.valid("param").orgId), 200),
+  );
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/organizations/{orgId}/learning-approval-settings",
+      tags,
+      security,
+      summary: "Enable or disable guarded agent-local self-learning (manage_agents only)",
+      request: { params: OrgParams, body: body(LearningApprovalSettings) },
+      responses: { 200: json(LearningApprovalSettings), ...errors },
+    }),
+    async (c) =>
+      c.json(
+        await setLearningApprovalSettings(db, c.get("user").id, c.req.valid("param").orgId, c.req.valid("json")),
+        200,
+      ),
+  );
 
   app.openapi(
     createRoute({
