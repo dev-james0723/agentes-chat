@@ -1,3 +1,4 @@
+import { holdEvents } from "@agenteschat/adapters";
 import { and, type Database, desc, type Executor, eq, inArray, schema, sql } from "@agenteschat/db";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { issueKey } from "./issue-key";
@@ -331,9 +332,11 @@ export async function applyIssueDelivery(
     throw new ValidationError("Configure three distinct existing parent, implementation and QA tasks first.");
   // Check the normal task ACL for every participant before taking locks or writing anything.
   for (const id of ids) await getIssue(deps.db, actor, ctx.orgId, { id });
+  // No client/worker sees a handoff before its revision and outbox row commit.
+  const { pubsub: heldPubsub, flush } = holdEvents(deps.pubsub);
   const result = await deps.db.transaction(async (tx) => {
     const db = tx as unknown as Database;
-    const d = { ...deps, db };
+    const d = { ...deps, db, pubsub: heldPubsub };
     const [hereMission] =
       action === "configure"
         ? await tx
@@ -653,6 +656,8 @@ export async function applyIssueDelivery(
       content: `Independent QA passed ${rev}; parent #${parent.number} is In review. Its manager's final packet is delivered or queued in the existing canonical conversation. Awaiting owner review, not release approval.`,
     };
   });
+  // The transaction completed successfully: only now expose its notifications.
+  await flush();
   for (const id of result.ids) {
     const view = await getIssue(deps.db, actor, ctx.orgId, { id });
     await publishToTaskReaders(deps, ctx.orgId, view, { type: "issue.updated", issue: view });

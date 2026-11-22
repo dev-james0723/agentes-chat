@@ -192,6 +192,68 @@ test("configuration and exact submission are idempotent; the existing QA task ge
   expect(await f.db.select().from(schema.issues)).toHaveLength(3);
 });
 
+test("delivery handoff publishes only after its outer transaction commits", async () => {
+  const p = await prepare();
+  const original = f.db.transaction;
+  let rootTransactionActive = false;
+  let publishedInside = 0;
+  let publishedAfter = 0;
+  const publish = f.pubsub.publish.bind(f.pubsub);
+  f.pubsub.publish = async (topic, payload) => {
+    if (rootTransactionActive) publishedInside++;
+    else publishedAfter++;
+    await publish(topic, payload);
+  };
+  expect(
+    Reflect.set(f.db, "transaction", async (...args: unknown[]) => {
+      rootTransactionActive = true;
+      try {
+        return await Reflect.apply(original, f.db, args);
+      } finally {
+        rootTransactionActive = false;
+      }
+    }),
+  ).toBe(true);
+  try {
+    await p.submit();
+    expect(publishedInside).toBe(0);
+    expect(publishedAfter).toBeGreaterThan(0);
+    expect(await events(p.implementation.id, "delivery_submitted")).toHaveLength(1);
+    expect(await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.issueId, p.qa.id))).toHaveLength(1);
+  } finally {
+    Reflect.set(f.db, "transaction", original);
+  }
+});
+
+test("aborted delivery handoff does not publish phantom notifications or QA work", async () => {
+  const p = await prepare();
+  const original = f.db.transaction;
+  const publish = f.pubsub.publish.bind(f.pubsub);
+  const published: string[] = [];
+  f.pubsub.publish = async (topic, payload) => {
+    published.push(payload.type);
+    await publish(topic, payload);
+  };
+  expect(
+    Reflect.set(f.db, "transaction", async (callback: (tx: Database) => Promise<unknown>) =>
+      Reflect.apply(original, f.db, [
+        async (tx: Database) => {
+          await callback(tx);
+          throw new Error("forced outer delivery rollback");
+        },
+      ]),
+    ),
+  ).toBe(true);
+  try {
+    await expect(p.submit()).rejects.toThrow("forced outer delivery rollback");
+    expect(published).toHaveLength(0);
+    expect(await events(p.implementation.id, "delivery_submitted")).toHaveLength(0);
+    expect(await f.db.select().from(schema.agentRuns).where(eq(schema.agentRuns.issueId, p.qa.id))).toHaveLength(0);
+  } finally {
+    Reflect.set(f.db, "transaction", original);
+  }
+});
+
 test("agent status and background completion cannot bypass the configured review gate", async () => {
   const p = await prepare();
   expect(await deliveryAllowsDone(f.db, f.org.id, p.implementation.id)).toBe(false);
