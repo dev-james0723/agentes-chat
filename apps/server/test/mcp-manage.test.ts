@@ -507,6 +507,48 @@ describe("skills", () => {
     expect(changes[0]?.details).toMatchObject({ before: false, after: true });
   });
 
+  test("only a true post-lock default transition consumes the manage quota", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const created = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: quota-default\ndescription: quota transitions\n---\nBody.",
+      }),
+    );
+    const rate = t.adapters.rateLimiter;
+    const consume = rate.consume.bind(rate);
+    let manageCharges = 0;
+    rate.consume = async (key, rule) => {
+      if (key.startsWith("mcp:manage:")) manageCharges += 1;
+      return consume(key, rule);
+    };
+    const turnOn = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: true,
+      }),
+    );
+    expect(turnOn.changed).toBe(true);
+    expect(manageCharges).toBe(2);
+    manageCharges = 0;
+    const repeat = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: true,
+      }),
+    );
+    expect(repeat.changed).toBe(false);
+    expect(manageCharges).toBe(0);
+    const turnOff = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: false,
+      }),
+    );
+    expect(turnOff.changed).toBe(true);
+    expect(manageCharges).toBe(2);
+  });
+
   test("a member without manage_agents can't install one", async () => {
     const { b, orgId } = await setup();
     const member = await joinByInvitation(t, b, orgId, "member@example.com");

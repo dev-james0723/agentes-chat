@@ -138,6 +138,32 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
     return agent;
   };
 
+  /** Bounded per-workspace lookup: a boolean should never load every skill's body. */
+  const resolveSkillDefault = async (ref: string) => {
+    await requirePermission(deps.db, p.userId, p.orgId, "read");
+    const columns = {
+      id: schema.skills.id,
+      name: schema.skills.name,
+      version: schema.skills.version,
+      defaultForNewAgents: schema.skills.defaultForNewAgents,
+    };
+    const scope = and(eq(schema.skills.orgId, p.orgId), isNull(schema.skills.deletedAt));
+    // A UUID-shaped skill name is valid; prefer the exact skill ID if present.
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
+      const [idMatch] = await deps.db
+        .select(columns)
+        .from(schema.skills)
+        .where(and(scope, eq(schema.skills.id, ref)));
+      if (idMatch) return idMatch;
+    }
+    const [named] = await deps.db
+      .select(columns)
+      .from(schema.skills)
+      .where(and(scope, eq(schema.skills.name, ref.trim().toLowerCase())));
+    if (!named) throw new ValidationError(`No skill "${ref}" in this workspace. list_skills lists them.`);
+    return named;
+  };
+
   tool(
     "import_summary",
     {
@@ -484,10 +510,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const installed = await listSkills(deps.db, p.userId, p.orgId);
-      const found =
-        installed.find((s) => s.id === args.skill) ?? installed.find((s) => s.name === args.skill.trim().toLowerCase());
-      if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
+      const found = await resolveSkillDefault(args.skill);
       return {
         id: found.id,
         name: found.name,
@@ -517,13 +540,9 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const installed = await listSkills(deps.db, p.userId, p.orgId);
-      const found =
-        installed.find((s) => s.id === args.skill) ?? installed.find((s) => s.name === args.skill.trim().toLowerCase());
-      if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
+      const found = await resolveSkillDefault(args.skill);
       // Authorize before touching data; exact skill resolution is restricted to this OAuth workspace.
       await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
-      if (found.defaultForNewAgents !== args.enabled) await allow();
       // Lock and reread the row in one transaction. Concurrent requests cannot double-audit
       // a single transition, and any failed audit rolls back the setting change.
       return deps.db.transaction(async (tx) => {
@@ -540,6 +559,9 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         if (!current) throw new ValidationError("The skill is no longer installed in this workspace.");
         const changed = current.defaultForNewAgents !== args.enabled;
         if (changed) {
+          // Rate-limit from the locked value: a true mutation is always charged,
+          // and a concurrent no-op does not burn the per-workspace quota.
+          await allow();
           await tx
             .update(schema.skills)
             .set({ defaultForNewAgents: args.enabled, updatedAt: new Date() })
