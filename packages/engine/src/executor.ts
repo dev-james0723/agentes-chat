@@ -87,6 +87,7 @@ import {
   bindingReset,
   brainSpeedFor,
   clearGrokPlanRefusal,
+  computerBrainUnavailable,
   forgetModelLimit,
   forgetPlanLimit,
   type ModelScope,
@@ -257,6 +258,7 @@ import {
   supportsMissionTaskModels,
   TASK_OFFLINE_GRACE_MS,
 } from "./machine-tasks";
+import { machinePause } from "./machines";
 import { MEDIA_TOOLS } from "./media";
 import {
   getMessage,
@@ -288,7 +290,7 @@ import {
   resolveRunFailed,
 } from "./notification-producers";
 import { openRequestNudge, openRequestsOf, WITHDRAW_REQUEST_TOOL } from "./open-requests";
-import { enqueue, PermanentJobError } from "./outbox";
+import { enqueue, lockJobClaim, PermanentJobError } from "./outbox";
 import { type OutsideMemo, personWords, runReadOutside } from "./outside";
 import { paperclipProjectBrain } from "./paperclip-project-runtime";
 import { assertPersonUnderLimit } from "./person-usage";
@@ -534,6 +536,12 @@ export const QUOTA_HANDOFF_RESUME_PROMPT =
   "The portable prior conversation and work log above show what was asked, what was already done and what it said. " +
   "Check the working directory's current state, do not redo finished steps or repeat external actions already taken, " +
   "and continue with the remaining work.";
+
+const FALLBACK_RETURN_RESUME_PROMPT =
+  "The API fallback for this same task stopped responding. Your configured Codex subscription is available again, " +
+  "so you are continuing the remaining work in a new session. The portable conversation and work log above " +
+  "record the goal and completed tool actions. Verify the current working state; do not repeat completed steps " +
+  "or external actions. The previous native session has not been resumed or imported.";
 
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}… [${text.length - max} more]` : text;
@@ -974,11 +982,15 @@ export interface Transcript {
   quotaCliHandoff?: {
     schema: "quota-cli-handoff/1";
     disposition: "CONTINUE";
+    /** Provider outage returns keep the same run, with a completed model checkpoint and a new native session. */
+    reason?: "provider_outage";
+    outageReturn?: { waitId: string; throughSeq: number; contextSha256: string; contextBytes: number };
     runId: string;
     agentId: string;
     channelId: string;
     goalMessageId: string;
     sourceKind: BrainKind;
+    /** For an outage return this is the previous native association, used only as a CAS anchor, never replayed. */
     sourceSessionId: string;
     targetKind: QuotaHandoffKind;
     /** The machine account the target signs in with (absent: the computer's own sign-in, or an older record). */
@@ -4515,6 +4527,8 @@ async function executeRunInner(
     // Behind others in the computer's line (`roomGate`) is no refusal: it waits its turn.
     if (
       allowLegacyFallback &&
+      // A qualified outage return waits on its committed target; falling back again would revive stale API history.
+      t.quotaCliHandoff?.reason !== "provider_outage" &&
       !onlyThisComputer &&
       !u.queued &&
       mayFallBack(agent, run) &&
@@ -5646,6 +5660,483 @@ async function executeRunInner(
     await finished("waiting_input", undefined, undefined, undefined, undefined, usage);
   };
 
+  /**
+   * ADR 0210: an outage retry may return a legacy API fallback to its configured own Codex route.
+   * The ordinary fallback pin remains in force unless this claimed boundary commits a qualified portable handoff.
+   */
+  const returnFromFallbackOutage = async (): Promise<"unchanged" | "returned" | "stale"> => {
+    const t = transcript as Transcript;
+    const inspector = inspectorPolicy();
+    const waitId = t.outage?.waitId;
+    const sourceRunSessionId = run.brainSessionId;
+    const machineId = agent.machineId;
+    if (
+      !inspector ||
+      !quotaContinuation ||
+      !(quotaContinuation.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS).includes("codex") ||
+      !options.jobId ||
+      !options.owned ||
+      !backFromWait ||
+      !waitId ||
+      options.wait !== waitId ||
+      !machineId ||
+      plan.kind !== "model" ||
+      run.brain !== "model" ||
+      t.fallback?.from !== "codex" ||
+      t.quotaCliHandoff ||
+      t.pending ||
+      t.waitingForBrain ||
+      t.effectUncertain ||
+      t.hostAcpUncertain ||
+      t.continuityCheckpoint ||
+      t.interruptedTurn ||
+      run.background ||
+      viaRoutine !== null ||
+      isRightHand(agent) ||
+      agent.brain !== "codex" ||
+      agent.brainAccountId !== null ||
+      agent.brainAccountLentBy !== null ||
+      agent.brainExtraUsage !== false ||
+      !agent.ownerUserId ||
+      !deps.brains?.codex ||
+      !deps.machines
+    )
+      return "unchanged";
+    if (!(await options.owned()) || (await pauseOpen(db, run.id, t))) return "unchanged";
+    const [claim] = await db.select().from(outbox).where(eq(outbox.id, options.jobId));
+    if (
+      claim?.kind !== "agent_run.execute" ||
+      claim.payload.runId !== run.id ||
+      claim.status !== "processing" ||
+      !claim.lockedUntil ||
+      claim.lockedUntil.getTime() <= Date.now() ||
+      !(await options.owned())
+    )
+      return "unchanged";
+
+    const mission = plan.missionId ? await getMissionRow(db, plan.missionId).catch(() => null) : null;
+    const sourceSessionId = sourceRunSessionId ?? mission?.mainSessionId;
+    if (!sourceSessionId) return "unchanged";
+    if (
+      plan.missionId &&
+      (!mission ||
+        !OPEN_MISSION_STATUSES.includes(mission.status) ||
+        mission.orgId !== run.orgId ||
+        mission.agentId !== run.agentId ||
+        mission.channelId !== run.channelId ||
+        mission.threadRootId !== run.threadRootId ||
+        mission.machineId !== machineId ||
+        mission.mainSessionId !== sourceSessionId ||
+        mission.brain !== "codex")
+    )
+      return "unchanged";
+    const configured = await resolveBrain(deps, agent, run, replyThreadId ?? run.channelId, {
+      quotaReservePercent: inspector.thresholdPercent,
+      quotaReserveMaxAgeMs: inspector.maxAgeMs,
+    });
+    if (
+      configured.kind !== "codex" ||
+      configured.unavailable ||
+      configured.account ||
+      configured.session?.machineId !== machineId ||
+      configured.missionId !== plan.missionId
+    )
+      return "unchanged";
+
+    await deferred;
+    const workLog = await runWorkDigest(db, run.id);
+    const conversation = await conversationDigest(db, run);
+    const content = portableMessages(t.messages, workLog, conversation);
+    const context = structuredClone({ system: t.system, messages: content });
+    const contextJson = JSON.stringify(context);
+    if (new TextEncoder().encode(contextJson).length > PORTABLE_CONTEXT_MAX_BYTES || hasCredentialText(contextJson))
+      return "unchanged";
+    const snapshot = JSON.stringify(t.messages);
+    const throughSeq = await lastStepSeq(db, run.id);
+    const proof = await quotaContinuation
+      .qualify({
+        orgId: run.orgId,
+        runId: run.id,
+        agentId: agent.id,
+        channelId: run.channelId,
+        goalMessageId: run.triggerMessageId,
+        machineId,
+        sourceKind: "model",
+        sourceAccountId: null,
+        targetKind: "codex",
+        requiredTools: tools.map((tool) => tool.name),
+        context,
+      })
+      .catch(() => null);
+    const at = Date.now();
+    if (
+      proof?.targetKind !== "codex" ||
+      proof.machineId !== machineId ||
+      proof.accountId != null ||
+      !SAFE_ID.test(proof.model) ||
+      !SAFE_ID.test(proof.sourcePool) ||
+      !SAFE_ID.test(proof.targetPool) ||
+      proof.sourcePool === proof.targetPool ||
+      !SAFE_ID.test(proof.evidence) ||
+      proof.noPaidExtraUsage !== true ||
+      proof.noCredentialsInContext !== true ||
+      !Number.isSafeInteger(proof.observedAt) ||
+      !Number.isSafeInteger(proof.validUntil) ||
+      proof.observedAt > at ||
+      proof.observedAt < at - 300_000 ||
+      proof.validUntil <= at ||
+      proof.validUntil > proof.observedAt + 300_000
+    )
+      return "unchanged";
+    const model =
+      !configured.model || isAutoModel(configured.model)
+        ? handoffModel("codex", proof.model, t.autoModel?.tier)
+        : configured.model;
+    if (!SAFE_ID.test(model) || isAutoModel(model)) return "unchanged";
+    const target = await resolveBrain(
+      { db, machines: deps.machines },
+      { ...agent, brainModel: model },
+      run,
+      replyThreadId ?? run.channelId,
+      {
+        fresh: true,
+        quotaReservePercent: inspector.thresholdPercent,
+        quotaReserveMaxAgeMs: inspector.maxAgeMs,
+        ...(mission
+          ? {
+              qualifiedQuotaHandoff: {
+                missionId: mission.id,
+                sourceSessionId: mission.mainSessionId,
+                ownerId: mission.ownerId,
+              },
+            }
+          : {}),
+      },
+    );
+    if (
+      target.kind !== "codex" ||
+      target.model !== model ||
+      target.unavailable ||
+      target.account ||
+      target.session?.machineId !== machineId ||
+      target.missionId !== plan.missionId ||
+      target.quotaReserve?.state !== "normal"
+    )
+      return "unchanged";
+
+    const sessionId = Bun.randomUUIDv7();
+    const effort = handoffEffort(agent, t.autoModel?.effort);
+    const handoff: NonNullable<Transcript["quotaCliHandoff"]> = {
+      schema: "quota-cli-handoff/1",
+      disposition: "CONTINUE",
+      reason: "provider_outage",
+      runId: run.id,
+      agentId: agent.id,
+      channelId: run.channelId,
+      goalMessageId: run.triggerMessageId,
+      sourceKind: "model",
+      sourceSessionId,
+      targetKind: "codex",
+      targetAccountId: null,
+      targetSessionId: sessionId,
+      machineId,
+      model,
+      ...(effort ? { effort } : {}),
+      sourcePool: proof.sourcePool,
+      targetPool: proof.targetPool,
+      evidence: proof.evidence,
+      observedAt: proof.observedAt,
+      validUntil: proof.validUntil,
+      afterTurns: run.turns,
+      ...(mission ? { missionId: mission.id } : {}),
+      outageReturn: {
+        waitId,
+        throughSeq,
+        contextSha256: sha256(contextJson),
+        contextBytes: new TextEncoder().encode(contextJson).length,
+      },
+    };
+    const nextTranscript: Transcript = {
+      ...t,
+      quotaCliHandoff: handoff,
+      system: [
+        ...t.system,
+        {
+          turn: true,
+          found: true,
+          text: untrustedBlock(
+            "portable prior conversation",
+            JSON.stringify(context.messages),
+            PORTABLE_CONTEXT_MAX_BYTES,
+          ),
+        } as ContextBlock,
+      ],
+    };
+    if (JSON.stringify(t.messages) !== snapshot || JSON.stringify(context) !== contextJson || !(await options.owned()))
+      return "stale";
+    const identityKeys = [
+      "ownerUserId",
+      "machineId",
+      "brain",
+      "brainModel",
+      "brainAccountId",
+      "brainAccountLentBy",
+      "brainExtraUsage",
+      "brainFallback",
+      "brainEffort",
+      "brainSpeed",
+      "role",
+      "instructions",
+      "audienceMode",
+      "audienceUserIds",
+      "audienceRoleIds",
+      "contextTokens",
+      "planForOthers",
+    ] as const;
+    const staleAdmission = new Error("fallback return admission changed before commit");
+    const expiredAdmission = new Error("fallback return qualification expired before commit");
+    const moved = await db
+      .transaction(async (tx) => {
+        // Fence the real job claim, then use the existing mission queue lock order before any route update.
+        if (!(await lockJobClaim(tx, claim))) return null;
+        if (mission) await lockMissionTaskQueue(tx, machineId);
+        const [current] = await tx
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.id, agent.id), eq(schema.agents.orgId, run.orgId)))
+          .for("update");
+        if (
+          !current ||
+          current.archivedAt ||
+          current.deletedAt ||
+          current.operatorHoldAt ||
+          identityKeys.some((key) => JSON.stringify(current[key]) !== JSON.stringify(agent[key])) ||
+          !inspectorPolicy() ||
+          deps.quotaCliContinuation?.enabled?.(run.orgId) === false
+        )
+          return null;
+        const [machine] = await tx
+          .select()
+          .from(schema.machines)
+          .where(and(eq(schema.machines.id, machineId), eq(schema.machines.orgId, run.orgId)))
+          .for("update");
+        const usage = machine?.executors.ownUsage?.codex;
+        const live = await deps.machines?.status(machineId).catch(() => null);
+        const observedAt = usage ? Date.parse(usage.at) : Number.NaN;
+        const liveUsage = live?.executors.ownUsage?.codex;
+        const liveAt = liveUsage ? Date.parse(liveUsage.at) : Number.NaN;
+        const liveReserve = quotaReserveOf(
+          liveUsage,
+          { machineId, kind: "codex", accountId: null },
+          {
+            now: Date.now(),
+            thresholdPercent: inspector.thresholdPercent,
+            maxAgeMs: inspector.maxAgeMs,
+            model,
+          },
+        );
+        const reserve = quotaReserveOf(
+          usage,
+          { machineId, kind: "codex", accountId: null },
+          {
+            now: Date.now(),
+            thresholdPercent: inspector.thresholdPercent,
+            maxAgeMs: inspector.maxAgeMs,
+            model,
+          },
+        );
+        if (
+          !machine ||
+          machine.deletedAt ||
+          !machine.online ||
+          !machine.execAllowed ||
+          machinePause(machine) ||
+          !live ||
+          computerBrainUnavailable("codex", machineId, live, Date.now(), undefined, true, usage, model) ||
+          computerBrainUnavailable(
+            "codex",
+            machineId,
+            {
+              ...live,
+              protocol: machine.protocol,
+              os: machine.os,
+              executors: machine.executors,
+              execAllowed: machine.execAllowed,
+              access: machine.access,
+            },
+            Date.now(),
+            undefined,
+            true,
+            usage,
+            model,
+          ) ||
+          machine.pairedByUserId !== current.ownerUserId ||
+          live.pairedByUserId !== current.ownerUserId ||
+          !machine.executors.codex ||
+          !live.executors.codex ||
+          !liveUsage ||
+          !["probe", "turn"].includes(liveUsage.source) ||
+          !liveUsage.windows?.length ||
+          !Number.isFinite(liveAt) ||
+          liveAt > Date.now() ||
+          liveReserve.state === "low" ||
+          !usage ||
+          !["probe", "turn"].includes(usage.source) ||
+          !usage.windows?.length ||
+          !Number.isFinite(observedAt) ||
+          observedAt > Date.now() ||
+          reserve.state === "low" ||
+          !(await planIsOwners(tx, current, machineId, undefined)) ||
+          (await pauseOpen(tx, run.id, t))
+        )
+          return null;
+        const policyCurrent = () =>
+          Boolean(
+            inspectorPolicy() &&
+              deps.quotaCliContinuation?.enabled?.(run.orgId) !== false &&
+              (deps.quotaCliContinuation?.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS).includes("codex"),
+          );
+        const freshnessCurrent = () => {
+          const now = Date.now();
+          return (
+            proof.validUntil > now &&
+            proof.observedAt <= now &&
+            observedAt <= now &&
+            now - observedAt <= inspector.maxAgeMs &&
+            liveAt <= now &&
+            now - liveAt <= inspector.maxAgeMs
+          );
+        };
+        const [source] = await tx
+          .select()
+          .from(agentRuns)
+          .where(
+            and(
+              eq(agentRuns.id, run.id),
+              eq(agentRuns.orgId, run.orgId),
+              eq(agentRuns.agentId, agent.id),
+              eq(agentRuns.channelId, run.channelId),
+              sql`${agentRuns.threadRootId} is not distinct from ${run.threadRootId}`,
+              eq(agentRuns.triggerMessageId, run.triggerMessageId),
+              eq(agentRuns.status, "running"),
+              eq(agentRuns.brain, "model"),
+              sql`${agentRuns.brainSessionId} is not distinct from ${sourceRunSessionId}`,
+              eq(agentRuns.turns, run.turns),
+              sql`${agentRuns.workId} is not distinct from ${run.workId}`,
+              sql`${agentRuns.issueId} is not distinct from ${run.issueId}`,
+              sql`${agentRuns.transcript}->'outage'->>'waitId' = ${waitId}`,
+              sql`${agentRuns.transcript}->'fallback'->>'from' = 'codex'`,
+              sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'waitingForBrain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'quotaCliHandoff', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'interruptedTurn', 'null'::jsonb) is null`,
+              sql`not exists (select 1 from ${schema.runToolTokens}
+            where ${schema.runToolTokens.runId} = ${run.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
+              sql`not exists (select 1 from ${schema.approvals} a where a.run_id = ${run.id}::uuid
+            and (a.status = 'pending' or (a.executed_at is not null and coalesce(a.result->>'isError','true') <> 'false')))`,
+            ),
+          )
+          .for("update");
+        if (
+          !source ||
+          (await lastStepSeq(tx, run.id)) !== throughSeq ||
+          JSON.stringify((source.transcript as unknown as Transcript)?.messages) !== snapshot ||
+          (await executedSince(tx, run.id, 0, [], [], true)).some((effect) => effect.uncertain) ||
+          !(await lockJobClaim(tx, claim)) ||
+          !policyCurrent()
+        )
+          return null;
+        // Only freshness expired: the same owned, unchanged API boundary keeps its ordinary retry/park path.
+        if (!freshnessCurrent()) return "retry-model" as const;
+        if (reserve.state !== "normal" || liveReserve.state !== "normal") return null;
+        if (
+          mission &&
+          !(await persistMissionInspectorRoute(
+            tx,
+            mission,
+            {
+              brain: "codex",
+              model,
+              accountId: null,
+              sessionId,
+              ...(effort ? { effort } : {}),
+            },
+            run.id,
+          ))
+        )
+          return null;
+        // A Mission row lock or its queued-child work may have waited. Expiry now rolls that entire route move back.
+        if (!(await lockJobClaim(tx, claim)) || !policyCurrent()) throw staleAdmission;
+        if (!freshnessCurrent()) throw expiredAdmission;
+        const [updated] = await tx
+          .update(agentRuns)
+          .set({
+            brain: "codex",
+            brainSessionId: sessionId,
+            transcript: storedTranscript(nextTranscript),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(agentRuns.id, source.id),
+              eq(agentRuns.status, "running"),
+              sql`${agentRuns.brainSessionId} is not distinct from ${sourceRunSessionId}`,
+            ),
+          )
+          .returning();
+        if (!updated) throw staleAdmission;
+        await addRunStep(tx, run, "context", { quotaCliHandoff: handoff });
+        await recordAudit(tx, {
+          orgId: run.orgId,
+          actor: { type: "system", id: null },
+          action: "run.fallback_return",
+          target: { type: "agent_run", id: run.id },
+          runId: run.id,
+          channelId: run.channelId,
+          details: {
+            reason: "provider_outage",
+            waitId,
+            agentId: agent.id,
+            issueId: run.issueId,
+            workId: run.workId,
+            missionId: mission?.id ?? null,
+            from: { kind: "model", sessionId: sourceSessionId },
+            to: { kind: "codex", model, sessionId, machineId, accountId: null },
+            throughSeq,
+            contextSha256: handoff.outageReturn?.contextSha256,
+            usageObservedAt: usage.at,
+            evidence: proof.evidence,
+          },
+        });
+        return updated;
+      })
+      .catch((error: unknown) => {
+        if (error === staleAdmission) return null;
+        if (error === expiredAdmission) return "retry-model" as const;
+        throw error;
+      });
+    if (moved === "retry-model") return "unchanged";
+    if (!moved) return "stale";
+    run = moved;
+    Object.assign(t, nextTranscript);
+    plan = {
+      ...target,
+      ...(effort ? { effort } : {}),
+      session: {
+        id: sessionId,
+        resume: false,
+        machineId,
+        cwd: target.session?.cwd ?? "",
+      },
+    };
+    nextPrompt = [FALLBACK_RETURN_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+    brain = createBrain(deps, thinker, run, "codex", turnToken, () => transcript as Transcript, triggerMessage);
+    return "returned";
+  };
+
   /** Read shared telemetry at the completed boundary; a worker never edits a running transcript to request this. */
   const inspectBoundaryQuota = async (): Promise<(BrainUnavailability & { quotaReserve?: boolean }) | null> => {
     const policy = inspectorPolicy();
@@ -5674,6 +6165,8 @@ async function executeRunInner(
       ? { code: "quota_reserve", message: "The source account is near its configured reserve.", quotaReserve: true }
       : null;
   };
+  // A stale claim must not fall through and dispatch the old model with a concurrently changed transcript.
+  if ((await returnFromFallbackOutage()) === "stale") return;
   const initialInspection = await inspectBoundaryQuota();
   if (initialInspection?.code === "plan_limit") plan = { ...plan, unavailable: initialInspection };
   const reservePending = (transcript as Transcript).quotaReservePending;
@@ -8639,7 +9132,7 @@ const withFallback = (t: Transcript, meta: Record<string, unknown> | undefined) 
   t.fallback || t.speedFallback || t.modelStandIn
     ? {
         ...(meta ?? {}),
-        ...(t.fallback ? { brainFallback: t.fallback } : {}),
+        ...(t.fallback && t.quotaCliHandoff?.reason !== "provider_outage" ? { brainFallback: t.fallback } : {}),
         ...(t.speedFallback ? { speedFallback: true } : {}),
         ...(t.modelStandIn ? { modelStandIn: t.modelStandIn } : {}),
       }
