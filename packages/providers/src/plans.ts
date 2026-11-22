@@ -242,6 +242,9 @@ export const CODING_PLANS = {
  * its `service_tiers`, codex-cli 0.166.0). Codex drops the tier without a word for any other model.
  */
 export const FAST_MODE_MODELS: readonly string[] = [
+  // GPT-6.2 Sol and Astra advertise priority/Fast service tiers (2026-11-17).
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-astra",
