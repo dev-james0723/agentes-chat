@@ -5,6 +5,13 @@
 # Usage: bun run ci:local
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# The physical checkout is the only valid lock scope; never trust a caller override.
+export AGENTES_CI_SCOPE="$PWD"
+# Full CI may regenerate migrations. Never run it over an agent's uncommitted work.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ci:local refused: worktree is not clean; commit or use a separate isolated checkout" >&2
+  exit 2
+fi
 log=$(mktemp "${TMPDIR:-/tmp}/agentes-ci-local.XXXXXX")
 export CI=true
 results=()
@@ -29,7 +36,10 @@ need bun "https://bun.sh"
 need shellcheck "brew install shellcheck, or apt-get install shellcheck"
 need gitleaks "brew install gitleaks, or https://github.com/gitleaks/gitleaks/releases"
 
-# One full run at a time on this computer (scripts/ci-lock.sh): runs side by side time each other's tests out.
+# Bounded parallel CI: up to two independent worktrees at once (configurable
+# via AGENTES_CI_MAX_PARALLEL); still only one full run per worktree.
+# Legacy global-lock holders count against capacity. Shared external fixtures
+# must have their own named resource locks instead of bypassing this guard.
 # shellcheck source=scripts/ci-lock.sh
 . scripts/ci-lock.sh
 ci_lock "ci-local $(git rev-parse --short HEAD)" || exit 2
@@ -44,9 +54,24 @@ step "geometry check's own test" "bun test scripts/geometry/check.test.ts"
 step "dependency licenses" "bun test scripts/check-licenses.test.ts && bun run check:licenses"
 step "typecheck" "bun run typecheck"
 step "build web and server" "bun run build"
-# A drift check that finds a difference leaves the generated files behind; they are removed so the tree stays as it was.
-step "migrations up to date with the schema" \
-  "bun run db:generate ci-drift-check < /dev/null; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
+# Regeneration must be fail-closed and non-destructive. Keep any drift visible
+# for the integration owner rather than deleting generated or concurrent files.
+# shellcheck disable=SC2329
+check_migration_drift() {
+  local changed
+  changed=$(git status --porcelain -- packages/db/migrations)
+  if [ -n "$changed" ]; then
+    echo "migration check blocked: pre-existing generated or uncommitted migration files" >&2
+    return 1
+  fi
+  bun run db:generate ci-drift-check < /dev/null || return 1
+  changed=$(git status --porcelain -- packages/db/migrations)
+  if [ -n "$changed" ]; then
+    printf "migration drift detected; generated files preserved for review:\n%s\n" "$changed" >&2
+    return 1
+  fi
+}
+step "migrations up to date with the schema" "check_migration_drift"
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"
