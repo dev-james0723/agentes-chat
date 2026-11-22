@@ -101,8 +101,65 @@ async function outcomeBackedInstruction(db: Database, item: ContextItem) {
   return !!proof;
 }
 
+/**
+ * A lesson becomes an agent-global instruction; never admit private/DM/task/role-scoped
+ * source material through that narrower memory boundary, even when its wording is benign.
+ * The query runs again inside the acceptance transaction before any instruction write.
+ */
+async function hasPublicLearningSources(db: Database, item: ContextItem): Promise<boolean> {
+  const messageIds = item.sourceIds.filter((id) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+  );
+  const messages = messageIds.length
+    ? await db
+        .select({ channelId: schema.messages.channelId })
+        .from(schema.messages)
+        .where(and(eq(schema.messages.orgId, item.orgId), inArray(schema.messages.id, messageIds)))
+    : [];
+  const outcomes = messageIds.length
+    ? await db
+        .select({ channelId: schema.outcomes.channelId })
+        .from(schema.outcomes)
+        .where(and(eq(schema.outcomes.orgId, item.orgId), inArray(schema.outcomes.id, messageIds)))
+        .for("share")
+    : [];
+  const ids = [
+    ...new Set([
+      ...item.channelIds,
+      ...messages.map((message) => message.channelId),
+      ...outcomes.flatMap((outcome) => (outcome.channelId ? [outcome.channelId] : [])),
+    ]),
+  ];
+  // Truly channel-free CI outcomes remain eligible if independently verified.
+  if (ids.length === 0) return true;
+  const channels = await db
+    .select({
+      id: schema.channels.id,
+      kind: schema.channels.kind,
+      visibility: schema.channels.visibility,
+      dmKey: schema.channels.dmKey,
+      archivedAt: schema.channels.archivedAt,
+      audienceRoleIds: schema.channels.audienceRoleIds,
+    })
+    .from(schema.channels)
+    .where(and(eq(schema.channels.orgId, item.orgId), inArray(schema.channels.id, ids)))
+    .for("share");
+  return (
+    channels.length === ids.length &&
+    channels.every(
+      (channel) =>
+        channel.visibility === "public" &&
+        channel.kind === "channel" &&
+        channel.dmKey === null &&
+        channel.archivedAt === null &&
+        channel.audienceRoleIds.length === 0,
+    )
+  );
+}
+
 /** Re-read actual proof before the independent judge and again under the write transaction. */
 export async function verifiedLearningEvidence(db: Database, item: ContextItem, lesson: string) {
+  if (!(await hasPublicLearningSources(db, item))) return false;
   return (await ownerBackedInstruction(db, item, lesson)) || (await outcomeBackedInstruction(db, item));
 }
 

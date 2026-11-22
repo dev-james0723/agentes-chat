@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { eq, schema } from "@agenteschat/db";
 import {
   autoLearningEnabled,
+  createChannel,
   ForbiddenError,
   getLearningApprovalSettings,
   insertMessage,
@@ -283,4 +284,113 @@ describe("guarded automatic acceptance of learned improvements", () => {
     const decision = await proposeFromItem(f.context, await lesson(f));
     expect(decision?.status).toBe("pending");
   });
+});
+
+test("private owner-authored lesson cannot be auto-admitted into cross-channel instructions", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const secret = await createChannel(f.db, f.owner.id, f.org.id, { name: "private-evidence", visibility: "private" });
+  const original = await insertMessage(f.db, {
+    orgId: f.org.id,
+    channelId: secret.id,
+    author: { type: "person", userId: f.owner.id },
+    body: LESSON,
+  });
+  const item = await lesson(f, {
+    channelIds: [secret.id],
+    sourceIds: [original.id],
+    evidence: [{ type: "human", ref: original.id, at: new Date().toISOString() }],
+  });
+  const decision = await proposeFromItem(f.context, item);
+  expect(decision?.status).toBe("pending");
+  const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+  expect(agent?.instructions).toBe("Answer briefly.");
+});
+
+test("independent CI proof does not launder a private linked message into instructions", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const secret = await createChannel(f.db, f.owner.id, f.org.id, { name: "private-ci-notes", visibility: "private" });
+  const privateMessage = await insertMessage(f.db, {
+    orgId: f.org.id,
+    channelId: secret.id,
+    author: { type: "person", userId: f.owner.id },
+    body: "This source is private.",
+  });
+  const proof = await recordOutcome(f.db, {
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "ci_passed",
+    source: "webhook",
+    subject: "changelog",
+    summary: "Verified local CI",
+  });
+  const item = await lesson(f, {
+    channelIds: [f.general.id],
+    sourceIds: [proof.id, privateMessage.id],
+    evidence: [{ type: "outcome", ref: proof.id, at: new Date().toISOString() }],
+  });
+  expect((await proposeFromItem(f.context, item))?.status).toBe("pending");
+});
+
+test("a public source reclassified private while judge runs cannot be auto-accepted", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const item = await lesson(f);
+  const judge = f.context.judge;
+  if (!judge) throw new Error("missing judge");
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.context.judge = {
+    name: "held-external-effect-judge",
+    ask: async (request) => {
+      if (request.kind === "learning_auto_external_effect") {
+        entered();
+        await hold;
+      }
+      return judge.ask(request);
+    },
+  };
+  const running = proposeFromItem(f.context, item);
+  try {
+    await Promise.race([
+      started,
+      running.then(() => {
+        throw new Error("judge never started");
+      }),
+    ]);
+    await f.db.update(schema.channels).set({ visibility: "private" }).where(eq(schema.channels.id, f.general.id));
+  } finally {
+    release();
+  }
+  expect((await running)?.status).toBe("pending");
+  const [agent] = await f.db.select().from(schema.agents).where(eq(schema.agents.id, f.agent.id));
+  expect(agent?.instructions).toBe("Answer briefly.");
+});
+
+test("private-channel CI outcomes cannot be laundered by omitting the channel list", async () => {
+  f = await setup();
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
+  const secret = await createChannel(f.db, f.owner.id, f.org.id, { name: "private-ci-results", visibility: "private" });
+  const proof = await recordOutcome(f.db, {
+    orgId: f.org.id,
+    agentId: f.agent.id,
+    kind: "ci_passed",
+    source: "webhook",
+    subject: "changelog",
+    channelId: secret.id,
+    summary: "Verified local CI",
+  });
+  const item = await lesson(f, {
+    channelIds: [],
+    sourceIds: [proof.id],
+    evidence: [{ type: "outcome", ref: proof.id, at: new Date().toISOString() }],
+  });
+  expect((await proposeFromItem(f.context, item))?.status).toBe("pending");
 });
