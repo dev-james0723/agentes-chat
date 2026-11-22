@@ -245,7 +245,8 @@ test.skipIf(!posix)(
     expect(readFileSync(original, "utf8")).toBe("keep original");
     expect(readdirSync(agentRoot)).toEqual(["original.txt"]);
     expect(readdirSync(taskDir).sort()).toEqual(taskFiles);
-    expect(readFileSync(tasks.journalFile, "utf8")).toBe(journal);
+    expect(readFileSync(tasks.journalFile, "utf8")).not.toBe(journal);
+    expect(JSON.parse(readFileSync(tasks.journalFile, "utf8")).tasks[0].artifactEventAttempted).toBe(true);
 
     tasks.close();
     const next = make();
@@ -261,6 +262,74 @@ test.skipIf(!posix)(
     expect(readFileSync(output, "utf8")).toBe("once\n");
   },
   20_000,
+);
+
+test.skipIf(!posix)(
+  "parallel starts cannot reuse a task ID across two agents",
+  async () => {
+    const { tasks } = setup();
+    await tasks.init();
+    const sameId = id(102);
+    const otherAgent = { ...AGENT, id: "0193bbbb-bbbb-7ccc-8ddd-eeeeffff0000", handle: "other" };
+    const results = await Promise.allSettled([
+      tasks.start(AGENT, { taskId: sameId, executor: "shell", command: "sleep 20" }),
+      tasks.start(otherAgent, { taskId: sameId, executor: "shell", command: "sleep 20" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    expect(tasks.list().filter((t) => t.taskId === sameId)).toHaveLength(1);
+    expect(tasks.artifactLifecycle(otherAgent, sameId)).toBeUndefined();
+    tasks.cancel(undefined, sameId);
+    await waitFor(() => tasks.list().some((t) => t.taskId === sameId && t.status !== "running"), 8000);
+  },
+  18_000,
+);
+
+test.skipIf(!posix)(
+  "an ambiguous broker event disables Claude retry and persists through reattach",
+  async () => {
+    const broker: ClosedArtifactBroker = {
+      async record() {
+        throw new Error("commit may have occurred before reply was lost");
+      },
+    };
+    const { tasks, make, send } = setup({ artifactBroker: broker });
+    await tasks.init();
+    const taskId = id(103);
+    const started = await tasks.start(AGENT, { taskId, executor: "shell", command: "sleep 20" });
+    const scope = tasks.artifactLifecycle(AGENT, taskId);
+    expect(scope).toBeDefined();
+    const refused = await scope?.record({
+      type: "artifact_created", eventId: "uncertain-1", artifactId: "blob-a", generation: 1,
+    });
+    expect(refused).toEqual({ status: "KEEP" });
+    expect(JSON.parse(readFileSync(tasks.journalFile, "utf8")).tasks[0].artifactEventAttempted).toBe(true);
+    // Exercise the Claude retry heuristic without actually invoking Claude or
+    // consuming the user's provider quota.
+    const internal = tasks as unknown as {
+      journal: { tasks: Array<Record<string, unknown>> };
+      wrongSessionFlag: (t: unknown, w: unknown, exit: unknown) => boolean;
+    };
+    const entry = internal.journal.tasks[0]!;
+    entry.executor = "claude";
+    entry.session = "synthetic-session";
+    entry.resumed = true;
+    expect(internal.wrongSessionFlag(entry, {
+      tail: ["No conversation found"], result: "No conversation found",
+    }, {
+      exitCode: 1, signal: null, reason: null,
+      endedAt: new Date().toISOString(),
+    })).toBe(false);
+    tasks.close();
+    const next = make();
+    await next.init();
+    next.attach(send);
+    expect(next.artifactLifecycle(AGENT, taskId)).toBeUndefined();
+    expect(next.status(AGENT, taskId).tasks).toMatchObject([{ status: "running" }]);
+    next.cancel(AGENT, taskId);
+    await waitFor(() => next.list().some((t) => t.taskId === taskId && t.status !== "running"), 8000);
+  },
+  18_000,
 );
 
 test.skipIf(!posix)(

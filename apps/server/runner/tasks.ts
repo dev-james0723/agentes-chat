@@ -167,6 +167,9 @@ interface Entry {
   resumed?: boolean;
   /** The start was retried once with the other session flag. */
   retried?: boolean;
+  /** Durable evidence that this execution may have submitted an artifact effect.
+   * This blocks Claude fallback replay, even after runner restart/lost ACK. */
+  artifactEventAttempted?: true;
   branch?: string;
   session?: string;
   status: RunnerTask["status"];
@@ -826,6 +829,8 @@ function readFrom(file: string, offset: number): { text: string; next: number } 
 interface Watch {
   timer: ReturnType<typeof setInterval>;
   artifacts?: TaskArtifactLifecycle;
+  /** The exact journal object to which the native execution was bound. */
+  artifactEntry?: Entry;
   offsets: { stdout: number; stderr: number };
   partial: { stdout: string; stderr: string };
   tail: string[];
@@ -851,6 +856,8 @@ const addDenial = (w: Watch, denial: TaskDenial) => {
 export class TaskManager {
   private journal: Journal = { tasks: [] };
   private readonly watches = new Map<string, Watch>();
+  /** Synchronous reservation prevents overlapping starts from reusing a task ID. */
+  private readonly startingArtifactTaskIds = new Set<string>();
   /** A Codex task's ChatGPT sign-in root keeps: stop sending its refreshed copies back when the task ends. */
   private readonly releases = new Map<string, () => void>();
   /** How each task this runner started was launched, for its retry (`retryOtherFlag`); in memory only, until it ends. */
@@ -1060,6 +1067,24 @@ export class TaskManager {
    * `grant` (system mode, protocol 29): what root handed over for `req.account`.
    */
   async start(
+    agent: AgentScope,
+    req: TaskStart,
+    allowed?: { grants?: string[] },
+    grant?: AccountGrant,
+  ): Promise<MachineReplies["task.start"]> {
+    if (this.closed) throw new RunnerError("internal", "The runner is stopping");
+    const taskId = String(req.taskId ?? "");
+    this.dirOf(taskId);
+    if (this.startingArtifactTaskIds.has(taskId)) throw new RunnerError("bad_request", "Duplicate task id");
+    this.startingArtifactTaskIds.add(taskId);
+    try {
+      return await this.startReserved(agent, req, allowed, grant);
+    } finally {
+      this.startingArtifactTaskIds.delete(taskId);
+    }
+  }
+
+  private async startReserved(
     agent: AgentScope,
     req: TaskStart,
     allowed?: { grants?: string[] },
@@ -1467,7 +1492,8 @@ export class TaskManager {
   /** Runner-internal only. The caller supplies its already authenticated native agent scope. */
   artifactLifecycle(agent: AgentScope, taskId: string): Pick<TaskArtifactLifecycle, "record"> | undefined {
     const t = this.journal.tasks.find((entry) => entry.taskId === taskId && entry.agentId === agent.id);
-    if (t?.status === "running" && !t.canceling) return this.watches.get(taskId)?.artifacts;
+    const watch = this.watches.get(taskId);
+    if (t?.status === "running" && !t.canceling && watch?.artifactEntry === t) return watch.artifacts;
   }
 
   status(agent: AgentScope | undefined, taskId?: string): MachineReplies["task.status"] {
@@ -1546,7 +1572,13 @@ export class TaskManager {
               taskId: t.taskId,
               agentId: t.agentId,
               executionId: randomUUID(),
+            }, () => {
+              // Persistent marker BEFORE broker submission: a lost reply
+              // cannot trigger a fallback that repeats native side effects.
+              t.artifactEventAttempted = true;
+              this.save();
             }),
+            artifactEntry: t,
           }
         : {}),
       offsets: { stdout: start("stdout.log"), stderr: start("stderr.log") },
@@ -1717,7 +1749,7 @@ export class TaskManager {
   }
 
   private wrongSessionFlag(t: Entry, w: Watch, exit: ExitFile) {
-    if (t.retried || t.executor !== "claude" || !t.session || t.resumed === undefined) return false;
+    if (t.retried || t.artifactEventAttempted || t.executor !== "claude" || !t.session || t.resumed === undefined) return false;
     if (exit.exitCode === 0 || exit.reason) return false;
     const seconds = (Date.parse(exit.endedAt) - Date.parse(t.startedAt)) / 1000;
     return seconds <= FAST_FAIL_SECONDS && WRONG_SESSION_FLAG.test(`${w.tail.join("\n")}\n${w.result ?? ""}`);

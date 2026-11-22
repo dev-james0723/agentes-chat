@@ -81,6 +81,7 @@ export class TaskArtifactLifecycle {
   constructor(
     private readonly broker: ClosedArtifactBroker,
     actor: ArtifactActor,
+    private readonly onAttempt: () => void = () => {},
   ) {
     this.actor = Object.freeze({ taskId: actor.taskId, agentId: actor.agentId, executionId: actor.executionId });
   }
@@ -99,6 +100,13 @@ export class TaskArtifactLifecycle {
     }
     if (!event) return KEEP;
 
+    try {
+      this.onAttempt();
+    } catch {
+      // If the journal cannot persist the potential effect, do not send.
+      this.close();
+      return KEEP;
+    }
     this.pending++;
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(EVENT_TIMEOUT_MS)]);
     let onAbort: (() => void) | undefined;
