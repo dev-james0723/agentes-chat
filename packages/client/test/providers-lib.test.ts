@@ -24,7 +24,7 @@ describe("whose key is it", () => {
     // A workspace's own endpoint (`custom`) has a form of its own, never a key's.
     const ids = PROVIDERS.map((p) => p.id);
     expect([...ids].sort()).toEqual(PROVIDER_IDS.filter((id) => id !== "custom").sort());
-    expect(ids.slice(0, 5)).toEqual(["anthropic", "openai", "xai", "gemini", "openrouter"]);
+    expect(ids.slice(0, 5)).toEqual(["anthropic", "openai", "gemini", "openrouter", "xai"]);
   });
 
   test("a Gemini key, either kind AI Studio hands out, fits Gemini alone, whichever provider was chosen", () => {

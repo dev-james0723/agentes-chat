@@ -39,7 +39,6 @@ export interface ProviderInfo {
 export const PROVIDERS = {
   anthropic: { label: "Claude", protocol: "anthropic" },
   openai: { label: "OpenAI", protocol: "openai" },
-  xai: { label: "Grok (xAI)", protocol: "openai", baseURL: "https://api.x.ai/v1" },
   gemini: { label: "Gemini", protocol: "gemini" },
   deepseek: {
     label: "DeepSeek",
@@ -68,6 +67,7 @@ export const PROVIDERS = {
   },
   // Its models come from its public list at run time (`openrouter.ts`), never from this catalog.
   openrouter: { label: "OpenRouter", protocol: "openrouter" },
+  xai: { label: "Grok (xAI)", protocol: "openai", baseURL: "https://api.x.ai/v1" },
   // A workspace's own endpoint (ADR 0146): its address, API style and models live on its credential (`custom.ts`).
   custom: { label: "Other provider", protocol: "custom" },
 } as const satisfies Record<string, ProviderInfo>;

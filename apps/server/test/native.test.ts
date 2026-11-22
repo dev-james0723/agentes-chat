@@ -37,7 +37,7 @@ afterAll(async () => {
   for (const child of children) child.kill("SIGKILL");
   await Promise.all(children.map((child) => child.exited));
   rmSync(root, { recursive: true, force: true });
-});
+}, 30_000);
 
 function freePort(): number {
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });

@@ -146,7 +146,6 @@ describe("pricing", () => {
     expect(recommended).toEqual([
       ["claude-sonnet-5-5"],
       ["gpt-6.2-sol"],
-      ["grok-4.7"],
       ["gemini-3.8-flash"],
       ["deepseek-flash"],
       ["kimi-k3.1-pro"],
@@ -154,6 +153,7 @@ describe("pricing", () => {
       ["MiniMax-M3"],
       // OpenRouter's come from its list.
       [],
+      ["grok-4.7"],
     ]);
   });
 
@@ -177,13 +177,13 @@ describe("pricing", () => {
     expect(PROVIDER_IDS.map((p) => cheapModelOf(p))).toEqual([
       "claude-haiku-5-5",
       "gpt-6-luna",
-      "grok-4.7",
       "gemini-3.5-flash-lite",
       "deepseek-flash",
       "kimi-k3.1-pro",
       "glm-5.3-flash",
       "MiniMax-M3.1-Flash",
       null,
+      "grok-4.7",
       null,
     ]);
     const line = (provider: string) => MODEL_TIERS.map((tier) => modelForTier(provider, tier));
@@ -198,12 +198,12 @@ describe("pricing", () => {
     expect(PROVIDER_IDS.map((p) => routerModelOf(p))).toEqual([
       "claude-haiku-5-5",
       "gpt-6-luna",
-      null,
       "gemini-3.5-flash-lite",
       "deepseek-flash",
       null,
       "glm-5.3-flash",
       "MiniMax-M3",
+      null,
       null,
       null,
     ]);

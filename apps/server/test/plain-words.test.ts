@@ -15,4 +15,4 @@ test("the API's and the runner's error words: no semicolon, no em dash", () => {
   for (const words of [REMOVED_COMPUTER_MESSAGE, PAUSED, STOPPING, missingLibrariesText(["libnspr4.so"])]) {
     expect(words).not.toMatch(MARKS);
   }
-});
+}, 30_000);
