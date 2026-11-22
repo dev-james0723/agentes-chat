@@ -1,4 +1,4 @@
-import { and, eq, gte, schema, sql } from "@agenteschat/db";
+import { and, eq, gte, isNull, schema, sql } from "@agenteschat/db";
 import { z } from "zod";
 import {
   type Agent,
@@ -484,9 +484,9 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const found = (await listSkills(deps.db, p.userId, p.orgId)).find(
-        (s) => s.id === args.skill || s.name === args.skill.trim().toLowerCase(),
-      );
+      const installed = await listSkills(deps.db, p.userId, p.orgId);
+      const found =
+        installed.find((s) => s.id === args.skill) ?? installed.find((s) => s.name === args.skill.trim().toLowerCase());
       if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
       return {
         id: found.id,
@@ -517,50 +517,56 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
-      const found = (await listSkills(deps.db, p.userId, p.orgId)).find(
-        (s) => s.id === args.skill || s.name === args.skill.trim().toLowerCase(),
-      );
+      const installed = await listSkills(deps.db, p.userId, p.orgId);
+      const found =
+        installed.find((s) => s.id === args.skill) ?? installed.find((s) => s.name === args.skill.trim().toLowerCase());
       if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
-      if (!deps.blobs) throw new ValidationError("This server has no storage for skills.");
-      // A repeat is a true no-op, but it still must enforce manage_agents permission.
-      const changed = found.defaultForNewAgents !== args.enabled;
-      if (!changed) {
-        await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
+      // Authorize before touching data; exact skill resolution is restricted to this OAuth workspace.
+      await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
+      if (found.defaultForNewAgents !== args.enabled) await allow();
+      // Lock and reread the row in one transaction. Concurrent requests cannot double-audit
+      // a single transition, and any failed audit rolls back the setting change.
+      return deps.db.transaction(async (tx) => {
+        const [current] = await tx
+          .select({
+            id: schema.skills.id,
+            name: schema.skills.name,
+            version: schema.skills.version,
+            defaultForNewAgents: schema.skills.defaultForNewAgents,
+          })
+          .from(schema.skills)
+          .where(and(eq(schema.skills.orgId, p.orgId), eq(schema.skills.id, found.id), isNull(schema.skills.deletedAt)))
+          .for("update");
+        if (!current) throw new ValidationError("The skill is no longer installed in this workspace.");
+        const changed = current.defaultForNewAgents !== args.enabled;
+        if (changed) {
+          await tx
+            .update(schema.skills)
+            .set({ defaultForNewAgents: args.enabled, updatedAt: new Date() })
+            .where(and(eq(schema.skills.orgId, p.orgId), eq(schema.skills.id, current.id)));
+          await recordAudit(tx, {
+            orgId: p.orgId,
+            actor: { type: "person", id: p.userId },
+            action: "apps.updated",
+            target: { type: "skill", id: current.id },
+            details: {
+              grantId: p.grantId,
+              client: p.app.name,
+              changed: ["defaultForNewAgents"],
+              before: current.defaultForNewAgents,
+              after: args.enabled,
+            },
+          });
+        }
         return {
-          id: found.id,
-          name: found.name,
-          default_for_new_agents: found.defaultForNewAgents,
-          version: found.version,
-          changed: false,
+          id: current.id,
+          name: current.name,
+          default_for_new_agents: changed ? args.enabled : current.defaultForNewAgents,
+          version: current.version,
+          changed,
           url: `${base}/settings/skills`,
         };
-      }
-      // The default-only updateSkill path checks manage_agents without changing the skill version.
-      await allow();
-      const updated = await updateSkill({ db: deps.db, blobs: deps.blobs }, p.userId, p.orgId, found.id, {
-        defaultForNewAgents: args.enabled,
       });
-      await recordAudit(deps.db, {
-        orgId: p.orgId,
-        actor: { type: "person", id: p.userId },
-        action: "apps.updated",
-        target: { type: "skill", id: found.id },
-        details: {
-          grantId: p.grantId,
-          client: p.app.name,
-          changed: ["defaultForNewAgents"],
-          before: found.defaultForNewAgents,
-          after: updated.defaultForNewAgents,
-        },
-      });
-      return {
-        id: found.id,
-        name: updated.name,
-        default_for_new_agents: updated.defaultForNewAgents,
-        version: updated.version,
-        changed,
-        url: `${base}/settings/skills`,
-      };
     },
   );
 

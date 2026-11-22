@@ -417,6 +417,96 @@ describe("skills", () => {
     expect(unchanged?.defaultForNewAgents).toBe(false);
   });
 
+  test("MCP skill ID resolution wins over UUID-shaped names", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const target = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: real-default\ndescription: original\n---\nBody.",
+      }),
+    );
+    const imposter = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: `---\nname: ${target.id}\ndescription: UUID-named skill\n---\nOther body.`,
+      }),
+    );
+    expect(imposter.id).not.toBe(target.id);
+    const read = data(await callTool(t, app.access, "get_skill_default_for_new_agents", { skill: String(target.id) }));
+    expect(read.id).toBe(target.id);
+    const enabled = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(target.id),
+        enabled: true,
+      }),
+    );
+    expect(enabled.id).toBe(target.id);
+    const rows = await t.db.select().from(schema.skills).where(eq(schema.skills.orgId, orgId));
+    expect(rows.find((x) => x.id === target.id)?.defaultForNewAgents).toBe(true);
+    expect(rows.find((x) => x.id === imposter.id)?.defaultForNewAgents).toBe(false);
+  });
+
+  test("a foreign workspace skill ID cannot be read or changed through this MCP grant", async () => {
+    const { b, orgId } = await setup();
+    const source = await connectApp(t, b, orgId, MANAGE);
+    const [foreignOrg] = await t.db
+      .insert(schema.organizations)
+      .values({
+        name: "Foreign tenant",
+        context: "Tests strict workspace boundaries.",
+      })
+      .returning();
+    if (!foreignOrg) throw new Error("missing foreign organization test fixture");
+    const [foreignSkill] = await t.db
+      .insert(schema.skills)
+      .values({
+        orgId: foreignOrg.id,
+        slug: "foreign-default",
+        name: "foreign-default",
+        description: "Only foreign workspace",
+        body: "Private to that workspace.",
+        source: "manual",
+      })
+      .returning();
+    if (!foreignSkill) throw new Error("missing foreign skill test fixture");
+    expect(
+      (
+        await callTool(t, source.access, "get_skill_default_for_new_agents", {
+          skill: foreignSkill.id,
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(t, source.access, "set_skill_default_for_new_agents", {
+          skill: foreignSkill.id,
+          enabled: true,
+        })
+      ).isError,
+    ).toBe(true);
+    const [unchanged] = await t.db.select().from(schema.skills).where(eq(schema.skills.id, foreignSkill.id));
+    expect(unchanged?.defaultForNewAgents).toBe(false);
+  });
+
+  test("two concurrent changes have one transition and one audited record", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const created = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: race-default\ndescription: concurrency\n---\nBody.",
+      }),
+    );
+    const outputs = await Promise.all([
+      callTool(t, app.access, "set_skill_default_for_new_agents", { skill: String(created.id), enabled: true }),
+      callTool(t, app.access, "set_skill_default_for_new_agents", { skill: String(created.id), enabled: true }),
+    ]);
+    expect(outputs.every((r) => !r.isError)).toBe(true);
+    expect(outputs.map((x) => data(x).changed).filter(Boolean)).toHaveLength(1);
+    const events = await t.db.select().from(schema.auditLog).where(eq(schema.auditLog.orgId, orgId));
+    const changes = events.filter((e) => e.action === "apps.updated" && e.targetId === created.id);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.details).toMatchObject({ before: false, after: true });
+  });
+
   test("a member without manage_agents can't install one", async () => {
     const { b, orgId } = await setup();
     const member = await joinByInvitation(t, b, orgId, "member@example.com");
