@@ -3846,7 +3846,14 @@ async function executeRunInner(
       if (
         !plan.missionId &&
         !isRightHand(agent) &&
-        agent.brainExtraUsage === false &&
+        // A hard plan refusal is different from a near-limit reserve: even agents
+        // allowing provider extra usage may move *scheduled routines* after a
+        // real refusal, never silently opt into a paid API route.
+        (agent.brainExtraUsage === false ||
+          (u.code === "plan_limit" &&
+            run.background &&
+            !run.workId &&
+            (viaRoutine !== null || Boolean(triggerMessage?.meta?.routine)))) &&
         !onlyThisComputer &&
         !t.pending &&
         !t.effectUncertain &&
