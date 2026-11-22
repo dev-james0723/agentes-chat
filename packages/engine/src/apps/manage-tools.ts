@@ -17,6 +17,7 @@ import { ConflictError, TooManyError, ValidationError } from "../errors";
 import { handleFromName } from "../imports";
 import { publishMachineAgentsChanged } from "../machines";
 import { notifyAppCreated } from "../notification-producers";
+import { requirePermission } from "../organizations";
 import { createRoutine, listRoutines } from "../routines";
 import {
   listSkills,
@@ -47,6 +48,8 @@ export const APP_MANAGE_TOOL_NAMES = [
   "list_skills",
   "create_skill",
   "update_skill",
+  "get_skill_default_for_new_agents",
+  "set_skill_default_for_new_agents",
   "create_routine",
   "add_memory",
   "create_channel",
@@ -347,6 +350,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         name: s.name,
         description: fenced(s.description, 1024),
         agents_count: s.agentsCount,
+        default_for_new_agents: s.defaultForNewAgents,
       })),
     }),
   );
@@ -458,6 +462,105 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         },
       });
       return { id: found.id, name: skill.name, version: skill.version, url: `${base}/settings/skills` };
+    },
+  );
+
+  // The same default as the web editor, exposed with the OAuth grant's workspace scope.
+  tool(
+    "get_skill_default_for_new_agents",
+    {
+      scope: "manage",
+      title: "Check whether new agents inherit a skill",
+      description:
+        "Checks if new agents in this authorized workspace inherit an installed skill. Does not modify any skill or agent.",
+      input: z
+        .object({
+          skill: z.string().min(1).max(64).describe("Skill id or name (from list_skills)"),
+        })
+        .strict(),
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => {
+      const found = (await listSkills(deps.db, p.userId, p.orgId)).find(
+        (s) => s.id === args.skill || s.name === args.skill.trim().toLowerCase(),
+      );
+      if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
+      return {
+        id: found.id,
+        name: found.name,
+        default_for_new_agents: found.defaultForNewAgents,
+        version: found.version,
+        url: `${base}/settings/skills`,
+      };
+    },
+  );
+
+  tool(
+    "set_skill_default_for_new_agents",
+    {
+      scope: "manage",
+      title: "Set whether new agents inherit a skill",
+      description:
+        "Set the default-on assignment for FUTURE agents in this authorized workspace. Does not change existing agents, skill body or version, or other workspaces. Requires manage_agents permission and is audited.",
+      input: z
+        .object({
+          skill: z.string().min(1).max(64).describe("Skill id or name (from list_skills)"),
+          enabled: z.boolean().describe("True: new agents start with this skill on; false: off by default."),
+        })
+        .strict(),
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => {
+      const found = (await listSkills(deps.db, p.userId, p.orgId)).find(
+        (s) => s.id === args.skill || s.name === args.skill.trim().toLowerCase(),
+      );
+      if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
+      if (!deps.blobs) throw new ValidationError("This server has no storage for skills.");
+      // A repeat is a true no-op, but it still must enforce manage_agents permission.
+      const changed = found.defaultForNewAgents !== args.enabled;
+      if (!changed) {
+        await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
+        return {
+          id: found.id,
+          name: found.name,
+          default_for_new_agents: found.defaultForNewAgents,
+          version: found.version,
+          changed: false,
+          url: `${base}/settings/skills`,
+        };
+      }
+      // The default-only updateSkill path checks manage_agents without changing the skill version.
+      await allow();
+      const updated = await updateSkill({ db: deps.db, blobs: deps.blobs }, p.userId, p.orgId, found.id, {
+        defaultForNewAgents: args.enabled,
+      });
+      await recordAudit(deps.db, {
+        orgId: p.orgId,
+        actor: { type: "person", id: p.userId },
+        action: "apps.updated",
+        target: { type: "skill", id: found.id },
+        details: {
+          grantId: p.grantId,
+          client: p.app.name,
+          changed: ["defaultForNewAgents"],
+          before: found.defaultForNewAgents,
+          after: updated.defaultForNewAgents,
+        },
+      });
+      return {
+        id: found.id,
+        name: updated.name,
+        default_for_new_agents: updated.defaultForNewAgents,
+        version: updated.version,
+        changed,
+        url: `${base}/settings/skills`,
+      };
     },
   );
 
