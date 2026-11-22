@@ -268,3 +268,45 @@ test("ambiguous legacy lock with unexpected files is never force-removed", async
   expect(await new Response(p.stderr).text()).toContain("unverified_legacy_global_lock");
   expect(readFileSync(join(legacy, "unknown-extra"), "utf8")).toBe("KEEP UNKNOWN");
 });
+
+test("unknown sibling in legacy slot is preserved before any dead-owner cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-slot-extra-"));
+  dirs.push(root);
+  const slot = join(root, "host-state", "ci-slots", "slot-1.lock");
+  mkdirSync(slot, { recursive: true });
+  writeFileSync(join(slot, "owner"), "pid=999999\ndir=old\n");
+  writeFileSync(join(slot, "unknown-evidence"), "DO NOT DELETE");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_host_slot");
+  expect(readFileSync(join(slot, "unknown-evidence"), "utf8")).toBe("DO NOT DELETE");
+  expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});
+
+test("unknown sibling in worktree lock is preserved before dead-owner cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-worktree-extra-"));
+  dirs.push(root);
+  mkdirSync(join(root, "candidate"), { recursive: true });
+  const lock = worktreeLock(root, "candidate");
+  mkdirSync(lock, { recursive: true });
+  writeFileSync(join(lock, "owner"), "pid=999999\ndir=old\n");
+  writeFileSync(join(lock, "foreign-writer-log"), "KEEP USER DATA");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_worktree_lock");
+  expect(readFileSync(join(lock, "foreign-writer-log"), "utf8")).toBe("KEEP USER DATA");
+  expect(await new Response(p.stdout).text()).not.toContain("FORBIDDEN");
+});
+
+test("ambiguous transition-lock directory rejects without removing unknown data", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-transition-extra-"));
+  dirs.push(root);
+  const legacy = join(root, "host-state", "parallel-worktrees", "old-run.lock");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, "owner"), "pid=999999\ndir=old\n");
+  writeFileSync(join(legacy, "unverified-file"), "KEEP TRANSITION EVIDENCE");
+  const p = runScoped(root, "candidate", "echo FORBIDDEN", "20");
+  expect(await p.exited).toBe(2);
+  expect(await new Response(p.stderr).text()).toContain("unverified_legacy_transition_lock");
+  expect(readFileSync(join(legacy, "unverified-file"), "utf8")).toBe("KEEP TRANSITION EVIDENCE");
+});

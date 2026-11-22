@@ -156,9 +156,10 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
     active_slots = 0
     slot_root = root / "ci-slots"
     for p in slot_root.glob("slot-*.lock"):
-        remove_provably_dead(p, recovered)
+        # Validate all legacy contents before ANY unlink or quarantine.
         if unverified_owner(p):
             raise ValueError("unverified_host_slot: manual reconciliation required: " + str(p))
+        remove_provably_dead(p, recovered)
         if p.exists():
             active_slots += 1
 
@@ -169,9 +170,10 @@ def status(root, scope, worktree, max_parallel, legacy_excluded, recovered):
 
 def acquire(root, scope, worktree, max_parallel, pid, label, legacy_excluded):
     recovered = []
-    remove_provably_dead(worktree, recovered)
+    # Refuse ambiguous owner data before considering a dead-owner cleanup.
     if unverified_owner(worktree):
         raise ValueError("unverified_worktree_lock: manual reconciliation required: " + str(worktree))
+    remove_provably_dead(worktree, recovered)
     if pathlib.Path(worktree).exists():
         old = record(worktree)
         print("BUSY=worktree busy, pid=" + old.get("pid", "unknown"))
