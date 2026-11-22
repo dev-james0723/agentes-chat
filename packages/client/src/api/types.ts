@@ -4516,6 +4516,11 @@ export interface SkillSettings {
   agentsImprove: boolean;
 }
 
+/** Separate from tool approvals: only independently verified, agent-local learning. */
+export interface LearningApprovalSettings {
+  autoApproveLearning: boolean;
+}
+
 /** A skill an agent made from its own how-tos (ADR 0120), archived ones too. */
 export interface LearnedSkill extends Skill {
   body: string;

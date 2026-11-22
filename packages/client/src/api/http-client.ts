@@ -140,6 +140,7 @@ import type {
   JoinClaim,
   JoinRequest,
   LearnedSkill,
+  LearningApprovalSettings,
   Machine,
   MachineAccess,
   MachineAccount,
@@ -1389,6 +1390,9 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       settings: (orgId) => request<SkillSettings>(`${org(orgId)}/skill-settings`),
       saveSettings: (orgId, input) =>
         request<SkillSettings>(`${org(orgId)}/skill-settings`, { method: "PUT", json: input }),
+      learningSettings: (orgId) => request<LearningApprovalSettings>(`${org(orgId)}/learning-approval-settings`),
+      saveLearningSettings: (orgId, input) =>
+        request<LearningApprovalSettings>(`${org(orgId)}/learning-approval-settings`, { method: "PUT", json: input }),
     },
     access: {
       get: (orgId, agentId) => request<AgentAccess>(`${org(orgId)}/agents/${enc(agentId)}/access`),

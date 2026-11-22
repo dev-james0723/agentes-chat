@@ -392,6 +392,8 @@ export const organizationSettings = pgTable("organization_settings", {
    * `skills.agents_improve` wins.
    */
   agentsImproveSkills: boolean().notNull().default(true),
+  /** Narrow opt-in: verified agent-local learning may be accepted by system policy, never a tool approval. */
+  autoApproveLearning: boolean().notNull().default(false),
   /**
    * Who the workspace is for (ADR 0159): `team` or `personal`. It changes defaults, words and what is in sight, never
    * what exists or who may do what.

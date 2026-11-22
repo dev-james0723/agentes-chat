@@ -9839,6 +9839,10 @@ export const ptBR = {
     lastUpdate: "Atualizada do link {{when}}",
     undoUpdate: "Desfazer atualização",
     undone: "{{name}} voltou para a versão {{version}}.",
+    autoApproveLearning: "Aprovar automaticamente melhorias de aprendizado verificadas",
+    autoApproveLearningHelp:
+      "Agentes podem aplicar melhorias curtas e verificadas repetidamente às próprias instruções sem pedir aprovação. Exige correção de uma pessoa ou testes/CI bem-sucedidos e revisão de segurança independente. Nunca aprova ferramentas, permissões, scripts ou lançamentos.",
+    autoApproveLearningFailed: "Não foi possível alterar a política de aprovação do aprendizado.",
     agentsImprove: "Agentes melhoram as skills sozinhos",
     agentsImproveHelp:
       "Quando um agente acha uma skill errada ou faltando um passo, ele corrige na hora: uma versão nova que dá para desfazer, e quem fez a skill fica sabendo.",

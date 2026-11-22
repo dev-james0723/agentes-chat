@@ -70,6 +70,7 @@ import {
   itemWords,
   REFUSED_CHANGE,
 } from "./items";
+import { autoLearningEnabled, safeForAutomaticLearning } from "./learning-auto-approval";
 
 const {
   agentRuns,
@@ -157,7 +158,7 @@ export function withLearnedBullet(text: string, bullet: string) {
  * Notifies who can decide. Returns null when the item isn't promotable.
  */
 export async function proposeFromItem(
-  deps: { db: Database; pubsub?: PubSub },
+  deps: { db: Database; pubsub?: PubSub; judge?: Judge },
   item: ContextItem,
 ): Promise<Proposal | null> {
   if (!isPromotable(item)) return null;
@@ -199,14 +200,45 @@ export async function proposeFromItem(
     return null;
   }
   const evidence = item.evidence.map((e) => e.type).join(", ");
+  // Autonomous admission is opt-in, narrow, verified, and independent of the proposing agent.
+  // Even the person who asked cannot turn this into arbitrary self-approval: no tools or scopes here.
+  const autoCandidate =
+    target === "agent_instructions" &&
+    agentId &&
+    (await autoLearningEnabled(db, item.orgId)) &&
+    (await safeForAutomaticLearning(db, item, deps.judge));
   const [proposal] = await db.transaction(async (tx) => {
     const claimed = await tx
       .update(contextItems)
       .set({ proposedAt: new Date() })
-      .where(and(eq(contextItems.id, item.id), eq(contextItems.status, "active")))
+      .where(and(eq(contextItems.id, item.id), eq(contextItems.status, "active"), isNull(contextItems.proposedAt)))
       .returning({ id: contextItems.id });
     if (claimed.length === 0) return [];
-    return tx
+    let auto = false;
+    if (autoCandidate && agentId) {
+      // Serialize policy-off against in-flight automatic decisions (the kill switch must win).
+      const [policy] = await tx
+        .select({ enabled: schema.organizationSettings.autoApproveLearning })
+        .from(schema.organizationSettings)
+        .where(eq(schema.organizationSettings.orgId, item.orgId))
+        .for("share");
+      if (policy?.enabled) {
+        const [current] = await tx
+          .select({ instructions: agents.instructions })
+          .from(agents)
+          .where(
+            and(
+              eq(agents.id, agentId),
+              eq(agents.orgId, item.orgId),
+              isNull(agents.archivedAt),
+              isNull(agents.deletedAt),
+            ),
+          )
+          .for("update");
+        auto = !!current && sha256(current.instructions) === baseHash;
+      }
+    }
+    const [created] = await tx
       .insert(contextProposals)
       .values({
         orgId: item.orgId,
@@ -218,11 +250,39 @@ export async function proposeFromItem(
         diff,
         rationale: `Seen ${item.recurrence}× (confidence ${item.confidence.toFixed(2)}, evidence: ${evidence || "none"}).`,
         itemIds: [item.id],
+        ...(auto ? { status: "accepted" as const, decidedAt: new Date() } : {}),
       })
       .returning();
+    if (auto && created && agentId) {
+      await tx
+        .update(agents)
+        .set({ instructions: proposedText, updatedAt: new Date() })
+        .where(and(eq(agents.id, agentId), eq(agents.orgId, item.orgId)));
+      await tx
+        .update(contextItems)
+        .set({ status: "archived", updatedAt: new Date() })
+        .where(and(eq(contextItems.id, item.id), eq(contextItems.orgId, item.orgId)));
+      await enqueue(tx, {
+        orgId: item.orgId,
+        kind: "search.index",
+        payload: { kind: "context_item", sourceId: item.id },
+      });
+      await recordAudit(tx, {
+        orgId: item.orgId,
+        actor: { type: "system", id: null },
+        action: "learning.proposal_auto_accepted",
+        target: { type: "agent", id: agentId },
+        details: { proposalId: created.id, itemId: item.id, policy: "verified_agent_local_lesson_v1" },
+      });
+    }
+    return created ? [created] : [];
   });
   if (!proposal) return null;
-  await announce(deps, [proposal]);
+  if (proposal.status === "accepted") {
+    invalidateOrg(item.orgId);
+    if (agentId) caches.agents.delete(`${item.orgId}:${agentId}`);
+    await publishAgentsChanged(deps.pubsub, item.orgId);
+  } else await announce(deps, [proposal]);
   return proposal;
 }
 

@@ -13,6 +13,8 @@ import {
   useCatalog,
   useConnections,
   useGitHubRepos,
+  useLearningApprovalSettings,
+  useSetLearningApprovalSettings,
   useSkill,
   useSkillAction,
   useSkillSettings,
@@ -209,6 +211,9 @@ export function SkillsSection({
   const list = skills.data ?? [];
   const usage = useSkillUsage(org.id, admin && list.length > 0);
   const settings = useSkillSettings(org.id, admin);
+  const learning = useLearningApprovalSettings(org.id, admin);
+  const learningAction = useSetLearningApprovalSettings(org.id);
+  const toast = useToast();
   const action = useSkillAction(org.id);
   const look = useRightHandLook();
   if (!admin) return null;
@@ -242,6 +247,29 @@ export function SkillsSection({
             <label htmlFor="skills-agents-improve">{t("skills.agentsImprove")}</label>
             <InfoHint name={t("common.about", { label: t("skills.agentsImprove") })}>
               {t("skills.agentsImproveHelp")}
+            </InfoHint>
+          </span>
+        </span>
+      )}
+      {learning.data && !learning.isError && (
+        <span className="row" style={{ gap: 10, alignItems: "center" }}>
+          <Switch
+            id="skills-auto-approve-learning"
+            checked={learning.data.autoApproveLearning}
+            disabled={learningAction.isPending}
+            onCheckedChange={(on) =>
+              learningAction.mutate(
+                { autoApproveLearning: on },
+                {
+                  onError: () => toast.show(t("skills.autoApproveLearningFailed"), "error"),
+                },
+              )
+            }
+          />
+          <span className="ac-hintline">
+            <label htmlFor="skills-auto-approve-learning">{t("skills.autoApproveLearning")}</label>
+            <InfoHint name={t("common.about", { label: t("skills.autoApproveLearning") })}>
+              {t("skills.autoApproveLearningHelp")}
             </InfoHint>
           </span>
         </span>

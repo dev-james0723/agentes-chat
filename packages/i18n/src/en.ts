@@ -9824,6 +9824,10 @@ export const en = {
     lastUpdate: "Updated from its link {{when}}",
     undoUpdate: "Undo update",
     undone: "{{name}} is back to version {{version}}.",
+    autoApproveLearning: "Auto-accept verified learning improvements",
+    autoApproveLearningHelp:
+      "Agents can adopt short, repeatedly verified improvements to their own instructions without asking. Requires human correction or successful test/CI evidence and independent safety review. Never approves tools, permissions, scripts, or releases.",
+    autoApproveLearningFailed: "Could not change the learning approval policy.",
     agentsImprove: "Agents improve skills by themselves",
     agentsImproveHelp:
       "When an agent finds a skill wrong or missing a step, it fixes it right away: a new version you can undo, and whoever made the skill is told.",
