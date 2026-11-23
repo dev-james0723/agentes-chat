@@ -1,3 +1,4 @@
+import type { OpenRouterAutoPolicy } from "./openrouter-auto";
 /**
  * Provider-neutral model interface. Only the Model Gateway
  * (`@agenteschat/engine`, `createModelGateway`) calls it: no other code talks
@@ -140,6 +141,8 @@ export interface ModelRequest {
   notes?: { at: number; text: string };
   /** One admitted credit attempt dispatches once; disables SDK and adapter retries. Never sent upstream. */
   noTransportRetries?: true;
+  /** Internal gateway-supplied, separately admitted policy for dynamic OpenRouter routers. */
+  openRouterAuto?: OpenRouterAutoPolicy;
   signal?: AbortSignal;
 }
 

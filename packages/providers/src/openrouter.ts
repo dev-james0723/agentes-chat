@@ -10,6 +10,7 @@ import {
   usdToNanoUsd,
 } from "./catalog";
 import { openAIError, saidIn } from "./openai";
+import { autoRouterKeyWithinCap, autoRouterParameters, isOpenRouterAutoModel } from "./openrouter-auto";
 import {
   type ContentBlock,
   deniedError,
@@ -407,9 +408,9 @@ function toMessages(request: ModelRequest, claude: boolean): Message[] {
   return out;
 }
 
-function toBody(request: ModelRequest, compatible: boolean) {
+function toBody(request: ModelRequest, compatible: boolean, auto?: ReturnType<typeof autoRouterParameters>) {
   const claude = !compatible && isClaude(request.model);
-  const reasoning = compatible ? undefined : reasoningFor(request.effort, modelInfo(request.model));
+  const reasoning = compatible || auto ? undefined : reasoningFor(request.effort, modelInfo(request.model));
   return {
     model: request.model,
     messages: toMessages(request, claude),
@@ -439,6 +440,8 @@ function toBody(request: ModelRequest, compatible: boolean) {
     ...(compatible ? { stream_options: { include_usage: true } } : {}),
     // Claude's automatic caching also covers the growing conversation of a tool loop.
     ...(claude ? { cache_control: { type: "ephemeral" as const } } : {}),
+    // Keep the router-selected effort and the bounded upstream model/price policy.
+    ...(auto ?? {}),
   };
 }
 
@@ -539,6 +542,38 @@ export function createOpenRouterProvider(
     id: compatible?.id ?? "openrouter",
     async stream(input, { apiKey, onDelta }): Promise<ModelResult> {
       const request = laidOut(input);
+      let auto: ReturnType<typeof autoRouterParameters> | undefined;
+      if (isOpenRouterAutoModel(request.model)) {
+        if (compatible) throw new ProviderError("OpenRouter Auto requires the official OpenRouter endpoint", false);
+        try {
+          auto = autoRouterParameters(request.openRouterAuto);
+        } catch {
+          throw new ProviderError("OpenRouter Auto requires an explicit bounded routing policy", false);
+        }
+        // A provider-side monthly credit limit is an additional independent safety net,
+        // not a replacement for the gateway's transactional organization reservation.
+        const cap = request.openRouterAuto?.monthlyCapUsd;
+        try {
+          const res = await (options.fetch ?? fetch)(`${OPENROUTER_API}/key`, {
+            headers: { authorization: `Bearer ${apiKey}`, ...ATTRIBUTION },
+            redirect: "error",
+            signal: AbortSignal.any([...(request.signal ? [request.signal] : []), AbortSignal.timeout(5000)]),
+          });
+          if (!res.ok || cap === undefined || !autoRouterKeyWithinCap(await res.json(), cap)) {
+            throw new Error("key cap not verified");
+          }
+        } catch {
+          // Never return the upstream body, key label, key or network exception here.
+          throw new ProviderError(
+            "OpenRouter Auto key monthly limit is unavailable or outside the approved cap",
+            false,
+          );
+        }
+      } else if (request.openRouterAuto) {
+        throw new ProviderError("OpenRouter Auto policy requires an official router model", false);
+      } else if (!compatible && request.model.startsWith("openrouter/")) {
+        throw new ProviderError("Unsupported OpenRouter router alias", false);
+      }
       const partial: PartialUsage = {
         inputTokens: null,
         cacheReadTokens: 0,
@@ -557,11 +592,11 @@ export function createOpenRouterProvider(
           apiKey,
           baseURL: compatible?.baseURL ?? OPENROUTER_API,
           ...(compatible ? {} : { defaultHeaders: ATTRIBUTION }),
-          maxRetries: options.maxRetries ?? 2,
+          maxRetries: auto || request.noTransportRetries ? 0 : (options.maxRetries ?? 2),
           fetch: options.fetch,
         });
         const stream = await client.chat.completions.create(
-          toBody(request, compatible !== undefined) as unknown as ChatCompletionCreateParamsStreaming,
+          toBody(request, compatible !== undefined, auto) as unknown as ChatCompletionCreateParamsStreaming,
           { signal: request.signal },
         );
         for await (const raw of stream) {
