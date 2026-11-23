@@ -391,6 +391,23 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
     'python\\u00adw -c "print(1)"',
     "run validate_receipts.py after deploying",
     "sh script.sh",
+    "pythonw <<END\nprint(1)\nEND",
+    "py -3",
+    "py /tmp/evil",
+    "py -3",
+    "pythonw -3",
+    "deno run app",
+    "tsx watch server",
+    "tsx watch serverpy /tmp/evil",
+    "pythonw <<END",
+    "[open](javascript:alert(1))",
+    "Go to javascript:alert(1)",
+    "javascript:alert(1)",
+    "run app",
+    "execute app",
+    "watch app",
+    "open a terminal",
+    "Launch this process",
   ];
   for (const body of risky) {
     await f.db
@@ -413,6 +430,68 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
   expect(grants).toHaveLength(1);
 });
 
+test("auto share rejects combining marks and unlisted letter-only commands without a peer grant or wiki copy", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const ctx = await runAt(f.agent.id);
+  const joiner = "\u034F";
+  const blocked = [
+    `d${joiner}eno`,
+    `t${joiner}sx`,
+    `p${joiner}y`,
+    `pythonw <${joiner}<END`,
+    `j${joiner}avascript link`,
+    "[open](javascript:alert(1))",
+    "deno run app",
+    "tsx watch server",
+    "py -3",
+    "pythonw <<END",
+    "pytest",
+    "py3",
+    "go test",
+    "cargo build",
+    "gcc app",
+    "nc host",
+    "rustc",
+    "elixir hello once.",
+    "cargo test the package twice.",
+    "go test the package twice.",
+    "gcc hello.c then read the binary.",
+    "clang main.c twice.",
+    "rustc main.rs twice.",
+    "swiftc App.swift.",
+    "dotnet build twice.",
+    "gradle test twice.",
+    "mvn test twice.",
+    "mix test twice.",
+    "julia hello once.",
+    "tclsh hello once.",
+    "pytest quietly twice.",
+    "Rscript analysis once.",
+    "sqlite3 data.db twice.",
+    "openssl enc twice.",
+    "make all targets.",
+    "ghc Main twice.",
+    "stack build twice.",
+    "phpunit quietly twice.",
+    "cmake build twice.",
+    "ninja build twice.",
+  ];
+  for (const body of blocked) {
+    await f.db
+      .update(schema.skills)
+      .set({ body, description: "Verified release checklist." })
+      .where(eq(schema.skills.id, skill.id));
+    const result = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+    expect(result.isError).toBe(true);
+    const grants = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+    expect(grants).toHaveLength(1);
+    expect(grants.some((row) => row.agentId === peers[0]!.id)).toBe(false);
+    const wiki = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
+    expect(wiki.some((page) => page.source?.id === skill.id)).toBe(false);
+  }
+});
+
 test("automatic promotion audits partially delivered shares after a Wiki failure", async () => {
   const peers = await fixture(["cecil"]);
   const { skill } = await promotedSkill(async () => {
@@ -429,6 +508,28 @@ test("automatic promotion audits partially delivered shares after a Wiki failure
   expect(partials).toHaveLength(1);
   expect(partials[0]?.details.reason).toBe("partial_delivery");
   expect(partials[0]?.details.wikiStatus).toBe("failed");
+  expect(partials[0]?.targetId).toBe(skill.id);
+});
+
+test("direct native skill sharing also audits a partial Wiki delivery", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const caller = await runAt(f.agent.id);
+  await f.db.execute(sql.raw("ALTER TABLE wiki_pages RENAME TO wiki_pages_offline_for_qa"));
+  const result = await invoke(caller, "share_learned_skill", {
+    name: skill.slug,
+    agents: [peers[0]!.handle],
+  });
+  expect(result.isError).toBeFalsy();
+  const receipt = result.data as { wiki?: { status?: string }; assigned?: unknown[] };
+  expect(receipt.wiki?.status).toBe("failed");
+  expect(receipt.assigned).toHaveLength(1);
+  const partials = await f.db
+    .select()
+    .from(schema.auditLog)
+    .where(eq(schema.auditLog.action, "skill.exchange_unverified"));
+  expect(partials).toHaveLength(1);
+  expect(partials[0]?.details.reason).toBe("partial_delivery");
   expect(partials[0]?.targetId).toBe(skill.id);
 });
 

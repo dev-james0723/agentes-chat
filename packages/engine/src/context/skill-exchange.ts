@@ -58,18 +58,62 @@ const COMMAND_WORD =
 const EXECUTABLE_MARKUP =
   /(?:\x60|~{3,}|<[^>]+>|(?:https?|ftp|file):\/\/|www\.|\$\(|\$\{|&&|\|\||;\s*(?:[a-z$]{1,18})\b|\\u(?:200b|200c|200d|2060))/iu;
 // Do not rely on enumerating interpreter binaries: newer/aliased commands
-// can appear with their own short switches. Executable arguments, file
-// extensions and soft-hyphen evasions all require explicit human review.
+// can appear with their own short switches. Heredocs, numeric switches,
+// unquoted paths, file extensions and soft-hyphen evasions all require
+// explicit human review.
 const COMMAND_SHAPE =
-  /(?:\s--?[a-zA-Z]|\s\/[a-zA-Z](?=\s|$)|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
+  /(?:<<|(?:^|\s)--?\d|(?:^|\s)\/[A-Za-z0-9._~/-]+|\s--?[a-zA-Z]|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
+// Fail-closed low-risk prose gate for unattended public Skill sharing.
+// Unlike a filename/interpreter denylist, refuse command verbs, executable
+// language runtimes, non-http schemes and code punctuation. Technical guides
+// that require a command, URI or expression remain installable only by a
+// human-reviewed Skill path. This is not a semantic safety classifier.
+const EXECUTION_LANGUAGE =
+  /(?:^|[^\p{L}\p{N}_])(?:run|execute|launch|install|download|watch|spawn|invoke|compile|interpret|terminal|shell|command|script|program|runtime|pythonw?|py|deno|tsx|ts-node|tsnode|bunx|ruby|nodejs|java|javascript|vbscript|applescript|cscript|wscript|powershell|pwsh|cmd|busybox|bash|dash|ksh|zsh|fish|perl|lua|awk|sed|npm|npx|pip|uv|uvx|chmod|chown|eval|git|docker|curl|wget)\b/iu;
+const EXECUTABLE_URI = /\b[a-z][a-z0-9+.-]{1,30}:\S/iu;
+// Reject every combining mark, including U+034F, before the word match.
+// A mark must not split deno, tsx, py, a heredoc or javascript into a passing body.
+const COMBINING_MARK = /\p{M}/u;
+// A line made only of letter or letter-digit tokens is a command. This is not
+// an extension of the name list: rustc is absent from that list and still fails.
+const BARE_LETTER_COMMAND_LINE = /^(?:[a-z][a-z0-9]*)(?:\s+[a-z][a-z0-9]*)*$/i;
+const ALNUM_COMMAND_TOKEN = /(?:^|[^\p{L}\p{N}_])\p{L}+\d/u;
+const PROSE_ONLY = /[^\p{L}\p{N}\p{Zs}\n.,:!?*#-]/u;
+const hasBareLetterCommand = (text: string) =>
+  text.split(/\r?\n/).some((line) => BARE_LETTER_COMMAND_LINE.test(line.trim()));
+// A denylist cannot enumerate arbitrary executable names. Unattended sharing
+// is restricted to a small, auditable procedural-language grammar. Unknown
+// imperatives, headings and command-looking fragments go to human review.
+const SAFE_PROCEDURE_START =
+  /^(?:check|verify|validate|compare|identify|record|retain|preserve|review|confirm|summarize|explain|report|assess|ensure|avoid|prefer|treat|keep|consider|describe|note|reconcile|inspect|repeat|verified|when|if|for|before|after|during|this|each|every|only|never|always|use when|do not)(?:\s|[.!?:])/iu;
+const SAFE_HEADING =
+  /^#{1,3}\s+(?:when to use|steps|method|pitfalls|verification|checklist|notes|overview|scope|purpose|safeguards)$/iu;
+const structuredSafeProse = (text: string) =>
+  text.split(/\r?\n/).every((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || SAFE_HEADING.test(trimmed)) return true;
+    const item = trimmed.replace(/^(?:[-*]\s+|[0-9]+[.)]\s+)/u, "");
+    return SAFE_PROCEDURE_START.test(item) && /[.!?]$/u.test(item);
+  });
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
+  if (
+    value.trim().length === 0 ||
+    value.length > maxLength ||
+    looksLikeSecret(value) ||
+    COMBINING_MARK.test(value) ||
+    COMBINING_MARK.test(text)
+  )
+    return false;
   return (
-    value.trim().length > 0 &&
-    value.length <= maxLength &&
-    !looksLikeSecret(value) &&
     !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
+    !hasBareLetterCommand(text) &&
+    structuredSafeProse(text) &&
+    !ALNUM_COMMAND_TOKEN.test(text) &&
     !COMMAND_WORD.test(text) &&
+    !EXECUTION_LANGUAGE.test(text) &&
+    !EXECUTABLE_URI.test(text) &&
+    !PROSE_ONLY.test(text) &&
     !COMMAND_SHAPE.test(text) &&
     !EXECUTABLE_MARKUP.test(text)
   );
@@ -550,5 +594,29 @@ export async function shareLearnedSkill(
       });
     }
   }
+  // Record an incomplete exchange for BOTH automatic promotion and an
+  // explicit native share_learned_skill call. The durable Skill grant may
+  // already exist; do not let a failed Wiki or peer handoff disappear from
+  // audit history, or report it as fully delivered.
+  const pendingWiki = receipt.wiki.status === "failed";
+  const pendingPeers = receipt.peerNotes
+    .filter((n) => n.status === "failed" || n.status === "deduplicated")
+    .map((n) => ({ handle: n.handle, status: n.status }));
+  if (pendingWiki || pendingPeers.length > 0)
+    await recordAudit(db, {
+      orgId,
+      actor: { type: "agent", id: agentId },
+      action: "skill.exchange_unverified",
+      target: { type: "skill", id: receipt.skillId },
+      runId,
+      channelId: ctx.channelId,
+      onBehalfOfUserId: personId,
+      details: {
+        reason: "partial_delivery",
+        wikiStatus: receipt.wiki.status,
+        pendingPeers,
+        assignedCount: receipt.assigned.length,
+      },
+    });
   return receipt;
 }

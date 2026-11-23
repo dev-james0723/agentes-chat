@@ -796,7 +796,7 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
   if (promoted && usedIn && shareWith.length > 0 && (await autoSkillSharingEnabled(db, orgId))) {
     try {
       const { shareLearnedSkill } = await import("./skill-exchange");
-      const receipt = await shareLearnedSkill(
+      await shareLearnedSkill(
         { pubsub: deps.pubsub },
         {
           db,
@@ -809,27 +809,6 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
         },
         { name, handles: shareWith },
       );
-      // The Skill was promoted, but a Wiki or a consultation may have failed
-      // after durable peer grants. Automatic sharing must leave a recovery
-      // audit instead of silently treating that partial result as delivered.
-      const pendingWiki = receipt.wiki.status === "failed";
-      const pendingPeers = receipt.peerNotes
-        .filter((n) => n.status === "failed" || n.status === "deduplicated")
-        .map((n) => ({ handle: n.handle, status: n.status }));
-      if (pendingWiki || pendingPeers.length) {
-        await recordAudit(db, {
-          orgId,
-          actor: { type: "agent", id: agentId },
-          action: "skill.exchange_unverified",
-          target: { type: "skill", id: receipt.skillId },
-          details: {
-            reason: "partial_delivery",
-            wikiStatus: receipt.wiki.status,
-            pendingPeers,
-            assignedCount: receipt.assigned.length,
-          },
-        });
-      }
     } catch (error) {
       await recordAudit(db, {
         orgId,
