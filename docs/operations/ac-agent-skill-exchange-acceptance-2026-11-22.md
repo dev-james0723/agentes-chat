@@ -84,3 +84,35 @@ All tests use isolated PGlite and simulated structured-summary model.
 No production migrations or deployment, provider changes, global scope
 expansion, independent GitHub approval, or branch-protection bypass occurred.
 Independent re-review and protected parent merge remain REQUIRED.
+
+## Jacob third-round regression remediation — 2026-11-23
+Independent native re-review rejected a20989fe because a blacklist
+of interpreter names misses aliases such as pythonw, py, dash, ksh,
+cmd /c, lua -e, jruby, perl6, deno and Unicode soft-hyphen evasion.
+It also found caller's agent authority was reread without a matching
+share lock inside the grant transaction.
+
+This candidate adds a general command-shape denial of shell-style
+switches, slash switches, known executable file suffixes, shell quote
+substrings and soft-hyphen / hyphen-variant obfuscation. New RED
+regressions were observed on prior SHA; the expanded gateway
+regression now has 48/48 assertions (0 fail) across bodies and
+descriptions. This intentionally fail-closed checker is not a
+proof that arbitrary prose has no unsafe semantic instructions:
+genuine technical or executable Skills require human review.
+
+The share transaction now selects and locks both the creator/caller
+row and all recipients in stable agent-ID order before the final
+callableAgents/canTalkTo and owner authority checks. Thus revoking
+the caller's autonomyBrakes during grant cannot bypass the
+in-transaction validation. The transaction and participant guard
+do not waive a separate human permission review.
+
+Evidence on M3 Max:
+~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/
+pr82-round3-unsafe-red.log, pr82-round3-unsafe-green.log,
+pr82-round3-biome.log, pr82-round3-tsc.log and
+pr82-round3-five-suites.log with receipt (80 PASS, 0 FAIL, 375
+assertions). Independent re-review is still required for the new
+exact SHA; no protected CI status, merge, production migration or
+autonomous Skill activation is implied.

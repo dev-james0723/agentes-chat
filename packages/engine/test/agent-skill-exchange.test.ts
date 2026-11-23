@@ -379,6 +379,18 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
     "Shell substitution: $(whoami)",
     "Open a file://private/var/tmp/path",
     "Use py\\u200bthon3 -c as an obfuscated command",
+    'pythonw -c "print(1)"',
+    'py -c "print(1)"',
+    "dash -c 'echo hi'",
+    "ksh -c 'echo hi'",
+    "cmd /c echo hi",
+    "lua -e 'print(1)'",
+    "jruby -e 'puts 1'",
+    "perl6 -e 'say 1'",
+    "deno run --allow-all main.ts",
+    'python\\u00adw -c "print(1)"',
+    "run validate_receipts.py after deploying",
+    "sh script.sh",
   ];
   for (const body of risky) {
     await f.db

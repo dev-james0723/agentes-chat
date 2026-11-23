@@ -57,6 +57,11 @@ const COMMAND_WORD =
   /(?:^|[^\p{L}\p{N}_])(?:sudo|curl|wget|bash|zsh|sh|fish|python(?:\d+(?:\.\d+)?)?|node(?:js)?|npm|npx|bun|docker|rm|git|powershell|pwsh|osascript|perl|ruby|php|chmod|chown|dd|eval|exec|scp|ssh|kubectl|pip(?:\d+)?|uvx|awk|sed|xargs|launchctl|systemctl)\b/iu;
 const EXECUTABLE_MARKUP =
   /(?:\x60|~{3,}|<[^>]+>|(?:https?|ftp|file):\/\/|www\.|\$\(|\$\{|&&|\|\||;\s*(?:[a-z$]{1,18})\b|\\u(?:200b|200c|200d|2060))/iu;
+// Do not rely on enumerating interpreter binaries: newer/aliased commands
+// can appear with their own short switches. Executable arguments, file
+// extensions and soft-hyphen evasions all require explicit human review.
+const COMMAND_SHAPE =
+  /(?:\s--?[a-zA-Z]|\s\/[a-zA-Z](?=\s|$)|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
   return (
@@ -65,6 +70,7 @@ const safeProse = (value: string, maxLength: number) => {
     !looksLikeSecret(value) &&
     !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
     !COMMAND_WORD.test(text) &&
+    !COMMAND_SHAPE.test(text) &&
     !EXECUTABLE_MARKUP.test(text)
   );
 };
@@ -297,23 +303,33 @@ export async function shareLearnedSkill(
       )
     )
       throw new ForbiddenError("The recipient's native load_skill access changed during sharing.");
-    const recipients = await tx
+    // Lock BOTH the caller and peers, in stable ID order. The inter-agent
+    // call grant is stored on the caller; holding only recipient locks left
+    // a revoke window between the authority read and the assignment.
+    const participantIds = [...new Set([agentId, ...peers.map((p) => p.id)])].sort();
+    const participants = await tx
       .select()
       .from(agents)
       .where(
         and(
           eq(agents.orgId, orgId),
-          inArray(
-            agents.id,
-            peers.map((p) => p.id),
-          ),
+          inArray(agents.id, participantIds),
           isNull(agents.archivedAt),
           isNull(agents.deletedAt),
         ),
       )
+      .orderBy(agents.id)
       .for("share");
-    if (recipients.length !== peers.length || recipients.some((p) => p.ownerUserId !== personId))
-      throw new ForbiddenError("Recipient status changed while sharing.");
+    const currentCreator = participants.find((p) => p.id === agentId);
+    const recipients = participants.filter((p) => p.id !== agentId);
+    if (
+      participants.length !== participantIds.length ||
+      !currentCreator ||
+      currentCreator.ownerUserId !== personId ||
+      recipients.length !== peers.length ||
+      recipients.some((p) => p.ownerUserId !== personId)
+    )
+      throw new ForbiddenError("Caller or recipient authority changed while sharing.");
     // Recheck the current audience and the live inter-agent call permission
     // with recipients locked, not only at the earlier preflight.
     const refreshedAudience = viaAgent(await speakerFor(tx, orgId, personId));
