@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { listedModels, MODEL_CATALOG, modelForTier, modelInfo, setDiscoveredModels } from "@agenteschat/providers";
-import { brainModelForTier } from "../src/auto-model";
+import {
+  costNanoUsd,
+  listedModels,
+  MODEL_CATALOG,
+  modelForTier,
+  modelInfo,
+  setDiscoveredModels,
+} from "@agenteschat/providers";
+import { autoModelFor, brainModelForTier } from "../src/auto-model";
 import { brainModelId, brainModelOptions, normalizeBrainModel } from "../src/brain-settings";
 import { MODEL_METADATA_URL, parseProviderModels, refreshProviderModels } from "../src/model-discovery";
 
@@ -35,7 +42,7 @@ const respond = (data: unknown, status = 200): typeof fetch =>
 afterEach(() => setDiscoveredModels({}));
 
 describe("native model discovery", () => {
-  test("adds tool-capable, priced models under their true provider; newer JEV tiers win", () => {
+  test("adds tool-capable models for explicit selection without unverified automatic promotion", () => {
     const found = parseProviderModels(sample());
     expect(found).not.toBeNull();
     expect(Object.keys(found ?? {})).toEqual(["gpt-6.3-sol", "claude-opus-5-6", "gemini-4.1-flash", "grok-4.8"]);
@@ -53,15 +60,65 @@ describe("native model discovery", () => {
     expect(found?.["gpt-6.2-sol"]).toBeUndefined();
     setDiscoveredModels(found ?? {});
     expect(modelInfo("gpt-6.2-sol")).toBe(MODEL_CATALOG["gpt-6.2-sol"]);
-    expect(modelForTier("openai", "medium")).toBe("gpt-6.3-sol");
-    expect(modelForTier("anthropic", "large")).toBe("claude-opus-5-6");
-    expect(modelForTier("xai", "medium")).toBe("grok-4.8");
+    // Public metadata does not prove the linked credential can use the model.
+    // Explicit workspace choice can still opt in after provider entitlement is checked.
+    expect(modelForTier("openai", "medium")).toBe("gpt-6.2-sol");
+    expect(modelForTier("anthropic", "large")).toBe("claude-opus-5-5");
+    expect(modelForTier("xai", "medium")).toBe("grok-4.7");
+    expect(autoModelFor("openai", "medium", { medium: "gpt-6.3-sol" })).toBe("gpt-6.3-sol");
     expect(listedModels().map(([id]) => id)).toContain("gpt-6.3-sol");
     expect(brainModelOptions("codex").map((o) => o.value)).toContain("gpt-6.3-sol");
     expect(brainModelOptions("claude_code").map((o) => o.value)).toContain("claude-opus-5-6");
-    expect(brainModelId("claude_code", "opus")).toBe("claude-opus-5-6");
+    expect(brainModelId("claude_code", "opus")).toBe("claude-opus-5-5");
     expect(brainModelForTier("claude_code", "large")).toBe("opus");
     expect(normalizeBrainModel("claude_code", "claude-opus-5-6")).toBe("claude-opus-5-6");
+  });
+
+  test("keeps batch discounts out of context prices and bounds multi-context costs", () => {
+    const doc = sample();
+    const tierCost = {
+      input: 2,
+      output: 8,
+      cache_read: 0.5,
+      tiers: [
+        { tier: { type: "batch", size: 32_000 }, input: 0.2, output: 1, cache_read: 0.05 },
+        { tier: { type: "context", size: 200_000 }, input: 4, output: 16, cache_read: 0.4 },
+        { tier: { type: "context", size: 350_000 }, input: 6, output: 24, cache_read: 0.6 },
+      ],
+    };
+    const parsed = parseProviderModels({
+      ...doc,
+      openai: {
+        models: {
+          ...doc.openai.models,
+          "gpt-6.3-sol": native("gpt-6.3-sol", "GPT-6.3 Sol", "2026-11-20", tierCost),
+        },
+      },
+    });
+    expect(parsed?.["gpt-6.3-sol"]?.longContext).toEqual({
+      aboveInputTokens: 200_000,
+      prices: { input: 6000, output: 24000, cacheRead: 600, cacheWrite: 12000 },
+    });
+    setDiscoveredModels(parsed ?? {});
+    expect(
+      costNanoUsd("gpt-6.3-sol", { inputTokens: 200_001, outputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0 }),
+    ).toBe(200_001 * 6000 + 1000 * 24000);
+    // A batch-only entry must not be interpreted as an automatic long-context discount.
+    const batchOnly = parseProviderModels({
+      ...doc,
+      openai: {
+        models: {
+          ...doc.openai.models,
+          "gpt-6.3-sol": native("gpt-6.3-sol", "GPT-6.3 Sol", "2026-11-20", {
+            input: 2,
+            output: 8,
+            cache_read: 0.5,
+            tiers: [tierCost.tiers[0]],
+          }),
+        },
+      },
+    });
+    expect(batchOnly?.["gpt-6.3-sol"]?.longContext).toBeUndefined();
   });
 
   test("rejects unsupported, unpriced, non-tool, multimedia, invalid ID and empty feeds", () => {

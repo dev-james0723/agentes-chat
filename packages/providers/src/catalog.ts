@@ -532,9 +532,11 @@ export function nearestTier<T>(
 
 /** A provider's model for a tier (`nearestTier`); null when the provider has no tiered model. */
 export function modelForTier(provider: string, tier: ModelTier): string | null {
-  // Prefer newly released supported models in their own tier; the user's existing explicit model is unchanged.
+  // A public metadata feed does not establish this workspace's entitlement to a new model.
+  // Keep unverified native discoveries selectable by explicit choice, never an unprompted
+  // Automático/JEV or CLI brain default. OpenRouter's key-dependent list is unaffected.
   const own = listedModels()
-    .filter(([, m]) => m.provider === provider && m.tier)
+    .filter(([id, m]) => m.provider === provider && m.tier && !discovered.has(id))
     .sort((a, b) => (b[1].releasedAt ?? "").localeCompare(a[1].releasedAt ?? ""));
   return nearestTier(own, tier, ([, m]) => m.tier)?.[0] ?? null;
 }

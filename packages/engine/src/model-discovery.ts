@@ -77,15 +77,33 @@ function longContext(value: unknown, context: number): ModelInfo["longContext"] 
   const source = record(value);
   const tiers = source?.tiers;
   if (!Array.isArray(tiers)) return undefined;
+  let chosen: ModelInfo["longContext"] | undefined;
   for (const raw of tiers) {
     const tier = record(raw);
-    const threshold = numeric(record(tier?.tier)?.size);
+    const thresholdInfo = record(tier?.tier);
+    // A batch, request, modality or other discount is not a long-context price.
+    if (thresholdInfo?.type !== "context") continue;
+    const threshold = numeric(thresholdInfo.size);
     const adjusted = price(tier);
-    if (threshold !== null && threshold >= 32_000 && threshold < context && adjusted) {
-      return { aboveInputTokens: threshold, prices: adjusted };
+    if (threshold === null || threshold < 32_000 || threshold >= context || !adjusted) continue;
+    if (!chosen) {
+      chosen = { aboveInputTokens: threshold, prices: adjusted };
+      continue;
     }
+    // ModelInfo represents a single threshold. Multiple context tiers must
+    // conservatively reserve at least the costliest published rate at the
+    // earliest threshold, rather than underbill a higher-context request.
+    chosen = {
+      aboveInputTokens: Math.min(chosen.aboveInputTokens, threshold),
+      prices: {
+        input: Math.max(chosen.prices.input, adjusted.input),
+        output: Math.max(chosen.prices.output, adjusted.output),
+        cacheRead: Math.max(chosen.prices.cacheRead, adjusted.cacheRead),
+        cacheWrite: Math.max(chosen.prices.cacheWrite, adjusted.cacheWrite),
+      },
+    };
   }
-  return undefined;
+  return chosen;
 }
 
 function oneModel(id: string, raw: unknown, provider: ProviderId): ModelInfo | null {
