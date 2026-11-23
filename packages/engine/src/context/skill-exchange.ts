@@ -1,5 +1,5 @@
 import type { PubSub } from "@agenteschat/adapters";
-import { and, eq, inArray, isNull, schema } from "@agenteschat/db";
+import { and, eq, inArray, isNull, schema, sql } from "@agenteschat/db";
 import { canTalkTo, speakerFor, viaAgent } from "../audience";
 import { recordAudit } from "../audit";
 import { callableAgents } from "../brakes";
@@ -50,11 +50,25 @@ export interface SkillExchangeReceipt extends Record<string, unknown> {
   }>;
 }
 
-const safeBody = (body: string) =>
-  body.length > 0 &&
-  body.length <= 12_000 &&
-  !looksLikeSecret(body) &&
-  !/\x60{3}|<script\b|https?:\/\/|(?:^|\n)\s*(?:sudo|curl|wget|bash|python|node|npm|bun|docker|rm|git)\s/iu.test(body);
+// Automatic sharing accepts only plain procedural prose. Reject code-looking
+// text anywhere, including descriptions that reach public Wiki and Memory.
+// Technical Skills containing commands must use the existing human review.
+const COMMAND_WORD =
+  /(?:^|[^\p{L}\p{N}_])(?:sudo|curl|wget|bash|zsh|sh|fish|python(?:\d+(?:\.\d+)?)?|node(?:js)?|npm|npx|bun|docker|rm|git|powershell|pwsh|osascript|perl|ruby|php|chmod|chown|dd|eval|exec|scp|ssh|kubectl|pip(?:\d+)?|uvx|awk|sed|xargs|launchctl|systemctl)\b/iu;
+const EXECUTABLE_MARKUP =
+  /(?:\x60|~{3,}|<[^>]+>|(?:https?|ftp|file):\/\/|www\.|\$\(|\$\{|&&|\|\||;\s*(?:[a-z$]{1,18})\b|\\u(?:200b|200c|200d|2060))/iu;
+const safeProse = (value: string, maxLength: number) => {
+  const text = value.normalize("NFKC");
+  return (
+    value.trim().length > 0 &&
+    value.length <= maxLength &&
+    !looksLikeSecret(value) &&
+    !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
+    !COMMAND_WORD.test(text) &&
+    !EXECUTABLE_MARKUP.test(text)
+  );
+};
+const safeBody = (body: string, description: string) => safeProse(body, 12_000) && safeProse(description, 200);
 
 /**
  * Creator-controlled sharing of public non-executable first-version agent-origin Skills.
@@ -97,7 +111,7 @@ export async function shareLearnedSkill(
         isNull(skills.deletedAt),
       ),
     );
-  if (!candidate || !safeBody(candidate.body))
+  if (!candidate || !safeBody(candidate.body, candidate.description))
     throw new ForbiddenError("Only a verified, first-version, text-only Skill may be shared.");
   const [hasOriginal] = await db
     .select({ id: agentSkills.id })
@@ -202,7 +216,8 @@ export async function shareLearnedSkill(
       locked.origin !== "agent" ||
       locked.deletedAt ||
       locked.body !== candidate.body ||
-      !safeBody(locked.body)
+      locked.description !== candidate.description ||
+      !safeBody(locked.body, locked.description)
     )
       throw new ForbiddenError("Skill identity changed while sharing.");
     const [stillEnabled] = await tx
@@ -299,6 +314,17 @@ export async function shareLearnedSkill(
       .for("share");
     if (recipients.length !== peers.length || recipients.some((p) => p.ownerUserId !== personId))
       throw new ForbiddenError("Recipient status changed while sharing.");
+    // Recheck the current audience and the live inter-agent call permission
+    // with recipients locked, not only at the earlier preflight.
+    const refreshedAudience = viaAgent(await speakerFor(tx, orgId, personId));
+    const refreshedCallable = await callableAgents(
+      tx,
+      orgId,
+      agentId,
+      recipients.map((p) => p.id),
+    );
+    if (recipients.some((p) => !refreshedCallable.has(p.id) || !canTalkTo(p, personId, refreshedAudience)))
+      throw new ForbiddenError("Recipient audience or agent communication permission changed during sharing.");
     const inserted = targets.length
       ? await tx
           .insert(agentSkills)
@@ -424,11 +450,19 @@ export async function shareLearnedSkill(
     candidate.slug +
     " when relevant, apply it in your own task and report evidence.";
   try {
-    const recordedPages = await db
-      .select({ id: schema.wikiPages.id, source: schema.wikiPages.source })
+    // Filter by this exact Skill in SQL instead of fetching every Wiki.
+    const [existingPage] = await db
+      .select({ id: schema.wikiPages.id })
       .from(schema.wikiPages)
-      .where(and(eq(schema.wikiPages.orgId, orgId), isNull(schema.wikiPages.deletedAt)));
-    const existingPage = recordedPages.find((page) => page.source?.type === "skill" && page.source.id === candidate.id);
+      .where(
+        and(
+          eq(schema.wikiPages.orgId, orgId),
+          isNull(schema.wikiPages.deletedAt),
+          sql`${schema.wikiPages.source}->>'type' = 'skill'`,
+          sql`${schema.wikiPages.source}->>'id' = ${candidate.id}`,
+        ),
+      )
+      .limit(1);
     if (existingPage) {
       receipt.wiki = { status: "existing", id: existingPage.id };
     } else {

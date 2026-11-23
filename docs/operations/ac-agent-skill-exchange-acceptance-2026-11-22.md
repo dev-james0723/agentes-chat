@@ -52,3 +52,35 @@ Evidence on M3 Max:
 This fixes draft source code, not live production. No production scope grants
 were changed. Preserve independent security review, protected integration and
 live real new-Skill peer application as explicit release gates.
+
+## Jacob PR #205 security review remediation (2026-11-23)
+Independent native QA reviewer Jacob marked original PR #82 SHA
+cd05596e43044eed28a2f41c204716917244dffa as **NOT APPROVED**
+for four source-level issues. This code update addresses all four:
+
+1. **P2 executable text**: automatic exchange now rejects interpreter
+   vocabulary anywhere in Skill BODY or DESCRIPTION; rejects URLs, triple
+   backticks, triple-tildes, HTML markup, shell substitutions and Unicode
+   zero-width / compatibility-obfuscated tokens. Technical Skills with
+   runnable instructions must use human-reviewed installation. A native
+   Tool Gateway test checks 11 unsafe bodies and descriptions and no grants.
+2. **P2 incomplete auto share**: after durable peer grants, failed Wiki or
+   peer consultation is audited as skill.exchange_unverified with reason
+   partial_delivery. A real isolated PGlite test renames Wiki's table to
+   induce failure, checking both durable peer grant and the audit.
+3. **P3 TOCTOU**: callableAgents/canTalkTo recheck inside the transaction
+   after recipient rows are locked, not only at initial preflight.
+4. **P3 Wiki query**: DB filters source type and exact Skill ID and LIMIT 1;
+   does not fetch the workspace's entire Wiki corpus into memory.
+
+Evidence: M3 Max directory
+~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122.
+The test receipts include pr82-review-script-red.log, pr82-review-script-green.log,
+pr82-review-partial-audit.log, pr82-review-biome-final.log,
+pr82-jacob-remediation-all-five.log (80 PASS, 0 fail, 351 assertions),
+pr82-jacob-remediation-engine-tsc.log (Engine TypeScript success) and
+pr82-jacob-remediation-final.receipt (SHA256).
+All tests use isolated PGlite and simulated structured-summary model.
+No production migrations or deployment, provider changes, global scope
+expansion, independent GitHub approval, or branch-protection bypass occurred.
+Independent re-review and protected parent merge remain REQUIRED.

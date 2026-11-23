@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { and, eq, schema } from "@agenteschat/db";
+import { and, eq, schema, sql } from "@agenteschat/db";
 import { systemText } from "@agenteschat/providers";
 import {
   createAgent,
@@ -114,7 +114,7 @@ async function invoke(ctx: ToolContext, name: string, input: Record<string, unkn
   return result.output;
 }
 
-async function promotedSkill() {
+async function promotedSkill(beforePromotion?: () => Promise<void>) {
   const first = await runAt(f.agent.id);
   const [note] = await f.db
     .insert(schema.contextItems)
@@ -137,6 +137,7 @@ async function promotedSkill() {
   await recordContextUse(f.db, f.org.id, first.runId, [note.id]);
   const second = await runAt(f.agent.id);
   await recordContextUse(f.db, f.org.id, second.runId, [note.id]);
+  await beforePromotion?.();
   const made = await promoteHowTos(f.context, f.org.id, 3);
   expect(made).toBe(1);
   const [skill] = await f.db.select().from(schema.skills).where(eq(schema.skills.origin, "agent"));
@@ -360,6 +361,63 @@ test("executable Skill edits and later versions require the existing human shari
     agents: [peers[0]!.handle],
   });
   expect(second.isError).toBe(true);
+});
+
+test("auto share refuses interpreter commands, multiline fences, URLs and dangerous descriptions", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const ctx = await runAt(f.agent.id);
+  const risky = [
+    "Explain the repair; python3 -c 'print(3)'",
+    "Use sh -c 'rm -rf /tmp/canary'",
+    "powershell -Command Get-Process",
+    "osascript -e 'tell application Finder'",
+    "Verify first; sudo rm -rf files",
+    "Do not run: npm exec vite",
+    "~~~bash\\nrm -rf /tmp/canary\\n~~~",
+    "Run node -e console.log(1)",
+    "Shell substitution: $(whoami)",
+    "Open a file://private/var/tmp/path",
+    "Use py\\u200bthon3 -c as an obfuscated command",
+  ];
+  for (const body of risky) {
+    await f.db
+      .update(schema.skills)
+      .set({ body, description: "Verified release checklist." })
+      .where(eq(schema.skills.id, skill.id));
+    const result = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+    expect(result.isError).toBe(true);
+  }
+  await f.db
+    .update(schema.skills)
+    .set({ body: "Check the release readiness twice." })
+    .where(eq(schema.skills.id, skill.id));
+  for (const description of risky) {
+    await f.db.update(schema.skills).set({ description }).where(eq(schema.skills.id, skill.id));
+    const result = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+    expect(result.isError).toBe(true);
+  }
+  const grants = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+  expect(grants).toHaveLength(1);
+});
+
+test("automatic promotion audits partially delivered shares after a Wiki failure", async () => {
+  const peers = await fixture(["cecil"]);
+  const { skill } = await promotedSkill(async () => {
+    // Isolated PGlite fault injection: disable only Wiki persistence for the
+    // next operation; native grants and consultations can still commit.
+    await f.db.execute(sql.raw("ALTER TABLE wiki_pages RENAME TO wiki_pages_offline_for_qa"));
+  });
+  const assigned = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+  expect(assigned.some((row) => row.agentId === peers[0]!.id && row.enabled)).toBe(true);
+  const partials = await f.db
+    .select()
+    .from(schema.auditLog)
+    .where(eq(schema.auditLog.action, "skill.exchange_unverified"));
+  expect(partials).toHaveLength(1);
+  expect(partials[0]?.details.reason).toBe("partial_delivery");
+  expect(partials[0]?.details.wikiStatus).toBe("failed");
+  expect(partials[0]?.targetId).toBe(skill.id);
 });
 
 test("a replay recovers a missing Wiki page without duplicating any peer notice or grant", async () => {
