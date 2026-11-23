@@ -6,6 +6,7 @@ import { callableAgents } from "../brakes";
 import { sendNote } from "../consultations";
 import { ForbiddenError, ValidationError } from "../errors";
 import { personBehindCall } from "../requester";
+import { grantKey, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
 import { createWikiPage } from "../wiki";
 import { insertContextItem, looksLikeSecret, normalizeSubject } from "./items";
@@ -14,6 +15,22 @@ import { autoSkillSharingEnabled } from "./learning-auto-approval";
 
 const { skills, skillFiles, agentSkills, agents, agentRuns, agentActions, contextItems, organizationSettings } = schema;
 export const MAX_SKILL_EXCHANGE_PEERS = 3;
+
+// Mirror the Tool Gateway's *effective* native load_skill permission:
+// a scoped grant, all-tools wildcard or tool-specific grant permits loading,
+// while an explicit deny:load_skill always overrides them.
+const LOAD_GRANT_SCOPES = ["skills:read", "*", "tool:load_skill", "deny:load_skill"] as const;
+const hasNativeLoadAccess = (rows: Array<{ agentId: string; scope: string }>, recipientIds: string[]) => {
+  const byAgent = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const current = byAgent.get(row.agentId) ?? new Set<string>();
+    current.add(grantKey(null, row.scope));
+    byAgent.set(row.agentId, current);
+  }
+  return recipientIds.every((id) =>
+    isAllowed(toolAccess(byAgent.get(id) ?? new Set(), { name: "load_skill", scope: "skills:read" })),
+  );
+};
 
 export interface SkillExchangeReceipt extends Record<string, unknown> {
   skillId: string;
@@ -128,7 +145,7 @@ export async function shareLearnedSkill(
   // A Skill assignment does not grant the built-in scope required to load it.
   // Deny instead of claiming a successful share to an agent that cannot use it.
   const readable = await db
-    .select({ agentId: schema.agentScopes.agentId })
+    .select({ agentId: schema.agentScopes.agentId, scope: schema.agentScopes.scope })
     .from(schema.agentScopes)
     .where(
       and(
@@ -137,14 +154,17 @@ export async function shareLearnedSkill(
           schema.agentScopes.agentId,
           peers.map((p) => p.id),
         ),
-        eq(schema.agentScopes.scope, "skills:read"),
+        inArray(schema.agentScopes.scope, LOAD_GRANT_SCOPES),
         isNull(schema.agentScopes.connectionId),
       ),
     );
-  if (new Set(readable.map((row) => row.agentId)).size !== peers.length)
-    throw new ForbiddenError(
-      "Every recipient needs an existing native skills:read grant; only a manager may grant it.",
-    );
+  if (
+    !hasNativeLoadAccess(
+      readable,
+      peers.map((p) => p.id),
+    )
+  )
+    throw new ForbiddenError("Every recipient needs effective native load_skill access; only a manager may change it.");
   const callable = await callableAgents(
     db,
     orgId,
@@ -241,7 +261,7 @@ export async function shareLearnedSkill(
     const targets = peers.filter((p) => !grants.has(p.id));
     // Serialize against concurrent revocation of an existing Skill-read grant.
     const lockedScopes = await tx
-      .select({ agentId: schema.agentScopes.agentId })
+      .select({ agentId: schema.agentScopes.agentId, scope: schema.agentScopes.scope })
       .from(schema.agentScopes)
       .where(
         and(
@@ -250,13 +270,18 @@ export async function shareLearnedSkill(
             schema.agentScopes.agentId,
             peers.map((p) => p.id),
           ),
-          eq(schema.agentScopes.scope, "skills:read"),
+          inArray(schema.agentScopes.scope, LOAD_GRANT_SCOPES),
           isNull(schema.agentScopes.connectionId),
         ),
       )
       .for("share");
-    if (new Set(lockedScopes.map((row) => row.agentId)).size !== peers.length)
-      throw new ForbiddenError("The recipient's native Skill-read grant changed during sharing.");
+    if (
+      !hasNativeLoadAccess(
+        lockedScopes,
+        peers.map((p) => p.id),
+      )
+    )
+      throw new ForbiddenError("The recipient's native load_skill access changed during sharing.");
     const recipients = await tx
       .select()
       .from(agents)

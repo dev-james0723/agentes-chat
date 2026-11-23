@@ -476,6 +476,58 @@ test("a peer without the native Skill-read grant is never reported as a successf
   expect(grants).toHaveLength(1);
 });
 
+test("a recipient granted the native all-tools wildcard can receive a Skill and load it", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const peer = peers[0];
+  if (!peer) throw new Error("missing peer");
+  await f.db
+    .delete(schema.agentScopes)
+    .where(
+      and(
+        eq(schema.agentScopes.orgId, f.org.id),
+        eq(schema.agentScopes.agentId, peer.id),
+        eq(schema.agentScopes.scope, "skills:read"),
+      ),
+    );
+  await f.db.insert(schema.agentScopes).values({ orgId: f.org.id, agentId: peer.id, scope: "*", connectionId: null });
+  const result = await invoke(await runAt(f.agent.id), "share_learned_skill", {
+    name: skill.slug,
+    agents: [peer.handle],
+  });
+  if (result.isError) throw new Error("legitimate wildcard grant denied: " + result.content);
+  const loaded = await invoke(await runAt(peer.id), "load_skill", { name: skill.slug });
+  expect(loaded.isError).not.toBe(true);
+  expect(loaded.content).toContain("Check the release readiness twice.");
+});
+
+test("a peer's explicit load_skill denial defeats the all-tools wildcard for Skill sharing", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const peer = peers[0];
+  if (!peer) throw new Error("missing peer");
+  await f.db.insert(schema.agentScopes).values([
+    { orgId: f.org.id, agentId: peer.id, scope: "*", connectionId: null },
+    { orgId: f.org.id, agentId: peer.id, scope: "deny:load_skill", connectionId: null },
+  ]);
+  const result = await invoke(await runAt(f.agent.id), "share_learned_skill", {
+    name: skill.slug,
+    agents: [peer.handle],
+  });
+  expect(result.isError).toBe(true);
+  const grants = await f.db
+    .select()
+    .from(schema.agentSkills)
+    .where(
+      and(
+        eq(schema.agentSkills.orgId, f.org.id),
+        eq(schema.agentSkills.skillId, skill.id),
+        eq(schema.agentSkills.agentId, peer.id),
+      ),
+    );
+  expect(grants).toHaveLength(0);
+});
+
 test("real native peer consultations each create a recipient run whose own gateway can load the shared Skill", async () => {
   const peers = await fixture();
   const { skill } = await promotedSkill();

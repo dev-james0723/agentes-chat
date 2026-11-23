@@ -26,3 +26,29 @@ Independent review of exact commit, same-SHA full local CI, protected PR integra
 Additional end-to-end PGlite test directly verifies that native sendNote creates three recipient-native consultation runs, that each persisted run's agentId, channelId and trigger message match the consultation, and that each run can execute load_skill through the native Tool Gateway with exact version 1. The same test reads back Wiki, public memory, Skill use-count 3 and three audit IDs. It prints a machine-readable, per-run receipt rather than just asserting detached synthetic work sessions.
 
 Evidence: ~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/native-peer-run-proof.json with SHA256 of native-peer-run-strong-proof.log. This is NOT production model inference or autonomous agent response generation: the fixture uses a simulated summary model and invokes load_skill on the native recipient runs. It proves the engine path and state transitions only.
+
+
+## Effective native Skill-read permissions (2026-11-23)
+A live Charlie-to-Jacob and Charlie-to-Theodore canary exposed a misleading grant-count
+metric: agents with the broad wildcard agent_scopes.scope=* can actually invoke
+load_skill on ordinary Skills even without a separate exact skills:read row.
+The Tool Gateway evaluates toolAccess over scoped grants, with an explicit
+deny:load_skill overriding wildcard, exact read scope and tool-specific grants.
+Before this correction the draft Skill Exchange demanded one literal skills:read
+row and could deny valid peers while accepting explicitly denied peers.
+
+Skill Exchange now filters four relevant grants, evaluates native toolAccess for
+load_skill at both initial preflight and under transaction FOR SHARE locks,
+and denies sharing to peers with an actual Tool Gateway load denial.
+Wildcard and explicit-deny tests were RED (both failed) before the fix and
+GREEN (both passed) after. Full isolated Skill Exchange suite: 15 PASS,
+103 assertions, 0 FAIL; Engine TypeScript 0 errors.
+Evidence on M3 Max:
+~/Documents/Agentes-Handoffs/ac-charlie-native-acceptance-20261122/wildcard-red.log
+~/Documents/Agentes-Handoffs/ac-charlie-native-acceptance-20261122/wildcard-green-v2.log
+~/Documents/Agentes-Handoffs/ac-charlie-native-acceptance-20261122/wildcard-full-suite.log
+~/Documents/Agentes-Handoffs/ac-charlie-native-acceptance-20261122/wildcard-tsc.log
+
+This fixes draft source code, not live production. No production scope grants
+were changed. Preserve independent security review, protected integration and
+live real new-Skill peer application as explicit release gates.
