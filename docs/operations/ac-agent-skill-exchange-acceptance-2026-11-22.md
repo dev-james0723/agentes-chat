@@ -190,3 +190,57 @@ pr82-strict-prose-five-final.log,
 pr82-strict-prose-final.receipt (with SHA256).
 No production migration or installation was claimed; independent
 review at exact new SHA is still required.
+
+## Immutable source-content digest (2026-11-23)
+
+An independent review found that a previously verified first-version
+agent-origin Skill could be modified in place and still borrow its
+original skill.created source-memory receipt for unattended sharing,
+including a prefix-concealed executable imperative. That path has
+been replaced with a cryptographic content integrity check.
+
+The original trusted promotion transaction records SHA256 of
+JSON.stringify([description, body]) alongside the exact source-note IDs
+in its native skill.created Agent Action. A later native peer share
+fails closed unless the current first-version Skill body AND
+description match that digest, both at admission and under the row lock
+inside the grant transaction. A missing older digest also fails
+closed, not as an implicit approval. Any owner-reviewed manual
+revision has its own separate legitimate installation path.
+
+Reproduction evidence:
+~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/
+pr82-tamper-digest-red.log shows the former unsafe share;
+pr82-tamper-digest-green.log and pr82-tamper-digest-both-green.log
+show rejection of body or description tampering with no unauthorized
+grant or Wiki copy. Five native Skill/Learning integration suites:
+83/83 PASS, 0 fail, 584 assertions; Engine TypeScript and Biome exit
+0 (pr82-sealed-promotion-gates.receipt, SHA256 logs).
+
+This is content integrity, not semantic verification of what the
+original summary model generated. The separate fail-closed syntax
+filter, high-trust public source requirement, independent review, and
+human-reviewed path for executable guides remain mandatory. No
+production migrations, privileged DB mutation or deployment occurred.
+
+## Promoter output format aligned with unattended sharing
+
+The autonomous promotion model originally requested free-form Markdown
+while the guarded automatic-share policy accepts only non-executable,
+structured procedural text. This mismatch meant a legitimate learned
+Skill could be promoted but not offered to peers.
+
+The normal promotion System Prompt now instructs a single plain
+description sentence under 200 characters, safe procedural sentence
+openings, numbered or bulleted steps ending in a period, and only
+known-safe headings. It explicitly excludes commands, executable text,
+paths, URLs, private source text, credentials and run identifiers.
+The existing real native Tool Gateway test checks the exact System
+Prompt requirement, verifies genuine agent-origin v1 promotion and
+A-to-C/D/E native grants and loads. The prompt is a model instruction;
+it is NOT itself a substitute for independent content validation or
+the provenance digest and public high-trust source gates.
+
+Evidence: pr82-prompt-compatible-skill.log,
+pr82-prompt-alignment-five.log (83 PASS, 584 assertions),
+pr82-prompt-alignment-gates.receipt (Biome / TypeScript success).
