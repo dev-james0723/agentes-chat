@@ -138,6 +138,13 @@ export function EndpointForm({
                   <span>
                     <b>{c.model}</b> · {t(view.key, { error: c.error ?? "" })}
                   </span>
+                  {c.structuredOutputCheck && (
+                    <span className="small muted">
+                      {c.structuredOutputCheck === "ok"
+                        ? t("endpoint.schemaOk")
+                        : t("endpoint.schemaFailed", { error: c.structuredOutputError ?? "" })}
+                    </span>
+                  )}
                 </li>
               );
             })}
@@ -298,6 +305,16 @@ export function EndpointForm({
                           onChange={(e) => setModel(m.id, { output: e.target.value })}
                         />
                       </span>
+                    )}
+                    {m.on && (
+                      <div className="endpoint-model__schema">
+                        <Checkbox
+                          id={ids + "-schema-" + m.id}
+                          checked={m.structuredOutput === true}
+                          onCheckedChange={(on) => setModel(m.id, { structuredOutput: on })}
+                        />
+                        <label htmlFor={ids + "-schema-" + m.id}>{t("endpoint.structuredOutput")}</label>
+                      </div>
                     )}
                     {problem && (
                       <div className="ac-field__error endpoint-model__error" role="alert">

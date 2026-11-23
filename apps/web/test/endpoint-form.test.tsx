@@ -79,6 +79,65 @@ describe("Outro provedor in Settings › Chaves de IA", () => {
     return { add, api };
   };
 
+  test("the structured-output checkbox persists an opt-in and reports the server's JSON schema result", async () => {
+    const state = seedState({
+      endpointChecks: {
+        "gemma3:4b": {
+          model: "gemma3:4b",
+          check: "failed",
+          error: "gemma3:4b does not support tools",
+          structuredOutputCheck: "ok",
+        },
+      },
+    });
+    const { add } = await openForm(state);
+    await type(within(add).getByLabelText("Nome"), "Local Gemma");
+    await type(within(add).getByLabelText("Endereço"), "http://host.docker.internal:11434/v1");
+    await type(within(add).getByLabelText("Adicionar um modelo"), "gemma3:4b");
+    await click(within(add).getByRole("button", { name: "Adicionar" }));
+    const schema = within(add).getByRole("checkbox", {
+      name: "Ativar JSON estruturado (verificar ao salvar)",
+    });
+    expect(schema.getAttribute("aria-checked")).toBe("false");
+    await click(schema);
+    expect(schema.getAttribute("aria-checked")).toBe("true");
+    await click(within(add).getByRole("button", { name: "Salvar e testar" }));
+    expect(state.calls.find((c) => c.method === "agents.addCredential")?.args[1]).toMatchObject({
+      provider: "custom",
+      endpoint: {
+        style: "openai",
+        models: [{ id: "gemma3:4b", structuredOutput: true }],
+      },
+    });
+    expect(add.textContent).toContain("Esquema JSON verificado");
+  });
+
+  test("owner may select only a server-verified custom model for workspace summaries", async () => {
+    const state = seedState();
+    state.credentials.push({
+      id: "00000000-0000-4000-8000-000000000001",
+      provider: "custom",
+      label: "Local Gemma",
+      keyHint: "",
+      createdAt: "2026-11-22T00:00:00Z",
+      revokedAt: null,
+      endpoint: {
+        style: "openai",
+        baseURL: "http://host.docker.internal:11434/v1",
+        models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "failed" }],
+      },
+    });
+    await renderApp("/org/" + ORG_ID + "/settings/keys", { api: createFakeApi(state) });
+    await settle(6);
+    const keys = screen().getByRole("region", { name: "Chaves de provedor" });
+    expect(within(keys).getByText("Local Gemma · gemma3:4b")).toBeDefined();
+    await click(within(keys).getByRole("button", { name: "Usar para resumos" }));
+    expect(state.calls.find((c) => c.method === "orgs.updateSettings")?.args[1]).toEqual({
+      summaryModel: "custom:00000000-0000-4000-8000-000000000001:gemma3:4b",
+    });
+    expect(within(keys).getByText("Selecionado")).toBeDefined();
+  });
+
   test("laid out as a dialog: its fields in the body, Buscar modelos on the label's line, Cancelar then the save in the footer", async () => {
     const { add } = await openForm();
     const body = add.querySelector(".ac-dialog__body") as HTMLElement;

@@ -321,6 +321,24 @@ describe("the test call", () => {
     expect(await summaryModelReady(f.context, f.org.id)).toBe(false);
   });
 
+  test("a tool-less but schema-verified Gemma endpoint is usable for summaries without enabling agent tools", async () => {
+    f = await setup({
+      reply: (request) =>
+        request.outputSchema
+          ? { chunks: [JSON.stringify({ status: "ok", details: { supported: true, modes: ["schema"] } })] }
+          : new ProviderError("gemma3:4b does not support tools", false, 400),
+    });
+    const cred = await addEndpoint(f, [{ id: "gemma3:4b", structuredOutput: true }]);
+    const result = await checkEndpoint(f.db, f.gateway, f.owner.id, f.org.id, cred.id);
+    expect(result).toEqual([
+      expect.objectContaining({ model: "gemma3:4b", check: "failed", structuredOutputCheck: "ok" }),
+    ]);
+    const model = customModelId(cred.id, "gemma3:4b");
+    expect((await modelInfoFor(f.db, model, f.org.id))?.structuredOutput).not.toBe(false);
+    expect((await updateOrgSettings(f.db, f.owner.id, f.org.id, { summaryModel: model })).summaryModel).toBe(model);
+    expect(await summaryModelReady(f.context, f.org.id)).toBe(true);
+  });
+
   test("valid JSON alone, a wrong nested type, extra fields or a provider refusal never verify structured output", async () => {
     const invalid = [
       "not JSON",

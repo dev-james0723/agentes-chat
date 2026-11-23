@@ -318,6 +318,7 @@ export interface FakeState {
   calls: { method: string; args: unknown[] }[];
   context?: string;
   defaultCredentialId?: string | null;
+  summaryModel?: string | null;
   /** The workspace default agent budget (US$); 50 when unset. */
   defaultAgentBudgetUsd?: number;
   /** What an agent spent through the API this month (US$), over the fake's own (Ada 12.30, Atlas 3.10). */
@@ -1859,7 +1860,7 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
         context: state.context ?? "",
         defaultCredentialId: state.defaultCredentialId ?? null,
         routerModel: null,
-        summaryModel: null,
+        summaryModel: state.summaryModel ?? null,
         timezone: "America/Sao_Paulo",
         actionCheck: state.actionCheck ?? true,
         autoModels: state.autoModels ?? {},
@@ -1881,6 +1882,7 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
         }
         if (input.context !== undefined) state.context = input.context;
         if (input.defaultCredentialId !== undefined) state.defaultCredentialId = input.defaultCredentialId;
+        if (input.summaryModel !== undefined) state.summaryModel = input.summaryModel;
         if (input.defaultAgentBudgetUsd !== undefined) state.defaultAgentBudgetUsd = input.defaultAgentBudgetUsd;
         if (input.actionCheck !== undefined) state.actionCheck = input.actionCheck;
         const { gifs, gifRating, agentStickers, agentMedia } = input;
@@ -1904,7 +1906,7 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
           context: state.context ?? "",
           defaultCredentialId: state.defaultCredentialId ?? null,
           routerModel: null,
-          summaryModel: null,
+          summaryModel: state.summaryModel ?? null,
           timezone: input.timezone ?? "America/Sao_Paulo",
           actionCheck: state.actionCheck ?? true,
           autoModels: state.autoModels ?? {},

@@ -10,6 +10,7 @@ import {
   modelUnpriced,
   parsePrice,
   pricesProblem,
+  verifiedSummaryModels,
   withListedModels,
   withoutModel,
   withTypedModel,
@@ -90,6 +91,62 @@ describe("the endpoint form", () => {
       ]).map((c) => c.model),
     ).toEqual(["x", "y"]);
   });
+});
+
+test("only verified structured-output custom endpoints qualify for organization summaries", () => {
+  const make = (id: string, patch: Partial<Credential> = {}): Credential => ({
+    id,
+    provider: "custom",
+    label: "Local Gemma",
+    keyHint: "",
+    createdAt: "2026-11-22T00:00:00Z",
+    revokedAt: null,
+    endpoint: {
+      style: "openai",
+      baseURL: "http://host.docker.internal:11434/v1",
+      models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "no_tools" }],
+    },
+    ...patch,
+  });
+  expect(
+    verifiedSummaryModels([
+      make("00000000-0000-4000-8000-000000000001"),
+      make("00000000-0000-4000-8000-000000000002", { revokedAt: "2026-11-22T12:00:00Z" }),
+      make("00000000-0000-4000-8000-000000000003", {
+        endpoint: {
+          style: "openai",
+          baseURL: "http://host.docker.internal:11434/v1",
+          models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "failed" }],
+        },
+      }),
+      make("00000000-0000-4000-8000-000000000004", {
+        endpoint: {
+          style: "openai",
+          baseURL: "http://host.docker.internal:11434/v1",
+          models: [{ id: "gemma3:4b", structuredOutput: true, check: "ok" }],
+        },
+      }),
+      make("00000000-0000-4000-8000-000000000005", { provider: "openai" }),
+      // A dedicated summary model may lack agent tool calling yet pass the
+      // independent JSON-schema test; this is the real local Gemma case.
+      make("00000000-0000-4000-8000-000000000006", {
+        endpoint: {
+          style: "openai",
+          baseURL: "http://host.docker.internal:11434/v1",
+          models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "failed" }],
+        },
+      }),
+    ]),
+  ).toEqual([
+    {
+      id: "custom:00000000-0000-4000-8000-000000000001:gemma3:4b",
+      label: "Local Gemma · gemma3:4b",
+    },
+    {
+      id: "custom:00000000-0000-4000-8000-000000000006:gemma3:4b",
+      label: "Local Gemma · gemma3:4b",
+    },
+  ]);
 });
 
 describe("endpoint models in the pickers", () => {
