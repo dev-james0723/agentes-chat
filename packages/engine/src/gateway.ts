@@ -2,6 +2,7 @@ import type { ErrorReporter, KeyWrapper, PlatformCredentials, PubSub, SearchKind
 import { and, type Database, desc, type Executor, eq, gte, isNull, lt, rowsOf, schema, sql } from "@agenteschat/db";
 import {
   annotateProviderFailure,
+  autoRouterKeyWithinCap,
   costNanoUsd,
   customModelOf,
   type EmbeddingProvider,
@@ -27,6 +28,7 @@ import {
   maxCostNanoUsd,
   modelInfo,
   modelProvider,
+  OPENROUTER_API,
   openRouterListed,
   outputTokensWithin,
   PROVIDERS,
@@ -41,7 +43,7 @@ import { type Agent, getAgent } from "./agents";
 import { caches } from "./cache";
 import { decryptCredentialWithVersion, usableCredentialRow } from "./credentials";
 import { creditAdmissionBound } from "./credit-admission";
-import { assertCreditClaim } from "./credit-continuity";
+import { assertCreditClaim, type CreditNativeClaim } from "./credit-continuity";
 import {
   admitCreditCall,
   CREDIT_MAX_REQUEST_MS,
@@ -59,8 +61,17 @@ import { sha256 } from "./crypto";
 import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
+import {
+  OpenRouterFallbackRefusal,
+  type OpenRouterFallbackRoute,
+  openRouterFallbackConfig,
+  openRouterKeyReserved,
+  reserveOpenRouterFallback,
+  settleOpenRouterFallback,
+} from "./openrouter-fallback-ledger";
 import { maySql, type RolePermission } from "./permissions";
 import { addPersonSpend, assertPersonUnderLimit, personSpendAdded } from "./person-usage";
+import { hasCredentialText } from "./quota-qualifier";
 import { type SharedBudgetTransport, withSharedBudget } from "./shared-budget";
 import { assertCanWork, standingRefusal } from "./standing";
 import { redactCredentials } from "./tool-detail";
@@ -92,6 +103,9 @@ export interface ModelGatewayDeps {
    * even when this switch is off.
    */
   creditRoutes?: boolean;
+  /** Disabled until the native route and its independently approved bounded transport are released. */
+  openRouterFallbackEnabled?: boolean;
+  openRouterKeyFetch?: typeof fetch;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
   /** Where an embeddings outage is reported, once (ADR 0104); absent: not reported. */
@@ -172,6 +186,8 @@ export interface GatewayCall {
     bucket?: "automatic" | "emergency";
     approvalId?: string;
   };
+  /** Native executor-owned, separately budgeted paid fallback; not a client API field. */
+  openRouterFallback?: { route: OpenRouterFallbackRoute; claim: CreditNativeClaim; turn: number };
   onDelta(text: string): void;
   signal?: AbortSignal;
 }
@@ -438,6 +454,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     credit: GatewayCall["credit"],
   ): Promise<void> {
     if (!credit) {
+      if (providerId === "openrouter" && (await openRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey))))
+        throw new OpenRouterFallbackRefusal("reserved_credential");
       // Credential selection may use its existing cache, but a protection verdict never does. A pool or retained
       // fingerprint committed after that cache was warmed must block the very next ordinary call. One fresh
       // statement covers provider, row and cross-workspace secret aliases without three database round trips.
@@ -630,6 +648,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     promptTokens: number,
     maxTokens: number,
     longCache = false,
+    exactBound?: number,
   ): Promise<{
     reservation: Pick<typeof budgetReservations.$inferSelect, "id" | "agentId" | "periodStart"> | null;
     maxTokens: number;
@@ -639,7 +658,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     const at = now();
     const period = periodOf(at);
     // Fast path, one statement: the worst case fits under the budget → reserve it atomically.
-    const amount = maxCostNanoUsd(model, promptTokens, maxTokens, longCache);
+    const amount = exactBound ?? maxCostNanoUsd(model, promptTokens, maxTokens, longCache);
     const id = Bun.randomUUIDv7();
     const fast = rowsOf<{ ok: number }>(
       await db.execute(sql`with upd as (
@@ -696,7 +715,12 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       let cap = maxTokens;
       if (agent.monthlyBudgetNanoUsd !== null) {
         const left = agent.monthlyBudgetNanoUsd - row.spentNanoUsd - reserved;
-        cap = Math.min(maxTokens, outputTokensWithin(model, promptTokens, left, longCache));
+        cap =
+          exactBound === undefined
+            ? Math.min(maxTokens, outputTokensWithin(model, promptTokens, left, longCache))
+            : left >= exactBound
+              ? maxTokens
+              : 0;
         if (left <= 0 || cap < Math.min(MIN_OUTPUT_TOKENS, maxTokens)) {
           if (expired.length > 0)
             await tx
@@ -707,11 +731,13 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           const byReservations =
             reserved > 0 &&
             room > 0 &&
-            outputTokensWithin(model, promptTokens, room, longCache) >= Math.min(MIN_OUTPUT_TOKENS, maxTokens);
+            (exactBound === undefined
+              ? outputTokensWithin(model, promptTokens, room, longCache) >= Math.min(MIN_OUTPUT_TOKENS, maxTokens)
+              : room >= exactBound);
           throw new BudgetExceededError(agent.id, row.spentNanoUsd, agent.monthlyBudgetNanoUsd, byReservations);
         }
       }
-      const amount = maxCostNanoUsd(model, promptTokens, cap, longCache);
+      const amount = exactBound ?? maxCostNanoUsd(model, promptTokens, cap, longCache);
       const [reservation] = await tx
         .insert(budgetReservations)
         .values({
@@ -874,7 +900,205 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (first) await deps.onBudgetThreshold({ agent, level: "exhausted", spentNanoUsd: spent, budgetNanoUsd: budget });
   }
 
+  async function streamOpenRouterFallback(call: GatewayCall, agent: Agent): Promise<GatewayResult> {
+    const native = call.openRouterFallback;
+    if (!native || !call.runId || call.credit || sharedBudgetRequired || !deps.openRouterFallbackEnabled)
+      throw new OpenRouterFallbackRefusal("route_disabled");
+    const route = native.route;
+    const config = await openRouterFallbackConfig(db, call.orgId);
+    if (
+      !config ||
+      config.revision !== route.revision ||
+      config.credentialId !== route.credentialId ||
+      config.credentialVersion !== route.credentialVersion
+    )
+      throw new OpenRouterFallbackRefusal("policy_changed");
+    const key = await resolveKey(call.orgId, "openrouter", route.credentialId);
+    if (
+      key.endpoint ||
+      key.credentialVersion !== route.credentialVersion ||
+      sha256(key.apiKey) !== config.credentialFingerprint
+    )
+      throw new OpenRouterFallbackRefusal("credential_changed");
+    // Qualify actual concrete candidates, not the zero-priced router alias. The full model window
+    // is a deliberately conservative input bound, not a character/token guess.
+    await ensureOpenRouterModels();
+    const infos = config.policy.allowedModels.map((id) => modelInfo(id));
+    if (
+      infos.some(
+        (info) =>
+          info?.provider !== "openrouter" ||
+          info.unpriced ||
+          !info.contextWindow ||
+          !Number.isSafeInteger(info.contextWindow) ||
+          !info.maxOutputTokens ||
+          !Number.isSafeInteger(info.maxOutputTokens),
+      )
+    )
+      throw new OpenRouterFallbackRefusal("pricing_unqualified");
+    const request: ModelRequest = {
+      model: route.router,
+      system: structuredClone(call.system),
+      messages: structuredClone(call.messages),
+      maxTokens: Math.min(call.maxTokens, ...infos.map((i) => i?.maxOutputTokens ?? 0)),
+      ...(call.tools ? { tools: structuredClone(call.tools) } : {}),
+      ...(call.notes ? { notes: structuredClone(call.notes) } : {}),
+      noTransportRetries: true,
+      openRouterAuto: structuredClone(config.policy),
+      signal: AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(120_000)]),
+    };
+    const content = JSON.stringify({
+      system: request.system,
+      messages: request.messages,
+      tools: request.tools,
+      notes: request.notes,
+    });
+    const bytes = new TextEncoder().encode(content).length;
+    if (
+      !Number.isSafeInteger(request.maxTokens) ||
+      request.maxTokens < 1 ||
+      hasCredentialText(content) ||
+      request.messages.some(
+        (m) =>
+          typeof m.content !== "string" &&
+          m.content.some((b) => b.type === "opaque" || (b.type === "tool_result" && (b.images?.length ?? 0) > 0)),
+      ) ||
+      bytes > 200_000 ||
+      bytes + request.maxTokens > Math.min(...infos.map((i) => i?.contextWindow ?? 0))
+    )
+      throw new OpenRouterFallbackRefusal("context_unqualified");
+    const promptPrice = Math.max(
+      Math.ceil(config.policy.maxPromptUsdPerMillion * 1000),
+      ...infos.flatMap((i) =>
+        i
+          ? [
+              i.prices.input,
+              i.prices.cacheRead,
+              i.prices.cacheWrite,
+              i.longContext?.prices.input ?? 0,
+              i.longContext?.prices.cacheRead ?? 0,
+              i.longContext?.prices.cacheWrite ?? 0,
+            ]
+          : [],
+      ),
+    );
+    const completionPrice = Math.max(
+      Math.ceil(config.policy.maxCompletionUsdPerMillion * 1000),
+      ...infos.flatMap((i) => (i ? [i.prices.output, i.longContext?.prices.output ?? 0] : [])),
+    );
+    const bound = Math.ceil(
+      Math.max(...infos.map((i) => i?.contextWindow ?? 0)) * promptPrice + request.maxTokens * completionPrice,
+    );
+    if (!Number.isSafeInteger(bound) || bound <= 0 || bound > config.monthlyCapNanoUsd)
+      throw new OpenRouterFallbackRefusal("pricing_unqualified");
+    const personId = call.personId ?? null;
+    if (personId) await assertPersonUnderLimit(db, call.orgId, personId, now());
+    const { reservation, maxTokens } = await reserve(agent, route.router, 0, request.maxTokens, false, bound);
+    let admission: Awaited<ReturnType<typeof reserveOpenRouterFallback>>;
+    try {
+      admission = await reserveOpenRouterFallback(db, {
+        orgId: call.orgId,
+        agentId: call.agentId,
+        runId: call.runId,
+        turn: native.turn,
+        route,
+        claim: native.claim,
+        boundNanoUsd: bound,
+        now,
+      });
+    } catch (error) {
+      await db.transaction((tx) => settle(tx, reservation, 0, agent));
+      throw error;
+    }
+    // Exact policy snapshot, revalidated under the shared pool lock. Never let unqualified
+    // output, tool calls or missing usage escape the gateway.
+    request.openRouterAuto = admission.policy;
+    request.openRouterReservedNanoUsd = bound;
+    const chunks: string[] = [];
+    let outputBytes = 0;
+    let result: ModelResult;
+    try {
+      await assertCreditClaim(db, call.orgId, call.runId, native.claim, now());
+      result = await providerFor("openrouter").stream(request, {
+        apiKey: key.apiKey,
+        session: call.runId,
+        onDelta: (chunk) => {
+          outputBytes += new TextEncoder().encode(chunk).length;
+          if (outputBytes <= 1_000_000 && chunks.length < 16_000) chunks.push(chunk);
+        },
+      });
+      if (
+        outputBytes > 1_000_000 ||
+        chunks.length >= 16_000 ||
+        !result.usageVerified ||
+        result.costNanoUsd === undefined ||
+        !Number.isSafeInteger(result.costNanoUsd) ||
+        result.costNanoUsd < 0 ||
+        !admission.policy.allowedModels.includes(result.model)
+      )
+        throw new OpenRouterFallbackRefusal("receipt_unqualified");
+    } catch {
+      // Failure after admission is unknown: the hold remains. No provider error text or secrets escape.
+      await settleOpenRouterFallback(db, call.orgId, admission.attemptId, null, now()).catch(() => {});
+      await db.transaction((tx) => settle(tx, reservation, 0, agent)).catch(() => {});
+      throw new OpenRouterFallbackRefusal("reconciliation_required");
+    }
+    const actual = result.costNanoUsd;
+    if (actual === undefined) throw new OpenRouterFallbackRefusal("reconciliation_required");
+    // Ordinary agent/person usage is also recorded; the separate pool is not a substitute for existing budgets.
+    const settled = await settleCall({
+      agent: { ...agent, model: route.router },
+      reservation,
+      runId: call.runId,
+      personId,
+      credentialId: key.credentialId,
+      provider: "openrouter",
+      model: result.model,
+      usage: result.usage,
+      reportedCost: actual,
+    });
+    await settleOpenRouterFallback(
+      db,
+      call.orgId,
+      admission.attemptId,
+      { model: result.model, costNanoUsd: actual },
+      now(),
+    );
+    await assertCreditClaim(db, call.orgId, call.runId, native.claim, now());
+    await checkThresholds(agent, settled.spent, actual);
+    if (personId && settled.personSpent !== null)
+      await personSpendAdded(
+        db,
+        { orgId: call.orgId, personId, amountNanoUsd: actual, at: now() },
+        settled.personSpent,
+      );
+    for (const chunk of chunks) call.onDelta(chunk);
+    return { ...result, usageRecordId: settled.record.id, costNanoUsd: actual, maxTokens };
+  }
+
   return {
+    async verifyOpenRouterFallbackKey(orgId: string): Promise<boolean> {
+      if (!deps.openRouterFallbackEnabled || sharedBudgetRequired) return false;
+      try {
+        const config = await openRouterFallbackConfig(db, orgId);
+        if (!config?.credentialId) return false;
+        const key = await resolveKey(orgId, "openrouter", config.credentialId);
+        if (
+          key.endpoint ||
+          key.credentialVersion !== config.credentialVersion ||
+          sha256(key.apiKey) !== config.credentialFingerprint
+        )
+          return false;
+        const response = await (deps.openRouterKeyFetch ?? fetch)(`${OPENROUTER_API}/key`, {
+          headers: { authorization: `Bearer ${key.apiKey}` },
+          redirect: "error",
+          signal: AbortSignal.timeout(5000),
+        });
+        return response.ok && autoRouterKeyWithinCap(await response.json(), config.policy.monthlyCapUsd);
+      } catch {
+        return false;
+      }
+    },
     /**
      * Whether the agent's model brain can be called at all: its model is in
      * the catalog or is OpenRouter's, its provider is registered and a key would
@@ -923,6 +1147,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!row || row.archivedAt) throw new NotFoundError("Agent not found");
       // Every agent has a budget: its own, else the organization's default.
       const agent = await withEffectiveBudget(db, row);
+      if (call.openRouterFallback) return streamOpenRouterFallback(call, agent);
       const providerId = modelProvider(agent.model);
       if (!providerId) throw new ValidationError(`Model ${agent.model} is not in the catalog`);
       const provider = providerFor(providerId);
@@ -1288,6 +1513,11 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     async verifyKey(input: KeyToVerify): Promise<KeyCheck> {
       // A key check has no qualified route or reserved bound. In required mode it must remain unchecked.
       if (sharedBudgetRequired) return { state: "unchecked" };
+      if (
+        input.provider === "openrouter" &&
+        (await openRouterKeyReserved(db, input.orgId, null, sha256(input.key.apiKey)))
+      )
+        return { state: "unchecked" };
       if (
         (await creditProviderProtected(input.orgId, input.provider)) ||
         (await creditSecretProtected(input.key.apiKey))

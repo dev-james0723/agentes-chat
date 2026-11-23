@@ -55,6 +55,7 @@ import { memoryRoutes } from "./routes/app/memory";
 import { missionRoutes } from "./routes/app/missions";
 import { modelInspectorRoutes } from "./routes/app/model-inspector";
 import { notificationRoutes } from "./routes/app/notifications";
+import { openRouterFallbackRoutes } from "./routes/app/openrouter-fallback";
 import { paperclipRoutineRoutes } from "./routes/app/paperclip-routines";
 import { paperclipWorkspaceRoutes } from "./routes/app/paperclip-workspaces";
 import { personUsageRoutes } from "./routes/app/person-usage";
@@ -245,6 +246,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", planUsageRoutes(deps));
     api.route("/app", modelInspectorRoutes(deps));
     api.route("/app", creditContinuityRoutes(deps));
+    api.route("/app", openRouterFallbackRoutes(deps));
     api.route("/app", personUsageRoutes(deps));
     api.route("/app", teamWeekRoutes(deps));
     api.route("/app", dashboardRoutes(deps));

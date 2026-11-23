@@ -229,6 +229,7 @@ export * from "./notice-prefs";
 export * from "./notification-producers";
 export * from "./notifications";
 export * from "./open-requests";
+export * from "./openrouter-fallback-ledger";
 export * from "./operator";
 export * from "./operator-events";
 export * from "./operator-review";

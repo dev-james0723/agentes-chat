@@ -143,6 +143,8 @@ export interface ModelRequest {
   noTransportRetries?: true;
   /** Internal gateway-supplied, separately admitted policy for dynamic OpenRouter routers. */
   openRouterAuto?: OpenRouterAutoPolicy;
+  /** Conservative admitted charge, used only for the upstream balance preflight. */
+  openRouterReservedNanoUsd?: number;
   signal?: AbortSignal;
 }
 

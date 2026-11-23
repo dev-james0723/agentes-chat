@@ -18,6 +18,7 @@ export * from "./machines";
 export * from "./mail";
 export * from "./missions";
 export * from "./notifications";
+export * from "./openrouter-fallback";
 export * from "./operator";
 export * from "./paperclip-routines";
 export * from "./paperclip-workspaces";

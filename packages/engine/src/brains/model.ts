@@ -32,6 +32,7 @@ export interface ModelBrainOptions {
   session?: string;
   /** The run is on a credit route (ADR 0209): every call it makes, a pre-warm included, is admitted against it. */
   credit?(): GatewayCall["credit"] | undefined;
+  openRouterFallback?(): GatewayCall["openRouterFallback"] | undefined;
 }
 
 /**
@@ -94,6 +95,7 @@ export class ModelBrain implements Brain {
       cacheTtl: "1h" as const,
       ...(this.options.session ? { session: this.options.session } : {}),
       ...(credit ? { credit } : {}),
+      openRouterFallback: this.options.openRouterFallback?.(),
     };
   }
 
@@ -104,7 +106,7 @@ export class ModelBrain implements Brain {
   async prewarm(turn: BrainTurn): Promise<void> {
     if (modelProvider(this.options.agent.model) !== "anthropic") return;
     // A pre-warm on a credit route would spend the grant on a cache write nobody asked for (ADR 0209).
-    if (this.options.credit?.()) return;
+    if (this.options.credit?.() || this.options.openRouterFallback?.()) return;
     await this.options.gateway.stream({ ...this.request(turn), maxTokens: 0, onDelta: () => {} }).catch(() => {});
   }
 

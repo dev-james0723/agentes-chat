@@ -10,9 +10,10 @@ export function keepRunMarkers(proposed: Record<string, unknown> | SQL): SQL {
   const isSql = typeof (proposed as { getSQL?: unknown }).getSQL === "function";
   const value = isSql ? (proposed as SQL) : sql`${pgSafeStringify(proposed)}::jsonb`;
   const current = schema.agentRuns.transcript;
-  return sql`((${value} - 'continuityCheckpoint' - 'effectUncertain' - 'creditHold') || jsonb_strip_nulls(jsonb_build_object(
+  return sql`((${value} - 'continuityCheckpoint' - 'effectUncertain' - 'creditHold' - 'openRouterHold') || jsonb_strip_nulls(jsonb_build_object(
     'continuityCheckpoint', coalesce(nullif(${current}->'continuityCheckpoint', 'null'::jsonb), nullif((${value})->'continuityCheckpoint', 'null'::jsonb)),
     'effectUncertain', coalesce(nullif(${current}->'effectUncertain', 'null'::jsonb), nullif((${value})->'effectUncertain', 'null'::jsonb)),
-    'creditHold', coalesce(nullif(${current}->'creditHold', 'null'::jsonb), nullif((${value})->'creditHold', 'null'::jsonb))
+    'creditHold', coalesce(nullif(${current}->'creditHold', 'null'::jsonb), nullif((${value})->'creditHold', 'null'::jsonb)),
+    'openRouterHold', coalesce(nullif(${current}->'openRouterHold', 'null'::jsonb), nullif((${value})->'openRouterHold', 'null'::jsonb))
   )))`;
 }

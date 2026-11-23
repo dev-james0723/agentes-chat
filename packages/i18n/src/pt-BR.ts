@@ -7,6 +7,30 @@ import type { LocaleStrings } from "./plurals";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const ptBR = {
+  openRouterFallback: {
+    title: "Alternativa OpenRouter",
+    intro: "Assinaturas primeiro. Agentes e rotinas elegíveis compartilham um limite mensal independente de US$ 50.",
+    disabled: "Desativada",
+    serverDisabled: "Desativada pela política do servidor",
+    configured: "Configurada — verificada antes do envio",
+    blocked: "Bloqueada — conciliação necessária",
+    spent: "Gasto neste mês",
+    pending: "Reservado / pendente",
+    cap: "Limite mensal (USD)",
+    key: "Chave OpenRouter dedicada",
+    chooseKey: "Selecione uma chave",
+    keyHint:
+      "Adicione uma chave OpenRouter separada, com limite mensal de até este valor, incluindo BYOK. Não a reutilize em outras chamadas.",
+    models: "IDs de modelos permitidos (um por linha)",
+    inputPrice: "Máximo USD de entrada por milhão de tokens",
+    outputPrice: "Máximo USD de saída por milhão de tokens",
+    tier: "Faixa de custo do roteador",
+    enable: "Salvar e ativar",
+    disable: "Desativar alternativa",
+    refresh: "Atualizar",
+    error: "Não foi possível salvar. Verifique a chave e a política.",
+    routes: "Engenharia: openrouter/auto-code · Geral: openrouter/auto",
+  },
   creditContinuity: {
     title: "Continuidade de créditos da API",
     refresh: "Atualizar status",

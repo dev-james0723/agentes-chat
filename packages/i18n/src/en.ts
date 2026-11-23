@@ -7,6 +7,30 @@ import type { Widen } from "./widen";
  * no exclamation marks, buttons start with a verb, "agentes" in lower case.
  */
 export const en = {
+  openRouterFallback: {
+    title: "OpenRouter fallback",
+    intro: "Subscription routes first. Eligible agents and routines share one independent US$50 monthly limit.",
+    disabled: "Disabled",
+    serverDisabled: "Disabled by server policy",
+    configured: "Configured — checked before dispatch",
+    blocked: "Blocked — reconciliation required",
+    spent: "Spent this month",
+    pending: "Reserved / unresolved",
+    cap: "Monthly limit (USD)",
+    key: "Dedicated OpenRouter key",
+    chooseKey: "Select a key",
+    keyHint:
+      "Add a separate OpenRouter key with a monthly limit no higher than this cap, including BYOK. Do not reuse it for ordinary requests.",
+    models: "Allowed concrete model IDs (one per line)",
+    inputPrice: "Maximum input USD per million tokens",
+    outputPrice: "Maximum output USD per million tokens",
+    tier: "Router cost tier",
+    enable: "Save and enable",
+    disable: "Disable fallback",
+    refresh: "Refresh",
+    error: "Could not save fallback settings. Check your key and policy.",
+    routes: "Engineering: openrouter/auto-code · General: openrouter/auto",
+  },
   creditContinuity: {
     title: "API credit continuity",
     refresh: "Refresh status",

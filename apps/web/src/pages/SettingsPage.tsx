@@ -86,6 +86,7 @@ import { BillingMeters } from "@/components/Limits";
 import { ErrorState, LoadingLine, LoadingList } from "@/components/Loading";
 import { MediaSettingsSection } from "@/components/MediaSettings";
 import { NoticePrefsSection } from "@/components/NoticePrefs";
+import { OpenRouterFallbackCard } from "@/components/OpenRouterFallbackCard";
 import { useOrg } from "@/components/org-context";
 import { UsageTabs } from "@/components/PeopleUsage";
 import { ApiCard, PlanUsageCards } from "@/components/PlanUsage";
@@ -1134,6 +1135,7 @@ function UsageSection() {
     <>
       <PlanUsageCards />
       <CreditContinuityCard />
+      <OpenRouterFallbackCard />
       {composio.data && showsComposioUsage(composio.data) && (
         <Card>
           <span className="small">{composioUsageText(t, i18n.language, composio.data)}</span>

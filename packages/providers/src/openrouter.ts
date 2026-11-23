@@ -559,7 +559,11 @@ export function createOpenRouterProvider(
             redirect: "error",
             signal: AbortSignal.any([...(request.signal ? [request.signal] : []), AbortSignal.timeout(5000)]),
           });
-          if (!res.ok || cap === undefined || !autoRouterKeyWithinCap(await res.json(), cap)) {
+          if (
+            !res.ok ||
+            cap === undefined ||
+            !autoRouterKeyWithinCap(await res.json(), cap, Date.now(), request.openRouterReservedNanoUsd)
+          ) {
             throw new Error("key cap not verified");
           }
         } catch {
@@ -675,6 +679,19 @@ export function createOpenRouterProvider(
                 cacheWriteTokens: 0,
               },
           ...(cost !== undefined ? { costNanoUsd: cost } : {}),
+          ...(auto &&
+          usage &&
+          cost !== undefined &&
+          Number.isSafeInteger(usage.prompt_tokens) &&
+          (usage.prompt_tokens ?? -1) >= 0 &&
+          Number.isSafeInteger(usage.completion_tokens) &&
+          (usage.completion_tokens ?? -1) >= 0 &&
+          (usage.is_byok !== true ||
+            (typeof usage.cost_details?.upstream_inference_cost === "number" &&
+              Number.isFinite(usage.cost_details.upstream_inference_cost) &&
+              usage.cost_details.upstream_inference_cost >= 0))
+            ? { usageVerified: true as const }
+            : {}),
           ...(hasToolImages(request.messages) ? { imagesLeftOut: true as const } : {}),
         };
       } catch (error) {

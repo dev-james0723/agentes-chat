@@ -61,7 +61,7 @@ export function autoRouterParameters(policy: OpenRouterAutoPolicy | undefined) {
 }
 
 /** Validate GET /api/v1/key without retaining or exposing key labels or other account metadata. */
-export function autoRouterKeyWithinCap(body: unknown, capUsd: number, now = Date.now()): boolean {
+export function autoRouterKeyWithinCap(body: unknown, capUsd: number, now = Date.now(), reservedNanoUsd = 0): boolean {
   if (!body || typeof body !== "object" || !("data" in body)) return false;
   const data = body.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return false;
@@ -83,6 +83,9 @@ export function autoRouterKeyWithinCap(body: unknown, capUsd: number, now = Date
     typeof remaining === "number" &&
     Number.isFinite(remaining) &&
     remaining > 0 &&
+    Number.isSafeInteger(reservedNanoUsd) &&
+    reservedNanoUsd >= 0 &&
+    remaining >= reservedNanoUsd / 1e9 &&
     remaining <= limit &&
     (k.expires_at === null || (typeof k.expires_at === "string" && Date.parse(k.expires_at) > now))
   );
