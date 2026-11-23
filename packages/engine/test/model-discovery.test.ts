@@ -11,7 +11,14 @@ import { autoModelFor, brainModelForTier } from "../src/auto-model";
 import { brainModelId, brainModelOptions, normalizeBrainModel } from "../src/brain-settings";
 import { MODEL_METADATA_URL, parseProviderModels, refreshProviderModels } from "../src/model-discovery";
 
-const native = (id: string, name: string, date: string, prices = { input: 2, output: 8, cache_read: 0.2 }) => ({
+// Public models.dev prices can include tier arrays and unknown fields, so the
+// test fixture accepts the same untrusted shape that the parser validates.
+const native = (
+  id: string,
+  name: string,
+  date: string,
+  prices: unknown = { input: 2, output: 8, cache_read: 0.2 },
+) => ({
   id,
   name,
   release_date: date,
