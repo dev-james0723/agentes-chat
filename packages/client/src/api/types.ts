@@ -4519,6 +4519,8 @@ export interface SkillSettings {
 /** Separate from tool approvals: only independently verified, agent-local learning. */
 export interface LearningApprovalSettings {
   autoApproveLearning: boolean;
+  /** Separate, default-off opt-in; absent on older servers means OFF. */
+  autoShareLearnedSkills?: boolean;
 }
 
 /** A skill an agent made from its own how-tos (ADR 0120), archived ones too. */

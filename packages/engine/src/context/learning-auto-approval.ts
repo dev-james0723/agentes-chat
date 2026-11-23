@@ -208,9 +208,26 @@ export async function autoLearningEnabled(db: Database, orgId: string): Promise<
   }
 }
 
+/** Independent fail-closed sharing opt-in; ordinary learning approval never implies peer publication. */
+export async function autoSkillSharingEnabled(db: Database, orgId: string): Promise<boolean> {
+  try {
+    const [setting] = await db
+      .select({ enabled: schema.organizationSettings.autoShareLearnedSkills })
+      .from(schema.organizationSettings)
+      .where(eq(schema.organizationSettings.orgId, orgId));
+    return setting?.enabled ?? false;
+  } catch {
+    return false;
+  }
+}
+
 export async function getLearningApprovalSettings(db: Database, actorId: string, orgId: string) {
   await requirePermission(db, actorId, orgId, "read");
-  return { autoApproveLearning: await autoLearningEnabled(db, orgId) };
+  const [autoApproveLearning, autoShareLearnedSkills] = await Promise.all([
+    autoLearningEnabled(db, orgId),
+    autoSkillSharingEnabled(db, orgId),
+  ]);
+  return { autoApproveLearning, autoShareLearnedSkills };
 }
 
 /** A managing person's policy change and its audit either both commit or both roll back. */
@@ -218,23 +235,43 @@ export async function setLearningApprovalSettings(
   db: Database,
   actorId: string,
   orgId: string,
-  input: { autoApproveLearning: boolean },
+  input: { autoApproveLearning: boolean; autoShareLearnedSkills?: boolean },
 ) {
   await requirePermission(db, actorId, orgId, "manage_agents");
   await db.transaction(async (tx) => {
+    const [previous] = await tx
+      .select({
+        approve: schema.organizationSettings.autoApproveLearning,
+        share: schema.organizationSettings.autoShareLearnedSkills,
+      })
+      .from(schema.organizationSettings)
+      .where(eq(schema.organizationSettings.orgId, orgId))
+      .for("update");
+    const update = {
+      autoApproveLearning: input.autoApproveLearning,
+      ...(input.autoShareLearnedSkills === undefined ? {} : { autoShareLearnedSkills: input.autoShareLearnedSkills }),
+      updatedAt: new Date(),
+    };
     await tx
       .insert(schema.organizationSettings)
-      .values({ orgId, autoApproveLearning: input.autoApproveLearning })
-      .onConflictDoUpdate({
-        target: schema.organizationSettings.orgId,
-        set: { autoApproveLearning: input.autoApproveLearning, updatedAt: new Date() },
+      .values({ orgId, ...update })
+      .onConflictDoUpdate({ target: schema.organizationSettings.orgId, set: update });
+    if ((previous?.approve ?? false) !== input.autoApproveLearning) {
+      await recordAudit(tx, {
+        orgId,
+        actor: { type: "person", id: actorId },
+        action: input.autoApproveLearning ? "learning.auto_approval_on" : "learning.auto_approval_off",
+        target: { type: "organization", id: orgId },
       });
-    await recordAudit(tx, {
-      orgId,
-      actor: { type: "person", id: actorId },
-      action: input.autoApproveLearning ? "learning.auto_approval_on" : "learning.auto_approval_off",
-      target: { type: "organization", id: orgId },
-    });
+    }
+    if (input.autoShareLearnedSkills !== undefined && (previous?.share ?? false) !== input.autoShareLearnedSkills) {
+      await recordAudit(tx, {
+        orgId,
+        actor: { type: "person", id: actorId },
+        action: input.autoShareLearnedSkills ? "learning.skill_sharing_on" : "learning.skill_sharing_off",
+        target: { type: "organization", id: orgId },
+      });
+    }
   });
-  return input;
+  return getLearningApprovalSettings(db, actorId, orgId);
 }

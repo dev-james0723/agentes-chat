@@ -95,6 +95,7 @@ export * from "./context/proposals";
 export * from "./context/reflect";
 export * from "./context/rules";
 export * from "./context/scorecard";
+export * from "./context/skill-exchange";
 export * from "./context/summaries";
 export * from "./context/tools";
 export * from "./continue-run";

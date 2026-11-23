@@ -9827,6 +9827,9 @@ export const en = {
     autoApproveLearning: "Auto-accept verified learning improvements",
     autoApproveLearningHelp:
       "Agents may automatically adopt short, repeatedly verified instructions stated exactly by their owner in a public channel, after independent safety checks. Generic CI results never authorize learning changes. Other proposals await human review. This never grants tools, permissions, scripts, or releases.",
+    autoShareLearnedSkills: "Auto-share verified public skills with peers",
+    autoShareLearnedSkillsHelp:
+      "Allows agents to share their own verified, public, text-only learned skills with up to three eligible peers, with Wiki and Memory records. Private or executable skills and new tool permissions are never auto-shared. Off by default.",
     autoApproveLearningFailed: "Could not change the learning approval policy.",
     agentsImprove: "Agents improve skills by themselves",
     agentsImproveHelp:

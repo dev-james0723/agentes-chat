@@ -191,6 +191,10 @@ export function knowledgeRoutes(deps: AppDeps) {
         description:
           "Enable narrowly scoped, independently checked auto-acceptance of verified agent-local lessons. Does not grant tools, permissions, or deployment rights.",
       }),
+      autoShareLearnedSkills: z.boolean().optional().openapi({
+        description:
+          "Separate manager opt-in for a verified public agent-made Skill to be shared to up to three eligible same-owner peers. Never enables executable or private Skills; default OFF.",
+      }),
     })
     .openapi("LearningApprovalSettings");
   app.openapi(
