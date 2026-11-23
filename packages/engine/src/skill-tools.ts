@@ -6,6 +6,7 @@ import { readsOrMayJoin } from "./channels";
 import { cardPlace } from "./consultations";
 import { learnTrust, ownWords } from "./context/learn";
 import { changeSkillAsAgent } from "./context/learned-skills";
+import { shareLearnedSkill } from "./context/skill-exchange";
 import { memoryResult } from "./context/tools";
 import {
   nativeSkillReadScoped,
@@ -161,6 +162,50 @@ export function createSkillToolSource(
     return message;
   };
   const tools: ToolDefinition[] = [
+    {
+      name: "share_learned_skill",
+      description:
+        "When your own verified Skill would help peers, choose one to three agents using find_agent and share it by name. AC checks the original public learning evidence, recipients, permissions and grant history, assigns the Skill, records a Wiki page and sends native peer notes. Only your own agent-created, first-version, non-executable public Skill can be shared. Do not broadcast skills or repeat a failed result without inspecting its receipt.",
+      scope: "skills:read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 64 },
+          agents: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", minLength: 2, maxLength: 33 } },
+        },
+        required: ["name", "agents"],
+        additionalProperties: false,
+      },
+      async execute(input, ctx) {
+        try {
+          const handles = Array.isArray(input.agents)
+            ? input.agents.filter((h): h is string => typeof h === "string")
+            : [];
+          const result = await shareLearnedSkill({ pubsub: deps.pubsub }, ctx, {
+            name: str(input.name),
+            handles,
+          });
+          const admitted = result.assigned.map((p) => "@" + p.handle).join(", ") || "none";
+          return {
+            content:
+              "Skill exchange for " +
+              result.name +
+              " v" +
+              result.version +
+              ": newly assigned " +
+              admitted +
+              "; wiki " +
+              result.wiki.status +
+              "; peer notes " +
+              result.peerNotes.map((n) => n.handle + ":" + n.status).join(", ") +
+              ". The receiving agents still need to actually load and apply it in a fresh task.",
+            data: result,
+          };
+        } catch (error) {
+          return failed(error);
+        }
+      },
+    },
     {
       name: LOAD_SKILL_TOOL,
       description:

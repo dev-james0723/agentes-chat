@@ -9842,6 +9842,9 @@ export const ptBR = {
     autoApproveLearning: "Aprovar automaticamente melhorias de aprendizado verificadas",
     autoApproveLearningHelp:
       "Agentes podem adotar automaticamente instruções curtas e repetidamente verificadas, ditas exatamente por seu responsável num canal público, após análise de segurança independente. Resultados genéricos de CI não autorizam mudanças. Outras propostas aguardam revisão humana. Não concede ferramentas, permissões, scripts ou lançamentos.",
+    autoShareLearnedSkills: "Compartilhar automaticamente skills públicas verificadas",
+    autoShareLearnedSkillsHelp:
+      "Permite compartilhar skills aprendidas, públicas, verificadas e somente de texto com até três colegas autorizados, com registros na Wiki e na Memória. Skills privadas ou executáveis não são compartilhadas automaticamente. Desativado por padrão.",
     autoApproveLearningFailed: "Não foi possível alterar a política de aprovação do aprendizado.",
     agentsImprove: "Agentes melhoram as skills sozinhos",
     agentsImproveHelp:

@@ -78,7 +78,10 @@ describe("guarded automatic acceptance of learned improvements", () => {
   test("an explicitly enabled verified and repeated local lesson is accepted by policy, never impersonating the owner", async () => {
     f = await setup();
     await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, { autoApproveLearning: true });
-    expect(await getLearningApprovalSettings(f.db, f.owner.id, f.org.id)).toEqual({ autoApproveLearning: true });
+    expect(await getLearningApprovalSettings(f.db, f.owner.id, f.org.id)).toMatchObject({
+      autoApproveLearning: true,
+      autoShareLearnedSkills: false,
+    });
     const item = await lesson(f);
     const decision = await proposeFromItem(f.context, item);
     expect(decision).toMatchObject({ status: "accepted", target: "agent_instructions", itemIds: [item.id] });
@@ -513,4 +516,28 @@ test("a private agent run cannot become an agent-global lesson through a public 
   const [live] = await f.db.select().from(schema.contextItems).where(eq(schema.contextItems.id, item.id));
   if (!live) throw new Error("missing live lesson");
   expect((await proposeFromItem(f.context, live))?.status).toBe("pending");
+});
+
+test("peer sharing is OFF by default and cannot be enabled by a non-managing agent owner", async () => {
+  f = await setup();
+  expect(await getLearningApprovalSettings(f.db, f.owner.id, f.org.id)).toMatchObject({
+    autoApproveLearning: false,
+    autoShareLearnedSkills: false,
+  });
+  const member = await addMember(f.db, f.org.id, "member");
+  await expect(
+    setLearningApprovalSettings(f.db, member.id, f.org.id, {
+      autoApproveLearning: false,
+      autoShareLearnedSkills: true,
+    }),
+  ).rejects.toBeInstanceOf(ForbiddenError);
+  expect((await getLearningApprovalSettings(f.db, f.owner.id, f.org.id)).autoShareLearnedSkills).toBe(false);
+  await setLearningApprovalSettings(f.db, f.owner.id, f.org.id, {
+    autoApproveLearning: false,
+    autoShareLearnedSkills: true,
+  });
+  expect((await getLearningApprovalSettings(f.db, f.owner.id, f.org.id)).autoShareLearnedSkills).toBe(true);
+  const records = await f.db.select().from(schema.auditLog);
+  expect(records.filter((row) => row.action === "learning.skill_sharing_on")).toHaveLength(1);
+  expect(records.filter((row) => row.action.startsWith("learning.auto_approval_"))).toHaveLength(0);
 });

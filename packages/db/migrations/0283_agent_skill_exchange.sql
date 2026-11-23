@@ -1,0 +1,1 @@
+ALTER TABLE "organization_settings" ADD COLUMN "auto_share_learned_skills" boolean DEFAULT false NOT NULL;

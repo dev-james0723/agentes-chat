@@ -176,6 +176,32 @@ describe("Configurações → Skills", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
+  test("owner independently enables agent-to-agent sharing without enabling lesson auto-approval", async () => {
+    const state = seedState();
+    const api = createFakeApi(state);
+    let current = { autoApproveLearning: false, autoShareLearnedSkills: false };
+    api.skills.learningSettings = async () => current;
+    api.skills.saveLearningSettings = async (orgId, input) => {
+      state.calls.push({ method: "skills.saveLearningSettings", args: [orgId, input] });
+      current = { ...current, ...input };
+      return current;
+    };
+    const { section } = await settings(state, api);
+    const share = within(section()).getByRole("switch", {
+      name: "Compartilhar automaticamente skills públicas verificadas",
+    });
+    expect(share.getAttribute("aria-checked")).toBe("false");
+    await click(share);
+    await settle(4);
+    expect(share.getAttribute("aria-checked")).toBe("true");
+    const last = state.calls.filter((c) => c.method === "skills.saveLearningSettings").at(-1);
+    expect(last?.args).toEqual([ORG_ID, { autoApproveLearning: false, autoShareLearnedSkills: true }]);
+    const lessons = within(section()).getByRole("switch", {
+      name: "Aprovar automaticamente melhorias de aprendizado verificadas",
+    });
+    expect(lessons.getAttribute("aria-checked")).toBe("false");
+  });
+
   test("a waiting update: what each side changed, who and when, the choice and its Desfazer either way", async () => {
     const { state, section } = await settings();
     await click(within(section()).getByRole("button", { name: "Revisão de PR" }));

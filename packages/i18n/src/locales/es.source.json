@@ -23329,6 +23329,12 @@
   "skills.autoApproveLearningHelp": {
     "value": "Agents may automatically adopt short, repeatedly verified instructions stated exactly by their owner in a public channel, after independent safety checks. Generic CI results never authorize learning changes; other proposals await human review. This never grants tools, permissions, scripts, or releases."
   },
+  "skills.autoShareLearnedSkills": {
+    "value": "Auto-share verified public skills with peers"
+  },
+  "skills.autoShareLearnedSkillsHelp": {
+    "value": "Allows agents to share their own verified, public, text-only learned skills with up to three eligible peers, with Wiki and Memory records. Private or executable skills and new tool permissions are never auto-shared. Off by default."
+  },
   "skills.autoApproveLearningFailed": {
     "value": "Could not change the learning approval policy."
   },

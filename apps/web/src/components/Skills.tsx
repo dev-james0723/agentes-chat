@@ -274,6 +274,29 @@ export function SkillsSection({
           </span>
         </span>
       )}
+      {learning.data && !learning.isError && (
+        <span className="row" style={{ gap: 10, alignItems: "center" }}>
+          <Switch
+            id="skills-auto-share-learning"
+            checked={learning.data.autoShareLearnedSkills ?? false}
+            disabled={learningAction.isPending}
+            onCheckedChange={(on) =>
+              learningAction.mutate(
+                { autoApproveLearning: learning.data.autoApproveLearning, autoShareLearnedSkills: on },
+                {
+                  onError: () => toast.show(t("skills.autoApproveLearningFailed"), "error"),
+                },
+              )
+            }
+          />
+          <span className="ac-hintline">
+            <label htmlFor="skills-auto-share-learning">{t("skills.autoShareLearnedSkills")}</label>
+            <InfoHint name={t("common.about", { label: t("skills.autoShareLearnedSkills") })}>
+              {t("skills.autoShareLearnedSkillsHelp")}
+            </InfoHint>
+          </span>
+        </span>
+      )}
       {skills.isLoading && <LoadingList count={3} avatar={false} />}
       {noSkills && (
         <EmptyState

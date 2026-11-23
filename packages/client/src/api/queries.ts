@@ -4670,7 +4670,9 @@ export const useLearningApprovalSettings = (orgId: string, enabled = true) => {
   const api = useApi();
   return useQuery({
     queryKey: keys.learningApprovalSettings(orgId),
-    queryFn: () => api.skills.learningSettings?.(orgId) ?? Promise.resolve({ autoApproveLearning: false }),
+    queryFn: () =>
+      api.skills.learningSettings?.(orgId) ??
+      Promise.resolve({ autoApproveLearning: false, autoShareLearnedSkills: false }),
     enabled: enabled && !!api.skills.learningSettings && !!api.skills.saveLearningSettings,
     retry: false,
   });
