@@ -56,6 +56,7 @@ describe("provider marks where a provider is named", () => {
       "OpenAI",
       "Gemini",
       "OpenRouter",
+      "Grok (xAI)",
       "DeepSeek",
       "Kimi",
       "Z.ai",

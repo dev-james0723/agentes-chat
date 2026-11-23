@@ -1186,6 +1186,7 @@ describe("Conectar uma IA: one picker, plans first", () => {
       "OpenAI",
       "Gemini",
       "OpenRouter",
+      "Grok (xAI)",
       "DeepSeek",
       "Kimi",
       "Z.ai",
