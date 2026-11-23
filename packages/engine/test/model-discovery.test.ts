@@ -178,6 +178,44 @@ describe("native model discovery", () => {
     }
   });
 
+  test("never converts tiny positive provider prices into a free paid model", () => {
+    const root = sample();
+    const priceModel = (cost: unknown) =>
+      parseProviderModels({
+        ...root,
+        openai: {
+          models: {
+            ...root.openai.models,
+            "gpt-6.3-sol": native("gpt-6.3-sol", "GPT-6.3 Sol", "2026-11-20", cost),
+            "gpt-6.3-astra": native("gpt-6.3-astra", "GPT-6.3 Astra", "2026-11-20"),
+          },
+        },
+      });
+    for (const cost of [
+      { input: 0.0004, output: 0.0004 },
+      { input: 2, output: 0.0004 },
+    ]) {
+      const parsed = priceModel(cost);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.["gpt-6.3-sol"]).toBeUndefined();
+    }
+    const underflow = priceModel({ input: 2, output: 8, cache_read: 0.0004, cache_write: 0.0004 });
+    expect(underflow?.["gpt-6.3-sol"]?.prices).toEqual({
+      input: 2000,
+      output: 8000,
+      cacheRead: 2000,
+      cacheWrite: 4000,
+    });
+    const intentionallyFreeCache = priceModel({ input: 2, output: 8, cache_read: 0, cache_write: 0 });
+    expect(intentionallyFreeCache?.["gpt-6.3-sol"]?.prices).toEqual({
+      input: 2000,
+      output: 8000,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+    expect(priceModel({ input: 2, output: 8, cache_read: 3000 })?.["gpt-6.3-sol"]).toBeUndefined();
+  });
+
   test("rejects unsupported, unpriced, non-tool, multimedia, invalid ID and empty feeds", () => {
     const invalid = sample();
     invalid.openai.models = {
@@ -190,6 +228,19 @@ describe("native model discovery", () => {
     expect(parseProviderModels(invalid)).toBeNull();
     expect(parseProviderModels({ data: [] })).toBeNull();
     expect(parseProviderModels(null)).toBeNull();
+  });
+
+  test("metadata fetch disables redirects before any untrusted response is read", async () => {
+    let requested = false;
+    const guarded = (async (url: string, options: RequestInit) => {
+      expect(url).toBe(MODEL_METADATA_URL);
+      expect(options.redirect).toBe("error");
+      requested = true;
+      // Redirect failures must preserve the previous snapshot and not publish.
+      throw new TypeError("redirect disallowed");
+    }) as unknown as typeof fetch;
+    expect(await refreshProviderModels(guarded)).toMatchObject({ updated: false });
+    expect(requested).toBe(true);
   });
 
   test("fails closed when the upstream is down, malformed or unavailable; previous list survives", async () => {

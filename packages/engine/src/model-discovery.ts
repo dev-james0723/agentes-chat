@@ -40,14 +40,28 @@ function price(value: unknown): ModelInfo["prices"] | null {
   const input = positive(cost.input);
   const output = positive(cost.output);
   if (input === null || output === null) return null;
-  // Missing cache rates are conservatively priced, never silently billed as zero.
-  const cacheRead = numeric(cost.cache_read);
-  const cacheWrite = numeric(cost.cache_write);
+  // A positive price below half a nano-USD per token rounds to zero. Never
+  // advertise a paid model as free, including models retained for old runs.
+  const inputNano = nano(input);
+  const outputNano = nano(output);
+  if (inputNano <= 0 || outputNano <= 0) return null;
+  // Missing cache rates and positive rates too small to represent must not
+  // underbill. An explicit zero is kept only when the feed truly says zero.
+  const cache = (value: unknown, fallback: number): number | null => {
+    if (value === undefined || value === null) return fallback;
+    const raw = numeric(value);
+    if (raw === null || raw < 0 || raw > 1_000) return null;
+    if (raw === 0) return 0;
+    return nano(raw) || fallback;
+  };
+  const cacheRead = cache(cost.cache_read, inputNano);
+  const cacheWrite = cache(cost.cache_write, inputNano * 2);
+  if (cacheRead === null || cacheWrite === null) return null;
   return {
-    input: nano(input),
-    output: nano(output),
-    cacheRead: nano(cacheRead !== null && cacheRead >= 0 ? cacheRead : input),
-    cacheWrite: nano(cacheWrite !== null && cacheWrite >= 0 ? cacheWrite : input * 2),
+    input: inputNano,
+    output: outputNano,
+    cacheRead,
+    cacheWrite,
   };
 }
 
@@ -201,6 +215,8 @@ export async function refreshProviderModels(read: typeof fetch = fetch): Promise
   try {
     const response = await read(MODEL_METADATA_URL, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
+      // Never follow an upstream redirect to an internal or untrusted host.
+      redirect: "error",
       ...(lastEtag ? { headers: { "If-None-Match": lastEtag } } : {}),
     });
     if (response.status === 304) return { updated: false, count };
