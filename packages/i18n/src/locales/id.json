@@ -8922,6 +8922,12 @@
     "priceOut": "{{model}}: harga output",
     "priceInShort": "Input",
     "priceOutShort": "Output",
+    "structuredForModel": "Keluaran JSON terstruktur untuk {{model}}",
+    "schemaCheck": {
+      "ok": "Keluaran terstruktur terverifikasi",
+      "failed": "Verifikasi keluaran terstruktur gagal: {{error}}",
+      "unverified": "Keluaran terstruktur belum diverifikasi"
+    },
     "priceUnit": "US$ per juta token",
     "priceBoth": "Isi input dan output, atau tidak keduanya.",
     "priceInvalid": "Gunakan angka, seperti 0.50",

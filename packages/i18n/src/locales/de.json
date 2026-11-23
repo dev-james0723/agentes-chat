@@ -9226,6 +9226,12 @@
     "priceOut": "{{model}}: Ausgabepreis",
     "priceInShort": "Eingabe",
     "priceOutShort": "Ausgabe",
+    "structuredForModel": "Strukturierte JSON-Ausgabe für {{model}}",
+    "schemaCheck": {
+      "ok": "Strukturierte Ausgabe bestätigt",
+      "failed": "Prüfung der strukturierten Ausgabe fehlgeschlagen: {{error}}",
+      "unverified": "Strukturierte Ausgabe nicht überprüft"
+    },
     "priceUnit": "US$ pro Million Tokens",
     "priceBoth": "Fülle Eingabe und Ausgabe aus, oder keins von beiden.",
     "priceInvalid": "Nutze eine Zahl, etwa 0.50",

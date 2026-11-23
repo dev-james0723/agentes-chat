@@ -8918,6 +8918,12 @@
     "priceOut": "{{model}}：输出价格",
     "priceInShort": "输入",
     "priceOutShort": "输出",
+    "structuredForModel": "{{model}} 的结构化 JSON 输出",
+    "schemaCheck": {
+      "ok": "结构化输出已验证",
+      "failed": "结构化输出验证失败：{{error}}",
+      "unverified": "结构化输出尚未验证"
+    },
     "priceUnit": "每百万 token 的 US$",
     "priceBoth": "请同时填写输入和输出，或都不填。",
     "priceInvalid": "请使用数字，例如 0.50",

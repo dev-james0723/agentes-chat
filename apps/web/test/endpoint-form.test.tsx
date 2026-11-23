@@ -79,6 +79,63 @@ describe("Outro provedor in Settings › Chaves de IA", () => {
     return { add, api };
   };
 
+  test("an admin can opt a keyless local model into structured output and see its real check", async () => {
+    const state = seedState({
+      endpointChecks: {
+        "gemma3:4b": { model: "gemma3:4b", check: "ok", structuredOutputCheck: "ok" },
+      },
+    });
+    const { add } = await openForm(state);
+    await type(within(add).getByLabelText("Nome"), "Local Gemma3 Summary");
+    await type(within(add).getByLabelText("Endereço"), "http://host.docker.internal:11434/v1");
+    const typed = within(add).getByLabelText("Adicionar um modelo");
+    await type(typed, "gemma3:4b");
+    await click(within(add).getByRole("button", { name: "Adicionar" }));
+    const schemaToggle = within(add).getByRole("checkbox", {
+      name: "Saída JSON estruturada para gemma3:4b",
+    });
+    await click(schemaToggle);
+    await click(within(add).getByRole("button", { name: "Salvar e testar" }));
+    await settle(4);
+    expect(state.calls.find((c) => c.method === "agents.addCredential")?.args[1]).toMatchObject({
+      provider: "custom",
+      label: "Local Gemma3 Summary",
+      apiKey: "[redacted]",
+      endpoint: {
+        style: "openai",
+        baseURL: "http://host.docker.internal:11434/v1",
+        models: [{ id: "gemma3:4b", structuredOutput: true }],
+      },
+    });
+    expect(add.textContent).toContain("Saída estruturada verificada");
+  });
+
+  test("a successful endpoint connection never masks a failed JSON schema check", async () => {
+    const state = seedState({
+      endpointChecks: {
+        "gemma3:4b": {
+          model: "gemma3:4b",
+          check: "ok",
+          structuredOutputCheck: "failed",
+          structuredOutputError: "Invalid schema response",
+        },
+      },
+    });
+    const { add } = await openForm(state);
+    await type(within(add).getByLabelText("Nome"), "Gemma schema test");
+    await type(within(add).getByLabelText("Endereço"), "http://host.docker.internal:11434/v1");
+    await type(within(add).getByLabelText("Adicionar um modelo"), "gemma3:4b");
+    await click(within(add).getByRole("button", { name: "Adicionar" }));
+    await click(within(add).getByRole("checkbox", { name: "Saída JSON estruturada para gemma3:4b" }));
+    await click(within(add).getByRole("button", { name: "Salvar e testar" }));
+    await settle(4);
+    expect(add.textContent).toContain("Falha na saída estruturada: Invalid schema response");
+    expect(add.textContent).not.toContain("Saída estruturada verificada");
+    expect(state.calls.find((c) => c.method === "agents.addCredential")?.args[1]).toMatchObject({
+      endpoint: { models: [{ id: "gemma3:4b", structuredOutput: true }] },
+    });
+  });
+
   test("laid out as a dialog: its fields in the body, Buscar modelos on the label's line, Cancelar then the save in the footer", async () => {
     const { add } = await openForm();
     const body = add.querySelector(".ac-dialog__body") as HTMLElement;

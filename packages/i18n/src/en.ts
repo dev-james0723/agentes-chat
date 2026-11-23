@@ -9496,6 +9496,12 @@ export const en = {
     priceOut: "{{model}}: output price",
     priceInShort: "Input",
     priceOutShort: "Output",
+    structuredForModel: "Structured JSON output for {{model}}",
+    schemaCheck: {
+      ok: "Structured output verified",
+      failed: "Structured output failed: {{error}}",
+      unverified: "Structured output not verified",
+    },
     priceUnit: "US$ per million tokens",
     priceBoth: "Fill in input and output, or neither.",
     priceInvalid: "Use a number, like 0.50",

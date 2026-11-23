@@ -9171,6 +9171,12 @@
     "priceOut": "{{model}}: çıkış fiyatı",
     "priceInShort": "Giriş",
     "priceOutShort": "Çıkış",
+    "structuredForModel": "{{model}} için yapılandırılmış JSON çıktısı",
+    "schemaCheck": {
+      "ok": "Yapılandırılmış çıktı doğrulandı",
+      "failed": "Yapılandırılmış çıktı doğrulaması başarısız: {{error}}",
+      "unverified": "Yapılandırılmış çıktı doğrulanmadı"
+    },
     "priceUnit": "Milyon token başına US$",
     "priceBoth": "Girişi ve çıkışı doldurun ya da ikisini de boş bırakın.",
     "priceInvalid": "0.50 gibi bir sayı kullanın",

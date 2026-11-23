@@ -22368,6 +22368,18 @@
   "endpoint.priceOutShort": {
     "value": "Output"
   },
+  "endpoint.structuredForModel": {
+    "value": "Structured JSON output for {{model}}"
+  },
+  "endpoint.schemaCheck.ok": {
+    "value": "Structured output verified"
+  },
+  "endpoint.schemaCheck.failed": {
+    "value": "Structured output failed: {{error}}"
+  },
+  "endpoint.schemaCheck.unverified": {
+    "value": "Structured output not verified"
+  },
   "endpoint.priceUnit": {
     "value": "US$ per million tokens"
   },
