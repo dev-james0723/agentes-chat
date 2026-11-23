@@ -94,8 +94,7 @@ const PROCEDURE_OPENER =
 // Closed vocabulary for every token after the opener. The golden sentence
 // contributes the, release, readiness, and twice. The promoted description
 // contributes the rest. A dotted token such as main.rs or hello.c cannot match.
-const PROCEDURAL_PROSE_WORD =
-  /^(?:a|after|changes|checklist|independently|readiness|release|tested|the|twice)$/iu;
+const PROCEDURAL_PROSE_WORD = /^(?:a|after|changes|checklist|independently|readiness|release|tested|the|twice)$/iu;
 const proseSentences = (item: string) => {
   const parts = item
     .split(/(?<=[.!?])\s+/u)
@@ -108,7 +107,10 @@ const sentenceUsesClosedVocabulary = (sentence: string) => {
   if (!SAFE_PROCEDURE_START.test(sentence)) return false;
   const opener = PROCEDURE_OPENER.exec(sentence);
   if (!opener) return false;
-  const words = sentence.replace(/[.!?]$/u, "").trim().split(/\s+/u);
+  const words = sentence
+    .replace(/[.!?]$/u, "")
+    .trim()
+    .split(/\s+/u);
   const openerCount = opener[0].split(/\s+/u).length;
   if (words.length < openerCount) return false;
   const leading = words.slice(0, openerCount).join(" ");
