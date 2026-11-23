@@ -215,20 +215,43 @@ export async function launch(bin: string, profile: string) {
     ws.onerror = fail;
   });
   let id = 0;
-  const waiting = new Map<number, { ok: (v: never) => void; fail: (e: Error) => void }>();
+  const timeoutMs = Math.max(1000, Number(process.env.GEOMETRY_CDP_TIMEOUT_MS) || 30000);
+  const waiting = new Map<number, { method: string; sessionId?: string; started: number; timer: ReturnType<typeof setTimeout>; ok: (v: never) => void; fail: (e: Error) => void }>();
+  const rejectPending = (reason: string) => {
+    for (const [requestId, call] of waiting) {
+      clearTimeout(call.timer);
+      waiting.delete(requestId);
+      call.fail(new Error(`CDP ${reason}: request=${requestId} method=${call.method} session=${call.sessionId ?? "browser"} elapsed=${Date.now() - call.started}ms pending=${waiting.size}`));
+    }
+  };
   ws.onmessage = (e) => {
     const m = JSON.parse(String(e.data));
     const call = waiting.get(m.id);
     if (!call) return;
+    clearTimeout(call.timer);
     waiting.delete(m.id);
-    if (m.error) call.fail(new Error(m.error.message));
+    if (m.error) call.fail(new Error(`CDP request=${m.id} method=${call.method} session=${call.sessionId ?? "browser"}: ${m.error.message}`));
     else call.ok(m.result as never);
   };
+  ws.onclose = () => rejectPending("WebSocket closed");
+  ws.onerror = () => rejectPending("WebSocket error");
   const send = <T = Record<string, never>>(method: string, params: object = {}, sessionId?: string) =>
     new Promise<T>((ok, fail) => {
-      id += 1;
-      waiting.set(id, { ok: ok as (v: never) => void, fail });
-      ws.send(JSON.stringify({ id, method, params, sessionId }));
+      const requestId = ++id;
+      const started = Date.now();
+      const timer = setTimeout(() => {
+        const pending = [...waiting.entries()].map(([key, call]) => `${key}:${call.method}:${Date.now() - call.started}ms`).join(", ");
+        waiting.delete(requestId);
+        fail(new Error(`CDP timeout after ${timeoutMs}ms: request=${requestId} method=${method} session=${sessionId ?? "browser"} pending=[${pending}]`));
+      }, timeoutMs);
+      waiting.set(requestId, { method, sessionId, started, timer, ok: ok as (v: never) => void, fail });
+      try {
+        ws.send(JSON.stringify({ id: requestId, method, params, sessionId }));
+      } catch (error) {
+        clearTimeout(timer);
+        waiting.delete(requestId);
+        fail(error);
+      }
     });
   return { send, close: () => chrome.kill() };
 }
