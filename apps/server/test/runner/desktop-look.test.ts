@@ -510,7 +510,17 @@ test.if(posix && existsSync("/bin/bash"))(
     const file = path.join(home, "bashrc");
     writeFileSync(file, fileOf(home, look(), `${LOOK_DIR}/bashrc`));
     writeFileSync(path.join(home, ".hushlogin"), "");
-    const shell = Bun.spawn(["/bin/bash", "--rcfile", file, "-i"], {
+    // The desktop runs on Linux with modern Bash. macOS ships Bash 3.2,
+    // whose history -a does not persist commands in this interactive fixture.
+    // Use the installed Linux-equivalent Bash for this local CI test; do not skip it.
+    const bash =
+      process.platform === "darwin"
+        ? ["/opt/homebrew/bin/bash", "/usr/local/bin/bash", Bun.which("bash")].find(
+            (candidate) => candidate && candidate !== "/bin/bash" && existsSync(candidate),
+          )
+        : "/bin/bash";
+    if (!bash) throw new Error("Install modern Bash for the Linux desktop history test (brew install bash)");
+    const shell = Bun.spawn([bash, "--rcfile", file, "-i"], {
       cwd: home,
       env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
       stdin: "pipe",
