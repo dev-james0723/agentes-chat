@@ -123,7 +123,7 @@ async function plan(machine: Machine, args: string[] = [], o: RunOptions = {}) {
   const argv = [...(o.real ? [] : ["--plan"]), ...args];
   const direct = o.piped === undefined ? ["/bin/sh", SCRIPT, ...argv] : ["/bin/sh", "-s", "--", ...argv];
   const cmd = o.before ? ["/bin/sh", "-c", `${o.before} && exec "$@"`, "sh", ...direct] : direct;
-  const env = { PATH: bin, HOME: home, STUB_LOG: log, ...o.env };
+  const env = { PATH: bin, HOME: home, STUB_LOG: log, AGENTES_INSTALL_PLAN_HERMETIC: "1", ...o.env };
   let out = "";
   let err = "";
   let code: number;
