@@ -8,6 +8,7 @@ import {
   recordContextUse,
   recordOutcome,
   setLearningApprovalSettings,
+  sha256,
   type ToolContext,
 } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
@@ -501,14 +502,17 @@ test("a tampered first-version promoted Skill cannot auto-share even when its pr
   const creator = await runAt(f.agent.id);
   // This passes the plain prose scanner, but the content was changed AFTER
   // the verified promotion; it must not inherit the original promotion proof.
-  await f.db.update(schema.skills).set({ body: "Check elixir hello once." }).where(eq(schema.skills.id, skill.id));
+  await f.db
+    .update(schema.skills)
+    .set({ body: "Verify the release readiness twice." })
+    .where(eq(schema.skills.id, skill.id));
   const attempt = await invoke(creator, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
   expect(attempt.isError).toBe(true);
   // A description-only rewrite also invalidates the original provenance,
   // even if both versions look like ordinary safe procedural prose.
   await f.db
     .update(schema.skills)
-    .set({ body: skill.body, description: "Verified elixir checklist." })
+    .set({ body: skill.body, description: "Check a release checklist after independently tested changes." })
     .where(eq(schema.skills.id, skill.id));
   const second = await invoke(creator, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
   expect(second.isError).toBe(true);
@@ -522,6 +526,70 @@ test("a tampered first-version promoted Skill cannot auto-share even when its pr
   expect(grants).toHaveLength(1);
   const pages = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
   expect(pages.some((page) => page.source?.id === skill.id)).toBe(false);
+});
+
+async function resealSkill(skillId: string, description: string, body: string) {
+  const [creation] = await f.db
+    .select()
+    .from(schema.agentActions)
+    .where(and(eq(schema.agentActions.kind, "skill.created"), eq(schema.agentActions.targetId, skillId)));
+  if (!creation?.after) throw new Error("missing creation receipt");
+  await f.db
+    .update(schema.agentActions)
+    .set({
+      after: {
+        ...creation.after,
+        contentDigest: sha256(JSON.stringify([description, body])),
+      },
+    })
+    .where(eq(schema.agentActions.id, creation.id));
+}
+
+test("auto share rejects later tokens outside the closed procedural vocabulary before any peer grant, memory, or wiki copy", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const ctx = await runAt(f.agent.id);
+  const safeBodyText = "Check the release readiness twice.";
+  const safeDescription = "Verify a release checklist after independently tested changes.";
+  const blocked = [
+    "Check rustc main.rs twice.",
+    "Check myinterp hello once.",
+    "Check the release readiness twice. Check cargo test the package twice.",
+  ];
+  for (const prose of blocked) {
+    for (const patch of [
+      { body: prose, description: safeDescription },
+      { body: safeBodyText, description: prose },
+    ]) {
+      await f.db.update(schema.skills).set(patch).where(eq(schema.skills.id, skill.id));
+      await resealSkill(skill.id, patch.description, patch.body);
+      const result = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+      expect(result.isError).toBe(true);
+      const grants = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+      expect(grants).toHaveLength(1);
+      expect(grants.some((row) => row.agentId === peers[0]!.id)).toBe(false);
+      const wiki = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
+      expect(wiki.some((page) => page.source?.id === skill.id)).toBe(false);
+      const memory = await f.db
+        .select()
+        .from(schema.contextItems)
+        .where(
+          and(
+            eq(schema.contextItems.orgId, f.org.id),
+            eq(schema.contextItems.scopeType, "org"),
+            eq(schema.contextItems.kind, "note"),
+          ),
+        );
+      expect(memory).toHaveLength(0);
+    }
+  }
+  await f.db
+    .update(schema.skills)
+    .set({ body: safeBodyText, description: safeDescription })
+    .where(eq(schema.skills.id, skill.id));
+  await resealSkill(skill.id, safeDescription, safeBodyText);
+  const allowed = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+  expect(allowed.isError).toBeFalsy();
 });
 
 test("automatic promotion audits partially delivered shares after a Wiki failure", async () => {
