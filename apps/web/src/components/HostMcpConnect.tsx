@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useApi } from "@/api/context";
 import { useOrg } from "@/components/org-context";
 import {
+  assertHostMcpReadLevel,
   bindReviewedHostMcp,
   hostMcpEndpoint,
   type ReviewedHostProfile,
@@ -69,10 +70,16 @@ export function HostMcpConnect() {
   }, [org.id, machineId]);
 
   async function grantRead(connectionId: string, targetAgent: string) {
-    // Read fresh grants before updating. No unrelated access is overwritten.
-    await saveLevels(api, org.id, targetAgent, { ["connector:" + connectionId]: "read" });
+    // A successful write does not prove permission if the new connector
+    // has not appeared in the access tree. Check both write result and fresh readback.
+    const changed = await saveLevels(api, org.id, targetAgent, { ["connector:" + connectionId]: "read" });
+    assertHostMcpReadLevel(changed, connectionId);
+    const confirmed = await api.access.get(org.id, targetAgent);
+    assertHostMcpReadLevel(confirmed, connectionId);
     setPending(null);
-    await Promise.all([
+    // Cache invalidation is UI-only; after server confirmation it must not
+    // turn a real successful grant into an erroneous "permission failed".
+    await Promise.allSettled([
       qc.invalidateQueries({ queryKey: keys.customServers(org.id) }),
       qc.invalidateQueries({ queryKey: keys.connections(org.id) }),
       qc.invalidateQueries({ queryKey: keys.agentAccess(org.id, targetAgent) }),

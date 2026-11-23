@@ -1,3 +1,6 @@
+import type { AgentAccess } from "@agenteschat/client";
+import { levelIn } from "@agenteschat/client/lib/access-levels";
+
 /**
  * Human-admin-only native Host MCP binding contract.
  *
@@ -16,6 +19,20 @@ export type HostBoundResult = { id: string; label: string; tools: number; grants
 
 type PostOptions = { method: "POST"; json: unknown };
 export type HostRequester = <T>(path: string, options?: PostOptions) => Promise<T>;
+
+/**
+ * Fail closed: saveLevels() can silently preserve an unchanged tree if the
+ * new connector is missing, so a successful HTTP PUT alone is not acceptance.
+ * Require an actual, server-reported READ level on this exact connection.
+ */
+export function assertHostMcpReadLevel(access: AgentAccess, connectionId: string): void {
+  if (!access.connectors.some((connection) => connection.connectionId === connectionId && connection.custom)) {
+    throw new Error("Host MCP connection is not visible in the agent access tree");
+  }
+  if (levelIn(access, "connector:" + connectionId) !== "read") {
+    throw new Error("Host MCP read permission is not confirmed by the server");
+  }
+}
 
 export const hostMcpEndpoint = (orgId: string) =>
   "/api/app/organizations/" + encodeURIComponent(orgId) + "/connectors/host-mcp";

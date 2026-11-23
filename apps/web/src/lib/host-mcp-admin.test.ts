@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bindReviewedHostMcp, type HostRequester, hostMcpEndpoint } from "./host-mcp-admin";
+import type { AgentAccess } from "@agenteschat/client";
+import { assertHostMcpReadLevel, bindReviewedHostMcp, type HostRequester, hostMcpEndpoint } from "./host-mcp-admin";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const machineId = "22222222-2222-4222-8222-222222222222";
@@ -25,7 +26,57 @@ function mockRequester(
   return { request, calls };
 }
 
+/** Simulates the server's effective access tree, not only PUT success. */
+function treeWithHostRead(state: "off" | "granted", connected = true): AgentAccess {
+  return {
+    all: false,
+    builtins: [],
+    connectors: connected
+      ? [
+          {
+            connectionId: "s1",
+            connector: "custom:s1",
+            label: "Shared Brain",
+            custom: true,
+            state: "off",
+            scopes: [
+              {
+                scope: "custom:s1:read",
+                label: "Read",
+                state,
+                tools: [
+                  {
+                    name: "search_shared_brain",
+                    label: "Search memory",
+                    description: "",
+                    readOnly: true,
+                    connectionId: "s1",
+                    scope: "custom:s1:read",
+                    sensitive: false,
+                    state,
+                  },
+                ],
+              },
+            ],
+          },
+        ]
+      : [],
+  } as AgentAccess;
+}
+
 describe("Native Host MCP admin connector", () => {
+  test("read grant acceptance requires server-visible connector and actual READ level", () => {
+    expect(() => assertHostMcpReadLevel(treeWithHostRead("granted"), "s1")).not.toThrow();
+    expect(() => assertHostMcpReadLevel(treeWithHostRead("off"), "s1")).toThrow(
+      "Host MCP read permission is not confirmed",
+    );
+    expect(() => assertHostMcpReadLevel(treeWithHostRead("off", false), "s1")).toThrow(
+      "Host MCP connection is not visible",
+    );
+    expect(() => assertHostMcpReadLevel(treeWithHostRead("granted"), "other")).toThrow(
+      "Host MCP connection is not visible",
+    );
+  });
   test("uses the signed-in native profiles API and pins the selected revision", async () => {
     const { request, calls } = mockRequester();
     const result = await bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", agentId });
