@@ -64,6 +64,14 @@ export const PROVIDERS = [
     privacy: true,
   },
   {
+    id: "xai",
+    label: "Grok (xAI)",
+    placeholder: "xai-…",
+    pattern: /^xai-[A-Za-z0-9._-]{16,}$/,
+    site: "console.x.ai/team/default/api-keys",
+    credit: "console.x.ai/team/default/billing",
+  },
+  {
     id: "deepseek",
     label: "DeepSeek",
     placeholder: "sk-…",

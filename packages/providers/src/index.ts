@@ -31,7 +31,7 @@ export function createModelProviders(
       p.protocol === "custom"
         ? createCustomProvider({ fetch: options.endpointFetch, version: options.version })
         : p.protocol === "openai"
-          ? createOpenAIProvider()
+          ? createOpenAIProvider({ id, baseURL: p.baseURL })
           : p.protocol === "gemini"
             ? createGeminiProvider()
             : p.protocol === "openrouter"

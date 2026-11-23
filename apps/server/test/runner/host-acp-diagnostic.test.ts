@@ -1,11 +1,14 @@
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { parseBrainEvent } from "@agenteschat/adapters/machine-protocol";
 import { cliErrorWords } from "../../../../packages/engine/src/tool-detail";
 import { runHostAcpTurn } from "../../runner/host-acp-runtime";
 
-const root = mkdtempSync(path.join(import.meta.dir, ".acp-diagnostic-fixtures-"));
+// Host ACP refuses a runner home outside the native user home. The fixture must
+// satisfy that real security rule even when CI checked out the repo in /private/tmp.
+const root = mkdtempSync(path.join(os.homedir(), ".acp-diagnostic-fixtures-"));
 /** The host ACP turn runs only on a Mac (`runHostAcpTurn` refuses any other platform): its turns are tested there. */
 const onMac = test.skipIf(process.platform !== "darwin");
 afterAll(() => rmSync(root, { recursive: true, force: true }));

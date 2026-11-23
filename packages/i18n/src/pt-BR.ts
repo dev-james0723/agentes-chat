@@ -1343,6 +1343,7 @@ export const ptBR = {
     keyInvalid: {
       anthropic: "As chaves de API do Claude começam com sk-ant-. Confira e cole de novo.",
       openai: "As chaves da OpenAI começam com sk-. Confira e cole de novo.",
+      xai: "As chaves da API da xAI (Grok) começam com xai-. Confira e cole novamente.",
       gemini: "As chaves de API do Gemini começam com AQ. ou AIza. Confira e cole de novo.",
       deepseek: "As chaves da DeepSeek começam com sk-. Confira e cole de novo.",
       moonshot: "As chaves da Kimi começam com sk-. Confira e cole de novo.",

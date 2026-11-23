@@ -36,7 +36,8 @@ import {
   contextWindowOf,
   isAutoModel,
   isContextLimit,
-  MODEL_CATALOG,
+  listedModels,
+  modelForTier,
   modelProvider,
   parseCustomModel,
 } from "@agenteschat/providers";
@@ -215,10 +216,27 @@ export const CLAUDE_CODE_MODELS: readonly BrainModelOption[] = [
   { value: "haiku", label: "Haiku", modelId: "claude-haiku-5-5" },
 ];
 
-/** Codex's models: the OpenAI rows of the catalog (any other name is accepted as typed). */
+/** Claude Code keeps its stable aliases, but exposes newly discovered versions for explicit selection.
+ * The alias IDs point at the newest dated provider model for context/cost display; the
+ * CLI resolves the actual alias for the owner's subscription at execution time.
+ */
+export const claudeCodeModels = (): BrainModelOption[] => {
+  const aliasTiers = ["large", "medium", "small"] as const;
+  const aliasRows = CLAUDE_CODE_MODELS.map((row, i) => ({
+    ...row,
+    modelId: modelForTier("anthropic", aliasTiers[i] ?? "medium") ?? row.modelId,
+  }));
+  const explicit = listedModels()
+    .filter(([id, m]) => m.provider === "anthropic" && /^claude-(?:opus|sonnet|haiku)-\d/.test(id))
+    .filter(([id]) => !CLAUDE_CODE_MODELS.some((row) => row.modelId === id))
+    .map(([id, m]) => ({ value: id, label: m.label, modelId: id }));
+  return [...aliasRows, ...explicit];
+};
+
+/** Codex models: verified built-ins plus new provider metadata (owner's CLI still gates use). */
 export const codexModels = (): BrainModelOption[] =>
-  Object.entries(MODEL_CATALOG)
-    .filter(([, m]) => m.provider === "openai")
+  listedModels()
+    .filter(([id, m]) => m.provider === "openai" && /^(?:gpt-\d|codex-)/.test(id))
     .map(([id, m]) => ({ value: id, label: m.label, modelId: id, ...(m.recommended ? { recommended: true } : {}) }));
 
 /**
@@ -235,7 +253,7 @@ export function brainModelOptions(
 }
 
 function modelChoices(kind: BrainKind, machine?: { executors?: schema.MachineExecutors | null } | null) {
-  if (kind === "claude_code") return [...CLAUDE_CODE_MODELS];
+  if (kind === "claude_code") return claudeCodeModels();
   if (kind === "codex") return codexModels();
   if (kind === "cursor") return cursorModels(machine?.executors?.cursor?.models);
   if (kind === "opencode") return opencodeModels(machine?.executors?.opencode?.models);

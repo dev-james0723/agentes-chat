@@ -689,7 +689,13 @@ export const useTeam = (orgId: string) => {
 
 export const useModels = () => {
   const api = useApi();
-  const models = useQuery({ queryKey: keys.models, queryFn: () => api.agents.models(), staleTime: 10 * 60_000 });
+  const models = useQuery({
+    queryKey: keys.models,
+    queryFn: () => api.agents.models(),
+    staleTime: 10 * 60_000,
+    refetchInterval: 10 * 60_000,
+    refetchOnWindowFocus: true,
+  });
   if (models.data?.planModels) learnPlanModels(models.data.planModels);
   return models;
 };

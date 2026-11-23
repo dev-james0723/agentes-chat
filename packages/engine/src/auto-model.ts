@@ -217,7 +217,8 @@ export const needsAutoChoice = (agent: AutoAgent, plan: Pick<BrainPlan, "kind" |
 export function brainModelForTier(kind: BrainKind, tier: ModelTier): string | undefined {
   if (kind === "claude_code") {
     const id = modelForTier("anthropic", tier);
-    return CLAUDE_CODE_MODELS.find((o) => o.modelId === id)?.value ?? "sonnet";
+    const alias = /^claude-(opus|sonnet|haiku)-/.exec(id ?? "")?.[1];
+    return alias ?? CLAUDE_CODE_MODELS.find((o) => o.modelId === id)?.value ?? "sonnet";
   }
   if (kind === "codex") return modelForTier("openai", tier) ?? undefined;
   return undefined;

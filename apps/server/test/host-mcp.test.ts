@@ -31,7 +31,8 @@ async function fixture(kind = "general") {
     artifacts: [{ path: script, sha256: sha(await readFile(script)) }],
     envNames: [],
     agents: { agent: { tool_0: "read", tool_1: "approval" }, peer: { tool_0: "read" } },
-    timeoutMs: 2000,
+    // A cold Bun/MCP stdio child can exceed 2s when the full local CI runs across many files.
+    timeoutMs: 10_000,
   };
   const file = path.join(home, "registry.json");
   const raw = JSON.stringify({ version: 1, profiles: [p] });

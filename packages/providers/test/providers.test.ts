@@ -78,6 +78,30 @@ describe("pricing", () => {
     );
   });
 
+  test("GPT-6.2 Sol and Astra: documented prices, context and reasoning efforts", () => {
+    // Stay below the 272K long-context threshold for base rates; scale to a million.
+    const cost = (model: string) =>
+      [usage(100_000, 0), usage(0, 100_000), usage(0, 0, 100_000), usage(0, 0, 0, 100_000)].map(
+        (u) => costNanoUsd(model, u) / 1e8,
+      );
+    expect(cost("gpt-6.2-sol")).toEqual([2, 10, 0.1, 2.5]);
+    expect(cost("gpt-6.2-astra")).toEqual([8, 40, 0.4, 10]);
+    expect(costNanoUsd("gpt-6.2-astra", usage(272_001, 1000))).toBe(272_001 * 16000 + 1000 * 60000);
+    expect(contextWindowOf("gpt-6.2-sol")).toBe(1_050_000);
+    expect(MODEL_CATALOG["gpt-6.2-astra"]?.efforts).toEqual(["max", "xhigh", "high", "medium", "low"]);
+    expect(modelForTier("openai", "medium")).toBe("gpt-6.2-sol");
+    expect(modelForTier("openai", "large")).toBe("gpt-6.2-astra");
+    // Old models remain valid explicit selections, but no longer drive the new automatic tier.
+    expect(MODEL_CATALOG["gpt-6.1-sol"]?.tier).toBeUndefined();
+  });
+
+  test("Grok 4.7: native xAI adapter, price tiers and selectable JEV tier", () => {
+    expect(PROVIDERS.xai).toMatchObject({ protocol: "openai", baseURL: "https://api.x.ai/v1" });
+    expect(costNanoUsd("grok-4.7", usage(200_000, 1000))).toBe(200_000 * 2000 + 1000 * 6000);
+    expect(costNanoUsd("grok-4.7", usage(200_001, 1000))).toBe(200_001 * 4000 + 1000 * 12000);
+    expect(modelForTier("xai", "medium")).toBe("grok-4.7");
+  });
+
   test("GPT-6.1 Terra: $1 / $0.05 / $1.25 / $5, and $2 / $0.10 / $2.50 / $7.50 above 272K prompt tokens", () => {
     expect(costNanoUsd("gpt-6.1-terra", usage(100_000, 1000, 100_000, 72_000))).toBe(
       100_000 * 1000 + 1000 * 5000 + 100_000 * 50 + 72_000 * 1250,
@@ -121,7 +145,7 @@ describe("pricing", () => {
       );
     expect(recommended).toEqual([
       ["claude-sonnet-5-5"],
-      ["gpt-6.1-sol"],
+      ["gpt-6.2-sol"],
       ["gemini-3.8-flash"],
       ["deepseek-flash"],
       ["kimi-k3.1-pro"],
@@ -129,6 +153,7 @@ describe("pricing", () => {
       ["MiniMax-M3"],
       // OpenRouter's come from its list.
       [],
+      ["grok-4.7"],
     ]);
   });
 
@@ -158,6 +183,7 @@ describe("pricing", () => {
       "glm-5.3-flash",
       "MiniMax-M3.1-Flash",
       null,
+      "grok-4.7",
       null,
     ]);
     const line = (provider: string) => MODEL_TIERS.map((tier) => modelForTier(provider, tier));
@@ -179,10 +205,11 @@ describe("pricing", () => {
       "MiniMax-M3",
       null,
       null,
+      null,
     ]);
     for (const provider of PROVIDER_IDS) {
       const picks = Object.values(MODEL_CATALOG).filter((m) => m.provider === provider && m.router);
-      expect(picks).toHaveLength(["moonshot", "openrouter", "custom"].includes(provider) ? 0 : 1);
+      expect(picks).toHaveLength(["moonshot", "xai", "openrouter", "custom"].includes(provider) ? 0 : 1);
     }
     // GLM-5.3 Flash can't stop thinking, Flash-Lite keeps a little, every other pick turns it off.
     expect(MODEL_CATALOG["glm-5.3-flash"]?.leastThinking).toBeUndefined();

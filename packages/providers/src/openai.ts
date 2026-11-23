@@ -6,7 +6,7 @@ import type {
   ResponseOutputItem,
   ResponseStreamEvent,
 } from "openai/resources/responses/responses";
-import { MODEL_CATALOG } from "./catalog";
+import { modelInfo } from "./catalog";
 import {
   type ContentBlock,
   deniedError,
@@ -42,7 +42,12 @@ import {
  * - Mid-stream failures carry what was received (`ProviderError.partial`).
  */
 export function createOpenAIProvider(
-  options: { baseURL?: string; maxRetries?: number /** Tests only: scripted transport. */; fetch?: typeof fetch } = {},
+  options: {
+    id?: string;
+    baseURL?: string;
+    maxRetries?: number /** Tests only: scripted transport. */;
+    fetch?: typeof fetch;
+  } = {},
 ): ModelProvider {
   const client = (apiKey: string, organization?: string, project?: string) =>
     new OpenAI({
@@ -55,7 +60,7 @@ export function createOpenAIProvider(
     });
 
   return {
-    id: "openai",
+    id: options.id ?? "openai",
     async stream(input, { apiKey, organization, project, onDelta }): Promise<ModelResult> {
       const request = laidOut(input);
       const partial: PartialUsage = {
@@ -65,14 +70,14 @@ export function createOpenAIProvider(
         outputTokens: null,
         outputChars: 0,
       };
-      const info = MODEL_CATALOG[request.model];
+      const info = modelInfo(request.model);
       const effort = request.effort === "none" && info?.leastThinking !== "off" ? "low" : request.effort;
       try {
         const stream = client(apiKey, organization, project).responses.stream(
           {
             model: request.model,
             instructions: systemText(request.system),
-            input: toInput(request.messages),
+            input: toInput(request.messages, options.id ?? "openai"),
             max_output_tokens: request.maxTokens,
             store: false,
             include: ["reasoning.encrypted_content"],
@@ -106,7 +111,7 @@ export function createOpenAIProvider(
         if (response.status === "failed") {
           throw new OpenAI.APIError(undefined, response.error ?? undefined, response.error?.message, undefined);
         }
-        return fromResponse(response as unknown as Response);
+        return fromResponse(response as unknown as Response, options.id ?? "openai");
       } catch (error) {
         const mapped = openAIError(error);
         if (partial.outputChars > 0) mapped.partial = partial;
@@ -126,7 +131,7 @@ function toTools(request: ModelRequest): FunctionTool[] {
   }));
 }
 
-function toInput(messages: ModelMessage[]): ResponseInputItem[] {
+function toInput(messages: ModelMessage[], provider = "openai"): ResponseInputItem[] {
   const items: ResponseInputItem[] = [];
   for (const m of messages) {
     if (typeof m.content === "string") {
@@ -162,14 +167,14 @@ function toInput(messages: ModelMessage[]): ResponseInputItem[] {
               ? `ERROR: ${b.content}`
               : b.content,
         });
-      else if (b.type === "opaque" && b.provider === "openai") items.push(b.data as unknown as ResponseInputItem);
+      else if (b.type === "opaque" && b.provider === provider) items.push(b.data as unknown as ResponseInputItem);
       // Opaque blocks of another provider (e.g. Anthropic thinking) can't be replayed here.
     }
   }
   return items;
 }
 
-function fromResponse(response: Response): ModelResult {
+function fromResponse(response: Response, provider = "openai"): ModelResult {
   const content: ContentBlock[] = [];
   let refused = false;
   for (const item of response.output as ResponseOutputItem[]) {
@@ -187,7 +192,7 @@ function fromResponse(response: Response): ModelResult {
       }
       content.push({ type: "tool_use", id: item.call_id, name: item.name, input });
     } else if (item.type === "reasoning") {
-      content.push({ type: "opaque", provider: "openai", data: item as unknown as Record<string, unknown> });
+      content.push({ type: "opaque", provider, data: item as unknown as Record<string, unknown> });
     }
   }
   const usage = response.usage;

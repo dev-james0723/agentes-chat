@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assertStepTable, FULL_STEPS, runFull, verifySource } from "./local-ci-full.mjs";
+import { assertStepTable, FULL_STEPS, parseRunnerArguments, runFull, verifySource } from "./local-ci-full.mjs";
 import { REQUIRED_RELEASE_STEPS } from "./local-ci-status.mjs";
 
 const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
@@ -25,6 +25,35 @@ function repo() {
 test("the step table is exactly the release contract's 22 steps, in its order", () => {
   assertStepTable();
   assert.deepEqual(Object.keys(FULL_STEPS), [...REQUIRED_RELEASE_STEPS]);
+});
+
+test("full runner retains the 30s per-test timeouts of ci-local and bounded geometry", () => {
+  assert.match(FULL_STEPS["engine-n-z-and-packages"].argv.at(-1), /bun test --timeout 30000/);
+  assert.deepEqual(FULL_STEPS.server.argv.slice(0, 4), ["bun", "test", "--timeout", "30000"]);
+  assert.match(FULL_STEPS["web-ui"].argv.at(-1), /bun test --timeout 30000/);
+  assert.match(FULL_STEPS["mobile-desktop"].argv.at(-1), /bun test --timeout 30000/);
+  assert.equal(FULL_STEPS.geometry.timeoutMs, 1_200_000);
+});
+
+test("CLI --docker-host configures dedicated CI daemon without losing exact candidate parameters", () => {
+  assert.deepEqual(
+    parseRunnerArguments([
+      "--root",
+      "/tmp/fresh-pr",
+      "--sha",
+      "a".repeat(40),
+      "--docker-host",
+      "unix:///tmp/dedicated-ci/docker.sock",
+      "--only",
+      "container-boot",
+    ]),
+    {
+      root: "/tmp/fresh-pr",
+      sha: "a".repeat(40),
+      dockerHost: "unix:///tmp/dedicated-ci/docker.sock",
+      only: "container-boot",
+    },
+  );
 });
 
 test("a clean candidate at the remote branch's commit is verified", async () => {

@@ -158,6 +158,11 @@ export function ordinalForm(locale: string, n: number): Intl.LDMLPluralRule {
   if (typeof Intl.PluralRules === "function") return new Intl.PluralRules(locale, { type: "ordinal" }).select(n);
   const code = appLocale([locale], true);
   if (code === "fr") return n === 1 ? "one" : "other";
+  // CLDR Spanish ordinals: 1 and 3 at the end of the number, except numbers ending in 11.
+  if (code === "es") {
+    const positive = Math.abs(n);
+    return positive % 10 === 3 || (positive % 10 === 1 && positive % 100 !== 11) ? "one" : "other";
+  }
   if (code !== "en" || (n % 100 >= 11 && n % 100 <= 13)) return "other";
   return (["other", "one", "two", "few"] as const)[n % 10] ?? "other";
 }

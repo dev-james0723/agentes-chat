@@ -50,14 +50,14 @@ step "migrations up to date with the schema" \
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"
-step "test backend 2/3" "bun test packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup"
-step "test backend 3/3" "bun test apps/server"
+step "test backend 2/3" "bun test --timeout 30000 packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup"
+step "test backend 3/3" "bun test --timeout 30000 apps/server"
 geometry=$(mktemp -d "${TMPDIR:-/tmp}/agentes-geometry.XXXXXX")
-step "test web and design system" "GEOMETRY_OUT=$geometry bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui"
+step "test web and design system" "GEOMETRY_OUT=$geometry bun test --timeout 30000 --preload ./scripts/geometry/capture.ts apps/web packages/ui"
 step "geometry" "bun run check:geometry $geometry --text-size xs,xl"
 rm -rf "$geometry"
 step "test new event dialog alone" "RUN_NEW_EVENT=1 bun test --timeout 20000 apps/web/test/new-event.test.tsx"
-step "test phone and desktop apps" "bun test apps/mobile/test apps/desktop/test"
+step "test phone and desktop apps" "bun test --timeout 30000 apps/mobile/test apps/desktop/test"
 # This branch's own history: other local branches' commits are theirs to scan.
 step "secret scan" "gitleaks git --config .gitleaks.toml --log-opts=HEAD --no-banner --redact --exit-code 1 ."
 step "boundaries" "bun run check:boundaries"

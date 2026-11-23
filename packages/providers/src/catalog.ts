@@ -67,6 +67,7 @@ export const PROVIDERS = {
   },
   // Its models come from its public list at run time (`openrouter.ts`), never from this catalog.
   openrouter: { label: "OpenRouter", protocol: "openrouter" },
+  xai: { label: "Grok (xAI)", protocol: "openai", baseURL: "https://api.x.ai/v1" },
   // A workspace's own endpoint (ADR 0146): its address, API style and models live on its credential (`custom.ts`).
   custom: { label: "Other provider", protocol: "custom" },
 } as const satisfies Record<string, ProviderInfo>;
@@ -118,6 +119,8 @@ export interface ModelInfo {
   unpriced?: true;
   /** A workspace endpoint's name (ADR 0146), which the pickers group its models under. */
   endpoint?: string;
+  /** Published release date, used to prefer newer verified tier peers in JEV Automático. */
+  releasedAt?: string;
 }
 
 /** The sizes "Automático" chooses between: a fast cheap model, the everyday one, the strongest. */
@@ -147,6 +150,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "claude-opus-5-5": {
     provider: "anthropic",
     label: "Claude Opus 5.5",
+    releasedAt: "2026-09-22",
     prices: { input: 4000, output: 20000, cacheRead: 200, cacheWrite: 5000 },
     contextWindow: 1_000_000,
     serverSideFallback: true,
@@ -155,6 +159,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "claude-sonnet-5-5": {
     provider: "anthropic",
     label: "Claude Sonnet 5.5",
+    releasedAt: "2026-09-28",
     prices: { input: 2000, output: 10000, cacheRead: 100, cacheWrite: 2500 },
     contextWindow: 1_000_000,
     serverSideFallback: true,
@@ -164,6 +169,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "claude-haiku-5-5": {
     provider: "anthropic",
     label: "Claude Haiku 5.5",
+    releasedAt: "2026-10-07",
     prices: { input: 100, output: 500, cacheRead: 10, cacheWrite: 125 },
     longContext: { aboveInputTokens: 100_000, prices: { input: 500, output: 2500, cacheRead: 50, cacheWrite: 625 } },
     contextWindow: 1_000_000,
@@ -177,7 +183,42 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   // 2026-10-31, GPT-6 Astra 2026-11-09); cache writes at the 30-minute rate. Above 272K prompt tokens, input,
   // cached input and cache writes cost 2×, output 1.5×. Context windows from each model's page (2026-10-26,
   // Terra's 2026-10-31, Astra's 2026-11-09).
-  // OpenAI's flagship, 5× GPT-6.1 Sol's prices: no tier and no pick for routing or system tasks, so "Automático"
+  // Verified 2026-11-17. Sol is the everyday JEV tier; Astra is selected only for hard jobs (large).
+  // OpenAI Standard pricing; 30-minute cache writes; prices double/1.5x above 272K input.
+  "gpt-6.2-sol": {
+    provider: "openai",
+    label: "GPT-6.2 Sol",
+    prices: { input: 2000, output: 10000, cacheRead: 100, cacheWrite: 2500 },
+    longContext: {
+      aboveInputTokens: 272_000,
+      prices: { input: 4000, output: 15000, cacheRead: 200, cacheWrite: 5000 },
+    },
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    serverSideFallback: false,
+    reasoning: true,
+    efforts: ["max", "xhigh", "high", "medium", "low"],
+    releasedAt: "2026-11-17",
+    recommended: true,
+    tier: "medium",
+  },
+  "gpt-6.2-astra": {
+    provider: "openai",
+    label: "GPT-6.2 Astra",
+    prices: { input: 8000, output: 40000, cacheRead: 400, cacheWrite: 10000 },
+    longContext: {
+      aboveInputTokens: 272_000,
+      prices: { input: 16000, output: 60000, cacheRead: 800, cacheWrite: 20000 },
+    },
+    contextWindow: 1_050_000,
+    maxOutputTokens: 128_000,
+    serverSideFallback: false,
+    reasoning: true,
+    efforts: ["max", "xhigh", "high", "medium", "low"],
+    releasedAt: "2026-11-17",
+    tier: "large",
+  },
+  // OpenAI's former flagship, 5× GPT-6.1 Sol's prices: no tier and no pick for routing or system tasks, so "Automático"
   // never chooses it, people do.
   "gpt-6-astra": {
     provider: "openai",
@@ -202,8 +243,6 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
     contextWindow: 1_050_000,
     serverSideFallback: false,
     reasoning: true,
-    recommended: true,
-    tier: "medium",
   },
   // No tier and no pick for routing or system tasks: "Automático" never chooses it, people do.
   "gpt-6.1-terra": {
@@ -233,6 +272,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "gpt-6-luna": {
     provider: "openai",
     label: "GPT-6 Luna",
+    releasedAt: "2026-09-22",
     prices: { input: 100, output: 500, cacheRead: 10, cacheWrite: 125 },
     longContext: { aboveInputTokens: 272_000, prices: { input: 200, output: 750, cacheRead: 20, cacheWrite: 250 } },
     contextWindow: 1_050_000,
@@ -243,12 +283,31 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
     leastThinking: "off",
     tier: "small",
   },
+  // xAI public Responses API, verified on docs.x.ai (Grok 4.7 released 2026-09-21).
+  // The model's context-tiered rate doubles above 200K input tokens.
+  "grok-4.7": {
+    provider: "xai",
+    label: "Grok 4.7",
+    prices: { input: 2000, output: 6000, cacheRead: 500, cacheWrite: 4000 },
+    longContext: {
+      aboveInputTokens: 200_000,
+      prices: { input: 4000, output: 12000, cacheRead: 1000, cacheWrite: 8000 },
+    },
+    contextWindow: 500_000,
+    serverSideFallback: false,
+    reasoning: true,
+    efforts: ["xhigh", "high", "medium", "low"],
+    releasedAt: "2026-09-21",
+    recommended: true,
+    tier: "medium",
+  },
   // Gemini (Interactions API), Standard tier, from ai.google.dev/gemini-api/docs/pricing (2026-10-27). Thinking is
   // billed as output. Caching is implicit, with no write charge, so a cache write costs the input rate (none is ever
   // reported). Argon and 3.8 Flash cost half until the day in `intro`.
   "gemini-4-argon": {
     provider: "gemini",
     label: "Gemini 4 Argon",
+    releasedAt: "2026-10-13",
     prices: { input: 4000, output: 20000, cacheRead: 200, cacheWrite: 4000 },
     intro: { until: "2026-12-01", prices: { input: 2000, output: 10000, cacheRead: 100, cacheWrite: 2000 } },
     contextWindow: 1_048_576,
@@ -258,6 +317,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "gemini-3.8-flash": {
     provider: "gemini",
     label: "Gemini 3.8 Flash",
+    releasedAt: "2026-09-02",
     prices: { input: 1500, output: 7500, cacheRead: 150, cacheWrite: 1500 },
     intro: { until: "2027-01-01", prices: { input: 750, output: 3750, cacheRead: 75, cacheWrite: 750 } },
     contextWindow: 1_048_576,
@@ -269,6 +329,7 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   "gemini-3.5-flash-lite": {
     provider: "gemini",
     label: "Gemini 3.5 Flash-Lite",
+    releasedAt: "2026-07-21",
     prices: { input: 300, output: 2500, cacheRead: 30, cacheWrite: 300 },
     contextWindow: 1_048_576,
     serverSideFallback: false,
@@ -362,8 +423,25 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
   },
 };
 
-/** Models a provider lists at run time (OpenRouter's, `openrouter.ts`), beside the fixed catalog. */
+/** OpenRouter's key-dependent catalog, separate from the native vendors' discovered public models. */
 let listed = new Map<string, ModelInfo>();
+/** Native API models from the verified, bounded background metadata fetch. */
+let discovered = new Map<string, ModelInfo>();
+/** Retained only for billing a call already started when a model is delisted. */
+const discoveredHistory = new Map<string, ModelInfo>();
+
+/** Atomically publish a validated snapshot; never replace the fixed catalog or OpenRouter's list. */
+export function setDiscoveredModels(models: Record<string, ModelInfo>) {
+  const next = new Map(Object.entries(models).filter(([id]) => !Object.hasOwn(MODEL_CATALOG, id)));
+  for (const [id, info] of next) discoveredHistory.set(id, info);
+  // Bound retained billing metadata when a long-lived worker sees many successive releases.
+  while (discoveredHistory.size > 5_000) {
+    const oldest = discoveredHistory.keys().next().value;
+    if (!oldest) break;
+    discoveredHistory.delete(oldest);
+  }
+  discovered = next;
+}
 
 /** Replaces the models listed at run time. A catalog id is never shadowed. */
 export function setListedModels(models: Record<string, ModelInfo>) {
@@ -412,11 +490,13 @@ export const customModelOf = (orgId: string, id: string) => custom.get(orgId)?.g
  */
 export function modelInfo(model: string): ModelInfo | undefined {
   if (Object.hasOwn(MODEL_CATALOG, model)) return MODEL_CATALOG[model];
-  return isCustomModel(model) ? lastKnown.get(model) : listed.get(model);
+  return isCustomModel(model)
+    ? lastKnown.get(model)
+    : (discovered.get(model) ?? listed.get(model) ?? discoveredHistory.get(model));
 }
 
-/** Every model: the catalog's, then the listed ones in their list's order. */
-export const listedModels = (): [string, ModelInfo][] => [...Object.entries(MODEL_CATALOG), ...listed];
+/** Every currently selectable model: fixed, discovered provider models, and OpenRouter's live list. */
+export const listedModels = (): [string, ModelInfo][] => [...Object.entries(MODEL_CATALOG), ...discovered, ...listed];
 
 /**
  * The model a provider's system tasks use (summaries, reflection): its cheap
@@ -452,7 +532,12 @@ export function nearestTier<T>(
 
 /** A provider's model for a tier (`nearestTier`); null when the provider has no tiered model. */
 export function modelForTier(provider: string, tier: ModelTier): string | null {
-  const own = listedModels().filter(([, m]) => m.provider === provider);
+  // A public metadata feed does not establish this workspace's entitlement to a new model.
+  // Keep unverified native discoveries selectable by explicit choice, never an unprompted
+  // Automático/JEV or CLI brain default. OpenRouter's key-dependent list is unaffected.
+  const own = listedModels()
+    .filter(([id, m]) => m.provider === provider && m.tier && !discovered.has(id))
+    .sort((a, b) => (b[1].releasedAt ?? "").localeCompare(a[1].releasedAt ?? ""));
   return nearestTier(own, tier, ([, m]) => m.tier)?.[0] ?? null;
 }
 

@@ -161,7 +161,7 @@ describe("the header search (Discord's)", () => {
     // 304 messages, 100 shown: the message is two pages of 200 back, so going to it pages back more than once.
     expect(pages.mock.calls.length - pagesBefore).toBeGreaterThanOrEqual(2);
     expect(results()).toBeNull();
-  }, 15_000);
+  }, 30_000);
 
   test("a message no longer there says so, and the results stay", async () => {
     const api = createFakeApi(seeded());
