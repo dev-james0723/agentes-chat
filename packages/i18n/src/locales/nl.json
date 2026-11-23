@@ -11902,6 +11902,7 @@
       "none": "MCP-servers die je via hun adres koppelt, verschijnen hier."
     },
     "hostMcp": {
+      "title": "Host MCP op je computer",
       "intro": "Gebruik een gecontroleerd Host MCP-profiel op een vertrouwde computer. Alleen de gekozen agent krijgt leestoegang.",
       "connectRead": "Verbinden en leestoegang geven",
       "note": "De toestemmingslijst van de computer blijft gelden. Controleer de toegang met een echte toolaanroep van de agent."

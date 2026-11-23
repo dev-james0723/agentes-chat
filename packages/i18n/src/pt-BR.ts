@@ -12140,6 +12140,7 @@ export const ptBR = {
       none: "Os servidores MCP que você conectar pelo endereço aparecem aqui.",
     },
     hostMcp: {
+      title: "Host MCP no seu computador",
       intro:
         "Use um perfil Host MCP revisado em um computador confiável. Só o agente selecionado recebe acesso de leitura.",
       connectRead: "Conectar e conceder leitura",

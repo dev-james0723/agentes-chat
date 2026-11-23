@@ -11840,6 +11840,7 @@
       "none": "Hier erscheinen die MCP-Server, die du über ihre Adresse verbindest."
     },
     "hostMcp": {
+      "title": "Host MCP auf deinem Computer",
       "intro": "Nutze ein geprüftes Host-MCP-Profil auf einem vertrauenswürdigen Computer. Nur der gewählte Agent erhält Lesezugriff.",
       "connectRead": "Verbinden und Lesezugriff gewähren",
       "note": "Die Freigabeliste des Computers gilt weiterhin. Prüfe den Zugriff mit einem echten Tool-Aufruf des Agenten."

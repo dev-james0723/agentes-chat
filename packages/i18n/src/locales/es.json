@@ -12197,6 +12197,7 @@
       "none": "Aquí aparecen los servidores MCP que conectes por su dirección."
     },
     "hostMcp": {
+      "title": "Host MCP en tu ordenador",
       "intro": "Usa un perfil Host MCP revisado en un ordenador de confianza. Solo el agente seleccionado obtiene acceso de lectura.",
       "connectRead": "Conectar y conceder lectura",
       "note": "La lista de permisos del ordenador sigue vigente. Verifica el acceso con una llamada real a una herramienta del agente."

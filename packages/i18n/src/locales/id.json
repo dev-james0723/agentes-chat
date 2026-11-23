@@ -11431,6 +11431,7 @@
       "none": "Server MCP yang kamu hubungkan lewat alamatnya muncul di sini."
     },
     "hostMcp": {
+      "title": "Host MCP di komputer Anda",
       "intro": "Gunakan profil Host MCP yang telah ditinjau di komputer tepercaya. Hanya agen yang dipilih mendapat akses baca.",
       "connectRead": "Hubungkan dan beri akses baca",
       "note": "Daftar izin komputer tetap berlaku. Verifikasi melalui pemanggilan alat nyata oleh agen."

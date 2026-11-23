@@ -12268,6 +12268,7 @@
       "none": "Les serveurs MCP que vous connectez par leur adresse s'affichent ici."
     },
     "hostMcp": {
+      "title": "Host MCP sur votre ordinateur",
       "intro": "Utilisez un profil Host MCP vérifié sur un ordinateur de confiance. Seul l’agent choisi obtient un accès en lecture.",
       "connectRead": "Connecter et autoriser la lecture",
       "note": "Les autorisations de l’ordinateur restent en vigueur. Vérifiez l’accès par un véritable appel d’outil de l’agent."

@@ -121,7 +121,7 @@ export function HostMcpConnect() {
   }
 
   return (
-    <section className="ac-form" aria-label={t("connectors.mcp.title")} data-testid="host-mcp-connect">
+    <section className="ac-form" aria-label={t("connectors.hostMcp.title")} data-testid="host-mcp-connect">
       <p className="small muted">{t("connectors.hostMcp.intro")}</p>
       <label>
         <span>{t("onboarding.stepNames.computer")}</span>

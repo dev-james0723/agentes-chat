@@ -12092,6 +12092,7 @@ export const en = {
       none: "MCP servers you connect by their address show up here.",
     },
     hostMcp: {
+      title: "Host MCP on your computer",
       intro: "Use a reviewed Host MCP profile on a trusted computer. Only the selected agent gets read access.",
       connectRead: "Connect and grant read",
       note: "The computer's allowlist still applies. Verify access with a real agent tool call.",

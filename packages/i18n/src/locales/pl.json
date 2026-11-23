@@ -12701,6 +12701,7 @@
       "none": "Tu pojawiają się serwery MCP połączone przez ich adres."
     },
     "hostMcp": {
+      "title": "Host MCP na Twoim komputerze",
       "intro": "Użyj sprawdzonego profilu Host MCP na zaufanym komputerze. Tylko wybrany agent otrzyma dostęp do odczytu.",
       "connectRead": "Połącz i przyznaj odczyt",
       "note": "Lista dozwolonych zasobów komputera nadal obowiązuje. Sprawdź dostęp prawdziwym wywołaniem narzędzia przez agenta."

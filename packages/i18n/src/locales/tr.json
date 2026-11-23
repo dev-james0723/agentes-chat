@@ -11775,6 +11775,7 @@
       "none": "Adresiyle bağladığınız MCP sunucuları burada görünür."
     },
     "hostMcp": {
+      "title": "Bilgisayarınızdaki Host MCP",
       "intro": "Güvenilir bir bilgisayardaki incelenmiş Host MCP profilini kullanın. Yalnızca seçilen aracıya okuma erişimi verilir.",
       "connectRead": "Bağlan ve okuma izni ver",
       "note": "Bilgisayarın izin listesi geçerliliğini korur. Erişimi aracının gerçek bir araç çağrısıyla doğrulayın."
