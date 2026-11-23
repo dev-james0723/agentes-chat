@@ -430,6 +430,45 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
   expect(grants).toHaveLength(1);
 });
 
+test("auto share rejects combining marks and unlisted letter-only commands without a peer grant or wiki copy", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const ctx = await runAt(f.agent.id);
+  const joiner = "\u034F";
+  const blocked = [
+    `d${joiner}eno`,
+    `t${joiner}sx`,
+    `p${joiner}y`,
+    `pythonw <${joiner}<END`,
+    `j${joiner}avascript link`,
+    "[open](javascript:alert(1))",
+    "deno run app",
+    "tsx watch server",
+    "py -3",
+    "pythonw <<END",
+    "pytest",
+    "py3",
+    "go test",
+    "cargo build",
+    "gcc app",
+    "nc host",
+    "rustc",
+  ];
+  for (const body of blocked) {
+    await f.db
+      .update(schema.skills)
+      .set({ body, description: "Verified release checklist." })
+      .where(eq(schema.skills.id, skill.id));
+    const result = await invoke(ctx, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+    expect(result.isError).toBe(true);
+    const grants = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+    expect(grants).toHaveLength(1);
+    expect(grants.some((row) => row.agentId === peers[0]!.id)).toBe(false);
+    const wiki = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
+    expect(wiki.some((page) => page.source?.id === skill.id)).toBe(false);
+  }
+});
+
 test("automatic promotion audits partially delivered shares after a Wiki failure", async () => {
   const peers = await fixture(["cecil"]);
   const { skill } = await promotedSkill(async () => {

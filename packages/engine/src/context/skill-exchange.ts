@@ -71,14 +71,30 @@ const COMMAND_SHAPE =
 const EXECUTION_LANGUAGE =
   /(?:^|[^\p{L}\p{N}_])(?:run|execute|launch|install|download|watch|spawn|invoke|compile|interpret|terminal|shell|command|script|program|runtime|pythonw?|py|deno|tsx|ts-node|tsnode|bunx|ruby|nodejs|java|javascript|vbscript|applescript|cscript|wscript|powershell|pwsh|cmd|busybox|bash|dash|ksh|zsh|fish|perl|lua|awk|sed|npm|npx|pip|uv|uvx|chmod|chown|eval|git|docker|curl|wget)\b/iu;
 const EXECUTABLE_URI = /\b[a-z][a-z0-9+.-]{1,30}:\S/iu;
-const PROSE_ONLY = /[^\p{L}\p{N}\p{M}\p{Zs}\n.,:!?*#-]/u;
+// Reject every combining mark, including U+034F, before the word match.
+// A mark must not split deno, tsx, py, a heredoc or javascript into a passing body.
+const COMBINING_MARK = /\p{M}/u;
+// A line made only of letter or letter-digit tokens is a command. This is not
+// an extension of the name list: rustc is absent from that list and still fails.
+const BARE_LETTER_COMMAND_LINE = /^(?:[a-z][a-z0-9]*)(?:[ 	]+[a-z][a-z0-9]*)*$/i;
+const ALNUM_COMMAND_TOKEN = /(?:^|[^\p{L}\p{N}_])\p{L}+\d/u;
+const PROSE_ONLY = /[^\p{L}\p{N}\p{Zs}\n.,:!?*#-]/u;
+const hasBareLetterCommand = (text: string) =>
+  text.split(/\r?\n/).some((line) => BARE_LETTER_COMMAND_LINE.test(line.trim()));
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
+  if (
+    value.trim().length === 0 ||
+    value.length > maxLength ||
+    looksLikeSecret(value) ||
+    COMBINING_MARK.test(value) ||
+    COMBINING_MARK.test(text)
+  )
+    return false;
   return (
-    value.trim().length > 0 &&
-    value.length <= maxLength &&
-    !looksLikeSecret(value) &&
     !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
+    !hasBareLetterCommand(text) &&
+    !ALNUM_COMMAND_TOKEN.test(text) &&
     !COMMAND_WORD.test(text) &&
     !EXECUTION_LANGUAGE.test(text) &&
     !EXECUTABLE_URI.test(text) &&
