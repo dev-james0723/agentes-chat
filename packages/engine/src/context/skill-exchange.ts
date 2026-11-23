@@ -89,12 +89,39 @@ const SAFE_PROCEDURE_START =
   /^(?:check|verify|validate|compare|identify|record|retain|preserve|review|confirm|summarize|explain|report|assess|ensure|avoid|prefer|treat|keep|consider|describe|note|reconcile|inspect|repeat|verified|when|if|for|before|after|during|this|each|every|only|never|always|use when|do not)(?:\s|[.!?:])/iu;
 const SAFE_HEADING =
   /^#{1,3}\s+(?:when to use|steps|method|pitfalls|verification|checklist|notes|overview|scope|purpose|safeguards)$/iu;
+const PROCEDURE_OPENER =
+  /^(?:use when|do not|check|verify|validate|compare|identify|record|retain|preserve|review|confirm|summarize|explain|report|assess|ensure|avoid|prefer|treat|keep|consider|describe|note|reconcile|inspect|repeat|verified|when|if|for|before|after|during|this|each|every|only|never|always)\b/iu;
+// Closed vocabulary for every token after the opener. The golden sentence
+// contributes the, release, readiness, and twice. The promoted description
+// contributes the rest. A dotted token such as main.rs or hello.c cannot match.
+const PROCEDURAL_PROSE_WORD =
+  /^(?:a|after|changes|checklist|independently|readiness|release|tested|the|twice)$/iu;
+const proseSentences = (item: string) => {
+  const parts = item
+    .split(/(?<=[.!?])\s+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => !/[.!?]$/u.test(part))) return null;
+  return parts;
+};
+const sentenceUsesClosedVocabulary = (sentence: string) => {
+  if (!SAFE_PROCEDURE_START.test(sentence)) return false;
+  const opener = PROCEDURE_OPENER.exec(sentence);
+  if (!opener) return false;
+  const words = sentence.replace(/[.!?]$/u, "").trim().split(/\s+/u);
+  const openerCount = opener[0].split(/\s+/u).length;
+  if (words.length < openerCount) return false;
+  const leading = words.slice(0, openerCount).join(" ");
+  if (!PROCEDURE_OPENER.test(leading)) return false;
+  return words.slice(openerCount).every((token) => PROCEDURAL_PROSE_WORD.test(token));
+};
 const structuredSafeProse = (text: string) =>
   text.split(/\r?\n/).every((line) => {
     const trimmed = line.trim();
     if (!trimmed || SAFE_HEADING.test(trimmed)) return true;
     const item = trimmed.replace(/^(?:[-*]\s+|[0-9]+[.)]\s+)/u, "");
-    return SAFE_PROCEDURE_START.test(item) && /[.!?]$/u.test(item);
+    const sentences = proseSentences(item);
+    return sentences !== null && sentences.every(sentenceUsesClosedVocabulary);
   });
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
