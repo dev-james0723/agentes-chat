@@ -73,10 +73,13 @@ function modelTier(provider: ProviderId, id: string): ModelTier | undefined {
   return undefined;
 }
 
-function longContext(value: unknown, context: number): ModelInfo["longContext"] | undefined {
+function longContext(value: unknown, context: number): ModelInfo["longContext"] | null | undefined {
   const source = record(value);
-  const tiers = source?.tiers;
-  if (!Array.isArray(tiers)) return undefined;
+  if (!source || !Object.hasOwn(source, "tiers")) return undefined;
+  const tiers = source.tiers;
+  // A changed or unrecognized price feed may hide expensive context brackets.
+  // Refuse that newly discovered model rather than underbill its requests.
+  if (!Array.isArray(tiers)) return null;
   let chosen: ModelInfo["longContext"] | undefined;
   for (const raw of tiers) {
     const tier = record(raw);
@@ -85,7 +88,11 @@ function longContext(value: unknown, context: number): ModelInfo["longContext"] 
     if (thresholdInfo?.type !== "context") continue;
     const threshold = numeric(thresholdInfo.size);
     const adjusted = price(tier);
-    if (threshold === null || threshold < 32_000 || threshold >= context || !adjusted) continue;
+    // Even an unrepresentable higher bracket makes the whole discovered model
+    // unsafe for cost estimates; never silently discard it and keep a cheaper one.
+    // Thresholds at the full context size are retained for defensive usage accounting.
+    if (threshold === null || !Number.isSafeInteger(threshold) || threshold <= 0 || threshold > context || !adjusted)
+      return null;
     if (!chosen) {
       chosen = { aboveInputTokens: threshold, prices: adjusted };
       continue;
@@ -119,6 +126,8 @@ function oneModel(id: string, raw: unknown, provider: ProviderId): ModelInfo | n
   const limits = record(m.limit);
   const context = numeric(limits?.context);
   if (!costs || context === null || context < 16_000 || context > 10_000_000) return null;
+  const contextPrices = longContext(m.cost, context);
+  if (contextPrices === null) return null;
   const max = numeric(limits?.output);
   const candidate =
     typeof m.name === "string" && m.name.length <= 100 && ![...m.name].some((ch) => ch.charCodeAt(0) < 32)
@@ -154,7 +163,7 @@ function oneModel(id: string, raw: unknown, provider: ProviderId): ModelInfo | n
     reasoning: m.reasoning === true,
     contextWindow: context,
     ...(max !== null && max >= 1000 && max <= 1_000_000 ? { maxOutputTokens: max } : {}),
-    ...(longContext(m.cost, context) ? { longContext: longContext(m.cost, context) } : {}),
+    ...(contextPrices ? { longContext: contextPrices } : {}),
     ...(efforts.length ? { efforts } : {}),
     ...(released ? { releasedAt: released } : {}),
     ...(modelTier(provider, id) ? { tier: modelTier(provider, id) } : {}),

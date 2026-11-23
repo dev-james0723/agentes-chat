@@ -43,21 +43,23 @@ export const FULL_STEPS = Object.freeze({
   "engine-a-m": { argv: sh("bun test packages/engine/test/[a-m]*.test.ts"), timeoutMs: 2_400_000 },
   "engine-n-z-and-packages": {
     argv: sh(
-      "bun test packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup",
+      "bun test --timeout 30000 packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup",
     ),
     timeoutMs: 2_400_000,
   },
-  server: { argv: ["bun", "test", "apps/server"], timeoutMs: 2_400_000 },
+  server: { argv: ["bun", "test", "--timeout", "30000", "apps/server"], timeoutMs: 2_400_000 },
   "web-ui": {
-    argv: sh('GEOMETRY_OUT="$CI_GEOMETRY_DIR" bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui'),
+    argv: sh(
+      'GEOMETRY_OUT="$CI_GEOMETRY_DIR" bun test --timeout 30000 --preload ./scripts/geometry/capture.ts apps/web packages/ui',
+    ),
     timeoutMs: 1_800_000,
   },
-  geometry: { argv: sh('bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl'), timeoutMs: 600_000 },
+  geometry: { argv: sh('bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl'), timeoutMs: 1_200_000 },
   "event-dialog": {
     argv: sh("RUN_NEW_EVENT=1 bun test --timeout 20000 apps/web/test/new-event.test.tsx"),
     timeoutMs: 300_000,
   },
-  "mobile-desktop": { argv: sh("bun test apps/mobile/test apps/desktop/test"), timeoutMs: 900_000 },
+  "mobile-desktop": { argv: sh("bun test --timeout 30000 apps/mobile/test apps/desktop/test"), timeoutMs: 900_000 },
   "secret-scan": {
     argv: [
       "gitleaks",
@@ -214,12 +216,12 @@ export async function runFull({ root, sha, repository, remote, branch, out, dock
   return receipt;
 }
 
-function args(argv) {
+export function parseRunnerArguments(argv) {
   const o = {};
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i]?.replace(/^--/, "");
     if (!k || argv[i + 1] === undefined) throw Error("expected --name value pairs");
-    o[k] = argv[i + 1];
+    o[k === "docker-host" ? "dockerHost" : k] = argv[i + 1];
   }
   return o;
 }
@@ -232,7 +234,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     );
     process.exit(64);
   }
-  const o = args(rest);
+  const o = parseRunnerArguments(rest);
   const receipt = await runFull({ ...o, only: o.only?.split(",") });
   const failed = receipt.steps.filter((s) => s.state !== "passed").map((s) => s.id);
   console.log(

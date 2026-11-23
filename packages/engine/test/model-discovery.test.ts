@@ -121,6 +121,56 @@ describe("native model discovery", () => {
     expect(batchOnly?.["gpt-6.3-sol"]?.longContext).toBeUndefined();
   });
 
+  test("retains context tiers at small and exact-window thresholds, rejects unknown expensive tiers", () => {
+    const base = sample();
+    const withCost = (cost: unknown) => ({
+      ...base,
+      openai: {
+        models: {
+          ...base.openai.models,
+          "gpt-6.3-sol": native("gpt-6.3-sol", "GPT-6.3 Sol", "2026-11-20", cost),
+          "gpt-6.3-astra": native("gpt-6.3-astra", "GPT-6.3 Astra", "2026-11-20"),
+        },
+      },
+    });
+    const prices = { input: 2, output: 8, cache_read: 0.5 };
+    const tiny = parseProviderModels(
+      withCost({
+        ...prices,
+        tiers: [{ tier: { type: "context", size: 16_000 }, input: 4, output: 16 }],
+      }),
+    );
+    expect(tiny?.["gpt-6.3-sol"]?.longContext).toMatchObject({ aboveInputTokens: 16_000 });
+    const exactWindow = parseProviderModels(
+      withCost({
+        ...prices,
+        tiers: [
+          { tier: { type: "context", size: 200_000 }, input: 4, output: 16 },
+          { tier: { type: "context", size: 500_000 }, input: 10, output: 40 },
+        ],
+      }),
+    );
+    expect(exactWindow?.["gpt-6.3-sol"]?.longContext).toMatchObject({
+      aboveInputTokens: 200_000,
+      prices: { input: 10_000, output: 40_000 },
+    });
+    for (const invalid of [
+      [{ tier: { type: "context", size: 350_000 }, input: 10, output: 1500 }],
+      [{ tier: { type: "context", size: 350_000 }, input: 10 }],
+      [{ tier: { type: "context", size: 550_000 }, input: 10, output: 40 }],
+    ]) {
+      const parsed = parseProviderModels(
+        withCost({
+          ...prices,
+          tiers: [{ tier: { type: "context", size: 200_000 }, input: 4, output: 16 }, ...invalid],
+        }),
+      );
+      expect(parsed).not.toBeNull();
+      expect(parsed?.["gpt-6.3-sol"]).toBeUndefined();
+      expect(parsed?.["gpt-6.3-astra"]).toBeDefined();
+    }
+  });
+
   test("rejects unsupported, unpriced, non-tool, multimedia, invalid ID and empty feeds", () => {
     const invalid = sample();
     invalid.openai.models = {
