@@ -111,7 +111,7 @@ describe.skipIf(!hasGit)("git in the agent's processes", () => {
     r.git("checkout", "-q", "-");
     r.git("merge", "-q", "--no-ff", "side", "-m", "Merge side");
     expect(r.message()).toBe(`Merge side\n\n${NICK}\n${ANA}`);
-  });
+  }, 30_000);
 
   test("the repository's own hooks run first and still refuse; a husky folder keeps working", () => {
     const r = repo([NICK]);

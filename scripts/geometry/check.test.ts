@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   bundleCss,
+  cdpTransport,
   compare,
   coverage,
   cssSheets,
@@ -15,6 +16,44 @@ import {
   playwrightChromes,
   SELF_TESTED,
 } from "./check";
+
+describe("CDP request deadlines", () => {
+  // A deterministic mock transport: no browser, network or slow CI startup required.
+  function socket() {
+    const sent: string[] = [];
+    const mock = {
+      readyState: WebSocket.OPEN,
+      send: (data: string) => {
+        sent.push(data);
+      },
+      onmessage: (_event: { data: string }) => {},
+      onclose: () => {},
+      onerror: () => {},
+    };
+    return { mock, sent, send: cdpTransport(mock as unknown as WebSocket, 20) };
+  }
+  test("returns a matching result and clears its deadline", async () => {
+    const { mock, sent, send } = socket();
+    const result = send<{ value: number }>("Runtime.evaluate", {}, "page-1");
+    const request = JSON.parse(sent[0] as string);
+    mock.onmessage({ data: JSON.stringify({ id: request.id, result: { value: 7 } }) });
+    expect(await result).toEqual({ value: 7 });
+  });
+  test("fails a stalled command with its method and session, rather than waiting forever", async () => {
+    const { send } = socket();
+    await expect(send("Runtime.evaluate", {}, "page-2")).rejects.toThrow(/CDP timeout.*Runtime.evaluate.*page-2/);
+  });
+  test("connection loss rejects every pending request and later sends fail immediately", async () => {
+    const { mock, send } = socket();
+    const a = send("Page.navigate");
+    const b = send("Runtime.evaluate");
+    mock.readyState = WebSocket.CLOSED;
+    mock.onclose();
+    const results = await Promise.allSettled([a, b]);
+    expect(results.every((r) => r.status === "rejected" && String(r.reason).includes("WebSocket closed"))).toBe(true);
+    await expect(send("Page.navigate")).rejects.toThrow("CDP socket is not open");
+  });
+});
 
 describe("geometry check", () => {
   test("a new offender is new at its width, and words or size never make one", () => {
