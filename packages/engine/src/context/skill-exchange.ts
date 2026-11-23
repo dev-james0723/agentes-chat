@@ -76,11 +76,25 @@ const EXECUTABLE_URI = /\b[a-z][a-z0-9+.-]{1,30}:\S/iu;
 const COMBINING_MARK = /\p{M}/u;
 // A line made only of letter or letter-digit tokens is a command. This is not
 // an extension of the name list: rustc is absent from that list and still fails.
-const BARE_LETTER_COMMAND_LINE = /^(?:[a-z][a-z0-9]*)(?:[ 	]+[a-z][a-z0-9]*)*$/i;
+const BARE_LETTER_COMMAND_LINE = /^(?:[a-z][a-z0-9]*)(?:\s+[a-z][a-z0-9]*)*$/i;
 const ALNUM_COMMAND_TOKEN = /(?:^|[^\p{L}\p{N}_])\p{L}+\d/u;
 const PROSE_ONLY = /[^\p{L}\p{N}\p{Zs}\n.,:!?*#-]/u;
 const hasBareLetterCommand = (text: string) =>
   text.split(/\r?\n/).some((line) => BARE_LETTER_COMMAND_LINE.test(line.trim()));
+// A denylist cannot enumerate arbitrary executable names. Unattended sharing
+// is restricted to a small, auditable procedural-language grammar. Unknown
+// imperatives, headings and command-looking fragments go to human review.
+const SAFE_PROCEDURE_START =
+  /^(?:check|verify|validate|compare|identify|record|retain|preserve|review|confirm|summarize|explain|report|assess|ensure|avoid|prefer|treat|keep|consider|describe|note|reconcile|inspect|repeat|verified|when|if|for|before|after|during|this|each|every|only|never|always|use when|do not)(?:\s|[.!?:])/iu;
+const SAFE_HEADING =
+  /^#{1,3}\s+(?:when to use|steps|method|pitfalls|verification|checklist|notes|overview|scope|purpose|safeguards)$/iu;
+const structuredSafeProse = (text: string) =>
+  text.split(/\r?\n/).every((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || SAFE_HEADING.test(trimmed)) return true;
+    const item = trimmed.replace(/^(?:[-*]\s+|[0-9]+[.)]\s+)/u, "");
+    return SAFE_PROCEDURE_START.test(item) && /[.!?]$/u.test(item);
+  });
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
   if (
@@ -94,6 +108,7 @@ const safeProse = (value: string, maxLength: number) => {
   return (
     !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
     !hasBareLetterCommand(text) &&
+    structuredSafeProse(text) &&
     !ALNUM_COMMAND_TOKEN.test(text) &&
     !COMMAND_WORD.test(text) &&
     !EXECUTION_LANGUAGE.test(text) &&

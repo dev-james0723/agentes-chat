@@ -162,3 +162,31 @@ require protected independent review and exact-head local CI;
 migrations 0282/0283 and an authorized, AC-verified summary model
 have not been installed, and the previous Charlie how-to is private
 low-trust source data that cannot become a public Skill by fiat.
+
+## Fifth reviewer executable prose regression (2026-11-23 UTC)
+
+The independent reviewer Victor demonstrated 23 executable sentence
+forms missed by a command-name denylist at an earlier SHA. Before the
+fix, a new isolated native Tool Gateway test reproduced a share
+acceptance for those unlisted executable imperatives (RED). Automatic
+peer sharing now requires *both* the legacy safe-text checks and a
+strict whitelist of non-executable procedural sentence openings and
+well-known, non-executable Markdown headings. Unknown imperative
+tokens and runnable source are refused for unattended publication,
+even when they resemble ordinary English; a person can still
+review and install a useful technical Skill via the existing manual
+path. This is an intentionally conservative syntax gate, not a
+semantic safety classifier.
+
+The same 23 known reviewer cases are included in the promotion/share
+test, alongside 17 additional script/fence/Unicode examples. The
+positive A->C/D/E native Tool Gateway Golden Journey still passes.
+Five real PGlite engine suites after repair: 82/82 PASS, 0 fail,
+577 assertions; Engine TS and Biome exit 0. Receipts:
+~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/
+pr82-reviewer-23-red.log, pr82-reviewer-23-green.log,
+pr82-safe-grammar-positive-green.log,
+pr82-strict-prose-five-final.log,
+pr82-strict-prose-final.receipt (with SHA256).
+No production migration or installation was claimed; independent
+review at exact new SHA is still required.
