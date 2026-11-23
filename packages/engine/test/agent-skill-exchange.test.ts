@@ -391,6 +391,9 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
     'python\\u00adw -c "print(1)"',
     "run validate_receipts.py after deploying",
     "sh script.sh",
+    "pythonw <<END\nprint(1)\nEND",
+    "py -3",
+    "py /tmp/evil",
   ];
   for (const body of risky) {
     await f.db

@@ -58,10 +58,11 @@ const COMMAND_WORD =
 const EXECUTABLE_MARKUP =
   /(?:\x60|~{3,}|<[^>]+>|(?:https?|ftp|file):\/\/|www\.|\$\(|\$\{|&&|\|\||;\s*(?:[a-z$]{1,18})\b|\\u(?:200b|200c|200d|2060))/iu;
 // Do not rely on enumerating interpreter binaries: newer/aliased commands
-// can appear with their own short switches. Executable arguments, file
-// extensions and soft-hyphen evasions all require explicit human review.
+// can appear with their own short switches. Heredocs, numeric switches,
+// unquoted paths, file extensions and soft-hyphen evasions all require
+// explicit human review.
 const COMMAND_SHAPE =
-  /(?:\s--?[a-zA-Z]|\s\/[a-zA-Z](?=\s|$)|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
+  /(?:<<|(?:^|\s)--?\d|(?:^|\s)\/[A-Za-z0-9._~/-]+|\s--?[a-zA-Z]|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
   return (
