@@ -1225,22 +1225,40 @@ describe("live view", () => {
     };
     const typed = "Olá, mundo! ação 123";
     const answers: Promise<unknown>[] = [];
-    for (const [i, ch] of [...typed].entries()) {
-      answers.push(live.input(f.owner.id, f.org.id, f.agent.id, [{ kind: "text", text: ch }]));
-      if (i === 0) await firstInFlight;
-      // A Backspace in the middle stays a key, between the texts around it.
-      if (i === 3) {
-        answers.push(
-          live.input(f.owner.id, f.org.id, f.agent.id, [
-            { kind: "key", type: "keyDown", key: "Backspace" },
-            { kind: "key", type: "keyUp", key: "Backspace" },
-          ]),
-        );
+    try {
+      for (const [i, ch] of [...typed].entries()) {
+        answers.push(live.input(f.owner.id, f.org.id, f.agent.id, [{ kind: "text", text: ch }]));
+        if (i === 0) {
+          // A broken flush must fail promptly instead of parking a promise
+          // until the global test runner timeout (and hiding the root cause).
+          let deadline!: ReturnType<typeof setTimeout>;
+          try {
+            await Promise.race([
+              firstInFlight,
+              new Promise<never>((_, reject) => {
+                deadline = setTimeout(() => reject(new Error("first browser input did not flush")), 2000);
+              }),
+            ]);
+          } finally {
+            clearTimeout(deadline);
+          }
+        }
+        // A Backspace in the middle stays a key, between the texts around it.
+        if (i === 3) {
+          answers.push(
+            live.input(f.owner.id, f.org.id, f.agent.id, [
+              { kind: "key", type: "keyDown", key: "Backspace" },
+              { kind: "key", type: "keyUp", key: "Backspace" },
+            ]),
+          );
+        }
+        await Bun.sleep(2);
       }
-      await Bun.sleep(2);
+    } finally {
+      // Even a failed assertion, a rejected input or a slow host must not
+      // leave an in-flight browser request held by this test.
+      releaseFirst();
     }
-    // Release the held computer round trip once later keystrokes are queued.
-    releaseFirst();
     await Promise.all(answers);
     const batches = calls
       .filter((c) => c.op === "browser.input")
