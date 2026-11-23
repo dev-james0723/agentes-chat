@@ -1203,15 +1203,31 @@ describe("live view", () => {
     await startTakeover(live.handoffDeps, f.owner.id, f.org.id, f.agent.id);
     await Bun.sleep(5);
     const real = live.sendInput;
+    // A real 30ms timer can race with repeated 2ms timers under high CI host
+    // load. Instead hold the first request until every later key is queued:
+    // this tests in-flight batching without depending on scheduling jitter.
+    let startedFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      startedFirst = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let first = true;
     live.sendInput = async (...args) => {
-      // Each round trip to the computer is slow (a far link).
-      await Bun.sleep(30);
+      if (first) {
+        first = false;
+        startedFirst();
+        await firstPending;
+      }
       return real(...args);
     };
     const typed = "Olá, mundo! ação 123";
     const answers: Promise<unknown>[] = [];
     for (const [i, ch] of [...typed].entries()) {
       answers.push(live.input(f.owner.id, f.org.id, f.agent.id, [{ kind: "text", text: ch }]));
+      if (i === 0) await firstInFlight;
       // A Backspace in the middle stays a key, between the texts around it.
       if (i === 3) {
         answers.push(
@@ -1223,6 +1239,8 @@ describe("live view", () => {
       }
       await Bun.sleep(2);
     }
+    // Release the held computer round trip once later keystrokes are queued.
+    releaseFirst();
     await Promise.all(answers);
     const batches = calls
       .filter((c) => c.op === "browser.input")
@@ -1230,8 +1248,9 @@ describe("live view", () => {
     const events = batches.flat();
     const text = events.map((e) => (e.kind === "text" ? e.text : e.kind === "key" && e.type === "keyDown" ? "⌫" : ""));
     expect(text.join("")).toBe(`${typed.slice(0, 4)}⌫${typed.slice(4)}`);
-    // The first key goes alone; what was typed while it travelled goes together.
-    expect(batches.length).toBeLessThanOrEqual(4);
+    // The first key goes alone, and all other keys form a single batch
+    // while the first is in-flight, independent of OS timer scheduling.
+    expect(batches.length).toBe(2);
     // Each key stays its own text: a one-box-per-digit code field moves focus on every character.
     expect(events.filter((e) => e.kind === "text").map((e) => (e.kind === "text" ? e.text : ""))).toEqual([...typed]);
     live.close();
