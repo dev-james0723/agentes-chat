@@ -99,14 +99,17 @@ export function endpointModelsOf(draft: Pick<EndpointDraft, "models">): Endpoint
 export function verifiedSummaryModels(credentials: readonly Credential[]) {
   return credentials.flatMap((credential) => {
     if (credential.revokedAt || credential.provider !== CUSTOM_PROVIDER || !credential.endpoint) return [];
-    return credential.endpoint.models
-      .filter(
-        (model) => model.structuredOutput === true && model.structuredOutputCheck === "ok" && model.check !== "failed",
-      )
-      .map((model) => ({
-        id: ["custom", credential.id, model.id].join(":"),
-        label: [credential.label, model.id].join(" · "),
-      }));
+    return (
+      credential.endpoint.models
+        // Summary inference uses JSON schema, not agent Tool Calling. A model
+        // may correctly fail the tool-use probe (e.g. Gemma3:4b) and still
+        // pass AC's independent structured-output check.
+        .filter((model) => model.structuredOutput === true && model.structuredOutputCheck === "ok")
+        .map((model) => ({
+          id: ["custom", credential.id, model.id].join(":"),
+          label: [credential.label, model.id].join(" · "),
+        }))
+    );
   });
 }
 

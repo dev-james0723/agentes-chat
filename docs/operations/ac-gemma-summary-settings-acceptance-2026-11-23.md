@@ -29,9 +29,9 @@ organization_settings.summary_model.
    show both the existing tool-use check and the JSON-schema check.
 2. A pure verifiedSummaryModels(credentials) helper only returns
    non-revoked custom endpoint models that have explicit
-   structuredOutput=true, server-stored structuredOutputCheck=ok, and
-   no failed provider check. It never treats host curl output or the
-   checkbox alone as proof.
+   structuredOutput=true and server-stored structuredOutputCheck=ok.
+   A failed agent Tool Calling test does not disqualify a dedicated JSON
+   Summary Model. Neither a host curl response nor a checkbox is proof.
 3. In Workspace Settings / AI provider keys, members with existing
    configure authority may explicitly select a passing custom model
    as summaryModel through the native useUpdateSettings mutation.
@@ -76,3 +76,17 @@ review must pass before release.
    assignment to qualified peers, native consultations, independent
    receiver model runs with successful load_skill, actual application,
    and linked Wiki/Memory/audit receipts.
+
+## Real Gemma edge case reconciled (2026-11-23)
+The owner-approved native AC credential was created by legitimate application
+flow (ID 1569a1a0-b29b-4cd5-9e8d-378a6a5f8b4a), with a completed,
+server-verified JSON schema check recorded as ok but its separate tool-use
+check failed because gemma3:4b does not support agent tool calls. The AC
+backend distinguishes these checks: its ModelInfo is structured-output
+capable after a server schema pass, regardless of a tool-use failure;
+summaryModelReady only requires usable credential and verified schema.
+Therefore the selector now intentionally includes an endpoint with
+structuredOutputCheck=ok even when check=failed. A dedicated summary
+model never becomes an agent tool-calling model by this selection.
+Source note: official production summary_model still null. No raw DB write,
+no override of revoked Qwen key, and no claimed production activation.

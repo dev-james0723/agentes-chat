@@ -82,7 +82,12 @@ describe("Outro provedor in Settings › Chaves de IA", () => {
   test("the structured-output checkbox persists an opt-in and reports the server's JSON schema result", async () => {
     const state = seedState({
       endpointChecks: {
-        "gemma3:4b": { model: "gemma3:4b", check: "no_tools", structuredOutputCheck: "ok" },
+        "gemma3:4b": {
+          model: "gemma3:4b",
+          check: "failed",
+          error: "gemma3:4b does not support tools",
+          structuredOutputCheck: "ok",
+        },
       },
     });
     const { add } = await openForm(state);
@@ -119,7 +124,7 @@ describe("Outro provedor in Settings › Chaves de IA", () => {
       endpoint: {
         style: "openai",
         baseURL: "http://host.docker.internal:11434/v1",
-        models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "no_tools" }],
+        models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "failed" }],
       },
     });
     await renderApp("/org/" + ORG_ID + "/settings/keys", { api: createFakeApi(state) });

@@ -127,10 +127,23 @@ test("only verified structured-output custom endpoints qualify for organization 
         },
       }),
       make("00000000-0000-4000-8000-000000000005", { provider: "openai" }),
+      // A dedicated summary model may lack agent tool calling yet pass the
+      // independent JSON-schema test; this is the real local Gemma case.
+      make("00000000-0000-4000-8000-000000000006", {
+        endpoint: {
+          style: "openai",
+          baseURL: "http://host.docker.internal:11434/v1",
+          models: [{ id: "gemma3:4b", structuredOutput: true, structuredOutputCheck: "ok", check: "failed" }],
+        },
+      }),
     ]),
   ).toEqual([
     {
       id: "custom:00000000-0000-4000-8000-000000000001:gemma3:4b",
+      label: "Local Gemma · gemma3:4b",
+    },
+    {
+      id: "custom:00000000-0000-4000-8000-000000000006:gemma3:4b",
       label: "Local Gemma · gemma3:4b",
     },
   ]);
