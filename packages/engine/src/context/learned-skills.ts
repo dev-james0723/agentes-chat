@@ -785,7 +785,14 @@ async function promoteCluster(deps: ContextDeps, orgId: string, agentId: string,
             target: { type: "skill", id: skill.id, title: name },
             params: { name },
             before: null,
-            after: { skillId: skill.id, noteIds: cluster.map((n) => n.id) },
+            // Bind the promotion proof to the exact, immutable v1 Skill
+            // content. A post-promotion body/description rewrite must not
+            // inherit this source trust when shared with other agents.
+            after: {
+              skillId: skill.id,
+              noteIds: cluster.map((n) => n.id),
+              contentDigest: sha256(JSON.stringify([description, body])),
+            },
           },
         ],
       );

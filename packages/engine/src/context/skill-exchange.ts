@@ -4,6 +4,7 @@ import { canTalkTo, speakerFor, viaAgent } from "../audience";
 import { recordAudit } from "../audit";
 import { callableAgents } from "../brakes";
 import { sendNote } from "../consultations";
+import { sha256 } from "../crypto";
 import { ForbiddenError, ValidationError } from "../errors";
 import { personBehindCall } from "../requester";
 import { grantKey, isAllowed, toolAccess } from "../tools/scopes";
@@ -193,6 +194,16 @@ export async function shareLearnedSkill(
       ? [...new Set(rawNoteIds as string[])]
       : [];
   if (!creation || !noteIds.length) throw new ForbiddenError("Native source memory receipts are missing.");
+  // Audit provenance must bind to exactly the v1 model-generated contents.
+  // A first-version row can otherwise be edited in place to inject an
+  // unknown executable phrase and still pass its old promotion receipt.
+  const expectedDigest = creation.after?.contentDigest;
+  if (
+    typeof expectedDigest !== "string" ||
+    !/^[a-f0-9]{64}$/.test(expectedDigest) ||
+    expectedDigest !== sha256(JSON.stringify([candidate.description, candidate.body]))
+  )
+    throw new ForbiddenError("Skill text no longer matches its verified creation receipt.");
   const peers = await db
     .select()
     .from(agents)
@@ -267,6 +278,7 @@ export async function shareLearnedSkill(
       locked.deletedAt ||
       locked.body !== candidate.body ||
       locked.description !== candidate.description ||
+      sha256(JSON.stringify([locked.description, locked.body])) !== expectedDigest ||
       !safeBody(locked.body, locked.description)
     )
       throw new ForbiddenError("Skill identity changed while sharing.");

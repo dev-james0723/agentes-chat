@@ -492,6 +492,35 @@ test("auto share rejects combining marks and unlisted letter-only commands witho
   }
 });
 
+test("a tampered first-version promoted Skill cannot auto-share even when its prose scanner would allow the edit", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const creator = await runAt(f.agent.id);
+  // This passes the plain prose scanner, but the content was changed AFTER
+  // the verified promotion; it must not inherit the original promotion proof.
+  await f.db.update(schema.skills).set({ body: "Check elixir hello once." }).where(eq(schema.skills.id, skill.id));
+  const attempt = await invoke(creator, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+  expect(attempt.isError).toBe(true);
+  // A description-only rewrite also invalidates the original provenance,
+  // even if both versions look like ordinary safe procedural prose.
+  await f.db
+    .update(schema.skills)
+    .set({ body: skill.body, description: "Verified elixir checklist." })
+    .where(eq(schema.skills.id, skill.id));
+  const second = await invoke(creator, "share_learned_skill", { name: skill.slug, agents: [peers[0]!.handle] });
+  expect(second.isError).toBe(true);
+  const creation = await f.db
+    .select()
+    .from(schema.agentActions)
+    .where(and(eq(schema.agentActions.kind, "skill.created"), eq(schema.agentActions.targetId, skill.id)));
+  expect(creation).toHaveLength(1);
+  expect(creation[0]?.after?.contentDigest).toMatch(/^[a-f0-9]{64}$/);
+  const grants = await f.db.select().from(schema.agentSkills).where(eq(schema.agentSkills.skillId, skill.id));
+  expect(grants).toHaveLength(1);
+  const pages = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
+  expect(pages.some((page) => page.source?.id === skill.id)).toBe(false);
+});
+
 test("automatic promotion audits partially delivered shares after a Wiki failure", async () => {
   const peers = await fixture(["cecil"]);
   const { skill } = await promotedSkill(async () => {
