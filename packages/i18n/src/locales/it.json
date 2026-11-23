@@ -12277,6 +12277,11 @@
       "list": "Server MCP collegati",
       "none": "Qui compaiono i server MCP che colleghi tramite il loro indirizzo."
     },
+    "hostMcp": {
+      "intro": "Usa un profilo Host MCP verificato su un computer affidabile. Solo l’agente selezionato ottiene accesso in lettura.",
+      "connectRead": "Connetti e concedi lettura",
+      "note": "Le autorizzazioni del computer restano valide. Verifica l’accesso con una chiamata reale a uno strumento dell’agente."
+    },
     "addTitle": "Aggiungi connettore",
     "catalogText": "Collega una volta per {{org}}. Poi scegli cosa può usare ogni agente.",
     "catalog": "Connettori disponibili",

@@ -11839,6 +11839,11 @@
       "list": "Verbundene MCP-Server",
       "none": "Hier erscheinen die MCP-Server, die du über ihre Adresse verbindest."
     },
+    "hostMcp": {
+      "intro": "Nutze ein geprüftes Host-MCP-Profil auf einem vertrauenswürdigen Computer. Nur der gewählte Agent erhält Lesezugriff.",
+      "connectRead": "Verbinden und Lesezugriff gewähren",
+      "note": "Die Freigabeliste des Computers gilt weiterhin. Prüfe den Zugriff mit einem echten Tool-Aufruf des Agenten."
+    },
     "addTitle": "Konnektor hinzufügen",
     "catalogText": "Einmal für {{org}} verbinden. Dann wählst du, was jeder Agent nutzen darf.",
     "catalog": "Verfügbare Konnektoren",

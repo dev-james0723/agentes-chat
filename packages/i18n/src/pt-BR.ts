@@ -12139,6 +12139,12 @@ export const ptBR = {
       list: "Servidores MCP conectados",
       none: "Os servidores MCP que você conectar pelo endereço aparecem aqui.",
     },
+    hostMcp: {
+      intro:
+        "Use um perfil Host MCP revisado em um computador confiável. Só o agente selecionado recebe acesso de leitura.",
+      connectRead: "Conectar e conceder leitura",
+      note: "A lista de permissões do computador continua válida. Verifique o acesso com uma chamada real de ferramenta do agente.",
+    },
     addTitle: "Adicionar conector",
     catalogText: "Conecte uma vez para a {{org}}. Depois escolha o que cada agente pode usar.",
     catalog: "Conectores disponíveis",

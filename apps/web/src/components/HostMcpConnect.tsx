@@ -3,6 +3,7 @@ import { saveLevels } from "@agenteschat/client/lib/access-levels";
 import { Button } from "@agenteschat/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useApi } from "@/api/context";
 import { useOrg } from "@/components/org-context";
 import {
@@ -26,6 +27,7 @@ type PendingAccess = { connectionId: string; agentId: string };
 const request = createRequester();
 
 export function HostMcpConnect() {
+  const { t } = useTranslation();
   const { org } = useOrg();
   const api = useApi();
   const qc = useQueryClient();
@@ -58,8 +60,8 @@ export function HostMcpConnect() {
       .then((response) => {
         if (!cancelled) setProfiles(response.profiles ?? []);
       })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not list Host MCP profiles");
+      .catch(() => {
+        if (!cancelled) setError(t("common.loadFailed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -67,7 +69,7 @@ export function HostMcpConnect() {
     return () => {
       cancelled = true;
     };
-  }, [org.id, machineId]);
+  }, [org.id, machineId, t]);
 
   async function grantRead(connectionId: string, targetAgent: string) {
     // A successful write does not prove permission if the new connector
@@ -97,14 +99,14 @@ export function HostMcpConnect() {
           throw new Error("Finish the previous agent permission review first");
         }
         await grantRead(pending.connectionId, pending.agentId);
-        setStatus("Permission granted. A real agent tool call is still required for acceptance.");
+        setStatus(t("common.saved"));
         return;
       }
       const bound = await bindReviewedHostMcp(request, { orgId: org.id, machineId, profileId, agentId });
       setPending({ connectionId: bound.id, agentId });
       try {
         await grantRead(bound.id, agentId);
-        setStatus(bound.label + " is bound with READ access. Real agent test pending.");
+        setStatus(t("connectFlow.done.title", { name: bound.label }));
       } catch (reason) {
         throw new Error(
           "Profile bound; access review incomplete. Retry the permission step only. " +
@@ -112,27 +114,24 @@ export function HostMcpConnect() {
         );
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Host MCP binding failed");
+      setError(t("common.unknownError"));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="stack" aria-label="Local Host MCP" data-testid="host-mcp-connect">
-      <p className="small muted">
-        Connect a reviewed MCP profile from an authorized computer. No private URL or API key is needed. New connections
-        grant nothing until you choose an agent below.
-      </p>
+    <section className="ac-form" aria-label={t("connectors.mcp.title")} data-testid="host-mcp-connect">
+      <p className="small muted">{t("connectors.hostMcp.intro")}</p>
       <label>
-        <span>Computer</span>
+        <span>{t("onboarding.stepNames.computer")}</span>
         <select
-          aria-label="Host MCP computer"
+          aria-label={t("onboarding.stepNames.computer")}
           value={machineId}
           disabled={busy || !!pending}
           onChange={(e) => setMachineId(e.target.value)}
         >
-          <option value="">Choose a computer</option>
+          <option value="">{t("connectAi.team.choose")}</option>
           {(machines.data ?? []).map((machine) => (
             <option key={machine.id} value={machine.id}>
               {machine.name}
@@ -141,14 +140,14 @@ export function HostMcpConnect() {
         </select>
       </label>
       <label>
-        <span>Reviewed local MCP profile</span>
+        <span>{t("shell.profile")}</span>
         <select
-          aria-label="Host MCP profile"
+          aria-label={t("shell.profile")}
           value={profileId}
           disabled={busy || loading || !!pending}
           onChange={(e) => setProfileId(e.target.value)}
         >
-          <option value="">Choose a reviewed profile</option>
+          <option value="">{t("connectAi.team.choose")}</option>
           {activeProfiles.map((profile) => (
             <option key={profile.id + ":" + profile.revision} value={profile.id}>
               {profile.label}
@@ -157,14 +156,14 @@ export function HostMcpConnect() {
         </select>
       </label>
       <label>
-        <span>Agent (read-only grant)</span>
+        <span>{t("team.list.col.agent")}</span>
         <select
-          aria-label="Host MCP agent"
+          aria-label={t("team.list.col.agent")}
           value={agentId}
           disabled={busy || !!pending}
           onChange={(e) => setAgentId(e.target.value)}
         >
-          <option value="">Choose one authorized agent</option>
+          <option value="">{t("connectAi.team.choose")}</option>
           {(agents.data ?? []).map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
@@ -177,11 +176,11 @@ export function HostMcpConnect() {
         disabled={busy || loading || !machineId || !profileId || !agentId}
         onClick={() => void connect()}
       >
-        {busy ? "Checking native permissions…" : pending ? "Finish read access" : "Connect and grant read"}
+        {busy ? t("common.loading") : pending ? t("common.continue") : t("connectors.hostMcp.connectRead")}
       </Button>
       {loading && (
         <p role="status" className="small muted">
-          Reading reviewed profiles…
+          {t("common.loading")}
         </p>
       )}
       {status && (
@@ -194,10 +193,7 @@ export function HostMcpConnect() {
           {error}
         </p>
       )}
-      <p className="small muted">
-        Only the selected agent gets read access. The machine SHA-pinned allowlist still applies. Verify the tool in a
-        real agent conversation before marking it accepted.
-      </p>
+      <p className="small muted">{t("connectors.hostMcp.note")}</p>
     </section>
   );
 }

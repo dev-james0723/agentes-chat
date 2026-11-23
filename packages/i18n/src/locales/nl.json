@@ -11901,6 +11901,11 @@
       "list": "Gekoppelde MCP-servers",
       "none": "MCP-servers die je via hun adres koppelt, verschijnen hier."
     },
+    "hostMcp": {
+      "intro": "Gebruik een gecontroleerd Host MCP-profiel op een vertrouwde computer. Alleen de gekozen agent krijgt leestoegang.",
+      "connectRead": "Verbinden en leestoegang geven",
+      "note": "De toestemmingslijst van de computer blijft gelden. Controleer de toegang met een echte toolaanroep van de agent."
+    },
     "addTitle": "Connector toevoegen",
     "catalogText": "Koppel één keer voor {{org}}. Kies daarna wat elke agent mag gebruiken.",
     "catalog": "Beschikbare connectors",

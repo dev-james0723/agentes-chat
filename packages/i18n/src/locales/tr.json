@@ -11774,6 +11774,11 @@
       "list": "Bağlı MCP sunucuları",
       "none": "Adresiyle bağladığınız MCP sunucuları burada görünür."
     },
+    "hostMcp": {
+      "intro": "Güvenilir bir bilgisayardaki incelenmiş Host MCP profilini kullanın. Yalnızca seçilen aracıya okuma erişimi verilir.",
+      "connectRead": "Bağlan ve okuma izni ver",
+      "note": "Bilgisayarın izin listesi geçerliliğini korur. Erişimi aracının gerçek bir araç çağrısıyla doğrulayın."
+    },
     "addTitle": "Bağlayıcı ekle",
     "catalogText": "{{org}} için bir kez bağlayın. Sonra her ajanın neyi kullanabileceğini seçin.",
     "catalog": "Kullanılabilir bağlayıcılar",
