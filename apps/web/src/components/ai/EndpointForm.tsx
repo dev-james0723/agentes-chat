@@ -137,6 +137,16 @@ export function EndpointForm({
                   <Icon name={view.tone === "ok" ? "check" : "alert"} size={14} />
                   <span>
                     <b>{c.model}</b> · {t(view.key, { error: c.error ?? "" })}
+                    {draft.models.find((m) => m.id === c.model)?.structuredOutput === true && (
+                      <span className="endpoint-check__schema">
+                        {" · "}
+                        {c.structuredOutputCheck === "ok"
+                          ? t("endpoint.schemaCheck.ok")
+                          : c.structuredOutputCheck === "failed"
+                            ? t("endpoint.schemaCheck.failed", { error: c.structuredOutputError ?? "" })
+                            : t("endpoint.schemaCheck.unverified")}
+                      </span>
+                    )}
                   </span>
                 </li>
               );
@@ -297,6 +307,18 @@ export function EndpointForm({
                           invalid={problem !== null}
                           onChange={(e) => setModel(m.id, { output: e.target.value })}
                         />
+                      </span>
+                    )}
+                    {m.on && (
+                      <span className="endpoint-model__structured">
+                        <Checkbox
+                          id={ids + "-structured-" + m.id}
+                          checked={m.structuredOutput === true}
+                          onCheckedChange={(structuredOutput) => setModel(m.id, { structuredOutput })}
+                        />
+                        <label htmlFor={ids + "-structured-" + m.id}>
+                          {t("endpoint.structuredForModel", { model: m.id })}
+                        </label>
                       </span>
                     )}
                     {problem && (

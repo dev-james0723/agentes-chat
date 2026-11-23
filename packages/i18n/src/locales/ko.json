@@ -8867,6 +8867,12 @@
     "priceOut": "{{model}}: 출력 가격",
     "priceInShort": "입력",
     "priceOutShort": "출력",
+    "structuredForModel": "{{model}}의 구조화된 JSON 출력",
+    "schemaCheck": {
+      "ok": "구조화된 출력 검증 완료",
+      "failed": "구조화된 출력 검증 실패: {{error}}",
+      "unverified": "구조화된 출력이 검증되지 않음"
+    },
     "priceUnit": "100만 토큰당 US$",
     "priceBoth": "입력과 출력을 모두 채우거나 둘 다 비워 두세요.",
     "priceInvalid": "0.50 같은 숫자를 쓰세요",

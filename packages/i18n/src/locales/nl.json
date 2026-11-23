@@ -9272,6 +9272,12 @@
     "priceOut": "{{model}}: uitvoerprijs",
     "priceInShort": "Invoer",
     "priceOutShort": "Uitvoer",
+    "structuredForModel": "Gestructureerde JSON-uitvoer voor {{model}}",
+    "schemaCheck": {
+      "ok": "Gestructureerde uitvoer geverifieerd",
+      "failed": "Controle van gestructureerde uitvoer mislukt: {{error}}",
+      "unverified": "Gestructureerde uitvoer niet geverifieerd"
+    },
     "priceUnit": "US$ per miljoen tokens",
     "priceBoth": "Vul invoer en uitvoer in, of geen van beide.",
     "priceInvalid": "Gebruik een getal, zoals 0.50",

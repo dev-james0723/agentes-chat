@@ -9517,6 +9517,12 @@ export const ptBR = {
     priceOut: "{{model}}: preço de saída",
     priceInShort: "Entrada",
     priceOutShort: "Saída",
+    structuredForModel: "Saída JSON estruturada para {{model}}",
+    schemaCheck: {
+      ok: "Saída estruturada verificada",
+      failed: "Falha na saída estruturada: {{error}}",
+      unverified: "Saída estruturada não verificada",
+    },
     priceUnit: "US$ por milhão de tokens",
     priceBoth: "Preencha entrada e saída, ou nenhum dos dois.",
     priceInvalid: "Use um número, como 0.50",

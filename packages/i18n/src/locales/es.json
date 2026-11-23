@@ -9502,6 +9502,12 @@
     "priceOut": "{{model}}: precio de salida",
     "priceInShort": "Entrada",
     "priceOutShort": "Salida",
+    "structuredForModel": "Salida JSON estructurada para {{model}}",
+    "schemaCheck": {
+      "ok": "Salida estructurada verificada",
+      "failed": "Error al verificar la salida estructurada: {{error}}",
+      "unverified": "Salida estructurada sin verificar"
+    },
     "priceUnit": "US$ por millón de tokens",
     "priceBoth": "Completa entrada y salida, o ninguno.",
     "priceInvalid": "Usa un número, como 0.50",

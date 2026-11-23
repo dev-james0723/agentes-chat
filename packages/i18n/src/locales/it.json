@@ -9570,6 +9570,12 @@
     "priceOut": "{{model}}: prezzo di output",
     "priceInShort": "Input",
     "priceOutShort": "Output",
+    "structuredForModel": "Output JSON strutturato per {{model}}",
+    "schemaCheck": {
+      "ok": "Output strutturato verificato",
+      "failed": "Verifica dell’output strutturato non riuscita: {{error}}",
+      "unverified": "Output strutturato non verificato"
+    },
     "priceUnit": "US$ per milione di token",
     "priceBoth": "Compila input e output, o nessuno dei due.",
     "priceInvalid": "Usa un numero, come 0.50",

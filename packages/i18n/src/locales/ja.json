@@ -8873,6 +8873,12 @@
     "priceOut": "{{model}}: 出力の料金",
     "priceInShort": "入力",
     "priceOutShort": "出力",
+    "structuredForModel": "{{model}} の構造化 JSON 出力",
+    "schemaCheck": {
+      "ok": "構造化出力を検証済み",
+      "failed": "構造化出力の検証に失敗: {{error}}",
+      "unverified": "構造化出力は未検証"
+    },
     "priceUnit": "100 万トークンあたりの US$",
     "priceBoth": "入力と出力の両方を入力するか、どちらも空欄にします。",
     "priceInvalid": "0.50 のような数値を使ってください",
