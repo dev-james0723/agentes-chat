@@ -116,3 +116,49 @@ pr82-round3-five-suites.log with receipt (80 PASS, 0 FAIL, 375
 assertions). Independent re-review is still required for the new
 exact SHA; no protected CI status, merge, production migration or
 autonomous Skill activation is implied.
+
+## Victor and Jacob additional review follow-up — 2026-11-23
+
+Both reviewers rejected the former d58d1c60 SHA; Victor identified
+deno run app, tsx watch server and a javascript URI, while Jacob
+demonstrated a script heredoc and path switch. Victor also found
+that the common direct share_learned_skill path could return a failed
+Wiki receipt without creating the skill.exchange_unverified audit.
+The local 6071b765 commit had partially handled path switches and
+heredocs but was not yet pushed to PR #82 when this follow-up began.
+
+This remediation is fail-closed for unattended public sharing:
+- The ordinary prose path accepts letters, numbers, whitespace,
+  limited sentence punctuation and bullet/headline markers. It rejects
+  file paths, URI schemes, code delimiters and symbols rather than
+  trying to enumerate every possible executable.
+- A separate execution-vocabulary check disallows programming
+  runtimes, command verbs and common interpreter aliases in both
+  Skill BODY and DESCRIPTION.
+- Runnable or ambiguous technical Skills require human-reviewed
+  publication; auto-promotion may still retain safe private how-to
+  notes without publicly spreading executable instructions.
+- skill.exchange_unverified partial-delivery audit is now emitted
+  by shareLearnedSkill for direct native tool calls and automatic
+  promotion alike; the separate auto-promotion caller no longer
+  duplicates that audit.
+- The caller and recipients remain locked in stable order for native
+  audience/autonomy validation, including explicit deny precedence.
+
+Evidence was run on the isolated PGlite Tool Gateway. Reviewer cases
+were genuinely RED before this patch; the expanded dangerous-prose
+test is GREEN with 82 assertions and a new direct-share Wiki failure
+audit test is GREEN with 7 assertions. Five Engine test modules now
+pass 81/81, 416 assertions, Engine TypeScript and Biome exit 0,
+at the precommit source tree. Logs/receipts:
+~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/
+pr82-thirdparty-unsafe-red.log, pr82-thirdparty-audit-red.log,
+pr82-thirdparty-unsafe-green.log, pr82-thirdparty-audit-green.log,
+pr82-review-final-five-suites.log, pr82-review-final-tsc.log,
+pr82-review-final-gates.receipt.
+
+No statement here is a full production release: PR #78/#82 still
+require protected independent review and exact-head local CI;
+migrations 0282/0283 and an authorized, AC-verified summary model
+have not been installed, and the previous Charlie how-to is private
+low-trust source data that cannot become a public Skill by fiat.

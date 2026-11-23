@@ -394,6 +394,20 @@ test("auto share refuses interpreter commands, multiline fences, URLs and danger
     "pythonw <<END\nprint(1)\nEND",
     "py -3",
     "py /tmp/evil",
+    "py -3",
+    "pythonw -3",
+    "deno run app",
+    "tsx watch server",
+    "tsx watch serverpy /tmp/evil",
+    "pythonw <<END",
+    "[open](javascript:alert(1))",
+    "Go to javascript:alert(1)",
+    "javascript:alert(1)",
+    "run app",
+    "execute app",
+    "watch app",
+    "open a terminal",
+    "Launch this process",
   ];
   for (const body of risky) {
     await f.db
@@ -432,6 +446,28 @@ test("automatic promotion audits partially delivered shares after a Wiki failure
   expect(partials).toHaveLength(1);
   expect(partials[0]?.details.reason).toBe("partial_delivery");
   expect(partials[0]?.details.wikiStatus).toBe("failed");
+  expect(partials[0]?.targetId).toBe(skill.id);
+});
+
+test("direct native skill sharing also audits a partial Wiki delivery", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const caller = await runAt(f.agent.id);
+  await f.db.execute(sql.raw("ALTER TABLE wiki_pages RENAME TO wiki_pages_offline_for_qa"));
+  const result = await invoke(caller, "share_learned_skill", {
+    name: skill.slug,
+    agents: [peers[0]!.handle],
+  });
+  expect(result.isError).toBeFalsy();
+  const receipt = result.data as { wiki?: { status?: string }; assigned?: unknown[] };
+  expect(receipt.wiki?.status).toBe("failed");
+  expect(receipt.assigned).toHaveLength(1);
+  const partials = await f.db
+    .select()
+    .from(schema.auditLog)
+    .where(eq(schema.auditLog.action, "skill.exchange_unverified"));
+  expect(partials).toHaveLength(1);
+  expect(partials[0]?.details.reason).toBe("partial_delivery");
   expect(partials[0]?.targetId).toBe(skill.id);
 });
 

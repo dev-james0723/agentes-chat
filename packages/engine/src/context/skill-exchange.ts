@@ -63,6 +63,15 @@ const EXECUTABLE_MARKUP =
 // explicit human review.
 const COMMAND_SHAPE =
   /(?:<<|(?:^|\s)--?\d|(?:^|\s)\/[A-Za-z0-9._~/-]+|\s--?[a-zA-Z]|\.(?:py|sh|js|ts|rb|ps1|lua|php|pl|bat|cmd|exe)(?:\s|$)|[\u00ad\u2010-\u2015]|\x22[^\x22]+\x22|\x27[^\x27]+\x27)/iu;
+// Fail-closed low-risk prose gate for unattended public Skill sharing.
+// Unlike a filename/interpreter denylist, refuse command verbs, executable
+// language runtimes, non-http schemes and code punctuation. Technical guides
+// that require a command, URI or expression remain installable only by a
+// human-reviewed Skill path. This is not a semantic safety classifier.
+const EXECUTION_LANGUAGE =
+  /(?:^|[^\p{L}\p{N}_])(?:run|execute|launch|install|download|watch|spawn|invoke|compile|interpret|terminal|shell|command|script|program|runtime|pythonw?|py|deno|tsx|ts-node|tsnode|bunx|ruby|nodejs|java|javascript|vbscript|applescript|cscript|wscript|powershell|pwsh|cmd|busybox|bash|dash|ksh|zsh|fish|perl|lua|awk|sed|npm|npx|pip|uv|uvx|chmod|chown|eval|git|docker|curl|wget)\b/iu;
+const EXECUTABLE_URI = /\b[a-z][a-z0-9+.-]{1,30}:\S/iu;
+const PROSE_ONLY = /[^\p{L}\p{N}\p{M}\p{Zs}\n.,:!?*#-]/u;
 const safeProse = (value: string, maxLength: number) => {
   const text = value.normalize("NFKC");
   return (
@@ -71,6 +80,9 @@ const safeProse = (value: string, maxLength: number) => {
     !looksLikeSecret(value) &&
     !/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u.test(text) &&
     !COMMAND_WORD.test(text) &&
+    !EXECUTION_LANGUAGE.test(text) &&
+    !EXECUTABLE_URI.test(text) &&
+    !PROSE_ONLY.test(text) &&
     !COMMAND_SHAPE.test(text) &&
     !EXECUTABLE_MARKUP.test(text)
   );
@@ -551,5 +563,29 @@ export async function shareLearnedSkill(
       });
     }
   }
+  // Record an incomplete exchange for BOTH automatic promotion and an
+  // explicit native share_learned_skill call. The durable Skill grant may
+  // already exist; do not let a failed Wiki or peer handoff disappear from
+  // audit history, or report it as fully delivered.
+  const pendingWiki = receipt.wiki.status === "failed";
+  const pendingPeers = receipt.peerNotes
+    .filter((n) => n.status === "failed" || n.status === "deduplicated")
+    .map((n) => ({ handle: n.handle, status: n.status }));
+  if (pendingWiki || pendingPeers.length > 0)
+    await recordAudit(db, {
+      orgId,
+      actor: { type: "agent", id: agentId },
+      action: "skill.exchange_unverified",
+      target: { type: "skill", id: receipt.skillId },
+      runId,
+      channelId: ctx.channelId,
+      onBehalfOfUserId: personId,
+      details: {
+        reason: "partial_delivery",
+        wikiStatus: receipt.wiki.status,
+        pendingPeers,
+        assignedCount: receipt.assigned.length,
+      },
+    });
   return receipt;
 }
