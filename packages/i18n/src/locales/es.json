@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "Alternativa de OpenRouter",
+    "intro": "Primero las suscripciones. Los agentes y las rutinas aptos comparten un límite mensual independiente de 50 USD.",
+    "disabled": "Desactivada",
+    "serverDisabled": "Desactivada por la política del servidor",
+    "configured": "Configurada. Se comprueba antes del envío",
+    "blocked": "Bloqueada. Requiere conciliación",
+    "spent": "Gastado este mes",
+    "pending": "Reservado / sin resolver",
+    "cap": "Límite mensual (USD)",
+    "key": "Clave dedicada de OpenRouter",
+    "chooseKey": "Selecciona una clave",
+    "keyHint": "Añade una clave de OpenRouter independiente con un límite mensual igual o inferior a este importe, incluido BYOK. No la reutilices en solicitudes ordinarias.",
+    "models": "IDs de modelos concretos permitidos (uno por línea)",
+    "inputPrice": "Precio máximo de entrada en USD por millón de tokens",
+    "outputPrice": "Precio máximo de salida en USD por millón de tokens",
+    "tier": "Nivel de coste del enrutador",
+    "enable": "Guardar y activar",
+    "disable": "Desactivar alternativa",
+    "refresh": "Actualizar",
+    "error": "No se pudo guardar la configuración. Revisa la clave y la política.",
+    "routes": "Ingeniería: openrouter/auto-code · General: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Continuidad con créditos de API",
     "refresh": "Actualizar estado",

@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "Cadangan OpenRouter",
+    "intro": "Utamakan langganan. Agen dan rutinitas yang memenuhi syarat berbagi batas bulanan terpisah sebesar 50 USD.",
+    "disabled": "Dinonaktifkan",
+    "serverDisabled": "Dinonaktifkan oleh kebijakan server",
+    "configured": "Dikonfigurasi. Diperiksa sebelum pengiriman",
+    "blocked": "Diblokir. Perlu rekonsiliasi",
+    "spent": "Pengeluaran bulan ini",
+    "pending": "Dicadangkan / belum terselesaikan",
+    "cap": "Batas bulanan (USD)",
+    "key": "Kunci OpenRouter khusus",
+    "chooseKey": "Pilih kunci",
+    "keyHint": "Tambahkan kunci OpenRouter terpisah dengan batas bulanan tidak melebihi jumlah ini, termasuk BYOK. Jangan gunakan kembali untuk permintaan biasa.",
+    "models": "ID model tertentu yang diizinkan (satu per baris)",
+    "inputPrice": "Harga input maksimum dalam USD per juta token",
+    "outputPrice": "Harga output maksimum dalam USD per juta token",
+    "tier": "Tingkat biaya router",
+    "enable": "Simpan dan aktifkan",
+    "disable": "Nonaktifkan cadangan",
+    "refresh": "Segarkan",
+    "error": "Tidak dapat menyimpan pengaturan cadangan. Periksa kunci dan kebijakan.",
+    "routes": "Rekayasa: openrouter/auto-code · Umum: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Kelanjutan dengan kredit API",
     "refresh": "Perbarui status",

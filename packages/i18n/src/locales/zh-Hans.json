@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter 回退",
+    "intro": "优先使用订阅。符合条件的代理和例程共享每月 50 美元的独立限额。",
+    "disabled": "已停用",
+    "serverDisabled": "已由服务器策略停用",
+    "configured": "已配置。发送前核查",
+    "blocked": "已阻止。需要对账",
+    "spent": "本月已支出",
+    "pending": "已预留 / 未解决",
+    "cap": "月度限额（USD）",
+    "key": "OpenRouter 专用密钥",
+    "chooseKey": "选择密钥",
+    "keyHint": "添加独立的 OpenRouter 密钥，月度限额不得高于此金额（包括 BYOK）。不要将其用于普通请求。",
+    "models": "允许的具体模型 ID（每行一个）",
+    "inputPrice": "每百万输入 token 的最高费用（USD）",
+    "outputPrice": "每百万输出 token 的最高费用（USD）",
+    "tier": "路由器费用等级",
+    "enable": "保存并启用",
+    "disable": "停用回退",
+    "refresh": "刷新",
+    "error": "无法保存回退设置。请检查密钥和策略。",
+    "routes": "工程：openrouter/auto-code · 通用：openrouter/auto"
+  },
   "creditContinuity": {
     "title": "API 赠送额度续接",
     "refresh": "刷新状态",

@@ -41,7 +41,8 @@ beforeAll(async () => {
   await first.migrate();
   await first.db.insert(users).values({ id: "u1", name: "Ana", email: "ana@example.com" });
   await first.close();
-});
+  // The full migration history can exceed the default 5 s on a shared CI host.
+}, 30_000);
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 test("a folder's URL and back, on a Mac or Linux and on Windows", () => {

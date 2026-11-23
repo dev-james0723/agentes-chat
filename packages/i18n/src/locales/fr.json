@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "Repli OpenRouter",
+    "intro": "Les abonnements passent en premier. Les agents et routines admissibles partagent un plafond mensuel indépendant de 50 USD.",
+    "disabled": "Désactivé",
+    "serverDisabled": "Désactivé par la politique du serveur",
+    "configured": "Configuré. Vérifié avant envoi",
+    "blocked": "Bloqué. Rapprochement nécessaire",
+    "spent": "Dépenses ce mois-ci",
+    "pending": "Réservé / non résolu",
+    "cap": "Plafond mensuel (USD)",
+    "key": "Clé OpenRouter dédiée",
+    "chooseKey": "Sélectionner une clé",
+    "keyHint": "Ajoutez une clé OpenRouter distincte avec un plafond mensuel inférieur ou égal à ce montant, BYOK compris. Ne la réutilisez pas pour les requêtes ordinaires.",
+    "models": "Identifiants des modèles concrets autorisés (un par ligne)",
+    "inputPrice": "Prix maximal en entrée en USD par million de tokens",
+    "outputPrice": "Prix maximal en sortie en USD par million de tokens",
+    "tier": "Niveau de coût du routeur",
+    "enable": "Enregistrer et activer",
+    "disable": "Désactiver le repli",
+    "refresh": "Actualiser",
+    "error": "Impossible d’enregistrer les paramètres de repli. Vérifiez la clé et la politique.",
+    "routes": "Ingénierie : openrouter/auto-code · Général : openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Continuité avec les crédits API",
     "refresh": "Actualiser l’état",

@@ -1,4 +1,67 @@
 {
+  "openRouterFallback.title": {
+    "value": "OpenRouter fallback"
+  },
+  "openRouterFallback.intro": {
+    "value": "Subscription routes first. Eligible agents and routines share one independent US$50 monthly limit."
+  },
+  "openRouterFallback.disabled": {
+    "value": "Disabled"
+  },
+  "openRouterFallback.serverDisabled": {
+    "value": "Disabled by server policy"
+  },
+  "openRouterFallback.configured": {
+    "value": "Configured. Checked before dispatch"
+  },
+  "openRouterFallback.blocked": {
+    "value": "Blocked. Reconciliation required"
+  },
+  "openRouterFallback.spent": {
+    "value": "Spent this month"
+  },
+  "openRouterFallback.pending": {
+    "value": "Reserved / unresolved"
+  },
+  "openRouterFallback.cap": {
+    "value": "Monthly limit (USD)"
+  },
+  "openRouterFallback.key": {
+    "value": "Dedicated OpenRouter key"
+  },
+  "openRouterFallback.chooseKey": {
+    "value": "Select a key"
+  },
+  "openRouterFallback.keyHint": {
+    "value": "Add a separate OpenRouter key with a monthly limit no higher than this cap, including BYOK. Do not reuse it for ordinary requests."
+  },
+  "openRouterFallback.models": {
+    "value": "Allowed concrete model IDs (one per line)"
+  },
+  "openRouterFallback.inputPrice": {
+    "value": "Maximum input USD per million tokens"
+  },
+  "openRouterFallback.outputPrice": {
+    "value": "Maximum output USD per million tokens"
+  },
+  "openRouterFallback.tier": {
+    "value": "Router cost tier"
+  },
+  "openRouterFallback.enable": {
+    "value": "Save and enable"
+  },
+  "openRouterFallback.disable": {
+    "value": "Disable fallback"
+  },
+  "openRouterFallback.refresh": {
+    "value": "Refresh"
+  },
+  "openRouterFallback.error": {
+    "value": "Could not save fallback settings. Check your key and policy."
+  },
+  "openRouterFallback.routes": {
+    "value": "Engineering: openrouter/auto-code · General: openrouter/auto"
+  },
   "app.name": {
     "value": "agentes"
   },

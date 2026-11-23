@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter フォールバック",
+    "intro": "サブスクリプションを優先します。対象のエージェントとルーチンは、月額50米ドルの独立した上限を共有します。",
+    "disabled": "無効",
+    "serverDisabled": "サーバーポリシーにより無効",
+    "configured": "設定済み。送信前に確認します",
+    "blocked": "ブロック中。照合が必要です",
+    "spent": "今月の使用額",
+    "pending": "予約済み・未解決",
+    "cap": "月額上限（USD）",
+    "key": "専用の OpenRouter キー",
+    "chooseKey": "キーを選択",
+    "keyHint": "この金額以下の月額上限（BYOK を含む）を設定した別の OpenRouter キーを追加してください。通常のリクエストには再利用しないでください。",
+    "models": "許可する具体的なモデル ID（1行に1つ）",
+    "inputPrice": "100万トークンあたりの最大入力料金（USD）",
+    "outputPrice": "100万トークンあたりの最大出力料金（USD）",
+    "tier": "ルーターの料金区分",
+    "enable": "保存して有効化",
+    "disable": "フォールバックを無効化",
+    "refresh": "更新",
+    "error": "設定を保存できませんでした。キーとポリシーを確認してください。",
+    "routes": "開発: openrouter/auto-code · 一般: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "APIクレジットによる継続",
     "refresh": "状態を更新",

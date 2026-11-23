@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter-Ausweichoption",
+    "intro": "Abonnements haben Vorrang. Berechtigte Agenten und Routinen teilen sich ein separates Monatslimit von 50 USD.",
+    "disabled": "Deaktiviert",
+    "serverDisabled": "Durch die Serverrichtlinie deaktiviert",
+    "configured": "Konfiguriert. Prüfung vor dem Senden",
+    "blocked": "Gesperrt. Abgleich erforderlich",
+    "spent": "Ausgaben diesen Monat",
+    "pending": "Reserviert / ungeklärt",
+    "cap": "Monatslimit (USD)",
+    "key": "Dedizierter OpenRouter-Schlüssel",
+    "chooseKey": "Schlüssel auswählen",
+    "keyHint": "Füge einen separaten OpenRouter-Schlüssel mit einem Monatslimit bis zu diesem Betrag hinzu, einschließlich BYOK. Verwende ihn nicht für gewöhnliche Anfragen.",
+    "models": "Zulässige konkrete Modell-IDs (eine pro Zeile)",
+    "inputPrice": "Maximaler Eingabepreis in USD pro Million Tokens",
+    "outputPrice": "Maximaler Ausgabepreis in USD pro Million Tokens",
+    "tier": "Kostenstufe des Routers",
+    "enable": "Speichern und aktivieren",
+    "disable": "Ausweichoption deaktivieren",
+    "refresh": "Aktualisieren",
+    "error": "Die Einstellungen konnten nicht gespeichert werden. Prüfe Schlüssel und Richtlinie.",
+    "routes": "Entwicklung: openrouter/auto-code · Allgemein: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Weiterarbeiten mit API-Guthaben",
     "refresh": "Status aktualisieren",

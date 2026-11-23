@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter yedek seçeneği",
+    "intro": "Önce abonelikler kullanılır. Uygun ajanlar ve rutinler aylık 50 USD tutarında ayrı bir limiti paylaşır.",
+    "disabled": "Devre dışı",
+    "serverDisabled": "Sunucu politikasıyla devre dışı",
+    "configured": "Yapılandırıldı. Gönderimden önce kontrol edilir",
+    "blocked": "Engellendi. Mutabakat gerekiyor",
+    "spent": "Bu ay harcanan",
+    "pending": "Ayrılmış / çözümlenmemiş",
+    "cap": "Aylık limit (USD)",
+    "key": "Özel OpenRouter anahtarı",
+    "chooseKey": "Anahtar seç",
+    "keyHint": "BYOK dahil, aylık limiti bu tutarı aşmayan ayrı bir OpenRouter anahtarı ekleyin. Normal isteklerde kullanmayın.",
+    "models": "İzin verilen belirli model kimlikleri (satır başına bir tane)",
+    "inputPrice": "Milyon token başına en yüksek giriş ücreti (USD)",
+    "outputPrice": "Milyon token başına en yüksek çıkış ücreti (USD)",
+    "tier": "Yönlendiricinin maliyet seviyesi",
+    "enable": "Kaydet ve etkinleştir",
+    "disable": "Yedek seçeneğini devre dışı bırak",
+    "refresh": "Yenile",
+    "error": "Yedek ayarları kaydedilemedi. Anahtarı ve politikayı kontrol edin.",
+    "routes": "Mühendislik: openrouter/auto-code · Genel: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "API kredileriyle süreklilik",
     "refresh": "Durumu yenile",

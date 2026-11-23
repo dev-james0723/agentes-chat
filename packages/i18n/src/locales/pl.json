@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "Tryb awaryjny OpenRouter",
+    "intro": "Najpierw subskrypcje. Uprawnieni agenci i procedury korzystają ze wspólnego, niezależnego limitu 50 USD miesięcznie.",
+    "disabled": "Wyłączony",
+    "serverDisabled": "Wyłączony przez politykę serwera",
+    "configured": "Skonfigurowany. Sprawdzany przed wysłaniem",
+    "blocked": "Zablokowany. Wymaga uzgodnienia kosztów",
+    "spent": "Wydatki w tym miesiącu",
+    "pending": "Zarezerwowane / nierozliczone",
+    "cap": "Limit miesięczny (USD)",
+    "key": "Dedykowany klucz OpenRouter",
+    "chooseKey": "Wybierz klucz",
+    "keyHint": "Dodaj osobny klucz OpenRouter z limitem miesięcznym nieprzekraczającym tej kwoty, z uwzględnieniem BYOK. Nie używaj go do zwykłych żądań.",
+    "models": "Dozwolone identyfikatory konkretnych modeli (jeden na wiersz)",
+    "inputPrice": "Maksymalna cena wejścia w USD za milion tokenów",
+    "outputPrice": "Maksymalna cena wyjścia w USD za milion tokenów",
+    "tier": "Poziom kosztów routera",
+    "enable": "Zapisz i włącz",
+    "disable": "Wyłącz tryb awaryjny",
+    "refresh": "Odśwież",
+    "error": "Nie udało się zapisać ustawień. Sprawdź klucz i politykę.",
+    "routes": "Inżynieria: openrouter/auto-code · Ogólne: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Ciągłość pracy dzięki środkom API",
     "refresh": "Odśwież stan",

@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter-uitwijkoptie",
+    "intro": "Abonnementen gaan voor. Geschikte agents en routines delen een afzonderlijke maandlimiet van 50 USD.",
+    "disabled": "Uitgeschakeld",
+    "serverDisabled": "Uitgeschakeld door serverbeleid",
+    "configured": "Geconfigureerd. Controle vóór verzending",
+    "blocked": "Geblokkeerd. Afstemming vereist",
+    "spent": "Deze maand uitgegeven",
+    "pending": "Gereserveerd / onopgelost",
+    "cap": "Maandlimiet (USD)",
+    "key": "Aparte OpenRouter-sleutel",
+    "chooseKey": "Selecteer een sleutel",
+    "keyHint": "Voeg een aparte OpenRouter-sleutel toe met een maandlimiet van maximaal dit bedrag, inclusief BYOK. Gebruik deze niet voor gewone verzoeken.",
+    "models": "Toegestane concrete model-ID’s (één per regel)",
+    "inputPrice": "Maximale invoerprijs in USD per miljoen tokens",
+    "outputPrice": "Maximale uitvoerprijs in USD per miljoen tokens",
+    "tier": "Kostenklasse van de router",
+    "enable": "Opslaan en inschakelen",
+    "disable": "Uitwijkoptie uitschakelen",
+    "refresh": "Vernieuwen",
+    "error": "Opslaan mislukt. Controleer je sleutel en het beleid.",
+    "routes": "Ontwikkeling: openrouter/auto-code · Algemeen: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "Doorgaan met API-tegoed",
     "refresh": "Status bijwerken",

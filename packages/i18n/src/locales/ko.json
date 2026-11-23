@@ -1,4 +1,27 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter 대체 경로",
+    "intro": "구독을 우선 사용합니다. 자격을 갖춘 에이전트와 루틴은 별도의 월 50 USD 한도를 공유합니다.",
+    "disabled": "비활성화됨",
+    "serverDisabled": "서버 정책으로 비활성화됨",
+    "configured": "구성됨. 전송 전에 확인",
+    "blocked": "차단됨. 비용 대사가 필요함",
+    "spent": "이번 달 지출",
+    "pending": "예약됨 / 미해결",
+    "cap": "월 한도 (USD)",
+    "key": "전용 OpenRouter 키",
+    "chooseKey": "키 선택",
+    "keyHint": "BYOK를 포함해 월 한도가 이 금액 이하인 별도의 OpenRouter 키를 추가하세요. 일반 요청에 재사용하지 마세요.",
+    "models": "허용된 구체적인 모델 ID (한 줄에 하나)",
+    "inputPrice": "토큰 100만 개당 최대 입력 요금 (USD)",
+    "outputPrice": "토큰 100만 개당 최대 출력 요금 (USD)",
+    "tier": "라우터 비용 등급",
+    "enable": "저장하고 활성화",
+    "disable": "대체 경로 비활성화",
+    "refresh": "새로 고침",
+    "error": "대체 경로 설정을 저장하지 못했습니다. 키와 정책을 확인하세요.",
+    "routes": "개발: openrouter/auto-code · 일반: openrouter/auto"
+  },
   "creditContinuity": {
     "title": "API 크레딧으로 작업 계속하기",
     "refresh": "상태 새로고침",
