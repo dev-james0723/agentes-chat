@@ -1,4 +1,4 @@
-import type { EndpointCheck, EndpointCheckResult, EndpointModel, EndpointStyle } from "../api/types";
+import type { Credential, EndpointCheck, EndpointCheckResult, EndpointModel, EndpointStyle } from "../api/types";
 
 /**
  * "Outro provedor" (ADR 0146), web and phone: a workspace's own OpenAI- or Anthropic-compatible endpoint (a gateway,
@@ -93,6 +93,23 @@ export function endpointModelsOf(draft: Pick<EndpointDraft, "models">): Endpoint
 }
 
 /** The address as the person typed it is worth sending: http(s), with a host. */
+/** Only a live, server-verified structured JSON model is eligible as an
+ * organization's Summary Model. A checkbox alone is not validation.
+ */
+export function verifiedSummaryModels(credentials: readonly Credential[]) {
+  return credentials.flatMap((credential) => {
+    if (credential.revokedAt || credential.provider !== CUSTOM_PROVIDER || !credential.endpoint) return [];
+    return credential.endpoint.models
+      .filter(
+        (model) => model.structuredOutput === true && model.structuredOutputCheck === "ok" && model.check !== "failed",
+      )
+      .map((model) => ({
+        id: ["custom", credential.id, model.id].join(":"),
+        label: [credential.label, model.id].join(" · "),
+      }));
+  });
+}
+
 export function endpointAddressLooksValid(raw: string): boolean {
   try {
     const url = new URL(raw.trim());

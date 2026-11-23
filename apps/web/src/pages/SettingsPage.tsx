@@ -21,7 +21,7 @@ import { keyRemovalText } from "@agenteschat/client/lib/ai-accounts";
 import { composioUsageText, showsComposioUsage } from "@agenteschat/client/lib/composio";
 import { computerEdition } from "@agenteschat/client/lib/computer";
 import { settingsFrozen } from "@agenteschat/client/lib/deletion";
-import { CUSTOM_PROVIDER } from "@agenteschat/client/lib/endpoints";
+import { CUSTOM_PROVIDER, verifiedSummaryModels } from "@agenteschat/client/lib/endpoints";
 import { errorText, keyRefusal } from "@agenteschat/client/lib/errors";
 import { formatShortDate, formatUsd, relativeTime } from "@agenteschat/client/lib/format";
 import { can } from "@agenteschat/client/lib/permissions";
@@ -760,6 +760,7 @@ function KeysSection() {
   const settings = useSettings(org.id);
   const platform = usePlatformKey(org.id);
   const updateSettings = useUpdateSettings(org.id);
+  const toast = useToast();
   const remove = useRemoveCredential(org.id);
   const [dialog, setDialog] = useState<
     | null
@@ -774,6 +775,7 @@ function KeysSection() {
   if (!allowed) return null;
   const live = (credentials.data ?? []).filter((c) => !c.revokedAt);
   const noKeys = credentials.isSuccess && live.length === 0;
+  const summaryCandidates = verifiedSummaryModels(live);
   // On plans alone the screen is the accounts: the first key is added from "Conectar uma IA", and this card comes
   // with it.
   if (live.length === 0 && plans > 0) return null;
@@ -868,6 +870,38 @@ function KeysSection() {
             );
           })}
         </List>
+      )}
+      {can(org, "configure") && live.some((c) => c.endpoint) && (
+        <section className="endpoint-summary" aria-label={t("endpoint.summaryTitle")}>
+          <b>{t("endpoint.summaryTitle")}</b>
+          <p className="small muted">{t("endpoint.summaryHint")}</p>
+          {summaryCandidates.length === 0 && <SettingNote icon="info">{t("endpoint.summaryNoVerified")}</SettingNote>}
+          {summaryCandidates.map((model) => (
+            <div key={model.id} className="row endpoint-summary__choice">
+              <span>{model.label}</span>
+              {settings.data?.summaryModel === model.id ? (
+                <Chip icon="check">{t("endpoint.summarySelected")}</Chip>
+              ) : (
+                <Button
+                  variant="link"
+                  disabled={updateSettings.isPending || Boolean(hold)}
+                  loading={updateSettings.isPending}
+                  onClick={() =>
+                    updateSettings.mutate(
+                      { summaryModel: model.id },
+                      {
+                        onSuccess: () => toast.show(t("endpoint.summarySaved")),
+                        onError: (error) => toast.show(errorText(t, error), "error"),
+                      },
+                    )
+                  }
+                >
+                  {t("endpoint.summaryUse")}
+                </Button>
+              )}
+            </div>
+          ))}
+        </section>
       )}
       {live.some((c) => c.provider === "openrouter") && <AutoModelsRow />}
       <KeyDialog
