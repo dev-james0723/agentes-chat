@@ -222,3 +222,25 @@ original summary model generated. The separate fail-closed syntax
 filter, high-trust public source requirement, independent review, and
 human-reviewed path for executable guides remain mandatory. No
 production migrations, privileged DB mutation or deployment occurred.
+
+## Promoter output format aligned with unattended sharing
+
+The autonomous promotion model originally requested free-form Markdown
+while the guarded automatic-share policy accepts only non-executable,
+structured procedural text. This mismatch meant a legitimate learned
+Skill could be promoted but not offered to peers.
+
+The normal promotion System Prompt now instructs a single plain
+description sentence under 200 characters, safe procedural sentence
+openings, numbered or bulleted steps ending in a period, and only
+known-safe headings. It explicitly excludes commands, executable text,
+paths, URLs, private source text, credentials and run identifiers.
+The existing real native Tool Gateway test checks the exact System
+Prompt requirement, verifies genuine agent-origin v1 promotion and
+A-to-C/D/E native grants and loads. The prompt is a model instruction;
+it is NOT itself a substitute for independent content validation or
+the provenance digest and public high-trust source gates.
+
+Evidence: pr82-prompt-compatible-skill.log,
+pr82-prompt-alignment-five.log (83 PASS, 584 assertions),
+pr82-prompt-alignment-gates.receipt (Biome / TypeScript success).

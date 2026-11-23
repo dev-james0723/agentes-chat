@@ -23,8 +23,11 @@ async function fixture(shareWith?: string[]) {
     contextTools: true,
     skillTools: true,
     reply: (req) => {
-      if (!systemText(req.system).includes("saved how-to notes into one reusable skill")) {
-        throw new Error("unexpected inference request");
+      if (
+        !systemText(req.system).includes("saved how-to notes into one reusable skill") ||
+        !systemText(req.system).includes("unattended sharing requires harmless procedural prose only")
+      ) {
+        throw new Error("promotion model prompt does not enforce the safe sharing format");
       }
       return {
         chunks: [
