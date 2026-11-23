@@ -475,3 +475,99 @@ test("a peer without the native Skill-read grant is never reported as a successf
     .where(and(eq(schema.agentSkills.orgId, f.org.id), eq(schema.agentSkills.skillId, skill.id)));
   expect(grants).toHaveLength(1);
 });
+
+test("real native peer consultations each create a recipient run whose own gateway can load the shared Skill", async () => {
+  const peers = await fixture();
+  const { skill } = await promotedSkill();
+  const senderRun = await runAt(f.agent.id);
+  const exchange = await invoke(senderRun, "share_learned_skill", {
+    name: skill.slug,
+    agents: peers.map((p) => p.handle),
+  });
+  if (exchange.isError) throw new Error("sharing denied: " + exchange.content);
+  const consultations = await f.db
+    .select()
+    .from(schema.agentConsultations)
+    .where(
+      and(
+        eq(schema.agentConsultations.orgId, f.org.id),
+        eq(schema.agentConsultations.askerAgentId, f.agent.id),
+        eq(schema.agentConsultations.askerRunId, senderRun.runId),
+        eq(schema.agentConsultations.kind, "note"),
+      ),
+    );
+  expect(consultations).toHaveLength(3);
+  const evidence: Array<{ recipient: string; runId: string; version: number; messageId: string }> = [];
+  for (const peer of peers) {
+    const handoff = consultations.find((c) => c.targetAgentId === peer.id);
+    if (!handoff?.targetRunId) throw new Error("native target run was not created for " + peer.handle);
+    const [recipientRun] = await f.db
+      .select()
+      .from(schema.agentRuns)
+      .where(and(eq(schema.agentRuns.orgId, f.org.id), eq(schema.agentRuns.id, handoff.targetRunId)));
+    if (!recipientRun) throw new Error("recipient run missing from native store");
+    expect(recipientRun.agentId).toBe(peer.id);
+    expect(recipientRun.channelId).toBe(handoff.channelId);
+    expect(recipientRun.triggerMessageId).toBe(handoff.messageId);
+    const answer = await invoke(
+      {
+        db: f.db,
+        orgId: f.org.id,
+        agentId: peer.id,
+        runId: recipientRun.id,
+        channelId: recipientRun.channelId,
+        threadRootId: recipientRun.threadRootId ?? handoff.messageId,
+        triggerMessageId: handoff.messageId,
+      },
+      "load_skill",
+      { name: skill.slug },
+    );
+    if (answer.isError) throw new Error(peer.handle + " could not load the Skill: " + answer.content);
+    expect(answer.content).toContain("Check the release readiness twice.");
+    const version = (answer.data as { skill?: { version: number } } | undefined)?.skill?.version;
+    expect(version).toBe(skill.version);
+    evidence.push({
+      recipient: peer.handle,
+      runId: recipientRun.id,
+      version: version ?? -1,
+      messageId: handoff.messageId,
+    });
+  }
+  expect(evidence).toHaveLength(3);
+  const [updatedSkill] = await f.db.select().from(schema.skills).where(eq(schema.skills.id, skill.id));
+  expect(updatedSkill?.useCount).toBeGreaterThanOrEqual(3);
+  expect(updatedSkill?.lastUsedAt).toBeInstanceOf(Date);
+  const [wikiPage] = await f.db.select().from(schema.wikiPages).where(eq(schema.wikiPages.orgId, f.org.id));
+  expect(wikiPage?.source?.id).toBe(skill.id);
+  const [publicMemory] = await f.db
+    .select()
+    .from(schema.contextItems)
+    .where(
+      and(
+        eq(schema.contextItems.orgId, f.org.id),
+        eq(schema.contextItems.kind, "note"),
+        eq(schema.contextItems.scopeType, "org"),
+      ),
+    );
+  expect(publicMemory?.status).toBe("active");
+  const audits = await f.db
+    .select()
+    .from(schema.auditLog)
+    .where(and(eq(schema.auditLog.orgId, f.org.id), eq(schema.auditLog.action, "skill.shared_by_agent")));
+  expect(audits).toHaveLength(3);
+  console.log(
+    "ISOLATED_NATIVE_EXCHANGE_RECEIPT=" +
+      JSON.stringify({
+        source: "PGlite test fixture; simulated structured summary; no live production",
+        skillId: skill.id,
+        skillVersion: updatedSkill?.version,
+        creatorAgentId: f.agent.id,
+        creatorRunId: senderRun.runId,
+        wikiId: wikiPage?.id,
+        publicMemoryId: publicMemory?.id,
+        nativeUseCount: updatedSkill?.useCount,
+        auditIds: audits.map((audit) => audit.id),
+        recipients: evidence,
+      }),
+  );
+});

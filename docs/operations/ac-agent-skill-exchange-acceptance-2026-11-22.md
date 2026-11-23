@@ -20,3 +20,9 @@ Native issue #165 owns Summary Model recovery and is assigned to Theodore. Issue
 
 ## Release requirements
 Independent review of exact commit, same-SHA full local CI, protected PR integration without overwriting PR #78, migration with manager-only OFF-by-default switch, authorized structured-output Summary Model, manager-controlled native Skills-read access roll-out to eligible active agents, and real AC runtime A-to-CDE and negative-case receipts (creator and receiver run IDs, Skill version, source memory IDs, Wiki ID, audit IDs, fresh load events). Do not describe an installed plugin, synthetic test, PR or green CI as Production Verified.
+
+
+## Stronger native receiver-run proof (2026-11-22, isolated)
+Additional end-to-end PGlite test directly verifies that native sendNote creates three recipient-native consultation runs, that each persisted run's agentId, channelId and trigger message match the consultation, and that each run can execute load_skill through the native Tool Gateway with exact version 1. The same test reads back Wiki, public memory, Skill use-count 3 and three audit IDs. It prints a machine-readable, per-run receipt rather than just asserting detached synthetic work sessions.
+
+Evidence: ~/Documents/Agentes-Handoffs/ac-agent-skill-exchange-20261122/native-peer-run-proof.json with SHA256 of native-peer-run-strong-proof.log. This is NOT production model inference or autonomous agent response generation: the fixture uses a simulated summary model and invokes load_skill on the native recipient runs. It proves the engine path and state transitions only.
