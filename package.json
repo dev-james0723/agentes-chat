@@ -20,7 +20,7 @@
     "check:geometry": "bun scripts/geometry/check.ts",
     "sync:unavailable": "bun scripts/unavailable-page.ts",
     "ci:local": "bash scripts/ci-local.sh",
-    "db:generate": "cd packages/db && bunx drizzle-kit generate --name",
+    "db:generate": "cd packages/db && bun run generate",
     "db:regenerate": "bun scripts/regenerate-migrations.ts",
     "docs:env": "bun run --filter '@agenteschat/config' docs",
     "i18n:missing": "bun scripts/i18n.ts missing",
