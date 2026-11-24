@@ -67,7 +67,7 @@ export function MemoryHistoryPanel({ id }: { id: string }) {
       <h4 className="muted" style={{ margin: 0 }}>
         {t("memory.inspect.versions")}
       </h4>
-      <ol style={{ margin: 0 }}>
+      <ol>
         {versions.map((v) => (
           <li key={v.id} aria-current={v.current || undefined}>
             <strong>{t("memory.inspect.version", { version: v.version })}</strong>
@@ -89,7 +89,7 @@ export function MemoryHistoryPanel({ id }: { id: string }) {
           {t("memory.inspect.noRuns")}
         </p>
       ) : (
-        <ul style={{ margin: 0 }}>
+        <ul>
           {runs.map((r) => (
             <li key={r.runId}>
               {t("memory.inspect.run", {
