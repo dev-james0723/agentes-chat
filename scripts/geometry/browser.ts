@@ -201,7 +201,7 @@ export async function launch(bin: string, profile: string, options: BrowserOptio
     while (!url) {
       signal.throwIfAborted();
       if (Date.now() - start >= startupMs)
-        throw new Error(`Chrome startup: timed out after ${startupMs}ms; ${log.slice(-500)}`);
+        throw new Error(`Chrome startup: timed out after ${startupMs}ms (pid=${chrome.pid}); ${log.slice(-500)}`);
       await deadline("Chrome startup poll", Bun.sleep(50), Math.max(startupMs, 100), signal);
       url = endpoint(profile);
     }

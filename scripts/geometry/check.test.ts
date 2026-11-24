@@ -312,13 +312,20 @@ describe("geometry browser anti-stall", () => {
     try {
       const bin = join(root, "fake-chrome");
       const profile = join(root, "profile");
-      const pidFile = join(root, "pid");
-      writeFileSync(bin, `#!/bin/sh\nprintf '%s' "$$" > '${pidFile}'\nexec /bin/sleep 60\n`);
+      // The OS may schedule the fixture only after the short startup deadline.
+      // Read the real spawned PID from the launcher's failure, not a child-written file.
+      writeFileSync(bin, "#!/bin/sh\nexec /bin/sleep 60\n");
       chmodSync(bin, 0o700);
-      await expect(launch(bin, profile, { startupMs: 250, closeMs: 1_000 })).rejects.toThrow(
-        "Chrome startup: timed out",
+      const failure = await launch(bin, profile, { startupMs: 250, closeMs: 1_000 }).then(
+        () => {
+          throw new Error("The silent browser unexpectedly started");
+        },
+        (error: unknown) => error,
       );
-      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(failure).toBeInstanceOf(Error);
+      const match = /Chrome startup: timed out after 250ms \(pid=(\d+)\)/.exec((failure as Error).message);
+      expect(match).not.toBeNull();
+      const pid = Number(match?.[1]);
       expect(pid).toBeGreaterThan(0);
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
