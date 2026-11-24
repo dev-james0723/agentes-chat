@@ -182,10 +182,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
           instructions: z.string().max(50_000).optional().describe("How it works: its system prompt"),
           avatar_color: z.enum(AGENT_LOOK.colors).optional().describe("Its avatar's color"),
           handle: z.string().max(32).optional().describe("Its @handle; made from the name when left out"),
-          owner_only: z
-            .literal(true)
-            .optional()
-            .describe("Create with a restricted owner-only audience; never widens access."),
+          owner_only: z.literal(true).optional().describe("Create with an owner-only audience."),
           idempotency_key: KEY,
         })
         .strict(),
@@ -385,7 +382,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       scope: "manage",
       title: "Set an agent to a free OpenCode model",
       description:
-        "Set only this owner's agent to a catalog-listed free OpenCode model, with API fallback and paid extra usage disabled. Requires a fresh config hash, an owner-only agent on the owner's computer, and its native OpenCode option. Never modifies workspace defaults, grants, accounts or audience. Read back and verify actual inference separately.",
+        "Set only this owner's agent to a catalog-listed free OpenCode model, with API fallback and paid extra usage disabled. Requires a fresh config hash, an owner-only agent on the owner's computer, and its native OpenCode option. Workspace defaults, grants, accounts and audience are unchanged. The response reports configuration, not live inference.",
       input: z
         .object({
           agent: AGENT_REF,
@@ -412,7 +409,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
           "Use an ordinary owner-only agent on the owner's own computer, without an assigned account.",
         );
       if (current.configHash !== expected_config_hash)
-        throw new ConflictError("Agent AI settings changed; read them again before editing.");
+        throw new ConflictError("Agent AI settings changed. Read them again before editing.");
       if (
         !current.computer?.online ||
         !aiSettings(current).free_opencode_available ||
