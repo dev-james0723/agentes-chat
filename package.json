@@ -17,7 +17,7 @@
     "check:boundaries": "bun scripts/check-boundaries.ts",
     "check:licenses": "bun scripts/check-licenses.ts",
     "check:migrations": "bun scripts/check-migrations.ts",
-    "check:geometry": "bun scripts/geometry/check.ts",
+    "check:geometry": "node scripts/geometry/run-bounded.mjs",
     "sync:unavailable": "bun scripts/unavailable-page.ts",
     "ci:local": "bash scripts/ci-local.sh",
     "db:generate": "cd packages/db && bun run generate",

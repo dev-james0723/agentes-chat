@@ -52,10 +52,11 @@ step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"
 step "test backend 2/3" "bun test packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup"
 step "test backend 3/3" "bun test apps/server"
-geometry=$(mktemp -d "${TMPDIR:-/tmp}/agentes-geometry.XXXXXX")
-step "test web and design system" "GEOMETRY_OUT=$geometry bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui"
-step "geometry" "bun run check:geometry $geometry --text-size xs,xl"
-rm -rf "$geometry"
+geometry=$(mktemp -d "${TMPDIR:-/tmp}/agentes-geometry.XXXXXX") || exit 2
+printf '%s\n' "$(git rev-parse HEAD)" > "$geometry/source-head" || exit 2
+step "test web and design system" "GEOMETRY_OUT=\"$geometry\" bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui"
+step "geometry" "bun run check:geometry \"$geometry\" --text-size xs,xl && rm -rf \"$geometry\""
+if [ -d "$geometry" ]; then echo "Geometry failure captures retained: $geometry" >> "$log"; fi
 step "test new event dialog alone" "RUN_NEW_EVENT=1 bun test --timeout 20000 apps/web/test/new-event.test.tsx"
 step "test phone and desktop apps" "bun test apps/mobile/test apps/desktop/test"
 # This branch's own history: other local branches' commits are theirs to scan.

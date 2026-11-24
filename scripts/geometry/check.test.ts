@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connectCdp, deadline, GeometryTransportError, launch } from "./browser";
 import {
   bundleCss,
-  cdpTransport,
   compare,
   coverage,
   cssSheets,
@@ -16,44 +16,8 @@ import {
   playwrightChromes,
   SELF_TESTED,
 } from "./check";
-
-describe("CDP request deadlines", () => {
-  // A deterministic mock transport: no browser, network or slow CI startup required.
-  function socket() {
-    const sent: string[] = [];
-    const mock = {
-      readyState: WebSocket.OPEN,
-      send: (data: string) => {
-        sent.push(data);
-      },
-      onmessage: (_event: { data: string }) => {},
-      onclose: () => {},
-      onerror: () => {},
-    };
-    return { mock, sent, send: cdpTransport(mock as unknown as WebSocket, 20) };
-  }
-  test("returns a matching result and clears its deadline", async () => {
-    const { mock, sent, send } = socket();
-    const result = send<{ value: number }>("Runtime.evaluate", {}, "page-1");
-    const request = JSON.parse(sent[0] as string);
-    mock.onmessage({ data: JSON.stringify({ id: request.id, result: { value: 7 } }) });
-    expect(await result).toEqual({ value: 7 });
-  });
-  test("fails a stalled command with its method and session, rather than waiting forever", async () => {
-    const { send } = socket();
-    await expect(send("Runtime.evaluate", {}, "page-2")).rejects.toThrow(/CDP timeout.*Runtime.evaluate.*page-2/);
-  });
-  test("connection loss rejects every pending request and later sends fail immediately", async () => {
-    const { mock, send } = socket();
-    const a = send("Page.navigate");
-    const b = send("Runtime.evaluate");
-    mock.readyState = WebSocket.CLOSED;
-    mock.onclose();
-    const results = await Promise.allSettled([a, b]);
-    expect(results.every((r) => r.status === "rejected" && String(r.reason).includes("WebSocket closed"))).toBe(true);
-    await expect(send("Page.navigate")).rejects.toThrow("CDP socket is not open");
-  });
-});
+import { resilientWorker } from "./recovery";
+import { runBounded, stageLimit } from "./run-bounded.mjs";
 
 describe("geometry check", () => {
   test("a new offender is new at its width, and words or size never make one", () => {
@@ -247,5 +211,310 @@ describe("geometry check", () => {
     expect(layerOf(/\n\s*\.ac-card\s*\{/)).toBe("base");
     expect(layerOf(/\n\s*\.page-title\s*\{/)).toBe("base");
     expect(layerOf(/\n\s*\.roles-list\s*\{/)).toBeUndefined();
+  });
+});
+
+describe("geometry browser anti-stall", () => {
+  const socketServer = (mode: "reply" | "silent" | "close" | "malformed") =>
+    Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, server) {
+        if (server.upgrade(request)) return;
+        return new Response("websocket only", { status: 426 });
+      },
+      websocket: {
+        message(ws, data) {
+          if (mode === "close") ws.close();
+          else if (mode === "malformed") ws.send("{bad json");
+          else if (mode === "reply") {
+            const request = JSON.parse(String(data));
+            ws.send(JSON.stringify({ id: request.id, result: { method: request.method } }));
+          }
+        },
+      },
+    });
+
+  test("a normal CDP request resolves and close is idempotent", async () => {
+    const server = socketServer("reply");
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 1_000 });
+      try {
+        expect(await cdp.send("Target.getTargets")).toEqual({ method: "Target.getTargets" });
+      } finally {
+        cdp.close();
+        cdp.close();
+      }
+      await expect(cdp.send("Runtime.evaluate")).rejects.toThrow("closed");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a silent CDP request fails within its deadline and rejects every outstanding call", async () => {
+    const server = socketServer("silent");
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 150 });
+      const began = Date.now();
+      const results = await Promise.allSettled([cdp.send("Runtime.evaluate"), cdp.send("Target.getTargets")]);
+      expect(results.every((r) => r.status === "rejected" && String(r.reason).includes("timed out"))).toBe(true);
+      expect(Date.now() - began).toBeLessThan(4_000);
+      await expect(cdp.send("Page.navigate")).rejects.toThrow("timed out");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  for (const mode of ["close", "malformed"] as const) {
+    test(`a ${mode} CDP transport rejects pending requests instead of waiting forever`, async () => {
+      const server = socketServer(mode);
+      try {
+        const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 1_000 });
+        const result = await Promise.allSettled([cdp.send("Runtime.evaluate"), cdp.send("Page.navigate")]);
+        expect(result.every((r) => r.status === "rejected")).toBe(true);
+        await expect(cdp.send("Target.getTargets")).rejects.toThrow();
+      } finally {
+        server.stop(true);
+      }
+    });
+  }
+
+  test("aborting a run rejects pending CDP operations and disallows new work", async () => {
+    const server = socketServer("silent");
+    const controller = new AbortController();
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { signal: controller.signal, callMs: 5_000 });
+      const pending = cdp.send("Runtime.evaluate");
+      controller.abort(new Error("stage canceled"));
+      await expect(pending).rejects.toThrow("stage canceled");
+      await expect(cdp.send("Page.navigate")).rejects.toThrow("stage canceled");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a websocket handshake that never completes has a hard deadline", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Promise<Response>(() => {}),
+    });
+    try {
+      await expect(connectCdp(`ws://127.0.0.1:${server.port}`, { connectMs: 150 })).rejects.toThrow(
+        "CDP connect: timed out",
+      );
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a Chrome process that never publishes its endpoint is terminated", async () => {
+    const root = mkdtempSync(join(tmpdir(), "geometry-silent-chrome-"));
+    try {
+      const bin = join(root, "fake-chrome");
+      const profile = join(root, "profile");
+      const pidFile = join(root, "pid");
+      writeFileSync(bin, `#!/bin/sh\nprintf '%s' "$$" > '${pidFile}'\nexec /bin/sleep 60\n`);
+      chmodSync(bin, 0o700);
+      await expect(launch(bin, profile, { startupMs: 250, closeMs: 1_000 })).rejects.toThrow(
+        "Chrome startup: timed out",
+      );
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an already aborted deadline still consumes late promise rejections", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("canceled"));
+    await expect(deadline("test", Promise.reject(new Error("late")), 500, controller.signal)).rejects.toThrow(
+      "canceled",
+    );
+  });
+
+  test("the independent watchdog propagates successful and failing child exits", async () => {
+    const node = Bun.which("node");
+    if (!node) throw new Error("node is required by local CI");
+    expect(await runBounded(node, ["-e", "process.exit(0)"], { ms: 5_000, graceMs: 250 })).toBe(0);
+    expect(await runBounded(node, ["-e", "process.exit(7)"], { ms: 5_000, graceMs: 250 })).toBe(7);
+    expect(() => stageLimit("0")).toThrow();
+    expect(() => stageLimit("7200001")).toThrow();
+  });
+
+  test("the independent watchdog kills even an unresponsive child that ignores TERM", async () => {
+    const node = Bun.which("node");
+    if (!node) throw new Error("node is required by local CI");
+    const root = mkdtempSync(join(tmpdir(), "geometry-watchdog-"));
+    try {
+      const pidFile = join(root, "pid");
+      const code = `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)`;
+      const started = Date.now();
+      expect(await runBounded(node, ["-e", code], { ms: 800, graceMs: 250 })).toBe(124);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      for (let i = 0; i < 20; i++) {
+        try {
+          process.kill(pid, 0);
+          await Bun.sleep(50);
+        } catch {
+          break;
+        }
+      }
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("geometry screen recovery", () => {
+  test("retries the same failed capture on a fresh browser, returns only complete findings", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    let opened = 0;
+    let closed = 0;
+    const worker = resilientWorker({
+      signal: controller.signal,
+      open: async () => {
+        const id = ++opened;
+        calls.push(`open-${id}`);
+        return {
+          value: id,
+          close: async () => {
+            closed++;
+            calls.push(`close-${id}`);
+          },
+        };
+      },
+      measure: async (id, name) => {
+        calls.push(`measure-${id}-${name}`);
+        const findings = ["first width"];
+        if (id === 1) throw new GeometryTransportError("simulated timeout after first width");
+        return [...findings, "second width", "third width"];
+      },
+      onRetry: (name, attempt) => calls.push(`retry-${name}-${attempt}`),
+    });
+    expect(await worker.measure("capture-a")).toEqual(["first width", "second width", "third width"]);
+    expect(await worker.measure("capture-b")).toHaveLength(3);
+    await worker.close();
+    expect(calls).toEqual([
+      "open-1",
+      "measure-1-capture-a",
+      "close-1",
+      "retry-capture-a-1",
+      "open-2",
+      "measure-2-capture-a",
+      "measure-2-capture-b",
+      "close-2",
+    ]);
+    expect([opened, closed]).toEqual([2, 2]);
+  });
+
+  test("exhausted transport failures close all attempts and fail closed", async () => {
+    let opened = 0;
+    let closed = 0;
+    const worker = resilientWorker({
+      signal: new AbortController().signal,
+      open: async () => ({
+        value: ++opened,
+        close: async () => {
+          closed++;
+        },
+      }),
+      measure: async () => {
+        throw new GeometryTransportError("timeout");
+      },
+    });
+    await expect(worker.measure("capture-x")).rejects.toThrow("attempt 3/3");
+    await worker.close();
+    expect([opened, closed]).toEqual([3, 3]);
+  });
+
+  test("deterministic failures are not retried", async () => {
+    let opened = 0;
+    let closed = 0;
+    const worker = resilientWorker({
+      signal: new AbortController().signal,
+      open: async () => ({
+        value: ++opened,
+        close: async () => {
+          closed++;
+        },
+      }),
+      measure: async () => {
+        throw new Error("rule evaluation failed");
+      },
+    });
+    await expect(worker.measure("capture-x")).rejects.toThrow("attempt 1/3");
+    expect([opened, closed]).toEqual([1, 1]);
+  });
+
+  test("cancellation prevents new work and closes the owned session", async () => {
+    const controller = new AbortController();
+    let opened = 0;
+    let closed = 0;
+    const worker = resilientWorker({
+      signal: controller.signal,
+      open: async () => ({
+        value: ++opened,
+        close: async () => {
+          closed++;
+        },
+      }),
+      measure: async () => {
+        controller.abort(new Error("canceled"));
+        throw new GeometryTransportError("timeout");
+      },
+    });
+    await expect(worker.measure("capture-x")).rejects.toThrow("canceled");
+    await expect(worker.measure("capture-y")).rejects.toThrow("canceled");
+    expect([opened, closed]).toEqual([1, 1]);
+  });
+
+  test("uncertain cleanup does not start a replacement browser", async () => {
+    let opened = 0;
+    const worker = resilientWorker({
+      signal: new AbortController().signal,
+      open: async () => ({
+        value: ++opened,
+        close: async () => {
+          throw new GeometryTransportError("close failed");
+        },
+      }),
+      measure: async () => {
+        throw new GeometryTransportError("timeout");
+      },
+    });
+    await expect(worker.measure("capture-x")).rejects.toThrow("cleanup failed");
+    await expect(worker.measure("capture-y")).rejects.toThrow("cleanup failed");
+    expect(opened).toBe(1);
+  });
+
+  test("recycles an owned browser only after its full capture budget is used", async () => {
+    const calls: string[] = [];
+    let opened = 0;
+    const worker = resilientWorker({
+      signal: new AbortController().signal,
+      recycleEvery: 2,
+      open: async () => {
+        const id = ++opened;
+        calls.push(`open-${id}`);
+        return {
+          value: id,
+          close: async () => {
+            calls.push(`close-${id}`);
+          },
+        };
+      },
+      measure: async (id, name) => `${id}:${name}`,
+    });
+    expect(await worker.measure("a")).toBe("1:a");
+    expect(await worker.measure("b")).toBe("1:b");
+    expect(await worker.measure("c")).toBe("2:c");
+    await worker.close();
+    expect(calls).toEqual(["open-1", "close-1", "open-2", "close-2"]);
   });
 });
