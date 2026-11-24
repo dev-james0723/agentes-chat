@@ -1,4 +1,5 @@
 import { afterAll, afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -139,7 +140,7 @@ describe("Configurações → Auditoria", () => {
     expect(change.textContent).toContain("Walter criou uma rotina");
     // An empty box in the outcome's place takes the time's cell on a phone's three columns.
     expect([...change.children].filter((c) => c.childElementCount === 0 && !c.textContent?.trim())).toHaveLength(0);
-    const css = (await Bun.file(new URL("../src/components/audit.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/components/audit.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );

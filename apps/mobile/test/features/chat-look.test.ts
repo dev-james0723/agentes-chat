@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import {
   CHAT_TEXT_SIZES,
   chatLookOf,
@@ -27,7 +28,7 @@ import {
 import { appColors } from "../../src/ui/palette";
 import { typeScale } from "../../src/ui/type-scale";
 
-const read = (rel: string) => Bun.file(new URL(`../../src/features/${rel}`, import.meta.url).pathname).text();
+const read = (rel: string) => Bun.file(fileURLToPath(new URL(`../../src/features/${rel}`, import.meta.url))).text();
 
 describe("the bubbles' colors", () => {
   test("light is a tint of the agent's deep color on the page, stronger on a dark page; strong is the color darkened", () => {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * Generates `src/icons/source.ts` from the design files in
  * `docs/design/icons/*.svg` (20px grid, 1.6 stroke). Run `bun run icons` in
@@ -6,8 +7,8 @@
  */
 import { Glob } from "bun";
 
-const DIR = new URL("../../../docs/design/icons/", import.meta.url).pathname;
-const OUT = new URL("../src/icons/source.ts", import.meta.url).pathname;
+const DIR = fileURLToPath(new URL("../../../docs/design/icons/", import.meta.url));
+const OUT = fileURLToPath(new URL("../src/icons/source.ts", import.meta.url));
 
 /** Design files are named in Portuguese; code uses English names. */
 const NAMES: Record<string, string> = {

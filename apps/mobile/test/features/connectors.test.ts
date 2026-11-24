@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ApiError,
   type Connection,
@@ -325,7 +326,7 @@ test("icons only from our own path; brand colors only as #rrggbb; monograms; htt
 
 describe("Ferramentas: Salvar stays at hand", () => {
   const read = (path: string) =>
-    Bun.file(new URL(`../../src/features/connectors/${path}`, import.meta.url).pathname).text();
+    Bun.file(fileURLToPath(new URL(`../../src/features/connectors/${path}`, import.meta.url))).text();
 
   test("Salvar is pinned outside the scroll, and no changed tool waits for an Aceitar", async () => {
     const [screen, review] = await Promise.all([read("ToolsScreen.tsx"), read("ToolReview.tsx")]);
@@ -477,7 +478,7 @@ describe("GitHub through the agentes.chat app (ADR 0156), as the web shows it", 
 
   test("the sheet offers the app first and finishes its install itself; the link route finishes it with the app closed", async () => {
     const read = (path: string) =>
-      Bun.file(new URL(`../../src/features/connectors/${path}`, import.meta.url).pathname).text();
+      Bun.file(fileURLToPath(new URL(`../../src/features/connectors/${path}`, import.meta.url))).text();
     const [sheet, back, app] = await Promise.all([
       read("ConnectSheet.tsx"),
       read("OAuthReturn.tsx"),

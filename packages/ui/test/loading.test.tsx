@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -108,10 +109,9 @@ describe("Button loading", () => {
   });
 
   test("the label's text never shows under the spinner, disabled or not, whatever the variant", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m, i) => ({
       i,
       selectors: (m[1] ?? "").split(",").map((s) => s.replace(/\s+/g, " ").trim()),
@@ -175,7 +175,7 @@ describe("SwapLabel", () => {
     expect(button.textContent).toBe("Copiar link de conviteCopiado");
     // Each word with its own icon: the one shown keeps its icon beside it, in the middle of the room the other keeps.
     expect(button.querySelectorAll(":scope > .ac-swap > * > .ac-icon")).toHaveLength(2);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-swap")).toContain("display: inline-grid");
     expect(rule(".ac-swap > *")).toContain("grid-area: 1 / 1");
@@ -186,7 +186,7 @@ describe("SwapLabel", () => {
 
 describe("reduced motion", () => {
   test("every loading animation lives inside a no-preference block", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const start = css.indexOf("Loading: skeletons");
     expect(start).toBeGreaterThan(-1);
     const section = css.slice(start);

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -30,7 +31,7 @@ const key = async (el: Element, k: string) => {
   await act(() => new Promise((r) => setTimeout(r, 0)));
 };
 const click = (el: Element) => act(async () => fireEvent.click(el));
-const css = (file: string) => Bun.file(new URL(`../src/styles/${file}`, import.meta.url).pathname).text();
+const css = (file: string) => Bun.file(fileURLToPath(new URL(`../src/styles/${file}`, import.meta.url))).text();
 
 describe("floating layers", () => {
   test("one layering scale: dialogs, sheets and what floats share one layer, so what opens later stacks above", async () => {
@@ -72,7 +73,7 @@ describe("floating layers", () => {
   });
 
   test("every anchored layer keeps room from the viewport's edges", async () => {
-    const dir = new URL("../src/components/", import.meta.url).pathname;
+    const dir = fileURLToPath(new URL("../src/components/", import.meta.url));
     // `=>` inside an attribute (an arrow function) doesn't end the tag.
     const anchored =
       /<(?:RPopover|DropdownMenu|RSelect|Tooltip|HoverCard|ContextMenu)\.(?:Sub)?Content\b(?:=>|[^>])*?>/gs;

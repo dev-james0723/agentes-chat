@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { ApiError } from "@agenteschat/client";
 import { knownErrorText } from "@agenteschat/client/lib/errors";
 import { planHoldPhoneLine } from "@agenteschat/client/lib/no-ai";
@@ -19,8 +20,8 @@ test("the time zone reads as its city; invitation tokens only url-safe", () => {
 });
 
 test("the import logos are the web's marks, each rendered for the phone at 96 px", async () => {
-  const brands = new URL("../../assets/images/brands/", import.meta.url).pathname;
-  const web = (name: string) => Bun.file(new URL(`../../../web/public/brands/${name}`, import.meta.url).pathname);
+  const brands = fileURLToPath(new URL("../../assets/images/brands/", import.meta.url));
+  const web = (name: string) => Bun.file(fileURLToPath(new URL(`../../../web/public/brands/${name}`, import.meta.url)));
   // Each mark is the web's SVG (a dark one where the maker has one), rendered for the phone at 96 px (the PNG
   // header's width and height). No other import logo is left in the folder (Gemini's mark there is the AI
   // pickers', VS Code's the AI apps').

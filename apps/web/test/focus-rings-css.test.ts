@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { Glob } from "bun";
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 /** While a mouse, a finger or a pen leads, <html> has data-pointer (`trackInput`): no rule draws a ring then. */
 const KEYS_ONLY = "html:not([data-pointer]) ";
 /** Ink, or a color of its own, where the design system's gray ring belongs. */

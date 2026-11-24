@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createFakeComposioClient, createFakeErrorReporter, createFakeMailConnector } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
 import { type McpConnect, mcpPreset } from "@agenteschat/engine";
@@ -344,7 +345,7 @@ test("catalog: one list of our connectors and the one-click MCP servers, one ent
   expect(byId("paypal")).toMatchObject({ iconUrl: "/brands/paypal.svg", brandColor: null });
   expect(byId("canva")).toMatchObject({ iconUrl: "/brands/canva.svg", brandColor: null });
   // Every connector in the catalog has its mark, a file in the web app: none is left a monogram.
-  const publicDir = new URL("../../web/public", import.meta.url).pathname;
+  const publicDir = fileURLToPath(new URL("../../web/public", import.meta.url));
   for (const c of connectors) {
     expect([c.id, c.iconUrl !== null && existsSync(`${publicDir}${c.iconUrl}`)]).toEqual([c.id, true]);
   }

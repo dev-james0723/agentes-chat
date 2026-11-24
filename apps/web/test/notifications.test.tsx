@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -213,7 +214,7 @@ describe("Notificações", () => {
     expect(move?.querySelector("svg")).toBeNull();
     expect(chips.find((c) => c.textContent === "Tarefa #131")?.querySelector("svg.ac-icon")).not.toBeNull();
     // The kit's chips as they are (22 high, words 12): the inbox sizes none of its own.
-    const sheet = await Bun.file(new URL("../src/pages/notifications.css", import.meta.url).pathname).text();
+    const sheet = await Bun.file(fileURLToPath(new URL("../src/pages/notifications.css", import.meta.url))).text();
     expect(sheet).not.toMatch(/\.nt-tags \.ac-chip[^{]*\{/);
   });
 
@@ -688,7 +689,7 @@ describe("what the workspace itself tells: nobody's face, its own", () => {
     expect(row("n-ready").getAttribute("aria-label")).toBe("O computador do seu workspace está pronto, não lida");
     expect(row("n-hold").getAttribute("aria-label")).toBe("O workspace está em espera: os agentes estão pausados");
     // A headline with no name in it carries the unread weight whole.
-    const css = await Bun.file(new URL("../src/pages/notifications.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/pages/notifications.css", import.meta.url))).text();
     expect(css).toMatch(/\.nt-what:not\(:has\(b\)\) \{[^}]*font-weight: 600/);
     expect(css).toMatch(/\.nt-item:not\(\.is-unread\) \.nt-what:not\(:has\(b\)\) \{[^}]*font-weight: 500/);
   });
@@ -855,10 +856,9 @@ describe("its computer is ready: what comes next", () => {
     expect(row.querySelector(":scope > .ac-mediarow__end.nt-tm")?.textContent).toBeTruthy();
     // The chips and the snippet go under the face, at the row's width: nothing is in a column beside it.
     expect(row.querySelector(":scope > .ac-mediarow__body > .nt-snip")).toBeTruthy();
-    const css = (await Bun.file(new URL("../src/pages/notifications.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/pages/notifications.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const body = (selector: string) =>
       new RegExp(`\\n *${selector.replace(/[.()>:]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[1] ?? "";
     expect(body(".nt-item")).not.toContain("grid-template-columns");
@@ -1034,7 +1034,7 @@ describe("Esperando você: what only points somewhere is a card of the requests'
 
   test("its geometry, from the stylesheets: the kit's action rows, the request card's shape, one column for every pair", async () => {
     const read = async (path: string) =>
-      (await Bun.file(new URL(path, import.meta.url).pathname).text()).replace(/\/\*[\s\S]*?\*\//g, "");
+      (await Bun.file(fileURLToPath(new URL(path, import.meta.url))).text()).replace(/\/\*[\s\S]*?\*\//g, "");
     const css = await read("../src/pages/notifications.css");
     const kit = await read("../../../packages/ui/src/styles/components.css");
     const block = (sheet: string, media: string) => sheet.split(`\n@media ${media} {`)[1]?.split("\n}")[0] ?? "";

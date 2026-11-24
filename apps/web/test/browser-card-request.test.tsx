@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -30,7 +31,7 @@ describe("a request to open a browser card", () => {
   });
 
   test("as built, the request is read before it's cleared", async () => {
-    const path = new URL("../src/components/browser/open.ts", import.meta.url).pathname;
+    const path = fileURLToPath(new URL("../src/components/browser/open.ts", import.meta.url));
     const js = new Bun.Transpiler({ loader: "ts" }).transformSync(await Bun.file(path).text());
     const built = transformSync(js, {
       filename: path.replace(/\.ts$/, ".js"),

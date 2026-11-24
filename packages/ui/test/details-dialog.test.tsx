@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -138,10 +139,9 @@ describe("DetailsDialog", () => {
   });
 
   test("the head's CSS: buttons under the words when they don't fit, never above them; the kind's tile off on a phone", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     // Nothing puts the buttons over the title any more (the old narrow head's `order: -1`).
     expect(css).not.toContain("ac-details-head (max-width");
@@ -217,12 +217,12 @@ describe("DetailsDialog", () => {
     expect(dialog.querySelector(".ac-details__heading")).toBeNull();
     expect(within(dialog).getAllByText("Exportar agenda")).toHaveLength(2);
     expect(within(dialog).getByRole("heading", { level: 1, name: "Exportar agenda" })).toBeTruthy();
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css.split("\n.ac-details--fill {")[1]?.split("}")[0]).toContain("height: calc(100dvh - 48px)");
   });
 
   test("the CSS: 720 reading width, its own scroll, a full-screen sheet on a phone", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-details")).toContain("width: min(720px, calc(100% - 48px))");
     expect(rule(".ac-details__body")).toContain("overflow-y: auto");

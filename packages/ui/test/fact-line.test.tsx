@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -6,7 +7,7 @@ setupDom();
 import { render } from "@testing-library/react";
 import { FactLine } from "../src";
 
-const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
 /** The declarations of the first rule written exactly as `selector {`, at the top level or one block deep. */
 const rule = (selector: string) =>
   (css.split(`\n${selector} {`)[1] ?? css.split(`\n  ${selector} {`)[1])?.split("}")[0] ?? "";

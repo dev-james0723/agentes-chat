@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -10,7 +11,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const styles = (name: string) => Bun.file(new URL(`../src/styles/${name}`, import.meta.url).pathname).text();
+const styles = (name: string) => Bun.file(fileURLToPath(new URL(`../src/styles/${name}`, import.meta.url))).text();
 
 describe("focus rings only for the keys", () => {
   test("a key that moves the focus turns them on, one that moves nothing doesn't; a press turns them off", () => {

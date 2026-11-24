@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -15,7 +16,7 @@ const body = () => within(document.body);
  * screens out at 1280, 320 and 390 (the capture preload saves them), so a head that squeezes its title fails there.
  */
 test("an event pill's line is the control's 32: 7 over and under its 18px line, one hairline on its left edge", async () => {
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".ac-eventpill__main")).toContain("padding: 7px 12px");
   expect(rule(".ac-eventpill__frame")).toContain("line-height: 18px");
@@ -149,7 +150,7 @@ describe("worst cases: words and their actions", () => {
 
 describe("worst cases: facts", () => {
   test("a fact strip: each fact as wide as its words, a long one moved whole to a line of its own", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-facts")).toContain("flex-wrap: wrap");
     // Every fact has its hairline; the strip starts that far left and clips its first pixel, so no line starts with one.

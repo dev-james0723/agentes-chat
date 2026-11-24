@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { Agent, AiComputer, MachineAccount } from "@agenteschat/client";
 import { keys } from "@agenteschat/client";
 import { LOGIN_PER_AGENT } from "@agenteschat/client/lib/plans";
@@ -324,7 +325,7 @@ describe("one login per agent, one instruction at a time", () => {
 
 /** A stylesheet's text, its comments left out. */
 const stylesheet = async (path: string) =>
-  (await Bun.file(new URL(path, import.meta.url).pathname).text()).replace(/\/\*[\s\S]*?\*\//g, "");
+  (await Bun.file(fileURLToPath(new URL(path, import.meta.url))).text()).replace(/\/\*[\s\S]*?\*\//g, "");
 
 /** The stylesheet with its `@media (…) {…}` blocks for `query` cut out, braces matched. */
 const without = (css: string, query: string) => {

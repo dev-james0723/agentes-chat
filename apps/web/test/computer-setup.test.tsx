@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { domWindow, setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -106,7 +107,7 @@ describe("the workspace's computer on its way: the notice on top of the work are
     expect(within(notice()).getByRole("img", { name: "Atlas" })).toBeTruthy();
     expect(notice().textContent).not.toContain("esperam por ele");
     // On a phone too, where other notices drop their faces: here nothing else says who waits.
-    const css = await Bun.file(new URL("../src/responsive.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/responsive.css", import.meta.url))).text();
     expect(css.split("\n  .setup-notice .outage__crew {")[1]?.split("}")[0]).toContain("display: inline-flex");
     expect(notice().textContent).not.toMatch(TECHNICAL);
     // This server sends no email: nothing is promised.
@@ -614,7 +615,7 @@ describe("a computer connected in system mode (each agent its own user)", () => 
 });
 
 describe("the computer's wait in words: one edge for the words, whole phrases, even ink", () => {
-  const sheet = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+  const sheet = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
   const rule = (text: string, selector: string) => text.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   const preparing = {
     state: "preparing",

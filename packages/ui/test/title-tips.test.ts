@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -357,7 +358,7 @@ describe("where it goes", () => {
   });
 
   test("long words wrap at a label's width and are never cut", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = css.split(".ac-tip--title {")[1]?.split("}")[0] ?? "";
     expect(rule).toContain(`max-width: min(280px, calc(100vw - ${2 * EDGE_ROOM}px))`);
     expect(rule).toContain("white-space: pre-line");
@@ -370,7 +371,7 @@ describe("where it goes", () => {
 
   test("every window installs it: the web app and the desktop windows", async () => {
     for (const main of ["../../../apps/web/src/main.tsx", "../../../apps/desktop/src/main.tsx"]) {
-      const source = await Bun.file(new URL(main, import.meta.url).pathname).text();
+      const source = await Bun.file(fileURLToPath(new URL(main, import.meta.url))).text();
       expect(source).toMatch(/^installTitleTips\(\);$/m);
     }
   });

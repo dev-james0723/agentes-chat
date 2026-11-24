@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -637,7 +638,7 @@ describe("the card in the message", () => {
     const hint = () => card.querySelector(".brw-ac__capture")?.textContent ?? null;
     // In control the page takes the fingers, not the conversation.
     expect(page.classList.contains("is-control")).toBe(true);
-    const css = await Bun.file(new URL("../src/components/browser/browser.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/components/browser/browser.css", import.meta.url))).text();
     expect(css.split("\n.brw-ac__page.is-control {")[1]?.split("}")[0]).toContain("touch-action: none");
     await act(async () => fireEvent.pointerDown(page, pointer(1, 100, 100, "touch")));
     expect(sentToPage()).toEqual([]);

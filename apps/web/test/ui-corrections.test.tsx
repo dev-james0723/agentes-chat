@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -435,7 +436,7 @@ describe("the pinned bar under the channel header", () => {
     expect(rows[0]?.querySelector(".thread-pop__row")?.classList.contains("ac-mediarow")).toBe(true);
     expect(rows[0]?.querySelector(".ac-avatar")?.className).not.toMatch(/ac-avatar--(xs|sm)/);
     expect(rows[0]?.querySelector("button[aria-label='Desafixar a mensagem de Ada']")?.parentElement).toBe(rows[0]);
-    const css = await Bun.file(new URL("../src/components/threads/threads.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/components/threads/threads.css", import.meta.url))).text();
     expect(css.split("\n.pins-pop__item:hover,")[1]?.split("}")[0]).toContain("background: var(--plate);");
     expect(rows[0]?.querySelector(".ac-mediarow__body.thread-pop__sub")?.textContent).toContain("Achei a causa");
     expect(rows[0]?.querySelector(".pins-pop__time")?.textContent).toBeTruthy();

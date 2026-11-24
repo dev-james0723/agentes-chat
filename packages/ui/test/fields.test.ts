@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
 
 /** CSS rules as [selector, body], comments removed. */
 const rules = (css: string) =>

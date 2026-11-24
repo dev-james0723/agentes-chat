@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { TFunction } from "i18next";
 import type { Message } from "../src/api/types";
 import { createHttpApi } from "../src/index";
@@ -57,7 +58,7 @@ const message = (patch: Partial<Message> = {}): Message => ({
 describe("what a message carries (ADR 0091)", () => {
   // Read from the server's source, not imported: the client never loads the engine (it holds the database).
   test("the same moods and categories as the server (packages/engine/src/media.ts), in its order", async () => {
-    const source = await Bun.file(new URL("../../engine/src/media.ts", import.meta.url).pathname).text();
+    const source = await Bun.file(fileURLToPath(new URL("../../engine/src/media.ts", import.meta.url))).text();
     const moods = /STICKER_MOODS = \[([^\]]*)\]/.exec(source)?.[1] ?? "";
     const categories = /GIF_CATEGORIES = \{([^}]*)\}/.exec(source)?.[1] ?? "";
     expect<string[]>([...STICKER_MOODS]).toEqual([...moods.matchAll(/"(\w+)"/g)].map((m) => m[1] ?? ""));

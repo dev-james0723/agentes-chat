@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -234,7 +235,7 @@ describe("Tarefas: projects", () => {
     expect(within(dialog).getByRole("button", { name: `Projeto: ${LONG}` }).textContent).toBe(LONG);
     // The strip's buttons wrap their words, as its selects do.
     const css = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     const rule = css.split(".ac-props > * > .ac-btn--sm:not(.ac-btn--icon) {")[1]?.split("}")[0] ?? "";
     expect(rule).toContain("white-space: normal");

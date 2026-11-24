@@ -80,7 +80,7 @@ describe("ACP isolated process smoke", () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const { handleAntigravityBrainTurn } = await import("../../runner/brain-antigravity");
-    const root = fs.mkdtempSync(path.join(import.meta.dir, "host-acp-dispatch-test-"));
+    const root = fs.mkdtempSync(path.join(homedir(), "host-acp-dispatch-test-"));
     const binary = path.join(root, "fake.py");
     const mcpBinary = path.join(root, "mcp-fake.py");
     fs.writeFileSync(
@@ -153,7 +153,7 @@ for line in sys.stdin:
     const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
     const path = await import("node:path");
     const { runHostAcpTurn } = await import("../../runner/host-acp-runtime");
-    const root = mkdtempSync(path.join(import.meta.dir, "host-acp-runtime-test-"));
+    const root = mkdtempSync(path.join(homedir(), "host-acp-runtime-test-"));
     const binary = path.join(root, "fake.py");
     const script = `#!/usr/bin/python3
 import json,sys
@@ -219,7 +219,7 @@ for line in sys.stdin:
     const path = await import("node:path");
     const { spawn } = await import("node:child_process");
     const { runHostAcpTurn } = await import("../../runner/host-acp-runtime");
-    const root = fs.mkdtempSync(path.join(import.meta.dir, "host-acp-abort-test-"));
+    const root = fs.mkdtempSync(path.join(homedir(), "host-acp-abort-test-"));
     const binary = path.join(root, "fake.py");
     fs.writeFileSync(binary, "#!/usr/bin/python3\nimport time\ntime.sleep(30)\n", { mode: 0o700 });
     const controller = new AbortController();
@@ -257,7 +257,7 @@ for line in sys.stdin:
     const fs = await import("node:fs");
     const path = await import("node:path");
     const { runHostAcpTurn } = await import("../../runner/host-acp-runtime");
-    const root = fs.mkdtempSync(path.join(import.meta.dir, "host-acp-tool-loop-test-"));
+    const root = fs.mkdtempSync(path.join(homedir(), "host-acp-tool-loop-test-"));
     const binary = path.join(root, "fake.py"),
       trace = path.join(root, "trace.json");
     const script = `#!/usr/bin/python3
