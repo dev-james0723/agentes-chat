@@ -502,7 +502,10 @@ test.if(posix && existsSync("/bin/bash"))(
   },
 );
 
-test.if(posix && existsSync("/bin/bash"))(
+// Exercise the Linux desktop's Bash behavior with the host's maintained Bash.
+// Apple's bundled Bash 3.2 records the command in memory but does not append
+// it at the next prompt in this PTY setup. A missing supported Bash must fail.
+test.if(posix)(
   "each command goes to the history file once it ran, while the shell still runs: a terminal killed with its computer keeps it",
   async () => {
     const home = tempDir("look-");
@@ -510,16 +513,23 @@ test.if(posix && existsSync("/bin/bash"))(
     const file = path.join(home, "bashrc");
     writeFileSync(file, fileOf(home, look(), `${LOOK_DIR}/bashrc`));
     writeFileSync(path.join(home, ".hushlogin"), "");
-    const shell = Bun.spawn(["/bin/bash", "--rcfile", file, "-i"], {
+    const bash = Bun.which("bash");
+    if (!bash) throw new Error("Bash is required for the desktop history test");
+    const version = spawnSync(bash, ["--version"], { encoding: "utf8" });
+    if (version.status !== 0 || !/version [4-9]\./.test(version.stdout))
+      throw new Error("Desktop history CI requires Bash 4 or newer on PATH");
+    // Exercise a real interactive terminal rather than a piped shell.
+    const shell = Bun.spawn([bash, "--rcfile", file, "-i"], {
       cwd: home,
-      env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
-      stdin: "pipe",
-      stdout: "ignore",
-      stderr: "ignore",
+      env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color" },
+      terminal: {
+        cols: 100,
+        rows: 30,
+        data: () => {},
+      },
     });
     try {
-      shell.stdin.write("echo first-command\n");
-      await shell.stdin.flush();
+      shell.terminal?.write("echo first-command\r");
       const history = path.join(home, ".bash_history");
       const deadline = Date.now() + 10_000;
       while (!(existsSync(history) && readFileSync(history, "utf8").includes("echo first-command"))) {
@@ -529,6 +539,8 @@ test.if(posix && existsSync("/bin/bash"))(
       expect(shell.exitCode).toBeNull();
     } finally {
       shell.kill("SIGKILL");
+      await shell.exited;
+      shell.terminal?.close();
     }
   },
 );

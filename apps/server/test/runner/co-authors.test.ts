@@ -242,7 +242,8 @@ describe.skipIf(!hasGit)("git in the agent's processes", () => {
 
 describe.skipIf(!hasGit)("what the agent's commands get", () => {
   const scope = (): RequestScope => ({ signal: new AbortController().signal, output: () => {} });
-  const dev = { id: "01a142cb-489d-7000-87a3-efb5adb382ca", handle: "dev" };
+  // Do not share a vault/redaction identity with other runner fixtures in the same Bun process.
+  const dev = { id: crypto.randomUUID(), handle: "dev" };
 
   test("work that carries the lines commits with them; the same command without them doesn't", async () => {
     const ws = tempDir();
