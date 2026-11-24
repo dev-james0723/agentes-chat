@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { OPENCODE_PROTOCOL } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
 import {
   APP_MANAGE_TOOL_NAMES,
@@ -243,6 +244,120 @@ describe("update_agent", () => {
     expect((await callTool(t, app.access, "update_agent", { agent: "dev", role: "Outra" })).isError).toBe(true);
     const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
     expect(agent?.role).not.toBe("Outra");
+  });
+});
+
+describe("agent-specific free OpenCode configuration", () => {
+  const FREE = "opencode/deepseek-v4.1-flash-free";
+  async function freeAgent() {
+    const { b, orgId, ownerId, agentId: otherId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const made = data(
+      await callTool(t, app.access, "create_agent", {
+        name: "Te",
+        owner_only: true,
+        role: "Knowledge Intelligence Agent",
+      }),
+    );
+    const agentId = String(made.id);
+    const [machine] = await t.db
+      .insert(schema.machines)
+      .values({
+        orgId,
+        name: "Fixture Mac",
+        pairedByUserId: ownerId,
+        protocol: OPENCODE_PROTOCOL,
+        online: true,
+        lastSeenAt: new Date(),
+        execAllowed: true,
+        executors: {
+          opencode: { version: "2.2.5", models: [{ id: FREE, free: true }] },
+          detectedAt: new Date().toISOString(),
+        },
+      })
+      .returning();
+    if (!machine) throw new Error("Fixture computer was not created");
+    await t.db
+      .update(schema.agents)
+      .set({ machineId: machine.id, brainFallback: true, brainExtraUsage: true })
+      .where(eq(schema.agents.id, agentId));
+    return { b, orgId, ownerId, app, agentId, otherId, machineId: machine.id };
+  }
+
+  test("manage consent and owner authorization remain mandatory; config never includes account inventories", async () => {
+    const { b, orgId, app, agentId } = await freeAgent();
+    const writer = await connectApp(t, b, orgId, { name: "Writer", scope: "read write manage", access: "write" });
+    expect(await toolNames(writer.access)).not.toContain("get_agent_ai_settings");
+    expect(await toolNames(writer.access)).not.toContain("set_agent_free_opencode");
+    const before = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    expect(before).toMatchObject({ owner_only: true, free_opencode_models: [FREE], runtime_verified: false });
+    expect(before).not.toHaveProperty("accounts");
+    expect(before).not.toHaveProperty("keys");
+    const member = await joinByInvitation(t, b, orgId, "member@example.com");
+    const memberApp = await connectApp(t, member, orgId, MANAGE);
+    expect((await callTool(t, memberApp.access, "get_agent_ai_settings", { agent: agentId })).isError).toBe(true);
+    expect(
+      (
+        await callTool(t, memberApp.access, "set_agent_free_opencode", {
+          agent: agentId,
+          model: FREE,
+          expected_config_hash: before.config_hash,
+        })
+      ).isError,
+    ).toBe(true);
+  });
+
+  test("pins the free model, disables paid fallback, preserves unrelated agents and workspace defaults", async () => {
+    const { orgId, app, agentId, otherId } = await freeAgent();
+    const oldDefaults = await t.db
+      .select()
+      .from(schema.organizationSettings)
+      .where(eq(schema.organizationSettings.orgId, orgId));
+    const oldOther = await t.db.select().from(schema.agents).where(eq(schema.agents.id, otherId));
+    const before = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    const args = { agent: agentId, expected_config_hash: before.config_hash };
+    expect(
+      (await callTool(t, app.access, "set_agent_free_opencode", { ...args, model: "opencode/deepseek-v4.1-flash" }))
+        .isError,
+    ).toBe(true);
+    expect(
+      (await callTool(t, app.access, "set_agent_free_opencode", { ...args, model: "other/imaginary-free" })).isError,
+    ).toBe(true);
+    const result = await callTool(t, app.access, "set_agent_free_opencode", { ...args, model: FREE });
+    expect(result.isError).not.toBe(true);
+    expect(data(result)).toMatchObject({
+      brain: "opencode",
+      model: FREE,
+      fallback: false,
+      extra_usage: false,
+      owner_only: true,
+      runtime_verified: false,
+    });
+    const after = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    expect(after).toEqual(data(result));
+    expect((await callTool(t, app.access, "set_agent_free_opencode", { ...args, model: FREE })).isError).toBe(true);
+    expect(
+      await t.db.select().from(schema.organizationSettings).where(eq(schema.organizationSettings.orgId, orgId)),
+    ).toEqual(oldDefaults);
+    expect(await t.db.select().from(schema.agents).where(eq(schema.agents.id, otherId))).toEqual(oldOther);
+  });
+
+  test("offline or unlisted model fails without changing the agent", async () => {
+    const { app, agentId, machineId } = await freeAgent();
+    const before = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    const agentBefore = await t.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    await t.db.update(schema.machines).set({ online: false }).where(eq(schema.machines.id, machineId));
+    const args = { agent: agentId, model: FREE, expected_config_hash: before.config_hash };
+    expect((await callTool(t, app.access, "set_agent_free_opencode", args)).isError).toBe(true);
+    await t.db
+      .update(schema.machines)
+      .set({
+        online: true,
+        executors: { opencode: { version: "2.2.5", models: [{ id: "opencode/big-pickle", free: true }] } },
+      })
+      .where(eq(schema.machines.id, machineId));
+    expect((await callTool(t, app.access, "set_agent_free_opencode", args)).isError).toBe(true);
+    expect(await t.db.select().from(schema.agents).where(eq(schema.agents.id, agentId))).toEqual(agentBefore);
   });
 });
 
