@@ -338,7 +338,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
 
   // Do not return account inventories, key IDs, credentials or unrelated workspace settings.
   const aiSettings = (view: AgentBrainView) => {
-    const option = view.options.find((o) => o.kind === "opencode");
+    const models = view.options.find((o) => o.kind === "opencode")?.isolatedFreeModelIds ?? [];
     return {
       agent_id: view.agentId,
       config_hash: view.configHash ?? null,
@@ -348,10 +348,8 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       extra_usage: view.extraUsage,
       owner_only: view.onlyOwner,
       computer_online: view.computer?.online === true,
-      free_opencode_available: option?.available === true,
-      free_opencode_models: (option?.models ?? [])
-        .filter((m) => m.free === true && OPENCODE_FREE_MODELS.some((known) => known.id === m.value))
-        .map((m) => m.value),
+      free_opencode_available: models.length > 0,
+      free_opencode_models: models,
       // A stored configuration is not proof of a successful provider turn or a future free offer.
       runtime_verified: false,
     };
@@ -382,7 +380,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       scope: "manage",
       title: "Set an agent to a free OpenCode model",
       description:
-        "Set only this owner's agent to a catalog-listed free OpenCode model, with API fallback and paid extra usage disabled. Requires a fresh config hash, an owner-only agent on the owner's computer, and its native OpenCode option. Workspace defaults, grants, accounts and audience are unchanged. The response reports configuration, not live inference.",
+        "Set only this owner's agent to a catalog-listed free OpenCode model, with API fallback and paid extra usage disabled. Requires a fresh config hash, an owner-only agent on the owner's computer, and a signed-out observation of that model on the computer. Workspace defaults, grants, accounts and audience are unchanged. The response reports configuration, not live inference.",
       input: z
         .object({
           agent: AGENT_REF,
@@ -410,11 +408,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         );
       if (current.configHash !== expected_config_hash)
         throw new ConflictError("Agent AI settings changed. Read them again before editing.");
-      if (
-        !current.computer?.online ||
-        !aiSettings(current).free_opencode_available ||
-        !aiSettings(current).free_opencode_models.includes(model)
-      )
+      if (!aiSettings(current).free_opencode_models.includes(model))
         throw new ValidationError("The computer is offline or does not currently offer this free OpenCode model.");
       await allow();
       const updated = await setAgentBrain(
@@ -430,7 +424,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
           extraUsage: false,
           effort: null,
         },
-        { remember: false, audit: { grantId: p.grantId, client: p.app.name } },
+        { remember: false, requireIsolatedFreeOpencode: true, audit: { grantId: p.grantId, client: p.app.name } },
       );
       await publishMachineAgentsChanged(deps.pubsub, p.orgId);
       await publishAgentsChanged(deps.pubsub, p.orgId);

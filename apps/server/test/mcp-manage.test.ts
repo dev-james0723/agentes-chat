@@ -10,6 +10,7 @@ import {
   MACHINE_CONTROL_TOPIC,
   parseScopes,
   reachableFromInternet,
+  setAgentBrain,
 } from "@agenteschat/engine";
 import { callTool, connectApp, mcp } from "./ai-apps";
 import { browser, createTestServer, joinByInvitation, seedOrg, signUp, type TestServer } from "./harness";
@@ -271,7 +272,7 @@ describe("agent-specific free OpenCode configuration", () => {
         lastSeenAt: new Date(),
         execAllowed: true,
         executors: {
-          opencode: { version: "2.2.5", models: [{ id: FREE, free: true }] },
+          opencode: { version: "2.2.5", models: [{ id: FREE, free: true }], isolatedFreeModelIds: [FREE] },
           detectedAt: new Date().toISOString(),
         },
       })
@@ -290,7 +291,12 @@ describe("agent-specific free OpenCode configuration", () => {
     expect(await toolNames(writer.access)).not.toContain("get_agent_ai_settings");
     expect(await toolNames(writer.access)).not.toContain("set_agent_free_opencode");
     const before = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
-    expect(before).toMatchObject({ owner_only: true, free_opencode_models: [FREE], runtime_verified: false });
+    expect(before).toMatchObject({
+      owner_only: true,
+      free_opencode_available: true,
+      free_opencode_models: [FREE],
+      runtime_verified: false,
+    });
     expect(before).not.toHaveProperty("accounts");
     expect(before).not.toHaveProperty("keys");
     const member = await joinByInvitation(t, b, orgId, "member@example.com");
@@ -340,6 +346,68 @@ describe("agent-specific free OpenCode configuration", () => {
       await t.db.select().from(schema.organizationSettings).where(eq(schema.organizationSettings.orgId, orgId)),
     ).toEqual(oldDefaults);
     expect(await t.db.select().from(schema.agents).where(eq(schema.agents.id, otherId))).toEqual(oldOther);
+  });
+
+  test("empty inventory cannot turn UI catalog defaults into free availability", async () => {
+    const { app, agentId, machineId, ownerId, orgId } = await freeAgent();
+    const valid = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    const agentRows = () => t.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    const auditRows = () =>
+      t.db
+        .select()
+        .from(schema.auditLog)
+        .where(and(eq(schema.auditLog.orgId, orgId), eq(schema.auditLog.action, "agent.brain")));
+    const initialAgent = await agentRows();
+    const initialAudit = await auditRows();
+    const models = [{ id: FREE, free: true }];
+    const unknown = "opencode/unlisted-free";
+    const other = "opencode/beam-free";
+    for (const [inventory, eligible] of [
+      [{}, []],
+      [{ models }, []],
+      [{ models, isolatedFreeModelIds: [] }, []],
+      [{ models, isolatedFreeModelIds: [FREE, false] }, []],
+      [{ models: [...models, { id: unknown, free: true }], isolatedFreeModelIds: [unknown] }, []],
+      [{ models: [...models, { id: other, free: true }], isolatedFreeModelIds: [other] }, [other]],
+    ] as const) {
+      // Include malformed prior JSON in storage, bypassing the wire parser intentionally.
+      const opencode = { version: "2.2.5", ...inventory } as schema.MachineExecutors["opencode"];
+      await t.db.update(schema.machines).set({ executors: { opencode } }).where(eq(schema.machines.id, machineId));
+      const before = data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+      expect(before).toMatchObject({
+        free_opencode_available: eligible.length > 0,
+        free_opencode_models: [...eligible],
+        config_hash: valid.config_hash,
+      });
+      expect(
+        (
+          await callTool(t, app.access, "set_agent_free_opencode", {
+            agent: agentId,
+            model: FREE,
+            expected_config_hash: valid.config_hash,
+          })
+        ).isError,
+      ).toBe(true);
+    }
+    // The MCP preflight saw FREE and a still-current hash. The native writer must independently check the machine.
+    await expect(
+      setAgentBrain(
+        { db: t.db },
+        ownerId,
+        orgId,
+        agentId,
+        {
+          expectedConfigHash: valid.config_hash,
+          brain: "opencode",
+          model: FREE,
+          fallback: false,
+          extraUsage: false,
+        },
+        { requireIsolatedFreeOpencode: true, remember: false },
+      ),
+    ).rejects.toThrow("currently observed");
+    expect(await agentRows()).toEqual(initialAgent);
+    expect(await auditRows()).toEqual(initialAudit);
   });
 
   test("offline or unlisted model fails without changing the agent", async () => {

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { MachineRequest } from "@agenteschat/adapters";
-import { accountCodeAad, OPENCODE_KEY_PROVIDER } from "@agenteschat/adapters/machine-protocol";
+import { accountCodeAad, OPENCODE_KEY_PROVIDER, parseExecutors } from "@agenteschat/adapters/machine-protocol";
 import { sealSecret } from "@agenteschat/adapters/secret-box";
 import { setTool } from "../../runner/access";
 import { AccountManager, accountEnv, opencodeKeyOf } from "../../runner/accounts";
@@ -19,7 +19,7 @@ import {
   opencodeTurnArgs,
 } from "../../runner/brain-opencode";
 import { accessToStore, effectiveAccess } from "../../runner/config";
-import { detectExecutors, parseOpencodeModels } from "../../runner/executors";
+import { cachedExecutors, detectExecutors, parseOpencodeModels } from "../../runner/executors";
 import { handleRequest } from "../../runner/handlers";
 import { CODEX_MCP_SERVER } from "../../runner/mcp";
 import { opencodeFreeEnv, opencodeMajor } from "../../runner/opencode-cli";
@@ -199,14 +199,60 @@ test.skipIf(!posix)("detection: OpenCode's semver and its models; another `openc
       : { status: 1, stdout: "" };
   expect((await detectExecutors(run("1.19.5"))).found.opencode).toEqual({
     version: "1.19.5",
+    isolatedFreeModelIds: ["opencode/big-pickle"],
     models: [{ id: "opencode/big-pickle", label: "Big Pickle", free: true }],
   });
   // OpenCode 2.2 says its name first (`opencode v2.2.7`): still found, its version kept without the name.
   expect((await detectExecutors(run("opencode v2.2.7"))).found.opencode).toEqual({
     version: "v2.2.7",
+    isolatedFreeModelIds: ["opencode/big-pickle"],
     models: [{ id: "opencode/big-pickle", label: "Big Pickle", free: true }],
   });
   expect((await detectExecutors(run("opencode the game"))).found.opencode).toBeUndefined();
+});
+
+test("only a successful isolated probe can refresh free availability; owner inventory stays usable", async () => {
+  const personal = "opencode/big-pickle";
+  const signedOut = "opencode/beam-free";
+  const previous = {
+    opencode: { version: "2.2.5", models: [{ id: personal, free: true }], isolatedFreeModelIds: [personal] },
+  };
+  for (const [result, ids] of [
+    [{ status: 1, stdout: personal }, undefined],
+    [{ status: 0, stdout: "" }, undefined],
+    [{ status: 0, stdout: signedOut }, [signedOut]],
+  ] as const) {
+    const { found } = await detectExecutors((bin, args, options) => {
+      if (bin !== "opencode") return { status: 127, stdout: "" };
+      if (args[0] === "--version") return { status: 0, stdout: "2.2.5" };
+      return options ? result : { status: 0, stdout: [personal, "ollama/qwen"].join("\n") };
+    }, previous);
+    expect(found.opencode?.isolatedFreeModelIds).toEqual(ids && [...ids]);
+    expect(found.opencode?.models).toContainEqual({ id: personal, label: "Big Pickle", free: true });
+    expect(found.opencode?.models).toContainEqual({ id: "ollama/qwen" });
+  }
+  const { found } = await detectExecutors(() => ({ status: null, stdout: "", error: "timed out" }), previous);
+  expect(found.opencode?.models).toEqual(previous.opencode.models);
+  expect(found.opencode?.isolatedFreeModelIds).toBeUndefined();
+  const folder = tempDir("opencode-cache-");
+  dirs.push(folder);
+  const file = path.join(folder, "executors.json");
+  writeFileSync(file, JSON.stringify(previous));
+  const cache = cachedExecutors({ file, run: () => ({ status: 127, stdout: "" }) });
+  expect(cache().opencode).toEqual(found.opencode);
+  await cache.fresh();
+});
+
+test("the executor parser bounds isolated IDs and requires matching free models on OpenCode", () => {
+  const id = "opencode/big-pickle";
+  const entry = { version: "2.2.5", models: [{ id, free: true }] };
+  const parse = (isolatedFreeModelIds: unknown) =>
+    parseExecutors({ opencode: { ...entry, isolatedFreeModelIds } }).opencode;
+  expect(parse([id, id])?.isolatedFreeModelIds).toEqual([id]);
+  for (const invalid of [undefined, true, id, [id, 1], [id, "../private"], Array(61).fill(id), ["opencode/absent"]]) {
+    expect(parse(invalid)).toEqual(entry);
+  }
+  expect(parseExecutors({ cursor: { ...entry, isolatedFreeModelIds: [id] } }).cursor).toEqual(entry);
 });
 
 test("an account folder is all of OpenCode's XDG folders, and no other key leaks in", () => {
@@ -646,6 +692,7 @@ test.skipIf(!posix)(
       return { status: 0, stdout: [free, free, "opencode/paid", "other/also-free"].join("\n") };
     });
     expect(calls).toBe(2);
+    expect(inventory.found.opencode?.isolatedFreeModelIds).toEqual([free]);
     expect(inventory.found.opencode?.models?.map((m) => m.id)).toEqual(["ollama/qwen", free]);
     expect(existsSync(tempHome)).toBe(false);
     expect(readFileSync(config, "utf8")).toBe(original);

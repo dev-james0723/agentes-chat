@@ -50,7 +50,11 @@ export interface MachineExecutors {
   /** Cursor's CLI (protocol 36, ADR 0114) and the models its sign-in lists; `inPlan`: the CLI said the plan includes it. */
   cursor?: { version: string; models?: { id: string; label?: string; inPlan?: boolean }[] };
   /** OpenCode's CLI (protocol 39, ADR 0132) and the models it lists; `free`: OpenCode's free tier. */
-  opencode?: { version: string; models?: { id: string; label?: string; free?: boolean }[] };
+  opencode?: {
+    version: string;
+    models?: { id: string; label?: string; free?: boolean }[];
+    isolatedFreeModelIds?: string[];
+  };
   /** Grok Build, xAI's CLI (protocol 43, ADR 0142), and the models it lists. */
   grok?: { version: string; models?: { id: string; label?: string }[] };
   /** Google's Antigravity CLI (protocol 44, ADR 0143), and the models it lists. */

@@ -386,14 +386,19 @@ export function parseOpencodeModels(output: string, freeOnly = false): CursorMod
 }
 
 /** Inventory from the person's configuration plus models actually visible to a signed-out, isolated CLI. */
-async function detectOpencode(run: Run): Promise<Probe> {
+async function detectOpencode(run: Run, previous?: RunnerExecutorInfo): Promise<Probe> {
   const version = await run(OPENCODE_BIN, ["--version"]);
   if (version.error || version.status !== 0) return versionFailed(version);
   const major = opencodeMajor(version.stdout);
   if (!major) return {};
   const args = major === 2 ? ["models", "--standalone"] : ["models"];
   const own = await run(OPENCODE_BIN, args);
-  const personal = !own.error && own.status === 0 ? parseOpencodeModels(own.stdout) : [];
+  const ownUnsure = Boolean(own.error && !missing(own));
+  const personal = ownUnsure
+    ? (previous?.models ?? [])
+    : !own.error && own.status === 0
+      ? parseOpencodeModels(own.stdout)
+      : [];
   const home = mkdtempSync(join(tmpdir(), "agentes-opencode-models-"));
   try {
     const listed = await run(OPENCODE_BIN, args, { cwd: home, env: opencodeFreeEnv(home, process.env) });
@@ -409,8 +414,12 @@ async function detectOpencode(run: Run): Promise<Probe> {
     const models = personal.filter((model) => personalIds.has(model.id) || freeIds.has(model.id));
     models.push(...free.filter((model) => !models.some((other) => other.id === model.id)));
     return {
-      entry: { version: version.stdout.trim().replace(/^opencode /, ""), ...(models.length ? { models } : {}) },
-      ...(own.error && !missing(own) ? { unsure: true } : {}),
+      entry: {
+        version: version.stdout.trim().replace(/^opencode /, ""),
+        ...(models.length ? { models } : {}),
+        ...(freeIds.size ? { isolatedFreeModelIds: [...freeIds] } : {}),
+      },
+      ...(ownUnsure || listed.error || listed.status !== 0 ? { unsure: true } : {}),
     };
   } finally {
     rmSync(home, { force: true, recursive: true });
@@ -527,7 +536,7 @@ export async function detectExecutors(
     safe(() => detectVersion(run, "claude")),
     safe(() => detectVersion(run, "codex")),
     safe(() => detectCursor(run)),
-    safe(() => detectOpencode(run)),
+    safe(() => detectOpencode(run, prev.opencode)),
     safe(() => detectGrok(run)),
     safe(() => detectAntigravity(run)),
   ]);
@@ -537,19 +546,32 @@ export async function detectExecutors(
     let p = probes[i] ?? {};
     strikes[name] = p.exited ? (strikes[name] ?? 0) + 1 : 0;
     if ((strikes[name] ?? 0) >= EXECUTORS_EXIT_STRIKES) p = {};
-    const entry = p.unsure ? (prev[name] ?? p.entry) : p.entry;
+    // Only this probe can establish isolated availability, even when normal inventory is kept for display.
+    const entry =
+      p.unsure && name === "opencode"
+        ? (p.entry ?? withoutIsolatedObservation(prev.opencode))
+        : p.unsure
+          ? (prev[name] ?? p.entry)
+          : p.entry;
     if (entry) found[name] = entry;
     if (p.unsure) unsure = true;
   });
   return { found, unsure };
 }
 
+function withoutIsolatedObservation(entry: RunnerExecutorInfo | undefined) {
+  if (!entry) return undefined;
+  const { isolatedFreeModelIds: _previous, ...inventory } = entry;
+  return inventory;
+}
+
 /** The last list kept on disk, believed only as far as `hello` would carry it; null when there is none. */
 function keptExecutors(file: string): Executors | null {
   const kept = readSmallJson(file, 1024 * 1024);
-  return kept && typeof kept === "object" && !Array.isArray(kept)
-    ? parseExecutors(kept as Record<string, unknown>)
-    : null;
+  if (!kept || typeof kept !== "object" || Array.isArray(kept)) return null;
+  const inventory = parseExecutors(kept as Record<string, unknown>);
+  if (inventory.opencode) inventory.opencode = withoutIsolatedObservation(inventory.opencode);
+  return inventory;
 }
 
 export interface ExecutorsCache {

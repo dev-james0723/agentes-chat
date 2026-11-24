@@ -34,7 +34,7 @@ import {
   TASKS_PROTOCOL,
   type Unsubscribe,
 } from "@agenteschat/adapters";
-import { and, type Database, eq, inArray, lt, schema } from "@agenteschat/db";
+import { and, type Database, eq, inArray, lt, schema, sql } from "@agenteschat/db";
 import type { ToolImage } from "@agenteschat/providers";
 import { getAgentCached } from "./agents";
 import { type MachinePhoneRow, publishDevicesChanged, syncMachinePhones } from "./devices";
@@ -763,6 +763,10 @@ export function createMachineHub(deps: MachineHubDeps) {
                         const { hostAuth: _hostAuth, ...rest } = stored.antigravity;
                         stored.antigravity = rest;
                       }
+                      if (stored.opencode?.isolatedFreeModelIds) {
+                        const { isolatedFreeModelIds: _previous, ...inventory } = stored.opencode;
+                        stored.opencode = inventory;
+                      }
                       return stored;
                     })()),
                 ...(frame.browser ? { browser: frame.browser } : {}),
@@ -780,7 +784,8 @@ export function createMachineHub(deps: MachineHubDeps) {
                   : {}),
               },
             }
-          : {}),
+          : // An inventory-less hello keeps existing capabilities, but cannot carry forward a signed-out observation.
+            { executors: sql`${machines.executors} #- '{opencode,isolatedFreeModelIds}'` }),
         paused: conn.pause !== null,
         pausedUntil: conn.pause?.until ? new Date(conn.pause.until) : null,
         pausedByUserId: conn.pause?.by ?? null,

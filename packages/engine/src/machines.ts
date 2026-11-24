@@ -245,11 +245,17 @@ export async function authenticateMachine(db: Database, token: string): Promise<
   return row;
 }
 
-export async function getMachine(db: Database, orgId: string, machineId: string): Promise<MachineRow | null> {
-  const [row] = await db
+export async function getMachine(
+  db: Database,
+  orgId: string,
+  machineId: string,
+  lock?: "share",
+): Promise<MachineRow | null> {
+  const query = db
     .select()
     .from(machines)
     .where(and(eq(machines.orgId, orgId), eq(machines.id, machineId), isNull(machines.deletedAt)));
+  const [row] = await (lock ? query.for(lock) : query);
   return row ?? null;
 }
 
