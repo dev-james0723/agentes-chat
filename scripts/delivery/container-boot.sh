@@ -19,6 +19,7 @@ fi
 root=$(pwd)
 tag=${CI_CANDIDATE_SHA:0:12}
 project="agentes-ci-$tag"
+s3_container="${project}-s3"
 port=${CI_BOOT_PORT:-39300}
 if [ "$port" -lt 1024 ] || [ "$port" = 3000 ]; then echo "refusing port $port" >&2; exit 2; fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/agentes-boot.XXXXXX")
@@ -30,8 +31,9 @@ compose() { docker-compose -p "$project" --project-directory "$work" -f "$root/d
 cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then compose logs --no-color > "$work/compose.log" 2>&1 || true; tail -200 "$work/compose.log" || true; fi
+  # The run-once S3 container can keep the project network attached.
+  docker rm -f "$s3_container" > /dev/null 2>&1 || true
   compose down -v --remove-orphans > /dev/null 2>&1 || true
-  docker rm -f "$project-s3" > /dev/null 2>&1 || true
   docker image rm "$AGENTES_IMAGE" "$AGENTES_BACKUP_IMAGE" > /dev/null 2>&1 || true
   rm -rf "$work"
   exit "$status"
@@ -86,8 +88,9 @@ compose run --rm -T agentes telemetry > report.json
 jq -e '.report == 1 and .install == "docker" and .host.container and .people.total == 1' report.json
 
 echo "== back up and restore"
-printf 'S3_ENDPOINT=http://s3:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' >> .env
-compose run -d --name "$project-s3" --entrypoint sh backup -c \
+printf 'S3_ENDPOINT=http://%s:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' \
+  "$s3_container" >> .env
+compose run -d --name "$s3_container" --entrypoint sh backup -c \
   'mkdir -p /tmp/s3/backups && exec rclone serve s3 --auth-key ci-key,ci-secret --addr :8080 /tmp/s3'
 sleep 3
 compose run --rm backup now
