@@ -28,7 +28,11 @@ docker-compose() {
     'run --rm -T agentes telemetry') printf '{}\n' ;;
     'run -d --name '*) trace "start $4" ;;
     'run --rm backup now')
-      trace "backup $(sed -n 's/^S3_ENDPOINT=//p' .env)"
+      local key
+      for key in S3_ENDPOINT S3_REGION S3_PROVIDER S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BACKUP_BUCKET; do
+        # Compose uses the exported environment before values in the project .env.
+        trace "$key=$(printenv "$key" || sed -n "s/^$key=//p" .env)"
+      done
       return "$BACKUP_STATUS"
       ;;
     'run --rm -T backup list') printf 'fixture.dump\n' ;;
@@ -69,6 +73,15 @@ curl() {
   esac
 }
 
+rm() {
+  trace "scratch cleanup"
+  if [ "$SCRATCH_DELETE_STATUS" -ne 0 ]; then
+    printf 'fixture scratch deletion failed\n' >&2
+    return "$SCRATCH_DELETE_STATUS"
+  fi
+  command rm "$@"
+}
+
 # These checks are outside the container wiring this fixture exercises.
 jq() { if [ "$#" -eq 2 ]; then cat >/dev/null; fi; }
 openssl() { printf 'fixture-password\n'; }
@@ -76,8 +89,17 @@ git() { printf '%s\n' "$CI_CANDIDATE_SHA"; }
 sleep() { :; }
 `;
 
-for (const backupStatus of [0, 37]) {
-  test(`container boot uses its own S3 container and cleans up after backup ${backupStatus === 0 ? "success" : "failure"}`, (t) => {
+const cases = [
+  { name: "container boot uses fixture S3 settings despite inherited values", backupStatus: 0, scratchDeleteStatus: 0 },
+  {
+    name: "container boot preserves backup failure when scratch deletion fails",
+    backupStatus: 37,
+    scratchDeleteStatus: 41,
+  },
+];
+
+for (const { name, backupStatus, scratchDeleteStatus } of cases) {
+  test(name, (t) => {
     const directory = mkdtempSync(join(tmpdir(), "container-boot-test-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const bashEnv = join(directory, "stubs.bash");
@@ -96,9 +118,16 @@ for (const backupStatus of [0, 37]) {
         BASH_ENV: bashEnv,
         BOOT_TRACE: traceFile,
         BACKUP_STATUS: String(backupStatus),
+        SCRATCH_DELETE_STATUS: String(scratchDeleteStatus),
         CI_CANDIDATE_SHA: sha,
         DOCKER_HOST: "unix:///fixture-ci",
         CI_PRODUCTION_DOCKER_HOST: "unix:///fixture-production",
+        S3_ENDPOINT: "https://ambient-s3.example.invalid",
+        S3_REGION: "ambient-region",
+        S3_PROVIDER: "ambient-provider",
+        S3_ACCESS_KEY_ID: "ambient-key",
+        S3_SECRET_ACCESS_KEY: "ambient-secret",
+        S3_BACKUP_BUCKET: "ambient-bucket",
       },
     });
 
@@ -108,13 +137,20 @@ for (const backupStatus of [0, 37]) {
       assert.match(result.stdout, /container boot passed/);
     } else {
       assert.match(result.stdout, /fixture compose diagnostics/);
+      assert.match(result.stderr, /fixture scratch deletion failed/);
     }
     assert.deepEqual(readFileSync(traceFile, "utf8").trim().split("\n"), [
       `start ${s3Container}`,
-      `backup http://${s3Container}:8080`,
+      `S3_ENDPOINT=http://${s3Container}:8080`,
+      "S3_REGION=",
+      "S3_PROVIDER=Rclone",
+      "S3_ACCESS_KEY_ID=ci-key",
+      "S3_SECRET_ACCESS_KEY=ci-secret",
+      "S3_BACKUP_BUCKET=backups",
       backupStatus === 0 ? "restore" : "logs",
       `remove ${s3Container}`,
       "teardown",
+      "scratch cleanup",
     ]);
   });
 }

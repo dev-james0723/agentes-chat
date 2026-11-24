@@ -22,6 +22,8 @@ project="agentes-ci-$tag"
 s3_container="${project}-s3"
 port=${CI_BOOT_PORT:-39300}
 if [ "$port" -lt 1024 ] || [ "$port" = 3000 ]; then echo "refusing port $port" >&2; exit 2; fi
+# Compose gives inherited S3 settings precedence over the fixture .env.
+unset S3_ENDPOINT S3_REGION S3_PROVIDER S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BACKUP_BUCKET
 work=$(mktemp -d "${TMPDIR:-/tmp}/agentes-boot.XXXXXX")
 export AGENTES_IMAGE="agentes-ci:$tag" AGENTES_BACKUP_IMAGE="agentes-backup-ci:$tag"
 export HOST_PORT=$port BIND_ADDRESS=127.0.0.1
@@ -35,7 +37,7 @@ cleanup() {
   docker rm -f "$s3_container" > /dev/null 2>&1 || true
   compose down -v --remove-orphans > /dev/null 2>&1 || true
   docker image rm "$AGENTES_IMAGE" "$AGENTES_BACKUP_IMAGE" > /dev/null 2>&1 || true
-  rm -rf "$work"
+  rm -rf "$work" || true
   exit "$status"
 }
 trap cleanup EXIT
