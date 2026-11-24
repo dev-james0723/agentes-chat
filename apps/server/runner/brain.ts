@@ -1662,7 +1662,10 @@ export interface BrainTurnContext {
   signal?: AbortSignal;
   /** Protocol 10: folders allowed for the agent besides its own (real paths): `cwd` may be inside one, `--add-dir` each. */
   grants?: string[];
-  /** The runner's `readsOnlyInFolders`: Claude Code's file tools read only its working directories. */
+  /**
+   * The runner's `readsOnlyInFolders` (ADR 0205): Claude Code's file tools read and write only its working
+   * directories, and our prompt tool refuses any call naming a path outside the agent's folders.
+   */
   readsOnlyInFolders?: boolean;
   /** Set by the manager (ADR 0041): the turn's account folder, its Claude Code home. */
   accountHome?: string;
@@ -2361,6 +2364,8 @@ export class BrainManager {
             token,
             cwd,
             folders: [...new Set([cwd, ctx.folder])],
+            // The machine's folder allow-list (ADR 0205): this turn's folders, so a folder taken back is out next turn.
+            ...(ctx.readsOnlyInFolders ? { confined: [...new Set([cwd, ctx.folder, ...(ctx.grants ?? [])])] } : {}),
             // Our tools behind Claude Code's ToolSearch, but those it reaches for on its own (`ALWAYS_LOADED`).
             alwaysLoad: false,
             // A plan turn's prompts are answered on the computer (reads only), never asked of anyone.

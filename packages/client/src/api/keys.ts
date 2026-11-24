@@ -115,6 +115,7 @@ export const keys = {
   teamMemories: (orgId: string) => ["org", orgId, "team-memories"] as const,
   memory: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory"] as const,
   /** Under `memory`: invalidating an agent's memories also refreshes "O que sabe sobre você". */
+  memoryHistory: (orgId: string, id: string) => ["org", orgId, "memory-history", id] as const,
   memoryAboutMe: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory", "me"] as const,
   agentForYou: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "for-you"] as const,
   proposals: (orgId: string) => ["org", orgId, "proposals"] as const,
@@ -172,6 +173,7 @@ export const keys = {
   issueList: (orgId: string, q: string, project = "") => ["org", orgId, "issues", "list", q, project] as const,
   issue: (orgId: string, number: number) => ["org", orgId, "issues", "one", number] as const,
   issueActivity: (orgId: string, id: string) => ["org", orgId, "issues", "activity", id] as const,
+  issueFounderStatus: (orgId: string, id: string) => ["org", orgId, "issues", "founder-status", id] as const,
   issueColumns: (orgId: string) => ["org", orgId, "issues", "columns"] as const,
   issueProjects: (orgId: string) => ["org", orgId, "issues", "projects"] as const,
   /** Every thread view and list (prefix): a `thread.updated` refreshes them all. */

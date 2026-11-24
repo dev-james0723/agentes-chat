@@ -1152,6 +1152,8 @@ export async function deleteContextItem(
   await requireEdit(db, actorId, item);
   const deletedAt = new Date();
   await db.transaction(async (tx) => {
+    // Its use records go with it (A17): nothing should still say a run received it.
+    await tx.delete(schema.contextUsage).where(eq(schema.contextUsage.itemId, itemId));
     await tx.delete(contextItems).where(eq(contextItems.id, itemId));
     await tx
       .insert(contextItemTombstones)
@@ -1166,15 +1168,48 @@ export async function deleteContextItem(
  * Removes every item a tombstone names, and queues its search document's removal: after a backup restore, before the
  * server serves anything (A19). Returns how many it removed; 0 on a database that was never restored.
  */
-export async function reapplyMemoryTombstones(db: Database): Promise<{ removed: number }> {
+export async function reapplyMemoryTombstones(
+  db: Database,
+  /**
+   * Tombstones also kept outside the database (the server's files folder): a whole-database restore rolls the table
+   * back with the rows, so these put back the ones it lost. Only for organizations that still exist.
+   */
+  kept: readonly { itemId: string; orgId: string; deletedAt?: string }[] = [],
+): Promise<{ removed: number }> {
   return db.transaction(async (tx) => {
+    if (kept.length) {
+      const orgs = new Set(
+        (
+          await tx
+            .select({ id: schema.organizations.id })
+            .from(schema.organizations)
+            .where(inArray(schema.organizations.id, [...new Set(kept.map((k) => k.orgId))]))
+        ).map((o) => o.id),
+      );
+      const back = kept.filter((k) => orgs.has(k.orgId));
+      if (back.length)
+        await tx
+          .insert(contextItemTombstones)
+          .values(
+            back.map((k) => ({
+              orgId: k.orgId,
+              itemId: k.itemId,
+              deletedByKind: "person",
+              deletedAt: k.deletedAt ? new Date(k.deletedAt) : new Date(),
+            })),
+          )
+          .onConflictDoNothing();
+    }
     const gone = await tx
       .delete(contextItems)
       .where(
         sql`exists (select 1 from ${contextItemTombstones} t where t.org_id = ${contextItems.orgId} and t.item_id = ${contextItems.id})`,
       )
       .returning({ id: contextItems.id, orgId: contextItems.orgId });
-    for (const row of gone) await enqueueIndex(tx, { orgId: row.orgId, kind: "context_item", sourceId: row.id });
+    for (const row of gone) {
+      await tx.delete(schema.contextUsage).where(eq(schema.contextUsage.itemId, row.id));
+      await enqueueIndex(tx, { orgId: row.orgId, kind: "context_item", sourceId: row.id });
+    }
     return { removed: gone.length };
   });
 }

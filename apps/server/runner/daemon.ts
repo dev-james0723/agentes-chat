@@ -92,6 +92,7 @@ import {
   DEFAULT_AGENT_UID_RANGE,
   effectiveAccess,
   expandHome,
+  foldersEnforced,
   normalizeServerUrl,
   normalizeStored,
   pairedConfig,
@@ -246,7 +247,7 @@ export function configFromGrant(
     ...(prev?.mode ? { mode: prev.mode } : {}),
     ...(same && prev?.orgId && prev.orgId === grant.org.id && prev.hostMcp ? { hostMcp: prev.hostMcp } : {}),
     ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
-    ...(prev?.readsOnlyInFolders ? { readsOnlyInFolders: true as const } : {}),
+    ...(typeof prev?.readsOnlyInFolders === "boolean" ? { readsOnlyInFolders: prev.readsOnlyInFolders } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
     ...(prev?.networkMark ? { networkMark: prev.networkMark } : {}),
@@ -1507,7 +1508,7 @@ export class RunnerDaemon implements RequestObserver {
     const context: HandlerContext = {
       hostMcp,
       workspaceReal,
-      ...(config.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
+      ...(foldersEnforced(config) ? { readsOnlyInFolders: true } : {}),
       ...(paperclip ? { paperclip } : {}),
       get exec() {
         return daemon.access().tools.commands;

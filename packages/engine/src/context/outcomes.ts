@@ -55,7 +55,7 @@ export interface OutcomeInput {
   subject?: string;
   summary?: string;
   details?: Record<string, unknown>;
-  source: "tool" | "approval" | "webhook" | "run" | "issue";
+  source: "tool" | "approval" | "webhook" | "run" | "issue" | "operator";
   channelId?: string | null;
   threadRootId?: string | null;
 }

@@ -142,6 +142,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GifQuery,
@@ -198,6 +199,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -1253,6 +1255,8 @@ export interface ApiClient {
     confirm(orgId: string, memoryId: string, expectedVersion?: number): Promise<Memory>;
     /** Undoes a change the agent made from the chat (`update.undo.path`). */
     revert(orgId: string, memoryId: string): Promise<void>;
+    /** Its versions and the runs that used it (who may change it). */
+    history(orgId: string, memoryId: string): Promise<MemoryHistory>;
   };
   proposals: {
     /** The newest 200, pending ones first; with `ids`, only those (a chat card's rows). */
@@ -1333,6 +1337,8 @@ export interface ApiClient {
     /** Who sees it (ADR 0151): anyone who can edit it changes it. */
     setAudience(orgId: string, id: string, audience: AudienceChoice): Promise<Issue>;
     activity(orgId: string, id: string): Promise<IssueActivity[]>;
+    /** Its status from stored evidence only, in Hong Kong Chinese (ADR 0204). */
+    founderStatus(orgId: string, id: string): Promise<FounderStatus>;
     comment(orgId: string, id: string, text: string, attachmentIds?: string[]): Promise<IssueActivity>;
     /** "Pedir à Ada para implementar": assigns the agent and starts its work in the task's conversation. */
     askAgent(orgId: string, id: string, agentId: string): Promise<Issue>;

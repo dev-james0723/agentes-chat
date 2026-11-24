@@ -179,7 +179,7 @@ export function createApp(options: AppOptions) {
       }
       return res;
     });
-    const deps: AppDeps = { log, ...options.services };
+    const deps: AppDeps = { log, sourceIdentity: options.sourceIdentity, ...options.services };
     // Separate server-to-runtime capability, not a session route. No CORS,
     // redirects, model-selected URL or general command execution exists here.
     if (config.FOUNDRY_CONTROL_TOKEN && deps.extras?.foundry) {
