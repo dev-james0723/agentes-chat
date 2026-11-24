@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentAccess } from "@agenteschat/client";
-import { assertHostMcpReadLevel, bindReviewedHostMcp, type HostRequester, hostMcpEndpoint } from "./host-mcp-admin";
+import {
+  assertHostMcpReadLevel,
+  bindReviewedHostMcp,
+  completeReviewedHostMcpRead,
+  type HostRequester,
+  hostMcpEndpoint,
+  type PendingHostMcpRead,
+} from "./host-mcp-admin";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const machineId = "22222222-2222-4222-8222-222222222222";
@@ -79,7 +86,13 @@ describe("Native Host MCP admin connector", () => {
   });
   test("uses the signed-in native profiles API and pins the selected revision", async () => {
     const { request, calls } = mockRequester();
-    const result = await bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", agentId });
+    const result = await bindReviewedHostMcp(request, {
+      orgId,
+      machineId,
+      profileId: "jamesos-shared-brain",
+      revision,
+      agentId,
+    });
     expect(result.id).toBe("44444444-4444-4444-8444-444444444444");
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({ url: path + "/" + machineId + "/profiles", options: undefined });
@@ -95,12 +108,13 @@ describe("Native Host MCP admin connector", () => {
   test("never POSTs a stale or disabled profile", async () => {
     for (const p of [
       { id: "jamesos-shared-brain", label: "Shared Brain", revision: "invalid", enabled: true, kind: "general" },
+      { id: "jamesos-shared-brain", label: "Shared Brain", revision: "b".repeat(64), enabled: true, kind: "general" },
       { id: "jamesos-shared-brain", label: "Shared Brain", revision, enabled: false, kind: "general" },
       { id: "jamesos-shared-brain", label: "Shared Brain", revision, enabled: true, kind: "phone" },
     ]) {
       const { request, calls } = mockRequester(p);
       await expect(
-        bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", agentId }),
+        bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", revision, agentId }),
       ).rejects.toThrow();
       expect(calls).toHaveLength(1);
       expect(calls[0]?.options).toBeUndefined();
@@ -110,9 +124,45 @@ describe("Native Host MCP admin connector", () => {
   test("does not bind a profile other than the one selected", async () => {
     const { request, calls } = mockRequester();
     await expect(
-      bindReviewedHostMcp(request, { orgId, machineId, profileId: "uai-daily-brain", agentId }),
+      bindReviewedHostMcp(request, { orgId, machineId, profileId: "uai-daily-brain", revision, agentId }),
     ).rejects.toThrow();
     expect(calls).toHaveLength(1);
+  });
+
+  test("partial read-grant failure retries only the exact bound selection", async () => {
+    const { request, calls } = mockRequester();
+    const selection = { orgId, machineId, profileId: "jamesos-shared-brain", revision, agentId };
+    let pending: PendingHostMcpRead | null = null;
+    const grants: string[][] = [];
+    const grantRead = async (connectionId: string, targetAgent: string) => {
+      grants.push([connectionId, targetAgent]);
+      if (grants.length === 1) throw new Error("readback unavailable");
+    };
+    const onBound = (binding: PendingHostMcpRead) => {
+      pending = binding;
+    };
+    await expect(completeReviewedHostMcpRead(request, selection, pending, onBound, grantRead)).rejects.toThrow(
+      "readback unavailable",
+    );
+    expect(pending).not.toBeNull();
+    for (const changed of [
+      { agentId: "different-agent" },
+      { orgId: "different-org" },
+      { revision: "b".repeat(64) },
+      { machineId: "different-machine" },
+      { profileId: "different-profile" },
+    ]) {
+      await expect(
+        completeReviewedHostMcpRead(request, { ...selection, ...changed }, pending, onBound, grantRead),
+      ).rejects.toThrow("pending read selection changed");
+    }
+    expect(grants).toHaveLength(1);
+    const recovered = await completeReviewedHostMcpRead(request, selection, pending, onBound, grantRead);
+    expect(calls).toHaveLength(2);
+    expect(grants).toEqual([
+      [recovered.connectionId, agentId],
+      [recovered.connectionId, agentId],
+    ]);
   });
 
   test("rejects unexpected server-side grant creation", async () => {
@@ -125,7 +175,7 @@ describe("Native Host MCP admin connector", () => {
       return { id: "44444444-4444-4444-8444-444444444444", label: "Shared Brain", tools: 3, grantsCreated: 1 } as T;
     };
     await expect(
-      bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", agentId }),
+      bindReviewedHostMcp(request, { orgId, machineId, profileId: "jamesos-shared-brain", revision, agentId }),
     ).rejects.toThrow("Unexpected native Host MCP binding response");
   });
 });

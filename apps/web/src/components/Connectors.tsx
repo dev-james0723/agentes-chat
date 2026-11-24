@@ -320,7 +320,7 @@ export function ConnectorsSection({
             )
           }
         />
-        {admin && <HostMcpConnect />}
+        {admin && <HostMcpConnect key={org.id} />}
         {loaded && mcps.length === 0 && <p className="small muted">{t("connectors.mcp.none")}</p>}
         {mcps.length > 0 && (
           <List className="connected-list" aria-label={t("connectors.mcp.list")}>

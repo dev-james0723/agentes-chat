@@ -11905,6 +11905,10 @@
       "title": "Host MCP op je computer",
       "intro": "Gebruik een gecontroleerd Host MCP-profiel op een vertrouwde computer. Alleen de gekozen agent krijgt leestoegang.",
       "connectRead": "Verbinden en leestoegang geven",
+      "bindFailed": "De koppeling is niet bevestigd. Wis de selectie, laad de profiellijst opnieuw en controleer de computer, profielversie en agent voordat je opnieuw probeert.",
+      "grantUnconfirmed": "Het profiel is gekoppeld, maar leestoegang is niet bevestigd. Probeer opnieuw voor deze agent of wis de selectie zonder bestaande machtigingen te wijzigen. Kies na herladen dezelfde profielversie en agent.",
+      "retryRead": "Leestoegang opnieuw proberen",
+      "resetSelection": "Selectie wissen",
       "note": "De toestemmingslijst van de computer blijft gelden. Controleer de toegang met een echte toolaanroep van de agent."
     },
     "addTitle": "Connector toevoegen",

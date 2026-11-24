@@ -2,14 +2,15 @@ import { createRequester, keys, useAgents, useMachines } from "@agenteschat/clie
 import { saveLevels } from "@agenteschat/client/lib/access-levels";
 import { Button } from "@agenteschat/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useApi } from "@/api/context";
 import { useOrg } from "@/components/org-context";
 import {
   assertHostMcpReadLevel,
-  bindReviewedHostMcp,
+  completeReviewedHostMcpRead,
   hostMcpEndpoint,
+  type PendingHostMcpRead,
   type ReviewedHostProfile,
   type ReviewedHostProfiles,
 } from "@/lib/host-mcp-admin";
@@ -22,7 +23,7 @@ import {
  */
 type HostProfile = ReviewedHostProfile;
 type HostProfiles = ReviewedHostProfiles;
-type PendingAccess = { connectionId: string; agentId: string };
+type HostMcpError = "" | "common.loadFailed" | "connectors.hostMcp.bindFailed" | "connectors.hostMcp.grantUnconfirmed";
 
 const request = createRequester();
 
@@ -39,9 +40,10 @@ export function HostMcpConnect() {
   const [profiles, setProfiles] = useState<HostProfile[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<HostMcpError>("");
   const [status, setStatus] = useState("");
-  const [pending, setPending] = useState<PendingAccess | null>(null);
+  const [pending, setPending] = useState<PendingHostMcpRead | null>(null);
+  const inFlight = useRef(false);
 
   const activeProfiles = useMemo(
     () => profiles.filter((profile) => profile.enabled && profile.kind === "general"),
@@ -54,6 +56,8 @@ export function HostMcpConnect() {
     setProfileId("");
     setError("");
     setPending(null);
+    setStatus("");
+    setLoading(false);
     if (!machineId) return;
     setLoading(true);
     void request<HostProfiles>(hostMcpEndpoint(org.id) + "/" + encodeURIComponent(machineId) + "/profiles")
@@ -61,7 +65,7 @@ export function HostMcpConnect() {
         if (!cancelled) setProfiles(response.profiles ?? []);
       })
       .catch(() => {
-        if (!cancelled) setError(t("common.loadFailed"));
+        if (!cancelled) setError("common.loadFailed");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -69,7 +73,7 @@ export function HostMcpConnect() {
     return () => {
       cancelled = true;
     };
-  }, [org.id, machineId, t]);
+  }, [org.id, machineId]);
 
   async function grantRead(connectionId: string, targetAgent: string) {
     // A successful write does not prove permission if the new connector
@@ -78,7 +82,6 @@ export function HostMcpConnect() {
     assertHostMcpReadLevel(changed, connectionId);
     const confirmed = await api.access.get(org.id, targetAgent);
     assertHostMcpReadLevel(confirmed, connectionId);
-    setPending(null);
     // Cache invalidation is UI-only; after server confirmation it must not
     // turn a real successful grant into an erroneous "permission failed".
     await Promise.allSettled([
@@ -89,35 +92,49 @@ export function HostMcpConnect() {
   }
 
   async function connect() {
-    if (!machineId || !agentId || !profileId || busy) return;
+    if (!machineId || !agentId || !profileId || busy || inFlight.current) return;
+    const revision = pending?.revision ?? activeProfiles.find((profile) => profile.id === profileId)?.revision;
+    if (!revision) {
+      setError("connectors.hostMcp.bindFailed");
+      return;
+    }
+    inFlight.current = true;
     setBusy(true);
     setError("");
     setStatus("");
+    let confirmedBinding = pending;
     try {
-      if (pending) {
-        if (pending.agentId !== agentId) {
-          throw new Error("Finish the previous agent permission review first");
-        }
-        await grantRead(pending.connectionId, pending.agentId);
-        setStatus(t("common.saved"));
-        return;
-      }
-      const bound = await bindReviewedHostMcp(request, { orgId: org.id, machineId, profileId, agentId });
-      setPending({ connectionId: bound.id, agentId });
-      try {
-        await grantRead(bound.id, agentId);
-        setStatus(t("connectFlow.done.title", { name: bound.label }));
-      } catch (reason) {
-        throw new Error(
-          "Profile bound; access review incomplete. Retry the permission step only. " +
-            (reason instanceof Error ? reason.message : String(reason)),
-        );
-      }
-    } catch (reason) {
-      setError(t("common.unknownError"));
+      const bound = await completeReviewedHostMcpRead(
+        request,
+        { orgId: org.id, machineId, profileId, revision, agentId },
+        pending,
+        (binding) => {
+          confirmedBinding = binding;
+          setPending(binding);
+        },
+        grantRead,
+      );
+      setPending(null);
+      setStatus(t("connectFlow.done.title", { name: bound.label }));
+    } catch {
+      // Do not show raw server/provider messages. The binding and read-grant
+      // phases have separate, localized recovery instructions.
+      setError(confirmedBinding ? "connectors.hostMcp.grantUnconfirmed" : "connectors.hostMcp.bindFailed");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
+  }
+
+  function clearSelection() {
+    if (inFlight.current) return;
+    // Clear only UI state; a binding or read grant may already exist on the server.
+    setPending(null);
+    setMachineId("");
+    setProfileId("");
+    setAgentId("");
+    setError("");
+    setStatus("");
   }
 
   return (
@@ -176,7 +193,7 @@ export function HostMcpConnect() {
         disabled={busy || loading || !machineId || !profileId || !agentId}
         onClick={() => void connect()}
       >
-        {busy ? t("common.loading") : pending ? t("common.continue") : t("connectors.hostMcp.connectRead")}
+        {busy ? t("common.loading") : pending ? t("connectors.hostMcp.retryRead") : t("connectors.hostMcp.connectRead")}
       </Button>
       {loading && (
         <p role="status" className="small muted">
@@ -190,8 +207,13 @@ export function HostMcpConnect() {
       )}
       {error && (
         <p role="alert" className="small">
-          {error}
+          {t(error)}
         </p>
+      )}
+      {(pending || error === "connectors.hostMcp.bindFailed") && (
+        <Button size="sm" disabled={busy} onClick={clearSelection}>
+          {t("connectors.hostMcp.resetSelection")}
+        </Button>
       )}
       <p className="small muted">{t("connectors.hostMcp.note")}</p>
     </section>

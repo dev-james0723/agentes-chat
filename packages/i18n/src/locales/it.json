@@ -12281,6 +12281,10 @@
       "title": "Host MCP sul tuo computer",
       "intro": "Usa un profilo Host MCP verificato su un computer affidabile. Solo l’agente selezionato ottiene accesso in lettura.",
       "connectRead": "Connetti e concedi lettura",
+      "bindFailed": "Il collegamento non è stato confermato. Cancella la selezione, ricarica i profili e verifica computer, versione del profilo e agente prima di riprovare.",
+      "grantUnconfirmed": "Il profilo è collegato, ma l’accesso in lettura non è confermato. Riprova per questo agente o cancella la selezione senza cambiare le autorizzazioni esistenti. Dopo il ricaricamento, scegli la stessa versione del profilo e lo stesso agente.",
+      "retryRead": "Riprova accesso in lettura",
+      "resetSelection": "Cancella selezione",
       "note": "Le autorizzazioni del computer restano valide. Verifica l’accesso con una chiamata reale a uno strumento dell’agente."
     },
     "addTitle": "Aggiungi connettore",

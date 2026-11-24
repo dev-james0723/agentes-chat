@@ -16,6 +16,14 @@ export type ReviewedHostProfile = {
 };
 export type ReviewedHostProfiles = { profiles?: ReviewedHostProfile[] };
 export type HostBoundResult = { id: string; label: string; tools: number; grantsCreated: 0 };
+export type ReviewedHostSelection = {
+  orgId: string;
+  machineId: string;
+  profileId: string;
+  revision: string;
+  agentId: string;
+};
+export type PendingHostMcpRead = ReviewedHostSelection & { connectionId: string; label: string };
 
 type PostOptions = { method: "POST"; json: unknown };
 export type HostRequester = <T>(path: string, options?: PostOptions) => Promise<T>;
@@ -39,11 +47,16 @@ export const hostMcpEndpoint = (orgId: string) =>
 
 export async function bindReviewedHostMcp(
   request: HostRequester,
-  input: { orgId: string; machineId: string; profileId: string; agentId: string },
+  input: ReviewedHostSelection,
 ): Promise<HostBoundResult> {
   const base = hostMcpEndpoint(input.orgId);
   const found = await request<ReviewedHostProfiles>(base + "/" + encodeURIComponent(input.machineId) + "/profiles");
-  const profile = found.profiles?.find((p) => p.id === input.profileId && p.enabled && p.kind === "general");
+  // This computer-connector flow intentionally excludes phone profiles.
+  // Recheck the exact revision displayed to the administrator; do not silently
+  // bind a replacement revision discovered during a fresh catalog read.
+  const profile = found.profiles?.find(
+    (p) => p.id === input.profileId && p.enabled && p.kind === "general" && p.revision === input.revision,
+  );
   if (!profile || !/^[a-f0-9]{64}$/.test(profile.revision)) {
     throw new Error("Host MCP profile is missing, disabled or changed");
   }
@@ -60,4 +73,32 @@ export async function bindReviewedHostMcp(
     throw new Error("Unexpected native Host MCP binding response; review server state");
   }
   return bound;
+}
+
+/** Retrying a partial binding may only grant read to its original selection. */
+export async function completeReviewedHostMcpRead(
+  request: HostRequester,
+  selection: ReviewedHostSelection,
+  pending: PendingHostMcpRead | null,
+  onBound: (binding: PendingHostMcpRead) => void,
+  grantRead: (connectionId: string, agentId: string) => Promise<void>,
+): Promise<PendingHostMcpRead> {
+  if (
+    pending &&
+    (pending.orgId !== selection.orgId ||
+      pending.machineId !== selection.machineId ||
+      pending.profileId !== selection.profileId ||
+      pending.revision !== selection.revision ||
+      pending.agentId !== selection.agentId)
+  ) {
+    throw new Error("Host MCP pending read selection changed");
+  }
+  let binding = pending;
+  if (!binding) {
+    const result = await bindReviewedHostMcp(request, selection);
+    binding = { ...selection, connectionId: result.id, label: result.label };
+    onBound(binding);
+  }
+  await grantRead(binding.connectionId, binding.agentId);
+  return binding;
 }

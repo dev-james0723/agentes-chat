@@ -11778,6 +11778,10 @@
       "title": "Bilgisayarınızdaki Host MCP",
       "intro": "Güvenilir bir bilgisayardaki incelenmiş Host MCP profilini kullanın. Yalnızca seçilen aracıya okuma erişimi verilir.",
       "connectRead": "Bağlan ve okuma izni ver",
+      "bindFailed": "Bağlantı doğrulanmadı. Seçimi temizleyin, profil listesini yeniden yükleyin ve tekrar denemeden önce bilgisayarı, profil sürümünü ve aracıyı kontrol edin.",
+      "grantUnconfirmed": "Profil bağlandı ancak okuma erişimi doğrulanmadı. Bu aracı için yeniden deneyin veya mevcut izinleri değiştirmeden seçimi temizleyin. Yeniden yüklemeden sonra aynı profil sürümünü ve aracıyı seçin.",
+      "retryRead": "Okuma erişimini yeniden dene",
+      "resetSelection": "Seçimi temizle",
       "note": "Bilgisayarın izin listesi geçerliliğini korur. Erişimi aracının gerçek bir araç çağrısıyla doğrulayın."
     },
     "addTitle": "Bağlayıcı ekle",

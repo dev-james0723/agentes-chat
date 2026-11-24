@@ -11843,6 +11843,10 @@
       "title": "Host MCP auf deinem Computer",
       "intro": "Nutze ein geprüftes Host-MCP-Profil auf einem vertrauenswürdigen Computer. Nur der gewählte Agent erhält Lesezugriff.",
       "connectRead": "Verbinden und Lesezugriff gewähren",
+      "bindFailed": "Die Verknüpfung wurde nicht bestätigt. Lösche die Auswahl, lade die Profilliste neu und prüfe Computer, Profilversion und Agent vor einem erneuten Versuch.",
+      "grantUnconfirmed": "Das Profil ist verknüpft, der Lesezugriff ist aber nicht bestätigt. Versuche es für diesen Agenten erneut oder lösche die Auswahl, ohne bestehende Berechtigungen zu ändern. Wähle nach dem Neuladen dieselbe Profilversion und denselben Agenten.",
+      "retryRead": "Lesezugriff erneut versuchen",
+      "resetSelection": "Auswahl löschen",
       "note": "Die Freigabeliste des Computers gilt weiterhin. Prüfe den Zugriff mit einem echten Tool-Aufruf des Agenten."
     },
     "addTitle": "Konnektor hinzufügen",
