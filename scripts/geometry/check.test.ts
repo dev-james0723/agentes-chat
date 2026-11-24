@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connectCdp, deadline, launch } from "./browser";
 import {
   bundleCss,
   compare,
@@ -15,6 +16,7 @@ import {
   playwrightChromes,
   SELF_TESTED,
 } from "./check";
+import { runBounded, stageLimit } from "./run-bounded.mjs";
 
 describe("geometry check", () => {
   test("a new offender is new at its width, and words or size never make one", () => {
@@ -208,5 +210,161 @@ describe("geometry check", () => {
     expect(layerOf(/\n\s*\.ac-card\s*\{/)).toBe("base");
     expect(layerOf(/\n\s*\.page-title\s*\{/)).toBe("base");
     expect(layerOf(/\n\s*\.roles-list\s*\{/)).toBeUndefined();
+  });
+});
+
+describe("geometry browser anti-stall", () => {
+  const socketServer = (mode: "reply" | "silent" | "close" | "malformed") =>
+    Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, server) {
+        if (server.upgrade(request)) return;
+        return new Response("websocket only", { status: 426 });
+      },
+      websocket: {
+        message(ws, data) {
+          if (mode === "close") ws.close();
+          else if (mode === "malformed") ws.send("{bad json");
+          else if (mode === "reply") {
+            const request = JSON.parse(String(data));
+            ws.send(JSON.stringify({ id: request.id, result: { method: request.method } }));
+          }
+        },
+      },
+    });
+
+  test("a normal CDP request resolves and close is idempotent", async () => {
+    const server = socketServer("reply");
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 1_000 });
+      try {
+        expect(await cdp.send("Target.getTargets")).toEqual({ method: "Target.getTargets" });
+      } finally {
+        cdp.close();
+        cdp.close();
+      }
+      await expect(cdp.send("Runtime.evaluate")).rejects.toThrow("closed");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a silent CDP request fails within its deadline and rejects every outstanding call", async () => {
+    const server = socketServer("silent");
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 150 });
+      const began = Date.now();
+      const results = await Promise.allSettled([cdp.send("Runtime.evaluate"), cdp.send("Target.getTargets")]);
+      expect(results.every((r) => r.status === "rejected" && String(r.reason).includes("timed out"))).toBe(true);
+      expect(Date.now() - began).toBeLessThan(4_000);
+      await expect(cdp.send("Page.navigate")).rejects.toThrow("timed out");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  for (const mode of ["close", "malformed"] as const) {
+    test(`a ${mode} CDP transport rejects pending requests instead of waiting forever`, async () => {
+      const server = socketServer(mode);
+      try {
+        const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { callMs: 1_000 });
+        const result = await Promise.allSettled([cdp.send("Runtime.evaluate"), cdp.send("Page.navigate")]);
+        expect(result.every((r) => r.status === "rejected")).toBe(true);
+        await expect(cdp.send("Target.getTargets")).rejects.toThrow();
+      } finally {
+        server.stop(true);
+      }
+    });
+  }
+
+  test("aborting a run rejects pending CDP operations and disallows new work", async () => {
+    const server = socketServer("silent");
+    const controller = new AbortController();
+    try {
+      const cdp = await connectCdp(`ws://127.0.0.1:${server.port}`, { signal: controller.signal, callMs: 5_000 });
+      const pending = cdp.send("Runtime.evaluate");
+      controller.abort(new Error("stage canceled"));
+      await expect(pending).rejects.toThrow("stage canceled");
+      await expect(cdp.send("Page.navigate")).rejects.toThrow("stage canceled");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a websocket handshake that never completes has a hard deadline", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Promise<Response>(() => {}),
+    });
+    try {
+      await expect(connectCdp(`ws://127.0.0.1:${server.port}`, { connectMs: 150 })).rejects.toThrow(
+        "CDP connect: timed out",
+      );
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a Chrome process that never publishes its endpoint is terminated", async () => {
+    const root = mkdtempSync(join(tmpdir(), "geometry-silent-chrome-"));
+    try {
+      const bin = join(root, "fake-chrome");
+      const profile = join(root, "profile");
+      const pidFile = join(root, "pid");
+      writeFileSync(bin, `#!/bin/sh\nprintf '%s' "$$" > '${pidFile}'\nexec /bin/sleep 60\n`);
+      chmodSync(bin, 0o700);
+      await expect(launch(bin, profile, { startupMs: 250, closeMs: 1_000 })).rejects.toThrow(
+        "Chrome startup: timed out",
+      );
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an already aborted deadline still consumes late promise rejections", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("canceled"));
+    await expect(deadline("test", Promise.reject(new Error("late")), 500, controller.signal)).rejects.toThrow(
+      "canceled",
+    );
+  });
+
+  test("the independent watchdog propagates successful and failing child exits", async () => {
+    const node = Bun.which("node");
+    if (!node) throw new Error("node is required by local CI");
+    expect(await runBounded(node, ["-e", "process.exit(0)"], { ms: 5_000, graceMs: 250 })).toBe(0);
+    expect(await runBounded(node, ["-e", "process.exit(7)"], { ms: 5_000, graceMs: 250 })).toBe(7);
+    expect(() => stageLimit("0")).toThrow();
+    expect(() => stageLimit("540001")).toThrow();
+  });
+
+  test("the independent watchdog kills even an unresponsive child that ignores TERM", async () => {
+    const node = Bun.which("node");
+    if (!node) throw new Error("node is required by local CI");
+    const root = mkdtempSync(join(tmpdir(), "geometry-watchdog-"));
+    try {
+      const pidFile = join(root, "pid");
+      const code = `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));process.on("SIGTERM",()=>{});setInterval(()=>{},1000)`;
+      const started = Date.now();
+      expect(await runBounded(node, ["-e", code], { ms: 800, graceMs: 250 })).toBe(124);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      for (let i = 0; i < 20; i++) {
+        try {
+          process.kill(pid, 0);
+          await Bun.sleep(50);
+        } catch {
+          break;
+        }
+      }
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

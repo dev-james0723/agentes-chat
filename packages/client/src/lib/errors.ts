@@ -31,6 +31,8 @@ const KNOWN = {
   "credit.conflict": "errors.credit.conflict",
   "credit.disabled": "errors.credit.disabled",
   "credit.resume_refused": "errors.credit.resumeRefused",
+  "openrouter.conflict": "errors.said.conflict",
+  "openrouter.disabled": "errors.said.offHere",
   "delivery_binding.observation_stale": "errors.said.changed",
   "delivery_binding.release_owner_unavailable": "errors.said.changed",
   "delivery_binding.revision_conflict": "errors.said.changed",
