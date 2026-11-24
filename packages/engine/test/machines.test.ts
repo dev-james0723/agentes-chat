@@ -696,6 +696,9 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
     await fakeRunner(hub).hello(paired.token);
     expect((await row())?.opencode?.isolatedFreeModelIds).toBeUndefined();
     expect((await row())?.browser?.available).toBe(true);
+    // A queued report from the old socket still names the same replica.
+    await runner.frame({ type: "executors.changed", executors: { opencode: executors?.opencode } });
+    expect((await row())?.opencode?.isolatedFreeModelIds).toBeUndefined();
     await fakeRunner(hub).hello(paired.token, { browser: { available: false } });
     await Bun.sleep(5);
     expect(await row()).toMatchObject({ claude: { version: "2.1.300" }, browser: { available: false }, detectedAt });

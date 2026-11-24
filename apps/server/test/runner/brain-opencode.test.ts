@@ -19,7 +19,7 @@ import {
   opencodeTurnArgs,
 } from "../../runner/brain-opencode";
 import { accessToStore, effectiveAccess } from "../../runner/config";
-import { cachedExecutors, detectExecutors, parseOpencodeModels } from "../../runner/executors";
+import { cachedExecutors, detectExecutors, EXECUTORS_TTL_MS, parseOpencodeModels } from "../../runner/executors";
 import { handleRequest } from "../../runner/handlers";
 import { CODEX_MCP_SERVER } from "../../runner/mcp";
 import { opencodeFreeEnv, opencodeMajor } from "../../runner/opencode-cli";
@@ -241,6 +241,39 @@ test("only a successful isolated probe can refresh free availability; owner inve
   const cache = cachedExecutors({ file, run: () => ({ status: 127, stdout: "" }) });
   expect(cache().opencode).toEqual(found.opencode);
   await cache.fresh();
+});
+
+test("an expired cache retracts proof during lookup and announces a renewed identical observation", async () => {
+  const free = "opencode/big-pickle";
+  for (const refreshed of [free, ""]) {
+    let now = 0;
+    const gate = Promise.withResolvers<void>();
+    const announcements: string[][] = [];
+    const cache = cachedExecutors({
+      now: () => now,
+      run: async (bin, args, options) => {
+        if (bin !== "opencode") return { status: 127, stdout: "" };
+        if (args[0] === "--version") return { status: 0, stdout: "2.2.5" };
+        if (!options) return { status: 0, stdout: free };
+        if (now === 0) return { status: 0, stdout: free };
+        await gate.promise;
+        return { status: 0, stdout: refreshed };
+      },
+      onChange: (found) => announcements.push(found.opencode?.isolatedFreeModelIds ?? []),
+    });
+    const good = await cache.ready();
+    expect(good.opencode?.isolatedFreeModelIds).toEqual([free]);
+    now = 72 * EXECUTORS_TTL_MS;
+    const expired = cache();
+    expect(expired.opencode?.models).toEqual(good.opencode?.models);
+    expect(expired.opencode?.isolatedFreeModelIds).toBeUndefined();
+    expect((await cache.ready()).opencode?.isolatedFreeModelIds).toBeUndefined();
+    expect(announcements).toEqual([[free], []]);
+    gate.resolve();
+    const done = await cache.fresh();
+    expect(done.opencode?.isolatedFreeModelIds ?? []).toEqual(refreshed ? [free] : []);
+    expect(announcements).toEqual(refreshed ? [[free], [], [free]] : [[free], []]);
+  }
 });
 
 test("the executor parser bounds isolated IDs and requires matching free models on OpenCode", () => {

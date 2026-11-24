@@ -602,8 +602,13 @@ export function cachedExecutors(
   let retry = 0;
   let running: Promise<Executors> | null = null;
   const strikes: Partial<Record<string, number>> = {};
-  const look = (): Promise<Executors> =>
-    (running ??= detectExecutors(opts.run, value, strikes)
+  const notify = () => {
+    try {
+      opts.onChange?.(value);
+    } catch {}
+  };
+  const look = (): Promise<Executors> => {
+    running ??= detectExecutors(opts.run, value, strikes)
       .then(({ found, unsure }) => {
         at = now();
         retry = unsure ? Math.min(retry ? retry * 2 : EXECUTORS_RETRY_MS, EXECUTORS_TTL_MS) : 0;
@@ -618,15 +623,21 @@ export function cachedExecutors(
               writeJson(opts.file, found);
             } catch {}
           }
-          try {
-            opts.onChange?.(found);
-          } catch {}
+          notify();
         }
         return value;
       })
       .finally(() => {
         running = null;
-      }));
+      });
+    // While the next observation is pending, hello and executors.changed carry only the display inventory.
+    // Update the comparison baseline so that re-observing identical IDs announces them again.
+    if (now() - at >= wait && value.opencode?.isolatedFreeModelIds?.length) {
+      value = { ...value, opencode: withoutIsolatedObservation(value.opencode) };
+      notify();
+    }
+    return running;
+  };
   const get = (() => {
     if (now() - at >= wait) void look();
     return value;

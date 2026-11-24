@@ -62,15 +62,29 @@ export function agentFolders(access: RunnerAccess | null | undefined, agentId: s
 
 const toolRequestKey = (machineId: string, tool: string) => `device-tool:${machineId}:${tool}`;
 
+type InventoryOwner = { replicaId: string; connectionId: string };
+
+/** The hello update installs both identifiers atomically. Pub/sub delivery can lag behind that commit. */
+const currentInventoryOwner = (owner: InventoryOwner) =>
+  and(
+    eq(machines.connectedReplica, owner.replicaId),
+    sql`${machines.executors}->>'inventoryConnectionId' = ${owner.connectionId}`,
+  );
+
 /** The runner's report, stored as is (the machine is the source of truth), and told to the org. */
-export async function storeMachineAccess(deps: AccessDeps, machineId: string, access: RunnerAccess) {
+export async function storeMachineAccess(
+  deps: AccessDeps,
+  machineId: string,
+  access: RunnerAccess,
+  owner?: InventoryOwner,
+) {
   const [row] = await deps.db
     .update(machines)
     // `exec` is the commands switch (as in `hello`): a change on the machine holds now, not at the next connect.
     .set({ access, execAllowed: access.tools.commands === true, updatedAt: new Date() })
-    .where(eq(machines.id, machineId))
+    .where(and(eq(machines.id, machineId), owner && currentInventoryOwner(owner)))
     .returning({ orgId: machines.orgId });
-  if (!row) return;
+  if (!row) return false;
   // Members refetch; the folders themselves are only in the API, for admins and the pairer.
   await publishMachineUpdated(deps.pubsub, row.orgId, machineId, { access: true });
   // A tool on, from the apps or the computer's own switch, answers whoever asked for it.
@@ -81,6 +95,7 @@ export async function storeMachineAccess(deps: AccessDeps, machineId: string, ac
       kind: "device.tool_request",
     }).catch(() => 0);
   }
+  return true;
 }
 
 /** What `machines.executors` keeps of the coding CLIs: each one found and when they were looked up. */
@@ -102,6 +117,7 @@ export async function storeMachineExecutors(
   deps: AccessDeps,
   machineId: string,
   executors: NonNullable<RunnerInfo["executors"]>,
+  owner: InventoryOwner,
 ) {
   const next = JSON.stringify({ ...executors, detectedAt: new Date().toISOString() });
   const [row] = await deps.db
@@ -110,9 +126,11 @@ export async function storeMachineExecutors(
       executors: sql`(coalesce(${machines.executors}, '{}'::jsonb) - 'claude' - 'codex' - 'cursor' - 'opencode' - 'grok' - 'antigravity') || ${next}::jsonb`,
       updatedAt: new Date(),
     })
-    .where(eq(machines.id, machineId))
+    .where(and(eq(machines.id, machineId), currentInventoryOwner(owner)))
     .returning({ orgId: machines.orgId });
-  if (row) await publishMachineUpdated(deps.pubsub, row.orgId, machineId, { executors: true });
+  if (!row) return false;
+  await publishMachineUpdated(deps.pubsub, row.orgId, machineId, { executors: true });
+  return true;
 }
 
 /** `toolchains.changed`: what `hello.toolchains` said, replaced whole; the rest of `executors` stays. */

@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { OPENCODE_PROTOCOL } from "@agenteschat/adapters";
+import { holdEvents, OPENCODE_PROTOCOL } from "@agenteschat/adapters";
 import { and, eq, schema } from "@agenteschat/db";
 import {
   APP_MANAGE_TOOL_NAMES,
   APP_TOOL_NAMES,
   appAccessOf,
   appScopesFor,
+  createMachineHub,
   isPromotable,
   MACHINE_CONTROL_TOPIC,
   parseScopes,
   reachableFromInternet,
   setAgentBrain,
 } from "@agenteschat/engine";
+import { fakeRunner, pairMachine } from "../../../packages/engine/test/machine-fixtures";
 import { callTool, connectApp, mcp } from "./ai-apps";
 import { browser, createTestServer, joinByInvitation, seedOrg, signUp, type TestServer } from "./harness";
 
@@ -408,6 +410,67 @@ describe("agent-specific free OpenCode configuration", () => {
     ).rejects.toThrow("currently observed");
     expect(await agentRows()).toEqual(initialAgent);
     expect(await auditRows()).toEqual(initialAudit);
+  });
+
+  test("a replacement runner owns inventory while its notification is in transit", async () => {
+    const { app, agentId, ownerId, orgId } = await freeAgent();
+    const paired = await pairMachine({ db: t.db }, ownerId, orgId);
+    await t.db.update(schema.agents).set({ machineId: paired.machineId }).where(eq(schema.agents.id, agentId));
+    const old = fakeRunner(t.engine.machineHub);
+    const executors = {
+      opencode: { version: "2.2.5", models: [{ id: FREE, free: true }], isolatedFreeModelIds: [FREE] },
+    };
+    await old.hello(paired.token, { executors });
+    const read = async () => data(await callTool(t, app.access, "get_agent_ai_settings", { agent: agentId }));
+    const before = await read();
+    expect(before.free_opencode_models).toEqual([FREE]);
+    const agentRows = () => t.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    const audits = () =>
+      t.db
+        .select()
+        .from(schema.auditLog)
+        .where(and(eq(schema.auditLog.orgId, orgId), eq(schema.auditLog.action, "agent.brain")));
+    const initialAgent = await agentRows();
+    const initialAudit = await audits();
+
+    const held = holdEvents(t.adapters.pubsub);
+    const replacement = createMachineHub({ db: t.db, pubsub: held.pubsub });
+    try {
+      const current = fakeRunner(replacement);
+      await current.hello(paired.token);
+      expect((await read()).free_opencode_models).toEqual([]);
+      expect(old.closed()).toBeNull();
+      await old.frame({ type: "executors.changed", executors });
+      const after = await read();
+      expect(after).toMatchObject({
+        free_opencode_available: false,
+        free_opencode_models: [],
+        config_hash: before.config_hash,
+      });
+      expect(
+        (
+          await callTool(t, app.access, "set_agent_free_opencode", {
+            agent: agentId,
+            model: FREE,
+            expected_config_hash: before.config_hash,
+          })
+        ).isError,
+      ).toBe(true);
+      expect(await agentRows()).toEqual(initialAgent);
+      expect(await audits()).toEqual(initialAudit);
+      await current.frame({ type: "executors.changed", executors });
+      expect((await read()).free_opencode_models).toEqual([FREE]);
+      const access = (opencode: boolean) => ({
+        folders: [],
+        tools: { commands: true, claude: false, codex: false, opencode },
+      });
+      await current.frame({ type: "access.changed", access: access(false) });
+      await old.frame({ type: "access.changed", access: access(true) });
+      expect((await read()).free_opencode_models).toEqual([]);
+    } finally {
+      await held.flush();
+      await replacement.stop();
+    }
   });
 
   test("offline or unlisted model fails without changing the agent", async () => {

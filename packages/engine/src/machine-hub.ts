@@ -752,6 +752,7 @@ export function createMachineHub(deps: MachineHubDeps) {
         machine.executors?.antigravity?.hostAuth
           ? {
               executors: {
+                inventoryConnectionId: conn.connectionId,
                 // A runner that hasn't looked yet leaves the CLIs out: the last ones stored stand.
                 ...(frame.executors
                   ? { ...frame.executors, detectedAt: now.toISOString() }
@@ -785,7 +786,9 @@ export function createMachineHub(deps: MachineHubDeps) {
               },
             }
           : // An inventory-less hello keeps existing capabilities, but cannot carry forward a signed-out observation.
-            { executors: sql`${machines.executors} #- '{opencode,isolatedFreeModelIds}'` }),
+            {
+              executors: sql`(coalesce(${machines.executors}, '{}'::jsonb) #- '{opencode,isolatedFreeModelIds}') || jsonb_build_object('inventoryConnectionId', ${conn.connectionId}::text)`,
+            }),
         paused: conn.pause !== null,
         pausedUntil: conn.pause?.until ? new Date(conn.pause.until) : null,
         pausedByUserId: conn.pause?.by ?? null,
@@ -1648,10 +1651,12 @@ export function createMachineHub(deps: MachineHubDeps) {
         }
       } else if (frame.type === "access.changed" || frame.type === "executors.changed") {
         const machineId = conn.machineId;
-        await (frame.type === "access.changed"
-          ? storeMachineAccess({ db, pubsub }, machineId, frame.access)
-          : storeMachineExecutors({ db, pubsub }, machineId, frame.executors)
+        const owner = { replicaId, connectionId: conn.connectionId };
+        const accepted = await (frame.type === "access.changed"
+          ? storeMachineAccess({ db, pubsub }, machineId, frame.access, owner)
+          : storeMachineExecutors({ db, pubsub }, machineId, frame.executors, owner)
         ).catch((error) => deps.log?.warn(`${frame.type} failed`, { machineId, error: String(error) }));
+        if (!accepted) return;
         // A tool turned on or a CLI found (Claude Code, Codex, commands): what waited for this computer goes on.
         if (hooks.online) {
           const online = hooks.online;
