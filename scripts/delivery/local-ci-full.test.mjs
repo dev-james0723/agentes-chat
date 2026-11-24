@@ -27,6 +27,15 @@ test("the step table is exactly the release contract's 22 steps, in its order", 
   assert.deepEqual(Object.keys(FULL_STEPS), [...REQUIRED_RELEASE_STEPS]);
 });
 
+test("full geometry retains the actual coverage command and a bounded workload-sized deadline", () => {
+  assert.deepEqual(FULL_STEPS.geometry.argv, [
+    "bash",
+    "-c",
+    'bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl',
+  ]);
+  assert.equal(FULL_STEPS.geometry.timeoutMs, 2 * 60 * 60 * 1000);
+});
+
 test("a clean candidate at the remote branch's commit is verified", async () => {
   const { work, sha } = repo();
   assert.deepEqual(await verifySource({ root: work, sha, remote: "origin", branch: "candidate" }), {
