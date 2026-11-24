@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { MachineRequest } from "@agenteschat/adapters";
 import { accountCodeAad, OPENCODE_KEY_PROVIDER } from "@agenteschat/adapters/machine-protocol";
@@ -22,6 +22,7 @@ import { accessToStore, effectiveAccess } from "../../runner/config";
 import { detectExecutors, parseOpencodeModels } from "../../runner/executors";
 import { handleRequest } from "../../runner/handlers";
 import { CODEX_MCP_SERVER } from "../../runner/mcp";
+import { opencodeFreeEnv, opencodeMajor } from "../../runner/opencode-cli";
 import type { Spawn } from "../../runner/scope-gate";
 import { removeDirs, tempDir } from "./helpers";
 
@@ -38,6 +39,8 @@ afterEach(async () => {
     "FAKE_OPENCODE_EXTRA_TOOL",
     "FAKE_OPENCODE_PROBE_FAIL",
     "FAKE_OPENCODE_RUN_BASH",
+    "FAKE_OPENCODE_VERSION",
+    "FAKE_OPENCODE_VERSION_EXIT",
   ])
     delete process.env[name];
   process.env.HOME = realHome;
@@ -244,7 +247,14 @@ function turnContext(root: string) {
       codex: {
         runnerHome: home,
         runs: new Map(),
-        spawn: ((_, args, options) => spawn(process.execPath, [FAKE, ...args], options)) as Spawn,
+        spawn: ((_, args, options) =>
+          spawn(process.execPath, [FAKE, ...args], {
+            ...options,
+            env: {
+              ...options.env,
+              ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith("FAKE_OPENCODE_"))),
+            },
+          })) as Spawn,
       },
     },
   };
@@ -268,6 +278,7 @@ interface Logged {
   args: string[];
   message: string;
   dataHome: string | null;
+  home: string;
   configHome: string | null;
   configDir: string | null;
   configEntries: string[];
@@ -511,6 +522,186 @@ test.skipIf(!posix)("an OpenCode account is its sealed key: no key, no sign-in",
   m.invalidate();
   expect((await m.list()).find((a) => a.id === id)).toMatchObject({ loggedIn: true, provider: "zen" });
 });
+
+test("free OpenCode receives only its own config, session and credential locations", () => {
+  const env = opencodeFreeEnv("/private/free", {
+    PATH: "/usr/bin",
+    OPENCODE_CONFIG: "/owner/config",
+    HOME: "/owner",
+    XDG_DATA_HOME: "/owner/auth",
+    OPENROUTER_API_KEY: "synthetic",
+    OPENCODE_API_KEY: "synthetic",
+    OPENCODE_AUTH_CONTENT: "{}",
+    AWS_PROFILE: "paid",
+    OPENCODE_SERVER: "http://owner.test",
+    NODE_OPTIONS: "--fake",
+    AGENTES_MCP_TOKEN: "other",
+  });
+  expect(env.PATH).toBe("/usr/bin");
+  expect(env.HOME).toBe("/private/free");
+  expect(env.XDG_DATA_HOME).toBe(path.join("/private/free", "data"));
+  for (const key of [
+    "OPENROUTER_API_KEY",
+    "OPENCODE_API_KEY",
+    "OPENCODE_AUTH_CONTENT",
+    "AWS_PROFILE",
+    "OPENCODE_SERVER",
+    "NODE_OPTIONS",
+    "AGENTES_MCP_TOKEN",
+    "OPENCODE_CONFIG",
+  ])
+    expect(env[key]).toBeUndefined();
+});
+
+test("verified major selects the CLI dialect and rejects unrelated or unsupported executables", () => {
+  for (const text of ["2", "3.0.0", "opencode v2.2.5 unknown", "log\n2.2.5", ""])
+    expect(opencodeMajor(text)).toBeUndefined();
+  expect(opencodeMajor("1.19.5\n")).toBe(1);
+  expect(opencodeMajor("opencode v2.2.5\n")).toBe(2);
+  expect(opencodeTurnArgs({ major: 2 })).toEqual(["run", "--format", "json", "--standalone"]);
+});
+
+test("v2 chat accepts only the verified build permission rules", () => {
+  const rule = (action: string, resource: string, effect: string) => ({ action, resource, effect });
+  const deny = rule("*", "*", "deny");
+  const bridge = rule(`${CODEX_MCP_SERVER}_*`, "*", "allow");
+  const defaults = [rule("*", "*", "allow"), rule("read", "*.env", "ask")];
+  const rules = [...defaults, deny, bridge, rule("browser", "*", "deny"), rule("skill", "browser", "deny")];
+  const build = { id: "build", name: "Build", permissions: rules };
+  const check = (value: unknown) => opencodeToolsBreach(JSON.stringify(value), 2);
+  expect(check([{ id: "explore", permissions: defaults }, build])).toBeNull();
+  for (const bad of [
+    [],
+    [build, build],
+    [{ ...build, id: "plan" }],
+    [null, build],
+    build,
+    [{ ...build, tools: { shell: true } }],
+  ])
+    expect(check(bad)).toBeString();
+  for (const bad of [
+    undefined,
+    [],
+    defaults,
+    [bridge, deny],
+    [rule("*", "workspace", "deny"), bridge],
+    [deny, { ...bridge, extra: true }],
+    [null, ...rules],
+    [...rules, rule("shell", "*", "allow")],
+    [...rules, rule("shell", "git status", "ask")],
+    [...rules, rule("foreign_*", "*", "allow")],
+    [...rules, rule(`${CODEX_MCP_SERVER}*`, "*", "allow")],
+    [...rules, rule("*", "*", "unknown")],
+    [...rules, rule("read", "", "deny")],
+  ])
+    expect(check([{ ...build, permissions: bad }])).toBeString();
+  expect(opencodeToolsBreach(`log ${JSON.stringify([build])}`, 2)).toBeString();
+});
+
+test("v2 free usage error from the 2.2.5 canary wins even over a clean process exit", () => {
+  const mapper = new OpencodeEventMapper();
+  mapper.event({ type: "step_start", sessionID: "ses_fixture", part: { type: "step-start" } });
+  const message =
+    "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.";
+  mapper.event({
+    type: "error",
+    sessionID: "ses_fixture",
+    error: { type: "provider.free-limit", message, status: 429, retryAfterMs: 8317000 },
+  });
+  expect(mapper.finish({ exitCode: 0, sessionId: SESSION })).toEqual([
+    { type: "limit" },
+    { type: "error", code: "plan_limit", message, worked: false },
+  ]);
+});
+
+test.skipIf(!posix)(
+  "model inventory keeps Ollama and unions only observed free models using independent config and auth",
+  async () => {
+    const root = tempDir("opencode-personal-");
+    dirs.push(root);
+    const original = JSON.stringify({ enabled_providers: ["ollama"] });
+    const config = path.join(root, "opencode.json");
+    writeFileSync(config, original);
+    const free = "opencode/deepseek-v4.1-flash-free";
+    let tempHome = "";
+    let calls = 0;
+    const inventory = await detectExecutors((bin, args, options) => {
+      if (bin !== "opencode") return { status: 127, stdout: "" };
+      if (args[0] === "--version") return { status: 0, stdout: "opencode v2.2.5" };
+      expect(args).toEqual(["models", "--standalone"]);
+      calls++;
+      if (!options)
+        return { status: 0, stdout: `${JSON.parse(readFileSync(config, "utf8")).enabled_providers[0]}/qwen` };
+      const env = options.env ?? {};
+      if (!env.HOME) throw new Error("missing isolated home");
+      tempHome = env.HOME;
+      expect(options.cwd).toBe(tempHome);
+      expect(tempHome).not.toBe(process.env.HOME);
+      expect(env).toMatchObject({
+        XDG_CONFIG_HOME: path.join(tempHome, "config"),
+        XDG_DATA_HOME: path.join(tempHome, "data"),
+      });
+      expect(Object.keys(env).some((name) => /(_API_KEY|_TOKEN|_AUTH_CONTENT)$/.test(name))).toBe(false);
+      expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}")).toMatchObject({ enabled_providers: ["opencode"] });
+      return { status: 0, stdout: [free, free, "opencode/paid", "other/also-free"].join("\n") };
+    });
+    expect(calls).toBe(2);
+    expect(inventory.found.opencode?.models?.map((m) => m.id)).toEqual(["ollama/qwen", free]);
+    expect(existsSync(tempHome)).toBe(false);
+    expect(readFileSync(config, "utf8")).toBe(original);
+  },
+);
+
+test.skipIf(!posix)(
+  "v2 chat uses standalone, rejects failed probes and detects an executed foreign tool",
+  async () => {
+    const root = tempDir("opencode-v2-");
+    dirs.push(root);
+    const { ctx } = turnContext(root);
+    const log = path.join(root, "cli.log");
+    process.env.FAKE_OPENCODE_LOG = log;
+    const model = "opencode/deepseek-v4.1-flash-free";
+    const run = async (n: number, signal = new AbortController().signal) => {
+      return (
+        (await handleRequest(ctx, turn({ runId: RUN.replace(/1$/, String(n)), permissions: { mode: "chat" }, model }), {
+          signal,
+          output: () => {},
+          emit: () => {},
+        } as never)) as { final: CodexBrainEvent }
+      ).final;
+    };
+    process.env.FAKE_OPENCODE_VERSION = "opencode v2.2.5";
+    expect(await run(1)).toMatchObject({ type: "done" });
+    const [probe, ran] = logOf(log);
+    if (!probe || !ran) throw new Error("missing probe or run");
+    expect(probe?.args).toEqual(["debug", "agents", "--standalone"]);
+    expect(ran?.args).toEqual(["run", "--format", "json", "--agent", "build", "--standalone", "--model", model]);
+    expect(ran.config).toBe(probe.config);
+    expect(ran?.home).not.toBe(process.env.HOME);
+    expect(ran?.dataHome).toBe(path.join(ran.home, "data"));
+    expect(JSON.parse(ran.config)).toMatchObject({
+      model,
+      agents: { title: { model }, compaction: { model }, summary: { model } },
+      enabled_providers: ["opencode"],
+    });
+    process.env.FAKE_OPENCODE_PROBE_FAIL = "1";
+    expect(await run(2)).toMatchObject({ type: "error", code: "tools_not_locked" });
+    delete process.env.FAKE_OPENCODE_PROBE_FAIL;
+    process.env.FAKE_OPENCODE_RUN_BASH = "1";
+    expect(await run(3)).toMatchObject({ type: "error", code: "tools_not_locked" });
+    const count = logOf(log).length;
+    process.env.FAKE_OPENCODE_VERSION_EXIT = "1";
+    expect(await run(4)).toMatchObject({ type: "error", code: "opencode_failed" });
+    delete process.env.FAKE_OPENCODE_VERSION_EXIT;
+    process.env.FAKE_OPENCODE_VERSION = "3.0.0";
+    expect(await run(5)).toMatchObject({ type: "error", code: "opencode_failed" });
+    process.env.FAKE_OPENCODE_VERSION = "wait";
+    expect(await run(6, AbortSignal.timeout(150))).toMatchObject({ type: "error", code: "canceled" });
+    expect(await run(7)).toMatchObject({ type: "error", code: "opencode_failed" });
+    expect(logOf(log)).toHaveLength(count);
+  },
+  20_000,
+);
 
 // ── Protocol 41: the team's right hand on an OpenCode plan (ADR 0137 §4) ─────
 
