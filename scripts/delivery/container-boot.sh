@@ -90,11 +90,34 @@ compose run --rm -T agentes telemetry > report.json
 jq -e '.report == 1 and .install == "docker" and .host.container and .people.total == 1' report.json
 
 echo "== back up and restore"
-printf 'S3_ENDPOINT=http://%s:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' \
-  "$s3_container" >> .env
+s3_endpoint="http://$s3_container:8080"
+printf 'S3_ENDPOINT=%s\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' \
+  "$s3_endpoint" >> .env
 compose run -d --name "$s3_container" --entrypoint sh backup -c \
   'mkdir -p /tmp/s3/backups && exec rclone serve s3 --auth-key ci-key,ci-secret --addr :8080 /tmp/s3'
-sleep 3
+# Probe the Docker-only endpoint from the running app. The HTTP and backoff budget is 30 × 2s + 29 × 1s.
+# shellcheck disable=SC2016
+compose exec -T agentes bun -e '
+  const endpoint = process.argv[1];
+  const attempts = 30;
+  let lastResult;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await fetch(endpoint, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
+      // The authenticated rclone fixture may forbid an anonymous request once it is serving S3.
+      if (response.ok || response.status === 403) {
+        console.log(`S3 fixture ready at ${endpoint} (HTTP ${response.status})`);
+        process.exit(0);
+      }
+      lastResult = `HTTP ${response.status}`;
+    } catch (error) {
+      lastResult = error.message;
+    }
+    if (attempt < attempts) await Bun.sleep(1_000);
+  }
+  console.error(`S3 fixture ${endpoint} was not ready after ${attempts} attempts (last result: ${lastResult})`);
+  process.exit(1);
+' "$s3_endpoint"
 compose run --rm backup now
 name=$(compose run --rm -T backup list | awk '{print $NF}' | tail -1)
 compose run --rm -T backup fetch "$name" > ci.dump
