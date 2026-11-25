@@ -224,6 +224,14 @@ function delivery(e: FounderEvidence, rows: EvidenceOutcome[]): FounderStatus["d
   };
 }
 
+/**
+ * The delivery state of one change from its stored rows alone (its `pr_merged`/`pr_reverted` rows and its repo's
+ * deploy rows), the same rule the founder status uses; requirement traceability (ADR 0206) reads it per pull request.
+ */
+export function deliveryOf(rows: EvidenceOutcome[], running: RunningSource | null): FounderStatus["delivery"] {
+  return delivery({ running } as FounderEvidence, rows);
+}
+
 function verification(e: FounderEvidence, rows: EvidenceOutcome[]): FounderStatus["verification"] {
   const total = e.issue.criteria.length;
   const checkedByPerson = e.issue.criteria.filter((c) => c.done && c.doneBy?.type === "person").length;

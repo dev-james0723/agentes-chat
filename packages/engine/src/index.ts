@@ -322,6 +322,7 @@ export * from "./tools/run-policy";
 export * from "./tools/schema-compat";
 export * from "./tools/scopes";
 export * from "./tools/types";
+export * from "./traceability";
 export * from "./ttf";
 export * from "./untrusted";
 export * from "./uploads";
