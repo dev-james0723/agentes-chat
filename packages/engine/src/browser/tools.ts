@@ -130,7 +130,9 @@ export {
 import { publishChannelEvent } from "../events";
 import { cutText } from "../format";
 import { outboundRefusal } from "../outbound";
+import { recordCapture } from "../run-files";
 import { releaseProfileTurns } from "../runs";
+import { captureGate } from "../storage-pressure";
 import { neutralizeUntrusted } from "../untrusted";
 
 const { agents, agentRuns, secretRequests, users } = schema;
@@ -1891,15 +1893,24 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
         if (await runBrowserProfile(ctx.db, ctx)) return { content: PROFILE_FILES_TEXT, isError: true };
         const linked = await linkFor(ctx);
         if (!linked.ok) return { content: linked.text, isError: true };
+        // A nearly full disk or a spent budget refuses it before anything is written (ADR 0200).
+        const gate = await captureGate(ctx.db, ctx, linked.status.machineId, "screenshot");
+        if ("refused" in gate) return { content: gate.refused, isError: true };
         const r = await linked.link.act({
           command: "screenshot",
           args: [path, ...(input.full_page === true ? ["--full"] : [])],
           timeoutSeconds: COMMAND_SECONDS,
         });
         if (!r.ok) return { content: neutralizeUntrusted(r.text), isError: true };
+        // Bookkeeping: the screenshot is saved either way.
+        await recordCapture(ctx.db, ctx, linked.status.machineId, {
+          path,
+          kind: "image",
+          tool: "browser_screenshot",
+        }).catch(() => undefined);
         const url = urlOf(r.data);
         const saved = {
-          content: `Saved ${path} in your folder.${emulatedLine(linked.emulated())}`,
+          content: `Saved ${path} in your folder.${emulatedLine(linked.emulated())}${gate.warning ? ` ${gate.warning}` : ""}`,
           data: { ...(url ? { url } : {}), path },
         };
         if (input.share !== true) return { ...saved, content: `${saved.content} ${SHARE_HINT}` };

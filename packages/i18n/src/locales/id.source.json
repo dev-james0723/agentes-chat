@@ -7636,6 +7636,12 @@
   "brakes.prsHelp": {
     "value": "The most its own work opens in an hour."
   },
+  "brakes.shots": {
+    "value": "Screenshots per task"
+  },
+  "brakes.shotsHelp": {
+    "value": "The most one piece of its work may take. Raise it for an agent that checks how pages look. New screenshots also pause while its computer's disk is nearly full."
+  },
   "brakes.call": {
     "value": "Agents it may call"
   },
@@ -28375,6 +28381,96 @@
   },
   "storage.title": {
     "value": "Storage"
+  },
+  "storage.clean.title": {
+    "value": "Clean workspace"
+  },
+  "storage.clean.intro": {
+    "value": "What ended tasks left on agents' computers. Deliverables, evidence and anything unexplained stay. You choose which temporary files to clean."
+  },
+  "storage.clean.computers": {
+    "value": "Computers' disks"
+  },
+  "storage.clean.level.ok": {
+    "value": "{{free}} GB free"
+  },
+  "storage.clean.level.low": {
+    "value": "Space is short: {{free}} GB free"
+  },
+  "storage.clean.level.critical": {
+    "value": "Nearly full: {{free}} GB free. New screenshots and recordings are paused."
+  },
+  "storage.clean.level.unknown": {
+    "value": "Not measured yet"
+  },
+  "storage.clean.none": {
+    "value": "No task has ended since agents started registering their files."
+  },
+  "storage.clean.task": {
+    "value": "Task"
+  },
+  "storage.clean.mission": {
+    "value": "Mission"
+  },
+  "storage.clean.ended.done": {
+    "value": "Done"
+  },
+  "storage.clean.ended.canceled": {
+    "value": "Canceled"
+  },
+  "storage.clean.kept": {
+    "value": {
+      "one": "{{count}} kept",
+      "other": "{{count}} kept"
+    }
+  },
+  "storage.clean.candidates": {
+    "value": {
+      "one": "{{count}} temporary file, {{size}}",
+      "other": "{{count}} temporary files, {{size}}"
+    }
+  },
+  "storage.clean.duplicates": {
+    "value": {
+      "one": "{{count}} exact copy",
+      "other": "{{count}} exact copies"
+    }
+  },
+  "storage.clean.restorable": {
+    "value": "Evidence: {{restorable}} restorable from the Drive, {{manifestOnly}} only listed"
+  },
+  "storage.clean.approve": {
+    "value": "Clean temporary files"
+  },
+  "storage.clean.approved": {
+    "value": {
+      "one": "{{count}} file approved: it is checked again on its computer before it goes.",
+      "other": "{{count}} files approved: each is checked again on its computer before it goes."
+    }
+  },
+  "storage.clean.status.approved": {
+    "value": "Waiting for its computer"
+  },
+  "storage.clean.status.done": {
+    "value": "Removed"
+  },
+  "storage.clean.status.skipped": {
+    "value": "Already gone"
+  },
+  "storage.clean.status.blocked": {
+    "value": "Kept: {{reason}}"
+  },
+  "storage.clean.status.unknown": {
+    "value": "Not sure yet: checked again later"
+  },
+  "storage.clean.freed": {
+    "value": "Free space on the computer: {{before}} before, {{after}} after"
+  },
+  "storage.clean.show": {
+    "value": "Show files"
+  },
+  "storage.clean.hide": {
+    "value": "Hide files"
   },
   "storage.options": {
     "value": "Where to keep files"

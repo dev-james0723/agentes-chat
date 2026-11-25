@@ -300,6 +300,12 @@ export const AgentBrakes = z
       .min(0)
       .max(50)
       .openapi({ description: "PRs its unrequested work may open in an hour." }),
+    maxScreenshotsPerRun: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .openapi({ description: "Screenshots one run may take (ADR 0200). 60 unless set." }),
     callAgents: z.enum(["all", "some", "none"]).openapi({ description: "Which agents it may wake or hand work to." }),
     callAgentIds: z.array(z.uuid()).max(200).openapi({ description: "With `some`: those agents." }),
     project: z.string().max(80).openapi({
