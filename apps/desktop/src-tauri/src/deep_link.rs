@@ -8,6 +8,9 @@
 //! only after the person confirms there, and then the link's maker still lets it in on the web (ADR 0066 §3 as amended).
 //! On macOS a link reaches the running app as an event; on Windows and Linux as a second launch, which the
 //! single-instance plugin hands to the deep-link plugin.
+//! `navigate?url=` opens only an already configured server's read-only workspace
+//! destination. `command-deck?ticket=` opens an isolated fixed-loopback panel.
+//! These two contracts never enter the setup flow or retain/log their launch URL.
 
 use std::io::Read;
 use std::sync::Mutex;
@@ -30,7 +33,8 @@ pub struct PendingLink(Mutex<Option<String>>);
 
 /// One of ours, of a size a link can be.
 pub fn accept(url: &Url) -> bool {
-    url.scheme() == SCHEME && url.as_str().len() <= MAX_LINK
+    let limit = if url.host_str() == Some("navigate") { crate::command_deck_links::MAX_NAVIGATION_LINK } else { MAX_LINK };
+    url.scheme() == SCHEME && url.as_str().len() <= limit
 }
 
 /// A connector's sign-in that the browser handed back (apps/server connectors.ts `oauth/callback`).
@@ -93,8 +97,32 @@ fn pair_url(pair: &PairLink) -> String {
     url.to_string()
 }
 
-fn receive(app: &AppHandle, urls: Vec<Url>) {
-    let Some(url) = urls.into_iter().find(accept) else { return };
+// True for a reserved navigation intent, even when rejected: malformed deck links
+// must never fall through into welcome/setup or become a retained PendingLink.
+fn receive(app: &AppHandle, urls: Vec<Url>) -> bool {
+    let Some(url) = urls.into_iter().find(accept) else { return false };
+    match url.host_str() {
+        Some("navigate") => {
+            let servers = crate::servers::get(app).servers;
+            if let Some(page) = crate::command_deck_links::navigation_link(&url, &servers) {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let _ = crate::main_window::show_url(&app, page);
+                });
+            }
+            return true;
+        }
+        Some("command-deck") => {
+            if let Some(page) = crate::command_deck_links::panel_link(&url) {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    let _ = crate::command_deck::open(&app, page);
+                });
+            }
+            return true;
+        }
+        _ => {}
+    }
     // On the server open now, where the window is signed in: its state is that person's there.
     if is_connector_return(&url) {
         if let Some(page) = crate::main_window::site(app).and_then(|site| connector_page(&url, &site)) {
@@ -104,7 +132,7 @@ fn receive(app: &AppHandle, urls: Vec<Url>) {
                 let _ = crate::main_window::show_url(&app, page);
             });
         }
-        return;
+        return false;
     }
     let pending = if url.host_str() == Some("pair") {
         // ponytail: a server on this computer is left out by its address only; one reached here at another address
@@ -115,7 +143,7 @@ fn receive(app: &AppHandle, urls: Vec<Url>) {
             {
                 pair_url(&pair)
             }
-            _ => return,
+            _ => return false,
         }
     } else {
         url.to_string()
@@ -123,18 +151,18 @@ fn receive(app: &AppHandle, urls: Vec<Url>) {
     *app.state::<PendingLink>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending);
     let _ = crate::present(app, "welcome");
     let _ = app.emit_to("welcome", "link://pending", ());
+    false
 }
 
 /// Listens for links, takes the one the app was opened with, and (Linux, where an AppImage has no
 /// `.desktop` file of its own) registers the scheme.
-pub fn setup(app: &AppHandle) {
+pub fn setup(app: &AppHandle) -> bool {
     let handle = app.clone();
-    app.deep_link().on_open_url(move |event| receive(&handle, event.urls()));
-    if let Ok(Some(urls)) = app.deep_link().get_current() {
-        receive(app, urls);
-    }
+    app.deep_link().on_open_url(move |event| { receive(&handle, event.urls()); });
+    let navigation_at_launch = app.deep_link().get_current().ok().flatten().is_some_and(|urls| receive(app, urls));
     #[cfg(target_os = "linux")]
     let _ = app.deep_link().register_all();
+    navigation_at_launch
 }
 
 /// A second launch carrying a link (Windows, Linux): the link is handled, the main window stays as it is.
@@ -233,6 +261,21 @@ mod tests {
         assert!(!accept(&long));
         assert!(in_args(&["/usr/bin/agentes".into(), "agenteschat://connect?server=x".into()]));
         assert!(!in_args(&["/usr/bin/agentes".into(), "--autostart".into()]));
+    }
+
+    #[test]
+    fn accepts_a_full_length_cjk_navigation_without_expanding_setup_limits() {
+        let mut page = Url::parse("https://app.agentes.chat/").unwrap();
+        page.set_path(&format!("/org/b221b439-4343-459b-bd26-f2abd0dfe764/dm/person/{}", "張".repeat(160)));
+        let mut navigation = Url::parse("agenteschat://navigate").unwrap();
+        navigation.query_pairs_mut().append_pair("url", page.as_str());
+        assert!(navigation.as_str().len() > MAX_LINK);
+        assert!(accept(&navigation));
+        assert!(crate::command_deck_links::navigation_link(&navigation, &["https://app.agentes.chat".into()]).is_some());
+        let oversized: Url = format!("agenteschat://navigate?url={}", "a".repeat(crate::command_deck_links::MAX_NAVIGATION_LINK)).parse().unwrap();
+        assert!(!accept(&oversized));
+        let setup: Url = format!("agenteschat://connect?server=x&pad={}", "a".repeat(MAX_LINK)).parse().unwrap();
+        assert!(!accept(&setup));
     }
 
     #[test]
