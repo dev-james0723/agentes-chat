@@ -1,0 +1,71 @@
+{
+  "design-director": {
+    "mode": "replace",
+    "body": "# Design direction and coordination\n\nUse the current request, existing project and available team. Recover the audience, user job, surface, stack, language, required deliverables and important constraints before choosing a direction. Inspect relevant project sources first; ask only about missing facts that materially change the result.\n\n## Route the work\n\nIf `james-design-team` is discoverable and enabled, load it and use its plan, workflow references and role catalog. It is an optional integration for this shared skill. If unavailable, apply the same steps below with the current project's available people, agents and tools; do not require installation or stop useful work.\n\n1. Choose one accountable execution owner, relevant collaborators and an independent reviewer. A coordinator owns synthesis and follow-through rather than performing every specialty.\n2. Select one primary craft method for the current stage and load supporting skills only when relevant. Keep explicitly requested capabilities accessible; routing is not a permission change.\n3. Use the actual surface and stack. React, native UI, social artwork and rendered video need different implementation and evidence.\n4. Let the current explicit request override older taste decisions when it intentionally changes them. Keep brand context scoped to the target project.\n5. Produce the requested editable source and real rendered artifacts, then have the reviewer inspect that exact version.\n6. Correct observed issues within the authorized task and recheck the affected output.\n\n## Deliver\n\nReport the brief, accountable owner, consequential design choices, actual artifacts, content version, review scope and remaining gaps. A prompt or concept is not a delivered image or video. Use native skill-file tools for available bundled references instead of assuming a sibling directory exists.\n\nWhen the package is available, run its delivery validation and report what the file/evidence checks actually establish. Otherwise record the same artifact paths, matching version, independent reviewer and platform evidence in the task's existing workflow. Neither a script pass nor a polished receipt substitutes for visual inspection.\n\nHonor existing task authorization and available tools. Do not invent an additional approval ceremony or require a discovery interview for a narrow production task. External publication still follows the task's actual publication authorization.\n"
+  },
+  "design-review": {
+    "mode": "replace",
+    "body": "# Design review\n\nInspect the current output against the user's task and the target surface. Review concrete evidence before forming a conclusion. A clean result is valid; do not invent findings to satisfy a quota.\n\nIf `james-design-team` is discoverable and enabled, load its review workflow. Otherwise use this self-contained procedure with the current project's tools and evidence. This shared skill does not require that package.\n\n## Review procedure\n\n1. Identify the user job, target platform, content version, required deliverables and relevant constraints from the task and project.\n2. Inspect the actual rendered artifact and, where relevant, the editable implementation. Record the screen/state, dimensions or device and reproduction steps.\n3. Check task fit, hierarchy, layout, type, color/contrast, brand consistency, copy, platform behavior, accessibility and motion where relevant.\n4. Distinguish observed defects, incomplete coverage and optional stylistic preferences. Give each finding its location, severity, effect and a concrete correction.\n5. Use an independent reviewer when declaring an independent pass. The execution owner cannot supply that independence themselves.\n6. When fixes are already authorized, make the relevant corrections and inspect the changed version again.\n\nUse PASS only for the version and scope actually inspected. Use CHANGES_REQUIRED for observed defects that prevent completion and NOT_VERIFIED for missing evidence. Screenshots support appearance claims; interaction, semantics and audio require suitable direct evidence.\n\n## Evidence and handoff\n\nRecord reviewer identity, exact content version, platform, inspected artifact paths, findings and the checks actually performed. For a package manifest, use `result:\"pass\"` only after the genuine review, with matching `reviewerId`, `platform`, `contentVersion` and evidence covering every required artifact.\n\nDo not transmit review data, identifiers, local files or telemetry to an external review service as an implicit step. This review has no paid report, anonymous tracking setup or credential-reading prerequisite. If a user explicitly requests an external service, use its available tools within that task's authorization.\n\nThe package validator, when available, checks recorded metadata and files. It cannot see the design or prove the reviewer inspected it. State any untested behavior plainly.\n"
+  },
+  "visual-qa": {
+    "mode": "replace",
+    "body": "# Visual and accessibility QA\n\nReview the actual implementation or export on its intended surface. Use an independent reviewer for an independent pass and keep the reviewed output separate from later revisions.\n\nIf `james-design-team` is discoverable and enabled, use its review and delivery references. Otherwise follow this self-contained checklist with the current project's available tools; this shared skill does not require another package.\n\n## Establish evidence\n\n- Identify the task, required artifacts, current content version and target platform. Record the source commit when available.\n- Inspect the real rendered files or application. Record viewport/device/export size, relevant state and reproduction steps.\n- Compare like-for-like evidence when evaluating a change. Do not mix versions, routes, content or dimensions without stating the difference.\n- Cover the affected user flow and states. Test responsive web behavior on relevant sizes, native behavior on the actual platform, and social assets at their intended viewing size.\n- Check hierarchy, alignment, type, clipping, overflow, contrast, branding and factual copy. Use suitable tools for keyboard behavior, focus, semantics, text scaling and reduced motion.\n- For bilingual work, inspect real glyphs, line breaks, names and matching meaning. For video, play the actual render; stills cannot establish timing or audio.\n\n## Findings and result\n\nReport observed defects with location, severity, user effect and a concrete correction. Keep optional taste suggestions separate. There is no fixed issue quota.\n\nUse PASS for the inspected version and scope, CHANGES_REQUIRED for observed blocking defects, and NOT_VERIFIED when necessary evidence is unavailable. If corrections are within the authorized task, fix and recheck them. An unrendered prompt, scaffold or claimed screenshot is not visual evidence.\n\n## Receipt\n\nRecord the independent reviewer, content version, platform and paths of every required artifact inspected, including editable source. Package manifests use `reviewerId`, `result:\"pass\"`, `platform`, `contentVersion` and `evidence`; the reviewer must differ from the execution owner and match the plan.\n\nKeep artifact state distinct from review outcome: draft, rendered, scheduled, published, failed or unverified. A local review cannot establish a remote publication. A package validation pass establishes only the file and recorded-evidence checks it reports, not visual quality or system-wide enforcement.\n"
+  },
+  "agents-chat-native-workflow": {
+    "mode": "scoped",
+    "replacements": [
+      {
+        "old": "Do not use Kynlo or Depot. Run authorized builds/tests locally through project scripts.",
+        "new": "Use the execution tools authorized for the current task. When James explicitly requests Kynlo for his paired computer, use that verified connection and the relevant project tools; do not add a blanket Kynlo prohibition. Run authorized builds/tests through the project's scripts and preserve other active work."
+      }
+    ]
+  },
+  "brand-voice": {
+    "mode": "scoped",
+    "replacements": [
+      {
+        "old": "5. If site copy matters, include the current ECC landing page and repo/plugin framing.",
+        "new": "5. If site copy matters, inspect the current target brand's site and project framing. Use sources for that brand; do not import ECC or another creator's voice unless the task explicitly requests it."
+      }
+    ]
+  },
+  "motion-foundations": {
+    "mode": "scoped",
+    "replacements": [
+      {
+        "old": "Load this skill before any animation work begins.",
+        "new": "Load this skill for React or Next.js animation implemented with motion/react. For SwiftUI, GSAP, Hyperframes or another stack, use that stack's implementation guidance."
+      },
+      {
+        "old": "- Starting any animated component from scratch",
+        "new": "- Starting a React or Next.js animated component that uses motion/react"
+      },
+      {
+        "old": "These are non-negotiable. They apply to every component in the system.",
+        "new": "These conventions apply within the selected React/Next.js motion/react implementation. Preserve the current task's established stack and motion system instead of applying these rules to other platforms."
+      }
+    ]
+  },
+  "design-critique": {
+    "mode": "scoped",
+    "replacements": [
+      {
+        "old": "- You have no context on the user job. Ask for it first; design critique without user context devolves into taste.",
+        "new": "- The user job is still unknown after inspecting the current task and product context. State the remaining assumption and ask only when it materially changes the critique."
+      },
+      {
+        "old": "If any of these is missing, ask. Critique without these is opinion.",
+        "new": "Recover missing context from the current brief, product and prior decisions first. Make low-risk assumptions explicit and continue; ask only for information that would materially change the review."
+      }
+    ]
+  },
+  "frontend-design": {
+    "mode": "scoped",
+    "replacements": [
+      {
+        "old": "If the brief does not identify what the product or subject matter is, identify it yourself before designing, and confirm with the client.",
+        "new": "If the brief omits the product or subject, recover it from the current task and project sources before designing. State a reasonable assumption and continue; ask only when the missing fact would materially change the result."
+      }
+    ]
+  }
+}

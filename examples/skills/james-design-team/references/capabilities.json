@@ -1,0 +1,334 @@
+{
+  "schemaVersion": 1,
+  "availabilityNotice": "Capabilities are routing methods, not proof of installed connectors or completed execution. Existing named skills must be discoverable/enabled in the actual native session.",
+  "capabilities": [
+    {
+      "id": "brief",
+      "label": "Task brief",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "naksha",
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "art-direction",
+      "label": "Art direction",
+      "skills": [],
+      "reference": "references/workflows/brand.md",
+      "sourceKeys": [
+        "naksha",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "research",
+      "label": "User research",
+      "skills": [
+        "user-research"
+      ],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "product-flow",
+      "label": "Product flows",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "typography",
+      "label": "Typography",
+      "skills": [
+        "better-typography",
+        "better-layout"
+      ],
+      "reference": "references/workflows/typography.md",
+      "sourceKeys": [
+        "impeccable"
+      ]
+    },
+    {
+      "id": "ux-copy",
+      "label": "Interface copy",
+      "skills": [],
+      "reference": "references/workflows/typography.md",
+      "sourceKeys": [
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "design-system",
+      "label": "Design system",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "impeccable",
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "figma",
+      "label": "Figma authoring and handoff",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "frontend",
+      "label": "Frontend implementation",
+      "skills": [
+        "frontend-design"
+      ],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "anthropic-skills",
+        "impeccable"
+      ]
+    },
+    {
+      "id": "handoff",
+      "label": "Implementation handoff",
+      "skills": [],
+      "reference": "references/workflows/delivery.md",
+      "sourceKeys": [
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "ui-motion",
+      "label": "Interface motion",
+      "skills": [],
+      "reference": "references/workflows/motion.md",
+      "sourceKeys": [
+        "impeccable",
+        "naksha"
+      ]
+    },
+    {
+      "id": "brand-identity",
+      "label": "Brand identity",
+      "skills": [
+        "brand-voice"
+      ],
+      "reference": "references/workflows/brand.md",
+      "sourceKeys": [
+        "naksha",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "illustration",
+      "label": "Illustration",
+      "skills": [],
+      "reference": "references/workflows/brand.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "social-strategy",
+      "label": "Social campaign strategy",
+      "skills": [],
+      "reference": "references/workflows/social.md",
+      "sourceKeys": [
+        "naksha",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "social-copy",
+      "label": "Social copy",
+      "skills": [],
+      "reference": "references/workflows/social.md",
+      "sourceKeys": [
+        "social-media-agent",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "social-visual",
+      "label": "Social visual production",
+      "skills": [],
+      "reference": "references/workflows/social.md",
+      "sourceKeys": [
+        "naksha",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "image-direction",
+      "label": "Image direction",
+      "skills": [],
+      "reference": "references/workflows/brand.md",
+      "sourceKeys": [
+        "naksha",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "storyboard",
+      "label": "Storyboards",
+      "skills": [],
+      "reference": "references/workflows/motion.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "video-production",
+      "label": "Video production",
+      "skills": [],
+      "reference": "references/workflows/motion.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "analytics",
+      "label": "Experiment and campaign analysis",
+      "skills": [],
+      "reference": "references/workflows/social.md",
+      "sourceKeys": [
+        "social-media-agent",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "data-viz",
+      "label": "Data visualization",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "accessibility",
+      "label": "Accessibility",
+      "skills": [],
+      "reference": "references/workflows/review.md",
+      "sourceKeys": [
+        "impeccable",
+        "design-jarvis",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "visual-qa",
+      "label": "Independent rendered review",
+      "skills": [
+        "visual-qa"
+      ],
+      "reference": "references/workflows/review.md",
+      "sourceKeys": [
+        "impeccable",
+        "agency-agents"
+      ]
+    },
+    {
+      "id": "design-memory",
+      "label": "Project design decisions",
+      "skills": [],
+      "reference": "references/workflows/memory.md",
+      "sourceKeys": [
+        "design-jarvis",
+        "impeccable"
+      ]
+    },
+    {
+      "id": "presentation",
+      "label": "Presentation design",
+      "skills": [],
+      "reference": "references/workflows/typography.md",
+      "sourceKeys": [
+        "naksha",
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "print",
+      "label": "Print production",
+      "skills": [],
+      "reference": "references/workflows/typography.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "email",
+      "label": "Email design",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "conversation",
+      "label": "Conversation design",
+      "skills": [],
+      "reference": "references/workflows/product.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "spatial",
+      "label": "Spatial interface design",
+      "skills": [],
+      "reference": "references/workflows/native.md",
+      "sourceKeys": [
+        "naksha"
+      ]
+    },
+    {
+      "id": "native-ui",
+      "label": "Native interface design",
+      "skills": [],
+      "reference": "references/workflows/native.md",
+      "sourceKeys": [
+        "impeccable"
+      ]
+    },
+    {
+      "id": "hk-bilingual",
+      "label": "HK bilingual composition",
+      "skills": [],
+      "reference": "references/workflows/typography.md",
+      "sourceKeys": [
+        "agency-agents",
+        "design-jarvis"
+      ]
+    },
+    {
+      "id": "publishing",
+      "label": "Authorized publishing evidence",
+      "skills": [],
+      "reference": "references/workflows/delivery.md",
+      "sourceKeys": [
+        "social-media-agent",
+        "agency-agents"
+      ]
+    }
+  ],
+  "aliases": {
+    "ui": "frontend",
+    "social-media": "social-visual",
+    "a11y": "accessibility",
+    "content-review": "ux-copy",
+    "stringweaver": "ux-copy",
+    "native": "native-ui",
+    "brand": "brand-identity",
+    "motion": "ui-motion",
+    "video": "video-production"
+  }
+}

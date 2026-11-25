@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "coordinator": "oliver",
+  "reviewer": "lily",
+  "reviewerFallback": "art-director",
+  "owners": {
+    "web": "noah",
+    "native": "noah",
+    "social": "isabella",
+    "motion": "motion-craft",
+    "brand": "isabella",
+    "data": "noah",
+    "presentation": "emma",
+    "print": "emma",
+    "email": "emma",
+    "conversation": "sophie",
+    "spatial": "sophie"
+  },
+  "roles": [
+    {
+      "id": "oliver",
+      "name": "Oliver | Design Director",
+      "handle": "oliver-design-director",
+      "purpose": "Own the department brief, route one accountable execution owner and synthesize evidence.",
+      "primaryCapabilities": [
+        "brief",
+        "art-direction",
+        "handoff"
+      ]
+    },
+    {
+      "id": "art-director",
+      "name": "Art Director",
+      "handle": "studio-art-director",
+      "purpose": "Develop visual concepts and independently review visual direction when requested.",
+      "primaryCapabilities": [
+        "art-direction",
+        "illustration",
+        "image-direction"
+      ]
+    },
+    {
+      "id": "sophie",
+      "name": "Sophie | Product and Interaction Designer",
+      "handle": "sophie-product-and-interaction-d",
+      "purpose": "Own interaction flows, product states and understandable behavior.",
+      "primaryCapabilities": [
+        "product-flow",
+        "ux-copy",
+        "conversation",
+        "spatial"
+      ]
+    },
+    {
+      "id": "nathan",
+      "name": "Nathan | Design Systems Engineer",
+      "handle": "nathan-design-systems-engineer",
+      "purpose": "Maintain reusable tokens, components and system consistency.",
+      "primaryCapabilities": [
+        "design-system",
+        "handoff",
+        "figma"
+      ]
+    },
+    {
+      "id": "chloe",
+      "name": "Chloe | UX Researcher",
+      "handle": "chloe-ux-researcher",
+      "purpose": "Separate observed user evidence from hypotheses and synthesize relevant research.",
+      "primaryCapabilities": [
+        "research",
+        "analytics"
+      ]
+    },
+    {
+      "id": "lily",
+      "name": "Lily | Visual and Accessibility QA",
+      "handle": "lily-visual-and-accessibility-qa",
+      "purpose": "Independently inspect actual artifacts, interactions and accessibility; report the tested scope.",
+      "primaryCapabilities": [
+        "visual-qa",
+        "accessibility"
+      ]
+    },
+    {
+      "id": "isabella",
+      "name": "Isabella | Brand & Visual Identity Designer",
+      "handle": "isabella-brand-visual",
+      "purpose": "Own brand expression and social visual production against the current brief.",
+      "primaryCapabilities": [
+        "brand-identity",
+        "social-visual",
+        "social-strategy",
+        "image-direction"
+      ]
+    },
+    {
+      "id": "emma",
+      "name": "Emma | Typography & Composition Designer",
+      "handle": "emma-typography-composition",
+      "purpose": "Own type, composition and HK bilingual legibility across exports.",
+      "primaryCapabilities": [
+        "typography",
+        "hk-bilingual",
+        "presentation",
+        "print",
+        "email"
+      ]
+    },
+    {
+      "id": "noah",
+      "name": "Noah | Creative Technologist",
+      "handle": "noah-creative-technologist",
+      "purpose": "Produce editable implementations and real rendered exports using the selected platform.",
+      "primaryCapabilities": [
+        "frontend",
+        "native-ui",
+        "data-viz",
+        "figma",
+        "handoff"
+      ]
+    },
+    {
+      "id": "motion-craft",
+      "name": "Motion Craft",
+      "handle": "studio-motion-craft",
+      "purpose": "Produce platform-appropriate motion and video, with reduced-motion alternatives.",
+      "primaryCapabilities": [
+        "ui-motion",
+        "storyboard",
+        "video-production"
+      ]
+    }
+  ]
+}
