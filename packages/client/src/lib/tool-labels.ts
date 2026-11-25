@@ -6,6 +6,8 @@ import type { TFunction } from "i18next";
  * pt-BR. Other languages build a name from the verb and nouns (`toolName` in `tool-review.ts`).
  */
 const LABELS: Record<string, readonly [en: string, ptBR: string]> = {
+  // Model availability (the Model Inspector).
+  get_model_inspector_status: ["Check model availability", "Conferir disponibilidade dos modelos"],
   // GitHub and GitLab: repositories, code, branches
   git_clone: ["Clone repository", "Clonar repositório"],
   create_repository: ["Create repository", "Criar repositório"],

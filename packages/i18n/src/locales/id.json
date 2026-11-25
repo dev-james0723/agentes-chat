@@ -1,4 +1,195 @@
 {
+  "openRouterFallback": {
+    "title": "Cadangan OpenRouter",
+    "intro": "Utamakan langganan. Agen dan rutinitas yang memenuhi syarat berbagi batas bulanan terpisah sebesar 50 USD.",
+    "disabled": "Dinonaktifkan",
+    "serverDisabled": "Dinonaktifkan oleh kebijakan server",
+    "configured": "Dikonfigurasi. Diperiksa sebelum pengiriman",
+    "blocked": "Diblokir. Perlu rekonsiliasi",
+    "spent": "Pengeluaran bulan ini",
+    "pending": "Dicadangkan / belum terselesaikan",
+    "cap": "Batas bulanan (USD)",
+    "key": "Kunci OpenRouter khusus",
+    "chooseKey": "Pilih kunci",
+    "keyHint": "Tambahkan kunci OpenRouter terpisah dengan batas bulanan tidak melebihi jumlah ini, termasuk BYOK. Jangan gunakan kembali untuk permintaan biasa.",
+    "models": "ID model tertentu yang diizinkan (satu per baris)",
+    "inputPrice": "Harga input maksimum dalam USD per juta token",
+    "outputPrice": "Harga output maksimum dalam USD per juta token",
+    "tier": "Tingkat biaya router",
+    "enable": "Simpan dan aktifkan",
+    "disable": "Nonaktifkan cadangan",
+    "refresh": "Segarkan",
+    "error": "Tidak dapat menyimpan pengaturan cadangan. Periksa kunci dan kebijakan.",
+    "routes": "Rekayasa: openrouter/auto-code · Umum: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Perute Model Global",
+    "intro": "Langganan utama dijalankan lebih dulu. Agen dan rutinitas yang memenuhi syarat beralih melalui OpenCode Go, API gratis terverifikasi, model hemat berbatas, dan penyedia API langsung yang disetujui.",
+    "cascade": "Urutan: Langganan · OpenCode Go · API gratis · Hemat berbayar · API langsung · Eskalasi terbatas",
+    "refresh": "Muat ulang",
+    "syncCatalog": "Sinkronkan katalog",
+    "syncing": "Menyinkronkan katalog",
+    "unknown": "Tidak diketahui",
+    "freeCap": "US$0 (gratis atau termasuk)",
+    "states": {
+      "loading": "Memuat status perute",
+      "disconnected": "Belum ada jalur API cadangan yang terhubung",
+      "serverDisabled": "Dinonaktifkan oleh kebijakan server",
+      "disabled": "Dinonaktifkan. Hanya langganan",
+      "authorization_needed": "Perlu otorisasi. Periksa kunci penyedia",
+      "stale_catalog": "Katalog kedaluwarsa. Sinkronkan katalog untuk memverifikasi penawaran",
+      "unverified": "Menunggu katalog dan kunci terverifikasi",
+      "eligible": "Siap. Dijaga sebelum pengiriman",
+      "quota_warning": "Mendekati batas kuota atau anggaran bulanan",
+      "rate_limited": "Batas laju tercapai. Menunggu jendela direset",
+      "provider_outage": "Penyedia tidak tersedia. Beralih ke jalur berikutnya",
+      "incompatible": "Dilewati karena alat atau modalitas tidak kompatibel",
+      "privacy_blocked": "Diblokir oleh kebijakan retensi data atau wilayah",
+      "budget_held": "Dijeda. Penahanan anggaran belum selesai atau batas tercapai",
+      "needs_owner": "Menunggu persetujuan pemilik ruang kerja",
+      "recovered": "Pulih ke langganan utama"
+    },
+    "lanes": {
+      "opencode_go": "Paket OpenCode Go",
+      "free_api": "Kumpulan API gratis",
+      "paid_low_cost": "Berbayar hemat",
+      "direct_api": "API vendor langsung",
+      "paid_dynamic": "Perute otomatis dinamis"
+    },
+    "entitlements": {
+      "subscription_go": "Langganan Go (tambahan $0)",
+      "free_only": "Hanya tingkat gratis (batas $0)",
+      "paid_capped": "Berbayar dengan batas bulanan"
+    },
+    "policy": {
+      "heading": "Kebijakan perutean ruang kerja",
+      "enable": "Simpan kebijakan",
+      "disable": "Nonaktifkan perute",
+      "enabledLabel": "Aktifkan cadangan Perute Model Global",
+      "killSwitchLabel": "Sakelar darurat (blokir semua pengiriman cadangan)",
+      "maxEscalations": "Maks eskalasi kualitas per giliran (0 hingga 2)",
+      "maxRetries": "Maks percobaan ulang transpor per rute (0 hingga 1)",
+      "optOutAgents": "ID agen yang dikecualikan (kosong mewarisi perute)",
+      "warnThresholds": "Kirim peringatan anggaran pada 50%, 80%, dan 95%"
+    },
+    "accounts": {
+      "caption": "Jalur penyedia terkonfigurasi dan jendela kuota",
+      "empty": "Belum ada jalur penyedia yang dikonfigurasi.",
+      "configureHeading": "Konfigurasikan jalur penyedia",
+      "provider": "Penyedia model",
+      "lane": "Jalur perutean",
+      "entitlement": "Mode penagihan",
+      "key": "Kunci khusus penyedia",
+      "chooseKey": "Pilih kunci khusus",
+      "cloudflareAccount": "ID Akun Cloudflare 32-heksadesimal",
+      "cap": "Batas bulanan (USD)",
+      "models": "ID model konkret yang diizinkan (satu per baris)",
+      "zdr": "Wajibkan tanpa retensi data (ZDR)",
+      "save": "Simpan jalur",
+      "columns": {
+        "provider": "Penyedia API",
+        "lane": "Jalur",
+        "state": "Status",
+        "budget": "Terpakai / batas",
+        "quota": "Kuota harian",
+        "reset": "Jendela / diamati"
+      }
+    },
+    "catalog": {
+      "summary": "Penawaran katalog: {{eligible}} memenuhi syarat · {{total}} tercatat",
+      "caption": "Penawaran model API yang memenuhi syarat",
+      "columns": {
+        "model": "ID model",
+        "provider": "Penyedia API",
+        "lane": "Jalur",
+        "status": "Kelayakan",
+        "context": "Jendela konteks"
+      }
+    },
+    "receipts": {
+      "caption": "Tanda terima perutean terbaru dan kualitas terverifikasi",
+      "empty": "Belum ada pengiriman cadangan pada periode ini.",
+      "reconcileNoSend": "Lepaskan penahanan",
+      "columns": {
+        "requested": "Model diminta",
+        "actual": "Model aktual",
+        "lane": "Jalur",
+        "cost": "Aktual / dicadangkan",
+        "quality": "Kualitas",
+        "state": "Status"
+      },
+      "verified": "Terverifikasi",
+      "unverified": "Gagal pemeriksaan"
+    },
+    "metrics": {
+      "caption": "Biaya per keberhasilan terverifikasi dan latensi",
+      "columns": {
+        "model": "ID model",
+        "successes": "Terverifikasi / percobaan",
+        "costPerSuccess": "Biaya per keberhasilan terverifikasi",
+        "latency": "Latensi p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Tolok ukur terbaru: {{tasks}} tugas · {{models}} model",
+    "error": "Tidak dapat memperbarui pengaturan Perute Model Global. Periksa kunci, batas, dan model."
+  },
+  "creditContinuity": {
+    "title": "Kelanjutan dengan kredit API",
+    "refresh": "Perbarui status",
+    "unavailable": "Status kredit tidak tersedia. Belum ada alokasi kredit pemberian yang diverifikasi di sini.",
+    "intro": "Langganan yang sesuai digunakan terlebih dahulu. Pengalihan ke API menggunakan kredit yang diberikan dan telah diverifikasi, dalam batas bersama untuk satu siklus.",
+    "status": {
+      "unavailable": "Status kredit tidak tersedia. Pengeluaran otomatis belum diverifikasi.",
+      "disabled": "Pengalihan otomatis ke API dinonaktifkan. Pengeluaran yang tercatat dan biaya tertunda tetap ditampilkan.",
+      "unverified": "Belum ada kredit API yang memenuhi syarat dan telah diverifikasi. Alokasi otomatis adalah $0.",
+      "blocked": "Pengalihan ke API menunggu bukti terkini, anggaran, atau rekonsiliasi.",
+      "available": "Pengalihan ke API tersedia dalam batas kredit pemberian yang tercatat."
+    },
+    "caption": "Kredit API yang diberikan dan anggaran siklus",
+    "columns": {
+      "provider": "Penyedia",
+      "state": "Status",
+      "automatic": "Otomatis tersedia / batas",
+      "costs": "Terpakai / tertunda",
+      "reserve": "Cadangan pemilik",
+      "buffer": "Penyangga keamanan",
+      "expires": "Kredit berakhir",
+      "forecast": "p95 historis"
+    },
+    "provider": {
+      "openai": "API untuk ChatGPT",
+      "anthropic": "API untuk Claude"
+    },
+    "unknown": "Tidak diketahui",
+    "state": {
+      "unavailable": "Tidak tersedia",
+      "unverified": "Belum diverifikasi",
+      "expired": "Kredit kedaluwarsa",
+      "stale": "Bukti perlu diperbarui",
+      "disabled": "Dinonaktifkan",
+      "paused": "Dijeda",
+      "pricingExpired": "Harga kedaluwarsa",
+      "pricingChanged": "Harga berubah",
+      "pricingUnverified": "Harga belum diverifikasi",
+      "noRoute": "Tidak ada jalur API yang memenuhi syarat",
+      "budgetUnavailable": "Anggaran tidak tersedia",
+      "ready": "Siap",
+      "reserveAvailable": "Cadangan pemilik tersedia",
+      "billingBlocked": "Penagihan diblokir",
+      "reconciliation": "Perlu rekonsiliasi",
+      "blocked": "Diblokir"
+    },
+    "evidence": "Bukti: {{date}}",
+    "approvedAvailable": "Tersedia dan disetujui: {{amount}}",
+    "approvals_other": "{{count}} persetujuan aktif dari pemilik",
+    "ownerApproval": "Persetujuan pemilik",
+    "historyHigh": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian tinggi.",
+    "historyMedium": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian sedang.",
+    "historyUnknown": "{{count}} unit telah diselesaikan pembiayaannya. Tingkat ketidakpastian tidak diketahui.",
+    "insufficientHistory": "Riwayat tidak cukup",
+    "obligations_other": "{{count}} panggilan API memiliki biaya yang dicadangkan atau belum diselesaikan. Cadangan darurat memerlukan persetujuan pemilik. Fitur ini tidak mengaktifkan isi ulang berbayar.",
+    "evidenceNote": "Kelayakan kredit pemberian menggunakan bukti penagihan penyedia yang dicatat oleh pemilik. Perkiraan berdasarkan riwayat tidak memberikan izin pengeluaran. Status diperiksa: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1283,7 +1474,13 @@
       "moonshot": "Kunci Kimi diawali sk-. Periksa lalu tempel lagi.",
       "zai": "Tempel seluruh kunci Z.ai, tanpa spasi. Periksa lalu tempel lagi.",
       "minimax": "Tempel seluruh kunci MiniMax, tanpa spasi. Kunci yang diawali sk-cp- milik paket dan tidak berfungsi di sini.",
-      "openrouter": "Kunci OpenRouter diawali sk-or-v1-. Periksa lalu tempel lagi."
+      "openrouter": "Kunci OpenRouter diawali sk-or-v1-. Periksa lalu tempel lagi.",
+      "groq": "Kunci Groq diawali dengan gsk_. Periksa lalu tempel lagi.",
+      "cloudflare": "Tempel seluruh token Cloudflare Workers AI tanpa spasi. Periksa lalu tempel lagi.",
+      "opencode": "Tempel seluruh kunci API OpenCode tanpa spasi. Periksa lalu tempel lagi.",
+      "tencent": "Tempel seluruh kunci API Tencent Hunyuan tanpa spasi. Periksa lalu tempel lagi.",
+      "xiaomi": "Tempel seluruh kunci API Xiaomi MiMo tanpa spasi. Periksa lalu tempel lagi.",
+      "nvidia": "Kunci NVIDIA NIM diawali dengan nvapi-. Periksa lalu tempel lagi."
     },
     "keyFromOther": "Dari penyedia lain?",
     "anthropicWorkspace": "ID ruang kerja Claude Console",
@@ -12944,6 +13141,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Catatan kredit sudah ada. Muat ulang untuk memeriksa statusnya.",
+      "disabled": "Cadangan dengan kredit dinonaktifkan.",
+      "resumeRefused": "Proses ini belum bisa dilanjutkan. Periksa kredit yang ditahan dan tindakan yang tertunda."
+    },
     "passwordLink": {
       "email": "Server ini mengirim email: orang itu meminta tautannya sendiri di Lupa kata sandi.",
       "serverOwner": "Orang yang memasang server ini masuk dari komputer tempat server berjalan, tanpa tautan.",

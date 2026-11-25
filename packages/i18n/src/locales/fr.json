@@ -1,4 +1,199 @@
 {
+  "openRouterFallback": {
+    "title": "Repli OpenRouter",
+    "intro": "Les abonnements passent en premier. Les agents et routines admissibles partagent un plafond mensuel indépendant de 50 USD.",
+    "disabled": "Désactivé",
+    "serverDisabled": "Désactivé par la politique du serveur",
+    "configured": "Configuré. Vérifié avant envoi",
+    "blocked": "Bloqué. Rapprochement nécessaire",
+    "spent": "Dépenses ce mois-ci",
+    "pending": "Réservé / non résolu",
+    "cap": "Plafond mensuel (USD)",
+    "key": "Clé OpenRouter dédiée",
+    "chooseKey": "Sélectionner une clé",
+    "keyHint": "Ajoutez une clé OpenRouter distincte avec un plafond mensuel inférieur ou égal à ce montant, BYOK compris. Ne la réutilisez pas pour les requêtes ordinaires.",
+    "models": "Identifiants des modèles concrets autorisés (un par ligne)",
+    "inputPrice": "Prix maximal en entrée en USD par million de tokens",
+    "outputPrice": "Prix maximal en sortie en USD par million de tokens",
+    "tier": "Niveau de coût du routeur",
+    "enable": "Enregistrer et activer",
+    "disable": "Désactiver le repli",
+    "refresh": "Actualiser",
+    "error": "Impossible d’enregistrer les paramètres de repli. Vérifiez la clé et la politique.",
+    "routes": "Ingénierie : openrouter/auto-code · Général : openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Routeur global de modèles",
+    "intro": "Les abonnements principaux passent en premier. Les agents et routines éligibles basculent vers OpenCode Go, les API gratuites vérifiées, les modèles à faible coût plafonnés et les fournisseurs d'API approuvés.",
+    "cascade": "Ordre : Abonnements · OpenCode Go · API gratuites · Faible coût · API directes · Escalade bornée",
+    "refresh": "Actualiser",
+    "syncCatalog": "Synchroniser le catalogue",
+    "syncing": "Synchronisation du catalogue",
+    "unknown": "Inconnu",
+    "freeCap": "0 $ US (gratuit ou inclus)",
+    "states": {
+      "loading": "Chargement de l'état du routeur",
+      "disconnected": "Aucune voie API de secours connectée",
+      "serverDisabled": "Désactivé par la politique du serveur",
+      "disabled": "Désactivé. Abonnements uniquement",
+      "authorization_needed": "Autorisation requise. Vérifiez la clé du fournisseur",
+      "stale_catalog": "Catalogue expiré. Synchronisez le catalogue pour vérifier les offres",
+      "unverified": "En attente d'un catalogue et d'une clé vérifiés",
+      "eligible": "Prêt. Contrôlé avant envoi",
+      "quota_warning": "Proche du seuil de quota ou du plafond mensuel",
+      "rate_limited": "Limite de débit atteinte. En attente de réinitialisation",
+      "provider_outage": "Fournisseur indisponible. Bascule vers la voie suivante",
+      "incompatible": "Ignoré pour outils ou modalités incompatibles",
+      "privacy_blocked": "Bloqué par la politique de rétention ou de région",
+      "budget_held": "En pause. Réservation en attente ou plafond atteint",
+      "needs_owner": "En attente de l'approbation du propriétaire",
+      "recovered": "Rétabli sur l'abonnement principal"
+    },
+    "lanes": {
+      "opencode_go": "Forfait OpenCode Go",
+      "free_api": "Pool d'API gratuites",
+      "paid_low_cost": "Payant à faible coût",
+      "direct_api": "API directe du fournisseur",
+      "paid_dynamic": "Routeur automatique dynamique"
+    },
+    "entitlements": {
+      "subscription_go": "Abonnement Go (0 $ supplémentaire)",
+      "free_only": "Palier gratuit seul (plafond 0 $)",
+      "paid_capped": "Payant avec plafond mensuel"
+    },
+    "policy": {
+      "heading": "Politique de routage de l'espace",
+      "enable": "Enregistrer la politique",
+      "disable": "Désactiver le routeur",
+      "enabledLabel": "Activer le secours du routeur global de modèles",
+      "killSwitchLabel": "Arrêt d'urgence (bloquer tous les envois de secours)",
+      "maxEscalations": "Nombre maximal d'escalades qualité par tour (0 à 2)",
+      "maxRetries": "Nombre maximal de nouveaux essais par route (0 à 1)",
+      "optOutAgents": "ID d'agents exclus (vide hérite du routeur)",
+      "warnThresholds": "Émettre des alertes budget à 50 %, 80 % et 95 %"
+    },
+    "accounts": {
+      "caption": "Voies de fournisseurs configurées et fenêtres de quota",
+      "empty": "Aucune voie de fournisseur configurée pour l'instant.",
+      "configureHeading": "Configurer une voie de fournisseur",
+      "provider": "Fournisseur de modèles",
+      "lane": "Voie de routage",
+      "entitlement": "Mode de facturation",
+      "key": "Clé dédiée du fournisseur",
+      "chooseKey": "Choisir une clé dédiée",
+      "cloudflareAccount": "Identifiant de compte Cloudflare sur 32 caractères hexadécimaux",
+      "cap": "Plafond mensuel (USD)",
+      "models": "ID concrets de modèles autorisés (un par ligne)",
+      "zdr": "Exiger zéro rétention des données (ZDR)",
+      "save": "Enregistrer la voie",
+      "columns": {
+        "provider": "Fournisseur d'API",
+        "lane": "Voie",
+        "state": "État",
+        "budget": "Dépensé / plafond",
+        "quota": "Quota quotidien",
+        "reset": "Fenêtre / observé"
+      }
+    },
+    "catalog": {
+      "summary": "Offres du catalogue : {{eligible}} éligibles · {{total}} enregistrées",
+      "caption": "Offres qualifiées de modèles API",
+      "columns": {
+        "model": "ID du modèle",
+        "provider": "Fournisseur d'API",
+        "lane": "Voie",
+        "status": "Admissibilité",
+        "context": "Fenêtre de contexte"
+      }
+    },
+    "receipts": {
+      "caption": "Reçus récents de routage et qualité vérifiée",
+      "empty": "Aucun envoi de secours enregistré sur cette période.",
+      "reconcileNoSend": "Libérer la réservation",
+      "columns": {
+        "requested": "Modèle demandé",
+        "actual": "Modèle réel",
+        "lane": "Voie",
+        "cost": "Réel / réservé",
+        "quality": "Qualité",
+        "state": "État"
+      },
+      "verified": "Vérifié",
+      "unverified": "Échec du contrôle"
+    },
+    "metrics": {
+      "caption": "Coût par succès vérifié et latence",
+      "columns": {
+        "model": "ID du modèle",
+        "successes": "Vérifiés / essais",
+        "costPerSuccess": "Coût par succès vérifié",
+        "latency": "Latence p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Dernier benchmark : {{tasks}} tâches · {{models}} modèles",
+    "error": "Impossible de mettre à jour le routeur global de modèles. Vérifiez la clé, le plafond et les modèles."
+  },
+  "creditContinuity": {
+    "title": "Continuité avec les crédits API",
+    "refresh": "Actualiser l’état",
+    "unavailable": "L’état des crédits est indisponible. Aucun crédit accordé n’a été vérifié ici.",
+    "intro": "Les abonnements adaptés sont utilisés en priorité. Le recours à l’API utilise des crédits accordés et vérifiés dans les limites communes du cycle.",
+    "status": {
+      "unavailable": "L’état des crédits est indisponible. Les dépenses automatiques ne sont pas vérifiées.",
+      "disabled": "Le recours automatique à l’API est désactivé. Les dépenses enregistrées et les coûts en attente restent affichés.",
+      "unverified": "Aucun crédit API admissible n’a été vérifié. Le montant utilisable automatiquement est de $0.",
+      "blocked": "Le recours à l’API attend des justificatifs à jour, un budget ou un rapprochement.",
+      "available": "Le recours à l’API est disponible dans les limites des crédits enregistrés."
+    },
+    "caption": "Crédits API accordés et budgets du cycle",
+    "columns": {
+      "provider": "Fournisseur",
+      "state": "État",
+      "automatic": "Disponible automatique / plafond",
+      "costs": "Dépensé / en attente",
+      "reserve": "Réserve du propriétaire",
+      "buffer": "Marge de sécurité",
+      "expires": "Expiration du crédit",
+      "forecast": "p95 historique"
+    },
+    "provider": {
+      "openai": "API de ChatGPT",
+      "anthropic": "API de Claude"
+    },
+    "unknown": "Inconnu",
+    "state": {
+      "unavailable": "Indisponible",
+      "unverified": "Non vérifié",
+      "expired": "Crédit expiré",
+      "stale": "Justificatifs à actualiser",
+      "disabled": "Désactivé",
+      "paused": "En pause",
+      "pricingExpired": "Tarifs expirés",
+      "pricingChanged": "Tarifs modifiés",
+      "pricingUnverified": "Tarifs non vérifiés",
+      "noRoute": "Aucune voie API admissible",
+      "budgetUnavailable": "Budget indisponible",
+      "ready": "Prêt",
+      "reserveAvailable": "Réserve du propriétaire disponible",
+      "billingBlocked": "Facturation bloquée",
+      "reconciliation": "Rapprochement nécessaire",
+      "blocked": "Bloqué"
+    },
+    "evidence": "Justificatifs : {{date}}",
+    "approvedAvailable": "Disponible approuvé : {{amount}}",
+    "approvals_one": "{{count}} approbation active du propriétaire",
+    "approvals_many": "{{count}} approbations actives du propriétaire",
+    "approvals_other": "{{count}} approbations actives du propriétaire",
+    "ownerApproval": "Approbation du propriétaire",
+    "historyHigh": "{{count}} unités réglées. Incertitude élevée.",
+    "historyMedium": "{{count}} unités réglées. Incertitude moyenne.",
+    "historyUnknown": "{{count}} unités réglées. Incertitude inconnue.",
+    "insufficientHistory": "Historique insuffisant",
+    "obligations_one": "{{count}} appel API comporte des coûts réservés ou non résolus. Les réserves d’urgence nécessitent l’approbation du propriétaire. Cette fonction n’active pas les recharges payantes.",
+    "obligations_many": "{{count}} appels API comportent des coûts réservés ou non résolus. Les réserves d’urgence nécessitent l’approbation du propriétaire. Cette fonction n’active pas les recharges payantes.",
+    "obligations_other": "{{count}} appels API comportent des coûts réservés ou non résolus. Les réserves d’urgence nécessitent l’approbation du propriétaire. Cette fonction n’active pas les recharges payantes.",
+    "evidenceNote": "L’admissibilité des crédits accordés repose sur les justificatifs de facturation du fournisseur enregistrés par le propriétaire. Les prévisions historiques n’autorisent aucune dépense. État consulté : {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1359,7 +1554,13 @@
       "moonshot": "Les clés Kimi commencent par sk-. Vérifiez-la et collez-la de nouveau.",
       "zai": "Collez la clé Z.ai entière, sans espaces. Vérifiez-la et collez-la de nouveau.",
       "minimax": "Collez la clé MiniMax entière, sans espaces. Les clés qui commencent par sk-cp- appartiennent à l'abonnement et ne fonctionnent pas ici.",
-      "openrouter": "Les clés OpenRouter commencent par sk-or-v1-. Vérifiez-la et collez-la de nouveau."
+      "openrouter": "Les clés OpenRouter commencent par sk-or-v1-. Vérifiez-la et collez-la de nouveau.",
+      "groq": "Les clés Groq commencent par gsk_. Vérifiez-la et collez-la de nouveau.",
+      "cloudflare": "Collez le jeton Cloudflare Workers AI complet, sans espace. Vérifiez-le et collez-le de nouveau.",
+      "opencode": "Collez la clé API OpenCode complète, sans espace. Vérifiez-la et collez-la de nouveau.",
+      "tencent": "Collez la clé API Tencent Hunyuan complète, sans espace. Vérifiez-la et collez-la de nouveau.",
+      "xiaomi": "Collez la clé API Xiaomi MiMo complète, sans espace. Vérifiez-la et collez-la de nouveau.",
+      "nvidia": "Les clés NVIDIA NIM commencent par nvapi-. Vérifiez-la et collez-la de nouveau."
     },
     "keyFromOther": "Elle vient d'un autre fournisseur ?",
     "anthropicWorkspace": "ID d'espace de travail de la Claude Console",
@@ -13863,6 +14064,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Un enregistrement de crédit existe déjà. Actualisez la page pour voir son état.",
+      "disabled": "Le relais avec des crédits est désactivé.",
+      "resumeRefused": "Cette exécution ne peut pas encore reprendre. Vérifiez le crédit retenu et les actions en attente."
+    },
     "passwordLink": {
       "email": "Ce serveur envoie des e-mails : la personne demande son propre lien dans Mot de passe oublié.",
       "serverOwner": "La personne qui a installé ce serveur se connecte sur l’ordinateur où il tourne, sans lien.",

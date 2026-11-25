@@ -3,7 +3,7 @@ import { type ModelMessage, modelProvider, type SystemBlock, type ToolSpec } fro
 import type { Agent } from "../agents";
 import { turnNotes } from "../context";
 import { cutOldToolSteps } from "../context-budget";
-import type { GatewayResult, ModelGateway } from "../gateway";
+import type { GatewayCall, GatewayResult, ModelGateway } from "../gateway";
 import type { Brain, BrainEvent, BrainIO, BrainTurn } from "./types";
 
 /**
@@ -30,6 +30,10 @@ export interface ModelBrainOptions {
   conversation(): ModelConversation;
   /** The agent's conversation, the same on each of its calls (`StreamOptions.session`). */
   session?: string;
+  /** The run is on a credit route (ADR 0212): every call it makes, a pre-warm included, is admitted against it. */
+  credit?(): GatewayCall["credit"] | undefined;
+  openRouterFallback?(): GatewayCall["openRouterFallback"] | undefined;
+  globalRouterFallback?(): GatewayCall["globalRouterFallback"] | undefined;
 }
 
 /**
@@ -65,6 +69,7 @@ export class ModelBrain implements Brain {
   /** The gateway call a turn makes, as sent (a pre-warm sends the same with no output). */
   private request(turn: BrainTurn) {
     const { agent } = this.options;
+    const credit = this.options.credit?.();
     const conversation = this.options.conversation();
     const { system, notesAt } = conversation;
     const messages = cutOldToolSteps(conversation.messages, turn.tools);
@@ -85,11 +90,14 @@ export class ModelBrain implements Brain {
       messages: laid.messages ?? messages,
       ...(laid.notes ? { notes: laid.notes } : {}),
       tools: specs.length > 0 ? specs : undefined,
-      // Only "Automático" sets an effort for the API; the API takes low, medium and high.
-      ...(turn.effort ? { effort: apiEffort(turn.effort) } : {}),
+      // Credit routes retain their reviewed task effort across handoff and restart; ordinary calls keep Auto.
+      ...(credit?.effort ? { effort: credit.effort } : turn.effort ? { effort: apiEffort(turn.effort) } : {}),
       // The prompt up to the conversation stays cached for an hour: a message after a pause reads it.
       cacheTtl: "1h" as const,
       ...(this.options.session ? { session: this.options.session } : {}),
+      ...(credit ? { credit } : {}),
+      openRouterFallback: this.options.openRouterFallback?.(),
+      globalRouterFallback: this.options.globalRouterFallback?.(),
     };
   }
 
@@ -99,6 +107,8 @@ export class ModelBrain implements Brain {
    */
   async prewarm(turn: BrainTurn): Promise<void> {
     if (modelProvider(this.options.agent.model) !== "anthropic") return;
+    // A pre-warm on a credit route would spend the grant on a cache write nobody asked for (ADR 0212).
+    if (this.options.credit?.() || this.options.openRouterFallback?.() || this.options.globalRouterFallback?.()) return;
     await this.options.gateway.stream({ ...this.request(turn), maxTokens: 0, onDelta: () => {} }).catch(() => {});
   }
 

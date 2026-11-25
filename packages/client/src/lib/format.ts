@@ -153,7 +153,7 @@ export function relativeDay(locale: string, offset: -1 | 0 | 1): string {
   return RELATIVE_DAYS[appLocale([locale], true) ?? "en"][offset + 1] as string;
 }
 
-/** The ordinal plural form of `n` ("one" for 1st, "few" for 3rd), with English's and French's rules where Intl.PluralRules is missing (Hermes). */
+/** Ordinal forms for queue positions on Hermes, which has no Intl.PluralRules. */
 export function ordinalForm(locale: string, n: number): Intl.LDMLPluralRule {
   if (typeof Intl.PluralRules === "function") return new Intl.PluralRules(locale, { type: "ordinal" }).select(n);
   const code = appLocale([locale], true);

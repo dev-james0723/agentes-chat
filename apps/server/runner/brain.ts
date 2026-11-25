@@ -2,6 +2,7 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { EventEmitter } from "node:events";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   lstatSync,
@@ -2232,8 +2233,10 @@ export class BrainManager {
   ): Promise<Live> {
     const id = crypto.randomUUID();
     const dir = path.join(ctx.delegated?.room ?? this.opts.root, id);
-    mkdirSync(dir, { recursive: true, mode: ctx.delegated ? 0o750 : 0o700 });
+    // The turn directory is newly owned under the verified room; keep its ACL mask exact even with umask 077.
+    mkdirSync(dir, { recursive: !ctx.delegated, mode: 0o700 });
     try {
+      if (ctx.delegated) chmodSync(dir, 0o750);
       return await this.start(id, dir, key, session, cwd, req, ctx, sig, persistent, resume);
     } catch (err) {
       // Refused on the way (the worker went, a folder root won't build): no process will clean up after it.
@@ -2258,6 +2261,10 @@ export class BrainManager {
     const { delegated } = ctx;
     // Delegated: root's, read by the sign-in's user through the default ACL on its room, which these modes unmask.
     const fileMode = delegated ? 0o640 : 0o600;
+    const writeTurnFile = (file: string, content: string) => {
+      writeFileSync(file, content, { mode: 0o600, flag: "wx" });
+      if (delegated) chmodSync(file, fileMode);
+    };
     const systemFile = path.join(dir, "system.txt");
     const mode = req.permissions?.mode === "plan" || req.permissions?.mode === "chat" ? req.permissions.mode : "work";
     const asks = mode === "work" ? turnAsks(req.permissions?.asks) : undefined;
@@ -2274,7 +2281,7 @@ export class BrainManager {
     const started = this.sessionSystem(keptSystem, resume, () =>
       withRepo ? system + (told ?? repoInstructions(cwd)) : system,
     );
-    writeFileSync(systemFile, started.text, { mode: fileMode });
+    writeTurnFile(systemFile, started.text);
     let mcpConfigFile: string | undefined;
     // A `chat` turn never holds the agent's secrets, nor reads the auto memory Claude Code keeps in the account's
     // folder (whoever else that folder is lent to can write there), nor loads the plan's claude.ai connectors.
@@ -2313,7 +2320,7 @@ export class BrainManager {
     if (delegated) {
       const token = newMcpToken();
       mcpConfigFile = path.join(dir, "mcp.json");
-      writeFileSync(
+      writeTurnFile(
         mcpConfigFile,
         JSON.stringify(
           claudeMcpConfig({
@@ -2325,7 +2332,6 @@ export class BrainManager {
             relay: true,
           }),
         ),
-        { mode: fileMode },
       );
       const frame: DelegatedFrame = {
         process: id,
@@ -2384,7 +2390,7 @@ export class BrainManager {
       env.MCP_TOOL_TIMEOUT = String(PERMISSION_WAIT_MS + 5 * 60_000);
     }
     const settingsFile = path.join(dir, "settings.json");
-    writeFileSync(
+    writeTurnFile(
       settingsFile,
       JSON.stringify(
         delegated
@@ -2411,7 +2417,6 @@ export class BrainManager {
                   : { env: accountSettingsEnv(undefined, model, process.env, true) }),
             },
       ),
-      { mode: fileMode },
     );
     // Starting in one of its checkouts (`repos/owner/name`), the agent keeps its whole folder (its other checkouts).
     const addDirs =

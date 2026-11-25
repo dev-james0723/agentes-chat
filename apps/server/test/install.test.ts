@@ -121,7 +121,21 @@ async function plan(machine: Machine, args: string[] = [], o: RunOptions = {}) {
     symlinkSync(Bun.which(tool) as string, join(bin, tool));
   }
   const argv = [...(o.real ? [] : ["--plan"]), ...args];
-  const direct = o.piped === undefined ? ["/bin/sh", SCRIPT, ...argv] : ["/bin/sh", "-s", "--", ...argv];
+  // A simulated Mac must not discover the test host's real Homebrew or Docker Desktop.
+  const isolateMacPaths = (source: string) =>
+    machine.os === "Darwin"
+      ? source
+          .replaceAll("/opt/homebrew/bin", `${home}/system/opt/homebrew/bin`)
+          .replaceAll("/usr/local/bin/brew", `${home}/system/usr/local/bin/brew`)
+          .replaceAll(/(?<!HOME)\/Applications\/Docker\.app/g, `${home}/system/Applications/Docker.app`)
+          .replaceAll(/(?<!HOME)\/Applications\/OrbStack\.app/g, `${home}/system/Applications/OrbStack.app`)
+      : source;
+  let script = SCRIPT;
+  if (machine.os === "Darwin" && o.piped === undefined) {
+    script = join(home, "installer-fixture.sh");
+    writeFileSync(script, isolateMacPaths(text));
+  }
+  const direct = o.piped === undefined ? ["/bin/sh", script, ...argv] : ["/bin/sh", "-s", "--", ...argv];
   const cmd = o.before ? ["/bin/sh", "-c", `${o.before} && exec "$@"`, "sh", ...direct] : direct;
   const env = { PATH: bin, HOME: home, STUB_LOG: log, AGENTES_INSTALL_PLAN_HERMETIC: "1", ...o.env };
   let out = "";
@@ -150,7 +164,7 @@ async function plan(machine: Machine, args: string[] = [], o: RunOptions = {}) {
     const proc = Bun.spawn(cmd, {
       cwd: home,
       env,
-      stdin: o.piped === undefined ? "ignore" : new Blob([o.piped]),
+      stdin: o.piped === undefined ? "ignore" : new Blob([isolateMacPaths(o.piped)]),
       stdout: "pipe",
       stderr: "pipe",
       // A session of its own, so no controlling terminal, as under cloud-init or CI.

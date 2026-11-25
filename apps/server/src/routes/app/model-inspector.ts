@@ -1,4 +1,10 @@
-import { can, ForbiddenError, requirePermission } from "@agenteschat/engine";
+import {
+  can,
+  ForbiddenError,
+  readGlobalModelRouterStatus,
+  readModelInspectorCredits,
+  requirePermission,
+} from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
 import { type AppDeps, createAppRouter, errors, json, OrgParams, requireSession, security } from "./context";
 
@@ -20,6 +26,13 @@ export function modelInspectorRoutes(deps: AppDeps) {
         200: json(
           z.object({
             enabled: z.boolean(),
+            credits: z
+              .unknown()
+              .openapi({ description: "Durable grant budget and unresolved costs; no provider calls." }),
+            globalRouter: z
+              .unknown()
+              .optional()
+              .openapi({ description: "Stored Global Model Router quotas, holds, and receipts; no provider calls." }),
             report: z
               .unknown()
               .nullable()
@@ -36,7 +49,9 @@ export function modelInspectorRoutes(deps: AppDeps) {
       const inspector = deps.extras?.modelInspector;
       const enabled = inspector?.enabled(orgId) ?? false;
       const report = enabled && inspector ? await inspector.report(orgId) : null;
-      return c.json({ enabled, report }, 200);
+      const credits = await readModelInspectorCredits(deps.db, orgId, deps.config.CREDIT_FALLBACK_ENABLED === true);
+      const globalRouter = await readGlobalModelRouterStatus(deps.db, orgId);
+      return c.json({ enabled, report, credits, globalRouter }, 200);
     },
   );
   return app;

@@ -131,6 +131,13 @@ export const PURGED_BY_HAND = [
   "feedback_files",
   "skill_read_activations",
 ] as const;
+/**
+ * These financial receipts deliberately have restrictive foreign keys. A registered credit pool holds the
+ * workspace's deletion before any cleanup, including after grants expire or keys rotate: deleting its history
+ * would remove a cross-workspace secret guard or let the same upstream account obtain another cycle allowance.
+ * Removing this hold requires a separate, evidenced upstream revocation and accounting retention procedure.
+ */
+export const RETAINED_BY_CREDIT_HOLD = ["credit_attempts", "credit_reserve_approvals"] as const;
 /** How long the purge waits for a workspace's online computers to sign its AI accounts out. */
 const ACCOUNTS_WAIT_MS = 60_000;
 
@@ -634,7 +641,11 @@ export interface PurgeDeps {
  */
 export async function purgeWorkspace(deps: PurgeDeps, orgId: string, options: { finalAttempt?: boolean } = {}) {
   const { db } = deps;
-  const dueColumns = { ...STANDING_COLUMNS, deletionHoldAt: organizations.deletionHoldAt };
+  const dueColumns = {
+    ...STANDING_COLUMNS,
+    deletionHoldAt: organizations.deletionHoldAt,
+    creditLedgerHeld: sql<boolean>`exists (select 1 from ${schema.creditPools} where ${schema.creditPools.orgId} = ${orgId})`,
+  };
   // Under the lock restoring takes: a restore under way commits first and is seen here, and a later one finds its date
   // passed, so nothing below is ever undone.
   const [org] = await db.transaction(async (tx) => {
@@ -646,6 +657,12 @@ export async function purgeWorkspace(deps: PurgeDeps, orgId: string, options: { 
       .for("update");
   });
   if (!org || keptFromDeletion(org)) return false;
+  if (org.creditLedgerHeld) {
+    deps.log?.warn("workspace deletion waits for API credit reconciliation and upstream credential revocation", {
+      orgId,
+    });
+    return false;
+  }
 
   const released = await db.transaction((tx) => releaseOrgAccounts(tx, orgId));
   await announceReleasedAccounts(deps.pubsub, released);
@@ -668,7 +685,8 @@ export async function purgeWorkspace(deps: PurgeDeps, orgId: string, options: { 
       .from(organizations)
       .where(and(eq(organizations.id, orgId), pastDue))
       .for("update");
-    if (!row || keptFromDeletion(row)) return null;
+    // Repeat the credit hold under the organization row lock, before deleting any audit or usage evidence.
+    if (!row || keptFromDeletion(row) || row.creditLedgerHeld) return null;
     await tx.delete(messageReactions).where(eq(messageReactions.orgId, orgId));
     await tx.delete(routingDecisions).where(eq(routingDecisions.orgId, orgId));
     await tx.delete(threadReflections).where(eq(threadReflections.orgId, orgId));

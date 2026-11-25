@@ -55,6 +55,7 @@ import {
   postPersonMessage,
   previewInvitation,
   purgeWorkspace,
+  RETAINED_BY_CREDIT_HOLD,
   removeMember,
   requestNewInvitation,
   requireBrowserAccess,
@@ -1210,7 +1211,11 @@ describe("no orphans", () => {
       }
       // Kept on purpose: the operator's feed (ADR 0056 §5), and the join codes' counts, gone after a day (ADR 0072).
       const kept = ["operator_events", "organization_join_code_events"];
-      expect(tables.filter((t) => !gone.has(t)).sort()).toEqual([...PURGED_BY_HAND, ...kept].sort());
+      // Credit receipts retain their workspace too. subscription-credit-ledger.test.ts proves that an overdue
+      // purge leaves unknown debits, finalized receipts and retired secret fingerprints intact.
+      expect(tables.filter((t) => !gone.has(t)).sort()).toEqual(
+        [...PURGED_BY_HAND, ...kept, ...RETAINED_BY_CREDIT_HOLD].sort(),
+      );
     } finally {
       await close();
     }

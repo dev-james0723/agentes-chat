@@ -53,14 +53,22 @@ test("status requires a session and membership; an absent report remains explici
   expect(f.reads).toEqual([]);
   const response = await f.owner(f.path);
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ enabled: true, report: null });
+  expect(await response.json()).toMatchObject({
+    enabled: true,
+    report: null,
+    credits: { enabled: false, state: "disabled" },
+  });
   expect(f.reads).toEqual([f.orgId]);
 });
 
 test("disabled status is explicit and reading it does not refresh usage or ask the inspector", async () => {
   const f = await fixture();
   f.enabled.clear();
-  expect(await (await f.owner(f.path)).json()).toEqual({ enabled: false, report: null });
+  expect(await (await f.owner(f.path)).json()).toMatchObject({
+    enabled: false,
+    report: null,
+    credits: { enabled: false, state: "disabled" },
+  });
   expect(f.reads).toEqual([]);
 });
 

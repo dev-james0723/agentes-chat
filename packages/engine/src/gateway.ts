@@ -1,6 +1,8 @@
 import type { ErrorReporter, KeyWrapper, PlatformCredentials, PubSub, SearchKind } from "@agenteschat/adapters";
 import { and, type Database, desc, type Executor, eq, gte, isNull, lt, rowsOf, schema, sql } from "@agenteschat/db";
 import {
+  annotateProviderFailure,
+  autoRouterKeyWithinCap,
   costNanoUsd,
   customModelOf,
   type EmbeddingProvider,
@@ -21,27 +23,61 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ModelResult,
+  type ModelTier,
   type ModelUsage,
   maxCostNanoUsd,
   modelInfo,
   modelProvider,
+  OPENROUTER_API,
   openRouterListed,
   outputTokensWithin,
   PROVIDERS,
   ProviderError,
   parseCustomModel,
   promptChars,
+  type StreamOptions,
   type SystemPrompt,
   type ToolSpec,
 } from "@agenteschat/providers";
 import { type Agent, getAgent } from "./agents";
 import { caches } from "./cache";
 import { decryptCredentialWithVersion, usableCredentialRow } from "./credentials";
+import { creditAdmissionBound } from "./credit-admission";
+import { assertCreditClaim, type CreditNativeClaim } from "./credit-continuity";
+import {
+  admitCreditCall,
+  CREDIT_MAX_REQUEST_MS,
+  disableCreditRoute,
+  isCreditCredential,
+  markCreditAttemptDispatched,
+  markCreditPool,
+  qualifyCreditRoute,
+  settleCreditAttempt,
+} from "./credit-ledger";
+import { creditPricingProfile, creditReceiptCost } from "./credit-pricing";
+import { type CreditEffort, creditModelMeetsRequirement } from "./credit-quality";
+import { CreditRouteRefusal, classifyCreditFailure, noteCreditOutcome } from "./credit-route";
+import { sha256 } from "./crypto";
 import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
+import {
+  executeGlobalRouterGatewayStream,
+  type GlobalRouterRouteRecord,
+  globalRouterKeyReserved,
+} from "./global-router-gateway";
+import { GlobalRouterRefusal } from "./global-router-ledger";
+import {
+  OpenRouterFallbackRefusal,
+  type OpenRouterFallbackRoute,
+  openRouterFallbackConfig,
+  openRouterKeyReserved,
+  reserveOpenRouterFallback,
+  settleOpenRouterFallback,
+} from "./openrouter-fallback-ledger";
 import { maySql, type RolePermission } from "./permissions";
 import { addPersonSpend, assertPersonUnderLimit, personSpendAdded } from "./person-usage";
+import { hasCredentialText } from "./quota-qualifier";
 import { type SharedBudgetTransport, withSharedBudget } from "./shared-budget";
 import { assertCanWork, standingRefusal } from "./standing";
 import { redactCredentials } from "./tool-detail";
@@ -68,6 +104,16 @@ export interface ModelGatewayDeps {
   sharedBudgetTransports?: Record<string, SharedBudgetTransport>;
   /** Immutable admission mode for this gateway instance. Legacy calls are outside shared-budget protection. */
   sharedBudgetRequired?: boolean;
+  /**
+   * Allows new grant admissions. Registered credentials remain reserved, and existing liabilities remain visible,
+   * even when this switch is off.
+   */
+  creditRoutes?: boolean;
+  /** Disabled until the native route and its independently approved bounded transport are released. */
+  openRouterFallbackEnabled?: boolean;
+  /** Enables multi-lane Global Model Router admission across free, Go, low-cost, dynamic and direct lanes. */
+  globalModelRouterEnabled?: boolean;
+  openRouterKeyFetch?: typeof fetch;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
   /** Where an embeddings outage is reported, once (ADR 0104); absent: not reported. */
@@ -128,6 +174,35 @@ export interface GatewayCall {
   notes?: ModelRequest["notes"];
   /** The agent's conversation, the same on each of its calls (`StreamOptions.session`). */
   session?: string;
+  /**
+   * The run is on a credit route (ADR 0212): the call is admitted against that route's pool, on exactly this
+   * credential at exactly this version, or refused before anything is sent.
+   */
+  credit?: {
+    routeId: string;
+    cycleId: string;
+    credentialId: string;
+    credentialVersion: string;
+    workUnitKey: string;
+    attemptKey: string;
+    ownerJobId: string;
+    ownerWorkerId: string;
+    ownerEpoch: number;
+    minimumTier?: ModelTier;
+    effort?: CreditEffort;
+    capabilities?: string[];
+    bucket?: "automatic" | "emergency";
+    approvalId?: string;
+  };
+  /** Native executor-owned, separately budgeted paid fallback; not a client API field. */
+  openRouterFallback?: { route: OpenRouterFallbackRoute; claim: CreditNativeClaim; turn: number };
+  /** Native executor-owned multi-lane Global Model Router call; never set by external clients. */
+  globalRouterFallback?: {
+    route: GlobalRouterRouteRecord;
+    claim: CreditNativeClaim;
+    turn: number;
+    routineRunId?: string | null;
+  };
   onDelta(text: string): void;
   signal?: AbortSignal;
 }
@@ -210,6 +285,7 @@ const masked = (
     ? redactCredentials(key.endpoint.baseURL.replace(/^https?:\/\//, "").split("/")[0] ?? "")
     : provider;
   out.platformKey = key.credentialId === null;
+  annotateProviderFailure(out, error);
   return out;
 };
 
@@ -344,6 +420,133 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     resolveKey(agent.orgId, provider, pinnedKey(agent.model) ?? agent.credentialId);
   const orgKey = (orgId: string, provider: string, model: string) => resolveKey(orgId, provider, pinnedKey(model));
 
+  // A different credential ID does not prove a different billing account. Once this organization registers a
+  // grant pool, unqualified calls for that provider stay blocked, including platform/default-key fallbacks.
+  const creditProviderProtected = async (orgId: string, provider: string) => {
+    const [pool] = await db
+      .select({ id: schema.creditPools.id })
+      .from(schema.creditPools)
+      .where(and(eq(schema.creditPools.orgId, orgId), eq(schema.creditPools.upstreamNamespace, provider)))
+      .limit(1);
+    return !!pool;
+  };
+  // Retained route fingerprints protect an upstream secret even after local credential rotation or revocation.
+  // The identity is internal only. Raw key checks and custom endpoint aliases cannot evade it with another ID/org.
+  const creditSecretProtected = async (secret: string) => {
+    const [route] = await db
+      .select({ id: schema.creditRoutes.id })
+      .from(schema.creditRoutes)
+      .where(eq(schema.creditRoutes.credentialFingerprint, sha256(secret)))
+      .limit(1);
+    return !!route;
+  };
+
+  // Availability never decrypts a key. Its provider and credential protections still need a fresh verdict,
+  // combined in one statement. Dispatch independently checks again, including the actual secret fingerprint.
+  const creditIdentityProtected = async (orgId: string, provider: string, credentialId: string | null) => {
+    const [protection] = rowsOf<{ blocked: boolean }>(
+      await db.execute(sql`select
+        exists (select 1 from ${schema.creditPools}
+          where ${schema.creditPools.orgId} = ${orgId}
+            and ${schema.creditPools.upstreamNamespace} = ${provider})
+        or exists (select 1 from ${schema.creditRoutes}
+          where ${schema.creditRoutes.orgId} = ${orgId}
+            and ${schema.creditRoutes.credentialId} = ${credentialId})
+        as blocked`),
+    );
+    return !protection || protection.blocked;
+  };
+
+  /**
+   * Credit routes (ADR 0212). A key that belongs to a route is reserved for it: no other call, whoever it is for,
+   * may spend it. A call that asks for the route must be on exactly the credential and version qualified, on the
+   * provider's own endpoint. Disabling admissions never turns a reserved key into an ordinary paid API key.
+   */
+  async function assertCreditKey(
+    orgId: string,
+    providerId: string,
+    key: Key,
+    credit: GatewayCall["credit"],
+  ): Promise<void> {
+    if (!credit) {
+      if (providerId === "openrouter" && (await openRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey))))
+        throw new OpenRouterFallbackRefusal("reserved_credential");
+      if (await globalRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey)))
+        throw new GlobalRouterRefusal("reserved_credential");
+      // Credential selection may use its existing cache, but a protection verdict never does. A pool or retained
+      // fingerprint committed after that cache was warmed must block the very next ordinary call. One fresh
+      // statement covers provider, row and cross-workspace secret aliases without three database round trips.
+      const [protection] = rowsOf<{ blocked: boolean }>(
+        await db.execute(sql`select
+          exists (select 1 from ${schema.creditPools}
+            where ${schema.creditPools.orgId} = ${orgId}
+              and ${schema.creditPools.upstreamNamespace} = ${providerId})
+          or exists (select 1 from ${schema.creditRoutes}
+            where (${schema.creditRoutes.orgId} = ${orgId}
+                and ${schema.creditRoutes.credentialId} = ${key.credentialId})
+              or ${schema.creditRoutes.credentialFingerprint} = ${sha256(key.apiKey)})
+          as blocked`),
+      );
+      if (!protection || protection.blocked) throw new CreditRouteRefusal("reserved_credential");
+      return;
+    }
+    if (!deps.creditRoutes) throw new CreditRouteRefusal("disabled");
+    if (providerId !== "openai" && providerId !== "anthropic") throw new CreditRouteRefusal("account_mismatch");
+    if (key.endpoint) throw new CreditRouteRefusal("endpoint_mismatch");
+    if (key.credentialId !== credit.credentialId || key.credentialVersion !== credit.credentialVersion)
+      throw new CreditRouteRefusal("credential_changed");
+    const [route] = await db
+      .select({ fingerprint: schema.creditRoutes.credentialFingerprint })
+      .from(schema.creditRoutes)
+      .where(and(eq(schema.creditRoutes.orgId, orgId), eq(schema.creditRoutes.id, credit.routeId)))
+      .limit(1);
+    if (!route || route.fingerprint !== sha256(key.apiKey)) throw new CreditRouteRefusal("credential_changed");
+  }
+
+  /**
+   * A proven pre-transport refusal releases its hold. Cancellation, timeout and missing final usage remain unknown,
+   * even if some tokens or no output were observed. The caller may not infer a free request from an abort.
+   */
+  async function closeCreditAttempt(
+    orgId: string,
+    admission: { attemptId: string; poolId: string },
+    error: unknown,
+    thrown: unknown,
+    credentialId: string | null,
+    how: { sent: boolean; stopped: boolean; actualNanoUsd: number },
+  ): Promise<void> {
+    const failure = classifyCreditFailure(error);
+    let closed = false;
+    let class_ = failure.class;
+    try {
+      if (!how.sent) {
+        class_ = "rejected";
+        await settleCreditAttempt(db, orgId, admission.attemptId, { kind: "released", reason: "not sent" });
+        closed = true;
+      } else if (failure.charged === "no") {
+        await settleCreditAttempt(db, orgId, admission.attemptId, {
+          kind: "released",
+          reason: failure.class,
+          providerRefusal: true,
+        });
+        closed = true;
+        if (failure.class === "exhausted") await markCreditPool(db, orgId, admission.poolId, "exhausted");
+        else if (failure.class === "billing_blocked")
+          await markCreditPool(db, orgId, admission.poolId, "billing_blocked");
+        else if (failure.class === "credential" && credentialId) await disableCreditRoute(db, orgId, credentialId);
+      } else {
+        await settleCreditAttempt(db, orgId, admission.attemptId, { kind: "unknown", reason: "outcome unknown" });
+      }
+    } catch (ledgerError) {
+      deps.errors?.capture(ledgerError, { cause: "credit_close", attempt: admission.attemptId });
+    }
+    noteCreditOutcome(thrown, {
+      attemptId: admission.attemptId,
+      class: class_,
+      hold: closed ? "released" : "unknown",
+    });
+  }
+
   /**
    * A model's entry from the catalog or OpenRouter's list (read first when due), or why there is none. Called once
    * its key resolved: no key, no read of OpenRouter's list.
@@ -379,6 +582,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     provider: ModelProvider,
     request: ModelRequest,
     key: { apiKey: string; workspaceId?: string; organization?: string; project?: string },
+    count = true,
   ): Promise<ModelUsage | null> {
     const p = error.partial;
     if (!p) return null;
@@ -386,7 +590,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (inputTokens === null) {
       // Provider token counters can make network calls with the prompt; required mode has no separately
       // qualified or budgeted counting route. Keep its existing local estimate and do not dispatch one.
-      if (!sharedBudgetRequired) {
+      if (!sharedBudgetRequired && count) {
         try {
           inputTokens = provider.countTokens ? await provider.countTokens(request, key) : null;
         } catch {
@@ -461,6 +665,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     promptTokens: number,
     maxTokens: number,
     longCache = false,
+    exactBound?: number,
   ): Promise<{
     reservation: Pick<typeof budgetReservations.$inferSelect, "id" | "agentId" | "periodStart"> | null;
     maxTokens: number;
@@ -470,7 +675,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     const at = now();
     const period = periodOf(at);
     // Fast path, one statement: the worst case fits under the budget → reserve it atomically.
-    const amount = maxCostNanoUsd(model, promptTokens, maxTokens, longCache);
+    const amount = exactBound ?? maxCostNanoUsd(model, promptTokens, maxTokens, longCache);
     const id = Bun.randomUUIDv7();
     const fast = rowsOf<{ ok: number }>(
       await db.execute(sql`with upd as (
@@ -527,7 +732,12 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       let cap = maxTokens;
       if (agent.monthlyBudgetNanoUsd !== null) {
         const left = agent.monthlyBudgetNanoUsd - row.spentNanoUsd - reserved;
-        cap = Math.min(maxTokens, outputTokensWithin(model, promptTokens, left, longCache));
+        cap =
+          exactBound === undefined
+            ? Math.min(maxTokens, outputTokensWithin(model, promptTokens, left, longCache))
+            : left >= exactBound
+              ? maxTokens
+              : 0;
         if (left <= 0 || cap < Math.min(MIN_OUTPUT_TOKENS, maxTokens)) {
           if (expired.length > 0)
             await tx
@@ -538,11 +748,13 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           const byReservations =
             reserved > 0 &&
             room > 0 &&
-            outputTokensWithin(model, promptTokens, room, longCache) >= Math.min(MIN_OUTPUT_TOKENS, maxTokens);
+            (exactBound === undefined
+              ? outputTokensWithin(model, promptTokens, room, longCache) >= Math.min(MIN_OUTPUT_TOKENS, maxTokens)
+              : room >= exactBound);
           throw new BudgetExceededError(agent.id, row.spentNanoUsd, agent.monthlyBudgetNanoUsd, byReservations);
         }
       }
-      const amount = maxCostNanoUsd(model, promptTokens, cap, longCache);
+      const amount = exactBound ?? maxCostNanoUsd(model, promptTokens, cap, longCache);
       const [reservation] = await tx
         .insert(budgetReservations)
         .values({
@@ -705,7 +917,205 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (first) await deps.onBudgetThreshold({ agent, level: "exhausted", spentNanoUsd: spent, budgetNanoUsd: budget });
   }
 
+  async function streamOpenRouterFallback(call: GatewayCall, agent: Agent): Promise<GatewayResult> {
+    const native = call.openRouterFallback;
+    if (!native || !call.runId || call.credit || sharedBudgetRequired || !deps.openRouterFallbackEnabled)
+      throw new OpenRouterFallbackRefusal("route_disabled");
+    const route = native.route;
+    const config = await openRouterFallbackConfig(db, call.orgId);
+    if (
+      !config ||
+      config.revision !== route.revision ||
+      config.credentialId !== route.credentialId ||
+      config.credentialVersion !== route.credentialVersion
+    )
+      throw new OpenRouterFallbackRefusal("policy_changed");
+    const key = await resolveKey(call.orgId, "openrouter", route.credentialId);
+    if (
+      key.endpoint ||
+      key.credentialVersion !== route.credentialVersion ||
+      sha256(key.apiKey) !== config.credentialFingerprint
+    )
+      throw new OpenRouterFallbackRefusal("credential_changed");
+    // Qualify actual concrete candidates, not the zero-priced router alias. The full model window
+    // is a deliberately conservative input bound, not a character/token guess.
+    await ensureOpenRouterModels();
+    const infos = config.policy.allowedModels.map((id) => modelInfo(id));
+    if (
+      infos.some(
+        (info) =>
+          info?.provider !== "openrouter" ||
+          info.unpriced ||
+          !info.contextWindow ||
+          !Number.isSafeInteger(info.contextWindow) ||
+          !info.maxOutputTokens ||
+          !Number.isSafeInteger(info.maxOutputTokens),
+      )
+    )
+      throw new OpenRouterFallbackRefusal("pricing_unqualified");
+    const request: ModelRequest = {
+      model: route.router,
+      system: structuredClone(call.system),
+      messages: structuredClone(call.messages),
+      maxTokens: Math.min(call.maxTokens, ...infos.map((i) => i?.maxOutputTokens ?? 0)),
+      ...(call.tools ? { tools: structuredClone(call.tools) } : {}),
+      ...(call.notes ? { notes: structuredClone(call.notes) } : {}),
+      noTransportRetries: true,
+      openRouterAuto: structuredClone(config.policy),
+      signal: AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(120_000)]),
+    };
+    const content = JSON.stringify({
+      system: request.system,
+      messages: request.messages,
+      tools: request.tools,
+      notes: request.notes,
+    });
+    const bytes = new TextEncoder().encode(content).length;
+    if (
+      !Number.isSafeInteger(request.maxTokens) ||
+      request.maxTokens < 1 ||
+      hasCredentialText(content) ||
+      request.messages.some(
+        (m) =>
+          typeof m.content !== "string" &&
+          m.content.some((b) => b.type === "opaque" || (b.type === "tool_result" && (b.images?.length ?? 0) > 0)),
+      ) ||
+      bytes > 200_000 ||
+      bytes + request.maxTokens > Math.min(...infos.map((i) => i?.contextWindow ?? 0))
+    )
+      throw new OpenRouterFallbackRefusal("context_unqualified");
+    const promptPrice = Math.max(
+      Math.ceil(config.policy.maxPromptUsdPerMillion * 1000),
+      ...infos.flatMap((i) =>
+        i
+          ? [
+              i.prices.input,
+              i.prices.cacheRead,
+              i.prices.cacheWrite,
+              i.longContext?.prices.input ?? 0,
+              i.longContext?.prices.cacheRead ?? 0,
+              i.longContext?.prices.cacheWrite ?? 0,
+            ]
+          : [],
+      ),
+    );
+    const completionPrice = Math.max(
+      Math.ceil(config.policy.maxCompletionUsdPerMillion * 1000),
+      ...infos.flatMap((i) => (i ? [i.prices.output, i.longContext?.prices.output ?? 0] : [])),
+    );
+    const bound = Math.ceil(
+      Math.max(...infos.map((i) => i?.contextWindow ?? 0)) * promptPrice + request.maxTokens * completionPrice,
+    );
+    if (!Number.isSafeInteger(bound) || bound <= 0 || bound > config.monthlyCapNanoUsd)
+      throw new OpenRouterFallbackRefusal("pricing_unqualified");
+    const personId = call.personId ?? null;
+    if (personId) await assertPersonUnderLimit(db, call.orgId, personId, now());
+    const { reservation, maxTokens } = await reserve(agent, route.router, 0, request.maxTokens, false, bound);
+    let admission: Awaited<ReturnType<typeof reserveOpenRouterFallback>>;
+    try {
+      admission = await reserveOpenRouterFallback(db, {
+        orgId: call.orgId,
+        agentId: call.agentId,
+        runId: call.runId,
+        turn: native.turn,
+        route,
+        claim: native.claim,
+        boundNanoUsd: bound,
+        now,
+      });
+    } catch (error) {
+      await db.transaction((tx) => settle(tx, reservation, 0, agent));
+      throw error;
+    }
+    // Exact policy snapshot, revalidated under the shared pool lock. Never let unqualified
+    // output, tool calls or missing usage escape the gateway.
+    request.openRouterAuto = admission.policy;
+    request.openRouterReservedNanoUsd = bound;
+    const chunks: string[] = [];
+    let outputBytes = 0;
+    let result: ModelResult;
+    try {
+      await assertCreditClaim(db, call.orgId, call.runId, native.claim, now());
+      result = await providerFor("openrouter").stream(request, {
+        apiKey: key.apiKey,
+        session: call.runId,
+        onDelta: (chunk) => {
+          outputBytes += new TextEncoder().encode(chunk).length;
+          if (outputBytes <= 1_000_000 && chunks.length < 16_000) chunks.push(chunk);
+        },
+      });
+      if (
+        outputBytes > 1_000_000 ||
+        chunks.length >= 16_000 ||
+        !result.usageVerified ||
+        result.costNanoUsd === undefined ||
+        !Number.isSafeInteger(result.costNanoUsd) ||
+        result.costNanoUsd < 0 ||
+        !admission.policy.allowedModels.includes(result.model)
+      )
+        throw new OpenRouterFallbackRefusal("receipt_unqualified");
+    } catch {
+      // Failure after admission is unknown: the hold remains. No provider error text or secrets escape.
+      await settleOpenRouterFallback(db, call.orgId, admission.attemptId, null, now()).catch(() => {});
+      await db.transaction((tx) => settle(tx, reservation, 0, agent)).catch(() => {});
+      throw new OpenRouterFallbackRefusal("reconciliation_required");
+    }
+    const actual = result.costNanoUsd;
+    if (actual === undefined) throw new OpenRouterFallbackRefusal("reconciliation_required");
+    // Ordinary agent/person usage is also recorded; the separate pool is not a substitute for existing budgets.
+    const settled = await settleCall({
+      agent: { ...agent, model: route.router },
+      reservation,
+      runId: call.runId,
+      personId,
+      credentialId: key.credentialId,
+      provider: "openrouter",
+      model: result.model,
+      usage: result.usage,
+      reportedCost: actual,
+    });
+    await settleOpenRouterFallback(
+      db,
+      call.orgId,
+      admission.attemptId,
+      { model: result.model, costNanoUsd: actual },
+      now(),
+    );
+    await assertCreditClaim(db, call.orgId, call.runId, native.claim, now());
+    await checkThresholds(agent, settled.spent, actual);
+    if (personId && settled.personSpent !== null)
+      await personSpendAdded(
+        db,
+        { orgId: call.orgId, personId, amountNanoUsd: actual, at: now() },
+        settled.personSpent,
+      );
+    for (const chunk of chunks) call.onDelta(chunk);
+    return { ...result, usageRecordId: settled.record.id, costNanoUsd: actual, maxTokens };
+  }
+
   return {
+    async verifyOpenRouterFallbackKey(orgId: string): Promise<boolean> {
+      if (!deps.openRouterFallbackEnabled || sharedBudgetRequired) return false;
+      try {
+        const config = await openRouterFallbackConfig(db, orgId);
+        if (!config?.credentialId) return false;
+        const key = await resolveKey(orgId, "openrouter", config.credentialId);
+        if (
+          key.endpoint ||
+          key.credentialVersion !== config.credentialVersion ||
+          sha256(key.apiKey) !== config.credentialFingerprint
+        )
+          return false;
+        const response = await (deps.openRouterKeyFetch ?? fetch)(`${OPENROUTER_API}/key`, {
+          headers: { authorization: `Bearer ${key.apiKey}` },
+          redirect: "error",
+          signal: AbortSignal.timeout(5000),
+        });
+        return response.ok && autoRouterKeyWithinCap(await response.json(), config.policy.monthlyCapUsd);
+      } catch {
+        return false;
+      }
+    },
     /**
      * Whether the agent's model brain can be called at all: its model is in
      * the catalog or is OpenRouter's, its provider is registered and a key would
@@ -723,9 +1133,11 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       const usable = async (id: string) => (await usableCredentialRow(db, agent.orgId, id))?.provider === provider;
       try {
         const own = pinnedKey(agent.model) ?? agent.credentialId;
-        if (own) return await usable(own);
+        if (own) return (await usable(own)) && !(await creditIdentityProtected(agent.orgId, provider, own));
         const defaultId = await orgDefaultCredentialId(agent.orgId, provider);
-        if (defaultId && (await usable(defaultId))) return true;
+        if (defaultId && (await usable(defaultId)))
+          return !(await creditIdentityProtected(agent.orgId, provider, defaultId));
+        if (await creditIdentityProtected(agent.orgId, provider, null)) return false;
         const platform = deps.platformCredentials;
         return platform.available
           ? await platform.available(agent.orgId, provider)
@@ -737,6 +1149,13 @@ export function createModelGateway(deps: ModelGatewayDeps) {
 
     /** An agent's model call (runs). Streams deltas through `onDelta`. */
     async stream(call: GatewayCall): Promise<GatewayResult> {
+      // Snapshot the native requirement before awaiting keys or other policy reads.
+      const credit = call.credit
+        ? {
+            ...call.credit,
+            capabilities: Array.isArray(call.credit.capabilities) ? [...call.credit.capabilities] : undefined,
+          }
+        : undefined;
       await assertCanWork(db, call.orgId, call.agentId);
       const row =
         call.agent && call.agent.id === call.agentId && call.agent.orgId === call.orgId
@@ -745,25 +1164,58 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!row || row.archivedAt) throw new NotFoundError("Agent not found");
       // Every agent has a budget: its own, else the organization's default.
       const agent = await withEffectiveBudget(db, row);
+      if (call.globalRouterFallback) {
+        return executeGlobalRouterGatewayStream({
+          db,
+          call,
+          agent,
+          native: call.globalRouterFallback,
+          sharedBudgetRequired,
+          globalRouterEnabled: Boolean(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled),
+          openRouterKeyFetch: deps.openRouterKeyFetch,
+          now,
+          providerFor,
+          resolveKey,
+          reserveAgentBudget: reserve,
+          releaseAgentBudget: (reservation, a) => db.transaction((tx) => settle(tx, reservation, 0, a)).then(() => {}),
+          settleAgentCall: settleCall,
+          checkThresholds,
+        });
+      }
+      if (call.openRouterFallback) return streamOpenRouterFallback(call, agent);
       const providerId = modelProvider(agent.model);
       if (!providerId) throw new ValidationError(`Model ${agent.model} is not in the catalog`);
       const provider = providerFor(providerId);
       const key = await agentKey(agent, providerId);
+      await assertCreditKey(agent.orgId, providerId, key, credit);
       const info = await infoFor(agent.orgId, agent.model);
+      if (credit && !creditModelMeetsRequirement(agent.model, credit.minimumTier, credit.effort))
+        throw new CreditRouteRefusal("unsupported_capability");
 
       const request: ModelRequest = {
         model: agent.model,
-        system: call.system,
+        system:
+          credit && Array.isArray(call.system)
+            ? call.system.map((block) => ({
+                text: block.text,
+                ...(block.cache === undefined ? {} : { cache: block.cache }),
+                ...(block.after === undefined ? {} : { after: block.after }),
+              }))
+            : call.system,
         messages: call.messages,
         maxTokens: capOf(call.maxTokens, info),
         tools: call.tools,
-        ...(call.effort ? { effort: call.effort } : {}),
-        ...(call.cacheTtl ? { cacheTtl: call.cacheTtl } : {}),
+        ...(credit ? { effort: credit.effort } : call.effort ? { effort: call.effort } : {}),
+        ...(call.cacheTtl && (!credit || providerId === "anthropic") ? { cacheTtl: call.cacheTtl } : {}),
         ...(call.notes ? { notes: call.notes } : {}),
-        signal: call.signal,
+        ...(credit ? { noTransportRetries: true as const } : {}),
+        signal: credit
+          ? AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(CREDIT_MAX_REQUEST_MS)])
+          : call.signal,
       };
-      // Conservative prompt estimate (3 chars/token) so the reservation is an upper bound in practice.
-      const promptTokens = Math.ceil(promptChars(request) / 3);
+      // Grant admission uses a finite catalog ceiling, never a token estimate. Ordinary API budgets retain theirs.
+      const creditBound = credit ? creditAdmissionBound(providerId as "openai" | "anthropic", request) : null;
+      const promptTokens = creditBound?.promptTokens ?? Math.ceil(promptChars(request) / 3);
       // Only Claude's own API is asked for (and bills) 1-hour writes at our catalog prices; OpenRouter reports its cost.
       const longCache = request.cacheTtl === "1h" && providerId === "anthropic";
       // ponytail: the person's month is checked, not reserved, so calls in flight together can pass the limit by
@@ -785,7 +1237,70 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       request.maxTokens = maxTokens;
 
       let result: ModelResult;
+      let admission: Awaited<ReturnType<typeof admitCreditCall>> | null = null;
+      // Whether the request reached the provider's transport: an error before it left nothing to charge.
+      let sent = false;
+      const dispatching: ModelProvider = Object.create(provider, {
+        stream: {
+          value: async (r: ModelRequest, o: StreamOptions) => {
+            if (!admission || !credit || !call.runId) throw new CreditRouteRefusal("unverified");
+            await markCreditAttemptDispatched(db, call.orgId, admission.attemptId, {
+              ownerJobId: credit.ownerJobId,
+              ownerWorkerId: credit.ownerWorkerId,
+              ownerEpoch: credit.ownerEpoch,
+              runId: call.runId,
+              now,
+            });
+            sent = true;
+            return provider.stream(r, o);
+          },
+        },
+      });
       try {
+        // The hold on the route's pool is taken last, right before the call goes out, and every call on the key
+        // (a pre-warm included) takes it. A refusal here sends nothing.
+        if (credit) {
+          if (!call.runId) throw new CreditRouteRefusal("unverified");
+          const bound = creditAdmissionBound(providerId as "openai" | "anthropic", request);
+          const pricing = creditPricingProfile(request.model);
+          const need = {
+            tools: (request.tools?.length ?? 0) > 0,
+            promptBytes: bound.promptBytes,
+            amountNanoUsd: bound.amountNanoUsd,
+            minimumTier: credit.minimumTier,
+            effort: credit.effort,
+            capabilities: credit.capabilities,
+          };
+          // Qualification of the full bound may select an explicitly approved emergency bucket. No partial
+          // reservation is split across buckets and the transaction still rechecks every counter and approval.
+          const qualified = await qualifyCreditRoute(db, { orgId: call.orgId, routeId: credit.routeId, need, now });
+          if (!qualified.ok) throw new CreditRouteRefusal(qualified.reason);
+          if (qualified.proof.cycleId !== credit.cycleId) throw new CreditRouteRefusal("cycle_mismatch");
+          admission = await admitCreditCall(db, {
+            orgId: call.orgId,
+            routeId: credit.routeId,
+            cycleId: credit.cycleId,
+            credentialId: credit.credentialId,
+            credentialVersion: credit.credentialVersion,
+            model: agent.model,
+            need,
+            amountNanoUsd: bound.amountNanoUsd,
+            pricingProfileHash: pricing.profileHash,
+            ...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
+            runId: call.runId,
+            agentId: agent.id,
+            workUnitKey: credit.workUnitKey,
+            attemptKey: credit.attemptKey,
+            ownerJobId: credit.ownerJobId,
+            ownerWorkerId: credit.ownerWorkerId,
+            ownerEpoch: credit.ownerEpoch,
+            ...(qualified.proof.bucket ? { bucket: qualified.proof.bucket } : {}),
+            ...(qualified.proof.approvalId ? { approvalId: qualified.proof.approvalId } : {}),
+            now,
+          });
+          // Another caller owns the same durable attempt. It alone may dispatch or settle it.
+          if (admission.replayed) throw new CreditRouteRefusal("duplicate_attempt");
+        }
         result = await withSharedBudget(db, {
           orgId: call.orgId,
           subject: `agent:${agent.id}`,
@@ -795,7 +1310,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           required: sharedBudgetRequired,
           dataClass: call.dataClass,
           request,
-          provider,
+          provider: credit ? dispatching : provider,
           now,
           transport: deps.sharedBudgetTransports?.[providerId],
           options: {
@@ -805,11 +1320,15 @@ export function createModelGateway(deps: ModelGatewayDeps) {
             project: key.project,
             endpoint: key.endpoint,
             ...(call.session ? { session: call.session } : {}),
+            // A call held against a balance is sent once: the transport's own resend would charge without a count.
             onDelta: call.onDelta,
           },
         });
+        if (credit && (!result.usageVerified || result.model !== request.model))
+          throw new ProviderError("Grant request ended without an exact-model final usage receipt", false);
       } catch (error) {
-        const usage = error instanceof ProviderError ? await partialUsage(error, provider, request, key) : null;
+        const usage =
+          error instanceof ProviderError ? await partialUsage(error, provider, request, key, !admission) : null;
         let actual = 0;
         await db.transaction(async (tx) => {
           if (usage) {
@@ -832,20 +1351,61 @@ export function createModelGateway(deps: ModelGatewayDeps) {
         });
         if (personId && usage)
           await addPersonSpend(db, { orgId: agent.orgId, personId, amountNanoUsd: actual, at: now() });
-        throw masked(error, label(providerId), key);
+        const thrown = masked(error, label(providerId), key);
+        if (admission && !admission.replayed)
+          await closeCreditAttempt(call.orgId, admission, error, thrown, key.credentialId, {
+            sent,
+            stopped: call.signal?.aborted === true,
+            actualNanoUsd: actual,
+          });
+        throw thrown;
       }
 
-      const { record, spent, personSpent } = await settleCall({
-        agent,
-        reservation,
-        runId: call.runId,
-        personId,
-        credentialId: key.credentialId,
-        provider: providerId,
-        model: result.model,
-        usage: result.usage,
-        reportedCost: result.costNanoUsd,
-      });
+      let settled: Awaited<ReturnType<typeof settleCall>>;
+      try {
+        settled = await settleCall({
+          agent,
+          reservation,
+          runId: call.runId,
+          personId,
+          credentialId: key.credentialId,
+          provider: providerId,
+          model: result.model,
+          usage: result.usage,
+          reportedCost: admission
+            ? creditReceiptCost(admission.pricingSnapshot, result.usage, admission.cacheTtl)
+            : result.costNanoUsd,
+        });
+        if (admission)
+          await settleCreditAttempt(
+            db,
+            call.orgId,
+            admission.attemptId,
+            {
+              kind: "settled",
+              actualNanoUsd: settled.record.cost,
+              ...(result.providerRequestId ? { providerRequestId: result.providerRequestId } : {}),
+            },
+            now,
+          );
+        if (credit && call.runId) await assertCreditClaim(db, call.orgId, call.runId, credit, now());
+      } catch (error) {
+        if (admission) {
+          // No tool calls or completion escape until the receipt is durable and this native worker still owns it.
+          await settleCreditAttempt(
+            db,
+            call.orgId,
+            admission.attemptId,
+            { kind: "unknown", reason: "receipt or ownership checkpoint failed" },
+            now,
+          ).catch(() => {});
+          const held = new CreditRouteRefusal("reconciliation_required");
+          noteCreditOutcome(held, { attemptId: admission.attemptId, class: "unknown", hold: "unknown" });
+          throw held;
+        }
+        throw error;
+      }
+      const { record, spent, personSpent } = settled;
       await checkThresholds(agent, spent, record.cost);
       if (personId && personSpent !== null)
         await personSpendAdded(
@@ -936,6 +1496,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       // Null, not a refusal: people on a hold still read and search, with full text alone.
       if (await standingRefusal(db, call.orgId)) return null;
       const { provider, apiKey } = embeddings;
+      if ((await creditProviderProtected(call.orgId, provider.id)) || (await creditSecretProtected(apiKey)))
+        return null;
       const timeoutMs =
         call.inputType === "query" ? (embeddings.queryTimeoutMs ?? EMBED_QUERY_TIMEOUT_MS) : EMBED_DOCUMENT_TIMEOUT_MS;
       let result: EmbeddingResult;
@@ -986,6 +1548,16 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     async verifyKey(input: KeyToVerify): Promise<KeyCheck> {
       // A key check has no qualified route or reserved bound. In required mode it must remain unchecked.
       if (sharedBudgetRequired) return { state: "unchecked" };
+      if (
+        input.provider === "openrouter" &&
+        (await openRouterKeyReserved(db, input.orgId, null, sha256(input.key.apiKey)))
+      )
+        return { state: "unchecked" };
+      if (
+        (await creditProviderProtected(input.orgId, input.provider)) ||
+        (await creditSecretProtected(input.key.apiKey))
+      )
+        return { state: "unchecked" };
       const provider = deps.providers[input.provider];
       if (!provider || (await standingRefusal(db, input.orgId))) return { state: "unchecked" };
       if (input.provider === "openrouter") await ensureOpenRouterModels().catch(() => {});
@@ -1023,6 +1595,9 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!credential) return null;
       const { provider, apiKey, workspaceId, options } = credential;
       if (provider === "custom") return { provider, result: { state: "unchecked" } as KeyCheck };
+      // A key reserved for a credit route is never probed: a probe is a call nobody holds room for.
+      if (await isCreditCredential(db, orgId, credentialId))
+        return { provider, result: { state: "unchecked" } as KeyCheck };
       const key = {
         apiKey,
         ...(workspaceId ? { workspaceId } : {}),
@@ -1039,6 +1614,7 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!providerId) throw new ValidationError(`Model ${call.model} is not in the catalog`);
       const provider = providerFor(providerId);
       const key = await orgKey(call.orgId, providerId, call.model);
+      await assertCreditKey(call.orgId, providerId, key, undefined);
       const info = await infoFor(call.orgId, call.model);
       const request: ModelRequest = {
         model: call.model,

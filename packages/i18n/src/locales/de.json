@@ -1,4 +1,197 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter-Ausweichoption",
+    "intro": "Abonnements haben Vorrang. Berechtigte Agenten und Routinen teilen sich ein separates Monatslimit von 50 USD.",
+    "disabled": "Deaktiviert",
+    "serverDisabled": "Durch die Serverrichtlinie deaktiviert",
+    "configured": "Konfiguriert. Prüfung vor dem Senden",
+    "blocked": "Gesperrt. Abgleich erforderlich",
+    "spent": "Ausgaben diesen Monat",
+    "pending": "Reserviert / ungeklärt",
+    "cap": "Monatslimit (USD)",
+    "key": "Dedizierter OpenRouter-Schlüssel",
+    "chooseKey": "Schlüssel auswählen",
+    "keyHint": "Füge einen separaten OpenRouter-Schlüssel mit einem Monatslimit bis zu diesem Betrag hinzu, einschließlich BYOK. Verwende ihn nicht für gewöhnliche Anfragen.",
+    "models": "Zulässige konkrete Modell-IDs (eine pro Zeile)",
+    "inputPrice": "Maximaler Eingabepreis in USD pro Million Tokens",
+    "outputPrice": "Maximaler Ausgabepreis in USD pro Million Tokens",
+    "tier": "Kostenstufe des Routers",
+    "enable": "Speichern und aktivieren",
+    "disable": "Ausweichoption deaktivieren",
+    "refresh": "Aktualisieren",
+    "error": "Die Einstellungen konnten nicht gespeichert werden. Prüfe Schlüssel und Richtlinie.",
+    "routes": "Entwicklung: openrouter/auto-code · Allgemein: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Globaler Modell-Router",
+    "intro": "Primäre Abos laufen zuerst. Berechtigte Agenten und Routinen wechseln bei Bedarf zu OpenCode Go, geprüften Gratis-APIs, günstigen Modellen mit Limit und freigegebenen API-Anbietern.",
+    "cascade": "Reihenfolge: Abos · OpenCode Go · Gratis-APIs · Günstig bezahlt · Direkte APIs · Begrenzte Eskalation",
+    "refresh": "Aktualisieren",
+    "syncCatalog": "Katalog synchronisieren",
+    "syncing": "Synchronisiere Katalog",
+    "unknown": "Unbekannt",
+    "freeCap": "0 US$ (gratis oder enthalten)",
+    "states": {
+      "loading": "Lade Router-Status",
+      "disconnected": "Keine Ersatz-API-Spuren verbunden",
+      "serverDisabled": "Durch Serverrichtlinie deaktiviert",
+      "disabled": "Deaktiviert. Nur Abos",
+      "authorization_needed": "Autorisierung nötig. Prüfe den Anbieterschlüssel",
+      "stale_catalog": "Katalog abgelaufen. Synchronisiere den Katalog zur Prüfung",
+      "unverified": "Warte auf geprüften Katalog und Schlüssel",
+      "eligible": "Bereit. Vor Versand geprüft",
+      "quota_warning": "Nahe am Kontingent oder Monatsbudget",
+      "rate_limited": "Ratenlimit erreicht. Warte auf neues Zeitfenster",
+      "provider_outage": "Anbieter nicht erreichbar. Wechsle zur nächsten Spur",
+      "incompatible": "Übersprungen wegen inkompatibler Werkzeuge oder Modalitäten",
+      "privacy_blocked": "Blockiert durch Datenschutz- oder Regionsrichtlinie",
+      "budget_held": "Pausiert. Offene Reservierung oder Monatslimit erreicht",
+      "needs_owner": "Warte auf Freigabe durch den Arbeitsbereichsinhaber",
+      "recovered": "Zurück auf primäres Abo gewechselt"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go-Abo",
+      "free_api": "Gratis-API-Pool",
+      "paid_low_cost": "Günstig bezahlt",
+      "direct_api": "Direkte Anbieter-API",
+      "paid_dynamic": "Dynamischer Auto-Router"
+    },
+    "entitlements": {
+      "subscription_go": "Go-Abo (0 $ Zusatzkosten)",
+      "free_only": "Nur Gratis-Stufe (0 $ Limit)",
+      "paid_capped": "Bezahlt mit Monatslimit"
+    },
+    "policy": {
+      "heading": "Routing-Richtlinie des Arbeitsbereichs",
+      "enable": "Richtlinie speichern",
+      "disable": "Router deaktivieren",
+      "enabledLabel": "Globalen Modell-Router als Ersatz aktivieren",
+      "killSwitchLabel": "Notschalter (alle Ersatzaufrufe sofort sperren)",
+      "maxEscalations": "Max. Qualitätseskalationen pro Zug (0 bis 2)",
+      "maxRetries": "Max. Transportwiederholungen pro Route (0 bis 1)",
+      "optOutAgents": "Ausgenommene Agenten-IDs (leer erbt den Router)",
+      "warnThresholds": "Budgetwarnungen bei 50 %, 80 % und 95 % senden"
+    },
+    "accounts": {
+      "caption": "Konfigurierte Anbieterspuren und Kontingentfenster",
+      "empty": "Noch keine Anbieterspuren konfiguriert.",
+      "configureHeading": "Anbieterspur konfigurieren",
+      "provider": "Modellanbieter",
+      "lane": "Routing-Spur",
+      "entitlement": "Abrechnungsmodus",
+      "key": "Eigener Anbieterschlüssel",
+      "chooseKey": "Eigenen Schlüssel wählen",
+      "cloudflareAccount": "Cloudflare Account-ID (32 Hex-Zeichen)",
+      "cap": "Monatslimit (USD)",
+      "models": "Erlaubte konkrete Modell-IDs (eine pro Zeile)",
+      "zdr": "Zero Data Retention (ZDR) verlangen",
+      "save": "Spur speichern",
+      "columns": {
+        "provider": "API-Anbieter",
+        "lane": "Spur",
+        "state": "Status",
+        "budget": "Ausgegeben / Limit",
+        "quota": "Tageskontingent",
+        "reset": "Fenster / gemessen"
+      }
+    },
+    "catalog": {
+      "summary": "Katalogangebote: {{eligible}} geeignet · {{total}} erfasst",
+      "caption": "Geprüfte API-Modellangebote",
+      "columns": {
+        "model": "Modell-ID",
+        "provider": "API-Anbieter",
+        "lane": "Spur",
+        "status": "Eignung",
+        "context": "Kontextfenster"
+      }
+    },
+    "receipts": {
+      "caption": "Letzte Routing-Belege und geprüfte Qualität",
+      "empty": "Keine Ersatzaufrufe in diesem Zeitraum erfasst.",
+      "reconcileNoSend": "Reservierung freigeben",
+      "columns": {
+        "requested": "Angefordertes Modell",
+        "actual": "Tatsächliches Modell",
+        "lane": "Spur",
+        "cost": "Ist / reserviert",
+        "quality": "Qualität",
+        "state": "Status"
+      },
+      "verified": "Geprüft",
+      "unverified": "Prüfung fehlgeschlagen"
+    },
+    "metrics": {
+      "caption": "Kosten pro geprüftem Erfolg und Latenz",
+      "columns": {
+        "model": "Modell-ID",
+        "successes": "Geprüft / Versuche",
+        "costPerSuccess": "Kosten pro geprüftem Erfolg",
+        "latency": "p50 / p95 Latenz"
+      }
+    },
+    "benchmarkSummary": "Letzter Benchmark: {{tasks}} Aufgaben · {{models}} Modelle",
+    "error": "Einstellungen des globalen Modell-Routers konnten nicht gespeichert werden. Prüfe Schlüssel, Limit und Modelle."
+  },
+  "creditContinuity": {
+    "title": "Weiterarbeiten mit API-Guthaben",
+    "refresh": "Status aktualisieren",
+    "unavailable": "Der Guthabenstatus ist nicht verfügbar. Hier wurde noch kein gewährtes Guthaben verifiziert.",
+    "intro": "Geeignete Abonnements werden zuerst genutzt. Der API-Ersatz nutzt verifiziertes, gewährtes Guthaben innerhalb der gemeinsamen Grenzen des Abrechnungszeitraums.",
+    "status": {
+      "unavailable": "Der Guthabenstatus ist nicht verfügbar. Automatische Ausgaben sind nicht verifiziert.",
+      "disabled": "Der automatische API-Ersatz ist deaktiviert. Erfasste Ausgaben und ausstehende Kosten bleiben sichtbar.",
+      "unverified": "Es wurde noch kein zulässiges API-Guthaben verifiziert. Automatisch verfügbar sind $0.",
+      "blocked": "Der API-Ersatz wartet auf aktuelle Nachweise, Budget oder einen Abgleich.",
+      "available": "Der API-Ersatz ist innerhalb der erfassten Guthabengrenzen verfügbar."
+    },
+    "caption": "Gewährtes API-Guthaben und Budgets je Abrechnungszeitraum",
+    "columns": {
+      "provider": "Anbieter",
+      "state": "Zustand",
+      "automatic": "Automatisch verfügbar / Grenze",
+      "costs": "Ausgegeben / ausstehend",
+      "reserve": "Reserve des Eigentümers",
+      "buffer": "Sicherheitspuffer",
+      "expires": "Guthaben verfällt",
+      "forecast": "Historischer p95"
+    },
+    "provider": {
+      "openai": "API von ChatGPT",
+      "anthropic": "API von Claude"
+    },
+    "unknown": "Unbekannt",
+    "state": {
+      "unavailable": "Nicht verfügbar",
+      "unverified": "Nicht verifiziert",
+      "expired": "Guthaben verfallen",
+      "stale": "Nachweise müssen aktualisiert werden",
+      "disabled": "Deaktiviert",
+      "paused": "Pausiert",
+      "pricingExpired": "Preise abgelaufen",
+      "pricingChanged": "Preise geändert",
+      "pricingUnverified": "Preise nicht verifiziert",
+      "noRoute": "Kein zulässiger API-Zugangsweg",
+      "budgetUnavailable": "Budget nicht verfügbar",
+      "ready": "Bereit",
+      "reserveAvailable": "Reserve des Eigentümers verfügbar",
+      "billingBlocked": "Abrechnung blockiert",
+      "reconciliation": "Abgleich erforderlich",
+      "blocked": "Blockiert"
+    },
+    "evidence": "Nachweise: {{date}}",
+    "approvedAvailable": "Genehmigt verfügbar: {{amount}}",
+    "approvals_one": "{{count}} aktive Genehmigung des Eigentümers",
+    "approvals_other": "{{count}} aktive Genehmigungen des Eigentümers",
+    "ownerApproval": "Genehmigung des Eigentümers",
+    "historyHigh": "{{count}} abgerechnete Einheiten. Hohe Unsicherheit.",
+    "historyMedium": "{{count}} abgerechnete Einheiten. Mittlere Unsicherheit.",
+    "historyUnknown": "{{count}} abgerechnete Einheiten. Unsicherheit unbekannt.",
+    "insufficientHistory": "Nicht genügend Verlaufsdaten",
+    "obligations_one": "{{count}} API-Aufruf hat reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "obligations_other": "{{count}} API-Aufrufe haben reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "evidenceNote": "Die Zulässigkeit des gewährten Guthabens wird anhand der vom Eigentümer erfassten Abrechnungsnachweise des Anbieters geprüft. Historische Prognosen genehmigen keine Ausgaben. Status abgerufen: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1320,7 +1513,13 @@
       "moonshot": "Kimi-Schlüssel beginnen mit sk-. Prüfe ihn und füge ihn noch einmal ein.",
       "zai": "Füge den ganzen Z.ai-Schlüssel ohne Leerzeichen ein. Prüfe ihn und füge ihn noch einmal ein.",
       "minimax": "Füge den ganzen MiniMax-Schlüssel ohne Leerzeichen ein. Schlüssel, die mit sk-cp- beginnen, gehören zum Abo und funktionieren hier nicht.",
-      "openrouter": "OpenRouter-Schlüssel beginnen mit sk-or-v1-. Prüfe ihn und füge ihn noch einmal ein."
+      "openrouter": "OpenRouter-Schlüssel beginnen mit sk-or-v1-. Prüfe ihn und füge ihn noch einmal ein.",
+      "groq": "Groq-Schlüssel beginnen mit gsk_. Prüfe ihn und füge ihn erneut ein.",
+      "cloudflare": "Füge das vollständige Cloudflare Workers AI-Token ohne Leerzeichen ein. Prüfe es und versuche es erneut.",
+      "opencode": "Füge den vollständigen OpenCode-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "tencent": "Füge den vollständigen Tencent Hunyuan-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "xiaomi": "Füge den vollständigen Xiaomi MiMo-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "nvidia": "NVIDIA NIM-Schlüssel beginnen mit nvapi-. Prüfe ihn und füge ihn erneut ein."
     },
     "keyFromOther": "Ist er von einem anderen Anbieter?",
     "anthropicWorkspace": "Workspace-ID der Claude Console",
@@ -13394,6 +13593,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Ein Guthabeneintrag ist bereits vorhanden. Aktualisiere die Seite, um seinen Status zu prüfen.",
+      "disabled": "Die Ausweichnutzung von Guthaben ist ausgeschaltet.",
+      "resumeRefused": "Dieser Lauf kann noch nicht fortgesetzt werden. Prüfe das zurückgehaltene Guthaben und die ausstehenden Aktionen."
+    },
     "passwordLink": {
       "email": "Dieser Server verschickt E-Mails: Die Person fordert ihren eigenen Link unter Passwort vergessen an.",
       "serverOwner": "Wer diesen Server installiert hat, meldet sich auf dem Computer an, auf dem er läuft, ohne Link.",

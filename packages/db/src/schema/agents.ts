@@ -59,6 +59,8 @@ export const providerCredentials = pgTable(
     label: text().notNull(),
     /** `v1.<iv>.<ciphertext>.<tag>` of the API key, under the data key. */
     secretCiphertext: text().notNull(),
+    /** Internal SHA-256 identity of a high-entropy API key; never returned through credential APIs. */
+    secretFingerprint: text(),
     /** The data key, wrapped by the key-encryption key. */
     wrappedDataKey: text().notNull(),
     /** Which key-encryption key wrapped the data key, e.g. `local:v1`. Enables rotation. */
@@ -82,7 +84,13 @@ export const providerCredentials = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp({ withTimezone: true }),
   },
-  (t) => [index().on(t.orgId)],
+  (t) => [
+    index().on(t.orgId),
+    check(
+      "provider_credential_fingerprint",
+      sql`${t.secretFingerprint} is null or ${t.secretFingerprint} ~ '^[a-f0-9]{64}$'`,
+    ),
+  ],
 );
 
 /**

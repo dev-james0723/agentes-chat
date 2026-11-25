@@ -502,7 +502,10 @@ test.if(posix && existsSync("/bin/bash"))(
   },
 );
 
-test.if(posix && existsSync("/bin/bash"))(
+// Exercise the Linux desktop's Bash behavior with the host's maintained Bash.
+// Apple's bundled Bash 3.2 records the command in memory but does not append
+// it at the next prompt in this PTY setup. A missing supported Bash must fail.
+test.if(posix)(
   "each command goes to the history file once it ran, while the shell still runs: a terminal killed with its computer keeps it",
   async () => {
     const home = tempDir("look-");
@@ -522,14 +525,15 @@ test.if(posix && existsSync("/bin/bash"))(
     if (!bash) throw new Error("Install modern Bash for the Linux desktop history test (brew install bash)");
     const shell = Bun.spawn([bash, "--rcfile", file, "-i"], {
       cwd: home,
-      env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "dumb" },
-      stdin: "pipe",
-      stdout: "ignore",
-      stderr: "ignore",
+      env: { HOME: home, PATH: "/usr/bin:/bin", TERM: "xterm-256color" },
+      terminal: {
+        cols: 100,
+        rows: 30,
+        data: () => {},
+      },
     });
     try {
-      shell.stdin.write("echo first-command\n");
-      await shell.stdin.flush();
+      shell.terminal?.write("echo first-command\r");
       const history = path.join(home, ".bash_history");
       const deadline = Date.now() + 10_000;
       while (!(existsSync(history) && readFileSync(history, "utf8").includes("echo first-command"))) {
@@ -539,6 +543,8 @@ test.if(posix && existsSync("/bin/bash"))(
       expect(shell.exitCode).toBeNull();
     } finally {
       shell.kill("SIGKILL");
+      await shell.exited;
+      shell.terminal?.close();
     }
   },
 );

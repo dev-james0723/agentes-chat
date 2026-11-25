@@ -489,6 +489,9 @@ export async function transitionRun(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, from),
+        to === "running" || to === "done"
+          ? sql`nullif(${agentRuns.transcript}->'creditHold', 'null'::jsonb) is null`
+          : undefined,
         requireNoUnknownEffect
           ? sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`
           : undefined,
