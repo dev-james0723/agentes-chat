@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   createIssue,
   deriveTraceability,
-  type TraceEvidence,
   recordDeploy,
   recordMergeEvidence,
+  type TraceEvidence,
   traceability,
   updateIssue,
 } from "../src";
