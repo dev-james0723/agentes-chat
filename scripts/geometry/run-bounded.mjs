@@ -98,8 +98,18 @@ export function runBounded(command, args, { ms, graceMs = grace, env = process.e
         if (!exists()) finish(result);
         return;
       }
-      if (exists()) terminate(code && code > 0 ? code : 1, "runner exited with surviving owned child processes");
-      else finish(code ?? (exitSignal ? 1 : 0));
+      const exitCode = code ?? (exitSignal ? 1 : 0);
+      if (!exists()) return finish(exitCode);
+      // Chrome's helpers (crashpad, zygotes) outlive a clean browser.close() by a moment. Give the group the grace to
+      // exit on its own; only a process still alive after it is a leak, and that fails the stage.
+      const settleBy = Date.now() + graceMs;
+      const settle = () => {
+        if (stopping || finished) return;
+        if (!exists()) return finish(exitCode);
+        if (Date.now() < settleBy) escalation = setTimeout(settle, 50);
+        else terminate(exitCode > 0 ? exitCode : 1, "runner exited with surviving owned child processes");
+      };
+      settle();
     });
     timer = setTimeout(() => terminate(124, `stage exceeded ${ms}ms`), ms);
   });

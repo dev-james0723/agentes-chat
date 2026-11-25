@@ -389,6 +389,19 @@ describe("geometry browser anti-stall", () => {
     expect(() => stageLimit("540001")).toThrow();
   });
 
+  test("the watchdog waits its grace for a runner's helpers to exit, and fails only on one that stays", async () => {
+    const node = Bun.which("node");
+    if (!node) throw new Error("node is required by local CI");
+    // A helper in the runner's group that exits a moment after the runner, as Chrome's do after close().
+    const brief = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},300)"],{stdio:"ignore"}).unref();process.exit(0)`;
+    expect(await runBounded(node, ["-e", brief], { ms: 5_000, graceMs: 2_000 })).toBe(0);
+    // One that never exits is a leak: the stage fails and the helper is stopped.
+    const stuck = `require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"}).unref();process.exit(0)`;
+    const started = Date.now();
+    expect(await runBounded(node, ["-e", stuck], { ms: 5_000, graceMs: 300 })).toBe(1);
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
   test("the independent watchdog kills even an unresponsive child that ignores TERM", async () => {
     const node = Bun.which("node");
     if (!node) throw new Error("node is required by local CI");
