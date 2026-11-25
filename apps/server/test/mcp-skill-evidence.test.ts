@@ -42,7 +42,8 @@ async function fixture(privateRoom = false) {
       markdown: "Subtract both totals.",
       agent: agentId,
     })
-  ).structuredContent!;
+  ).structuredContent;
+  if (!skill) throw Error("No registered skill");
   const [trigger] = await t.db
     .insert(schema.messages)
     .values({
