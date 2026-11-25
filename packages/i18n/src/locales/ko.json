@@ -15143,6 +15143,14 @@
       "oldSub": "계정이 기록되기 전의 사용량",
       "ofMonth": "이번 달의 {{percent}}",
       "shareLabel": "{{source}}: 이번 달의 {{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "검증된 성공당 비용",
+      "intro": "최근 30일. 성공은 사람이 인수 조건을 체크했고 그 후 아무도 다시 열지 않은 작업입니다. 모든 실행이 비용에 포함됩니다.",
+      "perSuccess": "성공당 {{cost}}",
+      "unknown": "비용 알 수 없음",
+      "noSuccess": "아직 검증된 성공이 없습니다",
+      "line": "실행 {{runs}}회 · 검증 {{successes}} · 실패 {{failed}} · 재시도 {{retries}}"
     }
   },
   "budget": {

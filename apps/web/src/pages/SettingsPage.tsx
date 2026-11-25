@@ -77,6 +77,7 @@ import { WhoPicksSection } from "@/components/ai/Jev";
 import { BillingLinkButton } from "@/components/BillingLinkButton";
 import { CleanWorkspaceSection } from "@/components/CleanWorkspace";
 import { ConnectorsSection } from "@/components/Connectors";
+import { CostPerSuccessCard } from "@/components/CostPerSuccess";
 import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import type { ConnectStart } from "@/components/devices/ConnectDialog";
 import { DevicePage } from "@/components/devices/DevicePage";
@@ -1145,6 +1146,7 @@ function UsageSection() {
       )}
       <KeysSection />
       {usesApi && <ApiCard />}
+      <CostPerSuccessCard />
       {allowed && (
         <Card aria-labelledby="sec-usage">
           <CardHeader id="sec-usage" icon="chart" title={t("settings.usageTitle")} />

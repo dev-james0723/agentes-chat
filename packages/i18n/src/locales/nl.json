@@ -15740,6 +15740,14 @@
       "oldSub": "Gebruik van voordat het account werd vastgelegd",
       "ofMonth": "{{percent}} van de maand",
       "shareLabel": "{{source}}: {{percent}} van de maand"
+    },
+    "costPerSuccess": {
+      "title": "Kosten per geverifieerd succes",
+      "intro": "Afgelopen 30 dagen. Een succes is een taak waarvan een persoon de acceptatiecriteria heeft afgevinkt en die sindsdien niemand heeft heropend. Elke run telt mee in de kosten.",
+      "perSuccess": "{{cost}} per succes",
+      "unknown": "Kosten onbekend",
+      "noSuccess": "Nog geen geverifieerd succes",
+      "line": "{{runs}} runs · {{successes}} geverifieerd · {{failed}} mislukt · {{retries}} nieuwe pogingen"
     }
   },
   "budget": {

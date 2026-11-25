@@ -15205,6 +15205,14 @@
       "oldSub": "Pemakaian dari sebelum akun dicatat",
       "ofMonth": "{{percent}} dari bulan ini",
       "shareLabel": "{{source}}: {{percent}} dari bulan ini"
+    },
+    "costPerSuccess": {
+      "title": "Biaya per keberhasilan terverifikasi",
+      "intro": "30 hari terakhir. Keberhasilan adalah tugas yang kriteria penerimaannya dicentang seseorang dan tidak dibuka kembali sejak itu. Setiap proses dihitung dalam biaya.",
+      "perSuccess": "{{cost}} per keberhasilan",
+      "unknown": "Biaya tidak diketahui",
+      "noSuccess": "Belum ada keberhasilan terverifikasi",
+      "line": "{{runs}} proses · {{successes}} terverifikasi · {{failed}} gagal · {{retries}} percobaan ulang"
     }
   },
   "budget": {

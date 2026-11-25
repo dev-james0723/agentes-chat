@@ -32,6 +32,7 @@ import type {
   ConnectorCatalog,
   ConnectorDef,
   ConsultationConversation,
+  CostPerSuccessReport,
   Credential,
   Edition,
   EndpointCheck,
@@ -294,6 +295,7 @@ export interface FakeState {
   usageQueues?: Record<string, UsageQueue>;
   /** Uso › Pessoas (ADR 0141); unset: nobody used agents yet. */
   peopleUsage?: PeopleUsage;
+  costPerSuccess?: CostPerSuccessReport;
   /** A person's month by id; unset: an empty month. */
   personUsage?: Record<string, PersonUsage>;
   personLimits?: PersonLimits;
@@ -1975,6 +1977,24 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
         if (inv) inv.roleIds = roleIds;
         return { roleIds };
       },
+      costPerSuccess: async () =>
+        state.costPerSuccess ?? {
+          from: new Date().toISOString(),
+          to: new Date().toISOString(),
+          groups: [],
+          total: {
+            runs: 0,
+            failedRuns: 0,
+            retries: 0,
+            verifiedSuccesses: 0,
+            tokens: 0,
+            costUsd: 0,
+            unknownCostRuns: 0,
+            costPerSuccessUsd: null,
+            missing: "no_success" as const,
+            text: "",
+          },
+        },
       peopleUsage: async () =>
         state.peopleUsage ?? {
           month: new Date().toISOString().slice(0, 7),
