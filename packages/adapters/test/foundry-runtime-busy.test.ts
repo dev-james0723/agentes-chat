@@ -87,3 +87,19 @@ test("admission keeps a slot per workspace: one org cannot take the whole pool",
   await Promise.all([first, second]);
   await expect(slow({ orgId: ORG_A }, new AbortController().signal)).resolves.toBeUndefined();
 });
+
+test("not qualified right now is a refusal before anything started: busy, never an unknown outcome", async () => {
+  const { FoundryExecutorError } = await import("../src/foundry-executor");
+  const { refusedBeforeStart } = await import("../src/foundry-runtime-service");
+  const notQualified = refusedBeforeStart(async () => {
+    throw new FoundryExecutorError("BLOCKED_SANDBOX", "Current trusted runner identity is unavailable.");
+  });
+  await expect(notQualified({}, new AbortController().signal)).rejects.toBeInstanceOf(FoundryRuntimeBusyError);
+  // Anything after the start stays what it was: the caller reconciles it.
+  const started = refusedBeforeStart(async () => {
+    throw new FoundryExecutorError("UNKNOWN_OUTCOME", "Evaluation outcome requires reconciliation.");
+  });
+  await expect(started({}, new AbortController().signal)).rejects.toMatchObject({ code: "UNKNOWN_OUTCOME" });
+  const fine = refusedBeforeStart(async () => "ok");
+  expect(await fine({}, new AbortController().signal)).toBe("ok");
+});
