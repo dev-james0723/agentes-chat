@@ -50,7 +50,7 @@ import { setupDom } from "@agenteschat/ui/testing/dom";
 setupDom();
 
 import { createHttpApi, UNREAD_REFRESH_MS } from "@agenteschat/client";
-import { act, cleanup, fireEvent, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { DESKTOP_QUERY } from "@/components/NavDrawer";
 import { renderApp, settle, showIn } from "./render";
 
@@ -99,7 +99,7 @@ interface AppOptions {
   /** Changes the app's HTTP client (a read held on its way back). */
   api?: (http: Http) => void;
   /** Every frame the app's socket gets, before the app does. */
-  onFrame?: (frame: { type?: string; event?: { type?: string; userId?: string } }) => void;
+  onFrame?: (frame: { type?: string; channelId?: string; event?: { type?: string; userId?: string } }) => void;
 }
 
 /** The web app, signed in as `b`. */
@@ -361,15 +361,31 @@ describe("other things that appear after my socket connected", () => {
   });
 
   test("a thread someone starts under my message in the open channel", async () => {
-    const w = await workspace();
-    await click(link("general"));
-    const root = (await (await w.as.me(`/channels/${w.general}/messages`, { json: { body: "pergunta" } })).json()) as {
-      id: string;
+    const subscribedChannels = new Set<string>();
+    const w = await workspace({
+      onFrame: (frame) => {
+        if (frame.type === "subscribed" && frame.channelId) subscribedChannels.add(frame.channelId);
+      },
+    });
+    await waitFor(() => expect(subscribedChannels).toContain(w.general));
+
+    const messages = `/channels/${w.general}/messages`;
+    const rootResponse = await w.as.me(messages, { json: { body: "pergunta" } });
+    expect(rootResponse.status).toBe(201);
+    const root = (await rootResponse.json()) as { id: string };
+    expect(root).toMatchObject({ id: expect.any(String), threadId: null, author: { id: w.ids.me } });
+
+    const rootRow = () => {
+      const row = document.querySelector<HTMLElement>(`main article[data-message-id="${root.id}"]`);
+      if (!row) throw new Error(`The channel is missing root message ${root.id}`);
+      return within(row);
     };
-    await live();
-    await w.as.admin(`/channels/${w.general}/messages`, { json: { body: "resposta", threadId: root.id } });
-    await burst();
-    expect(mainText()).toMatch(/1 repl/i);
+    await waitFor(() => rootRow().getByText("pergunta"));
+
+    const replyResponse = await w.as.admin(messages, { json: { body: "resposta", threadId: root.id } });
+    expect(replyResponse.status).toBe(201);
+    expect(await replyResponse.json()).toMatchObject({ threadId: root.id, author: { id: w.ids.admin } });
+    await waitFor(() => rootRow().getByRole("button", { name: /\b1 reply\b/i }));
   });
 });
 
