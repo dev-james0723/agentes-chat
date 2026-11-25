@@ -86,7 +86,7 @@ compose run --rm -T agentes telemetry > report.json
 jq -e '.report == 1 and .install == "docker" and .host.container and .people.total == 1' report.json
 
 echo "== back up and restore"
-printf 'S3_ENDPOINT=http://s3:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' >> .env
+printf 'S3_ENDPOINT=http://%s:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' "$project-s3" >> .env
 compose run -d --name "$project-s3" --entrypoint sh backup -c \
   'mkdir -p /tmp/s3/backups && exec rclone serve s3 --auth-key ci-key,ci-secret --addr :8080 /tmp/s3'
 sleep 3
