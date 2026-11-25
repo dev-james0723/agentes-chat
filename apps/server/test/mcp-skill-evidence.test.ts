@@ -170,3 +170,43 @@ test("private run contents stay private even for a workspace administrator", asy
   expect(result.isError).toBe(true);
   expect(JSON.stringify(result)).not.toContain(f.trigger.body);
 });
+
+test("excludes external and malformed skill loads while retaining the actual native version", async () => {
+  const f = await fixture();
+  const samples: { version: unknown; external?: boolean }[] = [
+    { version: 1, external: true },
+    { version: "1" },
+    { version: { note: "UNTRUSTED_VERSION_DATA" } },
+    { version: 0 },
+    { version: -1 },
+    { version: 1.5 },
+    { version: Number.MAX_SAFE_INTEGER + 1 },
+    { version: 2 },
+  ];
+  await t.db.insert(schema.agentRunSteps).values(
+    samples.map(({ version, external }, index) => ({
+      orgId: f.orgId,
+      runId: f.run.id,
+      seq: index + 2,
+      kind: "tool_result" as const,
+      data: {
+        name: "load_skill",
+        isError: false,
+        ...(external === undefined ? {} : { external }),
+        data: { skill: { id: f.skill.id, version } },
+      },
+    })),
+  );
+  const result = await f.call(f.args);
+  const runs = result.structuredContent?.runs as Record<
+    string,
+    {
+      steps: { seq: number; data: { data: { skill: { version: unknown } } } }[];
+    }
+  >;
+  expect(runs[f.run.id]?.steps.map((step) => [step.seq, step.data.data.skill.version])).toEqual([
+    [1, 1],
+    [9, 2],
+  ]);
+  expect(JSON.stringify(result)).not.toContain("UNTRUSTED_VERSION_DATA");
+});

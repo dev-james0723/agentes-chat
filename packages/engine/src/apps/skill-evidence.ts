@@ -85,10 +85,11 @@ async function smokeRun(
   )
     throw new NotFoundError("No readable original reply.");
   // Project only publication-safe metadata. Never select raw tool contents or model steps.
+  const versionValue = sql`${s.data}->'data'->'skill'->'version'`;
   const rows = await db
     .select({
       seq: s.seq,
-      version: sql<unknown>`${s.data}->'data'->'skill'->'version'`,
+      version: sql<number>`(${versionValue} #>> '{}')::integer`,
     })
     .from(s)
     .where(
@@ -97,7 +98,11 @@ async function smokeRun(
         eq(s.runId, runId),
         eq(s.kind, "tool_result"),
         sql`${s.data}->>'name' = 'load_skill' AND ${s.data}->'isError' = 'false'::jsonb
-        AND ${s.data}->'data'->'skill'->>'id' = ${skillId}`,
+        AND (${s.data}->'external' IS NULL OR ${s.data}->'external' = 'false'::jsonb)
+        AND ${s.data}->'data'->'skill'->>'id' = ${skillId}
+        AND jsonb_typeof(${versionValue}) = 'number'
+        AND ${versionValue} BETWEEN '1'::jsonb AND '2147483647'::jsonb
+        AND (${versionValue} #>> '{}') ~ '^[1-9][0-9]{0,9}$'`,
       ),
     )
     .orderBy(s.seq)
