@@ -124,6 +124,8 @@ export async function registerRunFiles(
         sha256: sql`coalesce(excluded.sha256, ${runFiles.sha256})`,
         note: sql`coalesce(excluded.note, ${runFiles.note})`,
         machineId: sql`coalesce(excluded.machine_id, ${runFiles.machineId})`,
+        // A new role is a new fact about the file: a collector holding the old version can no longer reserve it (ADR 0213).
+        version: sql`case when ${runFiles.role} <> excluded.role then ${runFiles.version} + 1 else ${runFiles.version} end`,
         updatedAt: new Date(),
       },
     })

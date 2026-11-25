@@ -62,6 +62,8 @@ export const runFiles = pgTable(
     /** The collector's claim while it removes the file; a claim left behind is checked again, never assumed. */
     reservedToken: text(),
     reservedAt: timestamp({ withTimezone: true }),
+    /** When the collector last looked at it: each cycle starts with the files it looked at least recently. */
+    gcCheckedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },

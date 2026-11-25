@@ -57,6 +57,8 @@ export interface ArtifactFacts {
   expiredLeases: number;
   /** Another registration of the same file (any run, same computer) calls it a deliverable, evidence or unknown. */
   otherRegistrationKeeps: boolean;
+  /** Other registrations of the same file that are pinned, decided, under review, reserved or still being written. */
+  siblingBlocks: number;
   /** A person kept or protected it in review, or it waits there. */
   review: "none" | "open" | "kept" | "protected" | "delete" | "archive";
   machineKnown: boolean;
@@ -170,6 +172,12 @@ export function decide(f: ArtifactFacts): Decision {
     return { action: "DEFER", code: "reserved", reason: "a collector holds it; checked again if that claim is stale" };
   if (f.otherRegistrationKeeps)
     return { action: "PROTECT", code: "other_registration_keeps", reason: "other work calls the same file a keeper" };
+  if (f.siblingBlocks > 0)
+    return {
+      action: "KEEP",
+      code: "sibling_in_use",
+      reason: "another registration of the same file is pinned, decided or still being written",
+    };
   if (!f.machineKnown) return { action: "KEEP", code: "no_computer", reason: "on no known computer" };
   if (!f.machinePosix) return { action: "KEEP", code: "not_posix", reason: "only macOS and Linux are cleaned" };
   if (f.review === "delete") {

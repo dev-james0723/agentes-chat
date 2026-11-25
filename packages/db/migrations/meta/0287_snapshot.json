@@ -1,5 +1,5 @@
 {
-  "id": "2420cdb5-c344-45b6-8047-74c35a247a02",
+  "id": "f7c942fd-57bc-4efa-83bd-a9a2aa85adc7",
   "prevId": "1d265344-9918-4dab-a255-f747ae5e3c3e",
   "version": "7",
   "dialect": "postgresql",
@@ -19231,6 +19231,12 @@
         },
         "reserved_at": {
           "name": "reserved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gc_checked_at": {
+          "name": "gc_checked_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

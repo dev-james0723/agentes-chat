@@ -140,6 +140,7 @@ const facts = (over: Partial<ArtifactFacts> = {}): ArtifactFacts => ({
   futureStages: 0,
   expiredLeases: 0,
   otherRegistrationKeeps: false,
+  siblingBlocks: 0,
   review: "none",
   machineKnown: true,
   machinePosix: true,
@@ -260,6 +261,10 @@ describe("acceptance", () => {
     await w.reg(w.A, [{ path: "scratch/stage1.out", role: "derived" }]);
     await w.ev(w.A, "seal", ["scratch/stage1.out"]);
     await w.ev(w.A, "future", ["scratch/stage1.out"], "stage 3: packaging");
+    expect((await w.gc()).decisions.reserved_future_stage).toBe(1);
+    expect(w.on("scratch/stage1.out")).toBe(true);
+    // Its turn ends: a later stage is a later run, so the reservation outlives this one.
+    await f.db.update(schema.agentRuns).set({ status: "done" }).where(eq(schema.agentRuns.id, w.runA.id));
     expect((await w.gc()).decisions.reserved_future_stage).toBe(1);
     expect(w.on("scratch/stage1.out")).toBe(true);
     // Even after the run ends a future reservation of a finished run is released by evidence, not by a timeout.
@@ -578,13 +583,19 @@ describe("acceptance", () => {
     f = await setup({ machines: true, reply: () => ({ chunks: ["ok"] }) });
     const fx = f;
     const { paired } = await connectedComputer(fx);
-    const agent = await createAgent(fx.db, fx.owner.id, fx.org.id, {
-      name: "Nova",
-      handle: "nova",
-      role: "Builder",
-      instructions: "",
-      model: "claude-sonnet-5-5",
-    } as Parameters<typeof createAgent>[3]);
+    const agent = await createAgent(
+      fx.db,
+      fx.owner.id,
+      fx.org.id,
+      {
+        name: "Nova",
+        handle: "nova",
+        role: "Builder",
+        instructions: "",
+        model: "claude-sonnet-5-5",
+      } as Parameters<typeof createAgent>[3],
+      { model: "claude-sonnet-5-5" },
+    );
     await grantScopes(fx.db, fx.org.id, agent.id, [{ connectionId: null, scope: "sandbox:run" }]);
     await setAgentComputerTarget({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, agent.id, paired.machineId);
     const msg = await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, fx.general.id, {
@@ -603,6 +614,84 @@ describe("acceptance", () => {
     expect(listed).toContain("file_lifecycle");
     expect(FILES_GUIDANCE).toContain("file_lifecycle");
     expect(FILES_GUIDANCE.length).toBeLessThan(500);
+  });
+});
+
+describe("one file, many registrations (independent review)", () => {
+  test.skipIf(!hasPython)("a read or a pin on another run's registration of the same file keeps it", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    const w = await world(fx);
+    w.write("scratch/x.bin");
+    w.write("scratch/y.bin");
+    await w.reg(w.A, [
+      { path: "scratch/x.bin", role: "scratch" },
+      { path: "scratch/y.bin", role: "scratch" },
+    ]);
+    await w.ev(w.A, "seal", ["scratch/x.bin", "scratch/y.bin"]);
+    // B registers the same paths in its own run (a new row each) and reads one, pins the other.
+    await w.reg(w.B, [
+      { path: "scratch/x.bin", role: "scratch" },
+      { path: "scratch/y.bin", role: "scratch" },
+    ]);
+    await w.ev(w.B, "read", ["scratch/x.bin"]);
+    await w.ev(w.B, "pin", ["scratch/y.bin"]);
+    const cycle = await w.gc();
+    expect(cycle.removed).toBe(0);
+    expect(w.on("scratch/x.bin")).toBe(true);
+    expect(w.on("scratch/y.bin")).toBe(true);
+    expect(await w.state("scratch/y.bin")).toBe("protected");
+  });
+
+  test.skipIf(!hasPython)(
+    "another agent can't make someone else's unfinished file removable by sealing its own row",
+    async () => {
+      f = await setup({ machines: true });
+      const w = await world(f);
+      w.write("scratch/wip.bin");
+      await w.reg(w.A, [{ path: "scratch/wip.bin", role: "scratch" }]);
+      await w.reg(w.B, [{ path: "scratch/wip.bin", role: "scratch" }]);
+      await w.ev(w.B, "seal", ["scratch/wip.bin"]);
+      const cycle = await w.gc();
+      expect(cycle.decisions.sibling_in_use).toBe(1);
+      expect(w.on("scratch/wip.bin")).toBe(true);
+    },
+  );
+
+  test.skipIf(!hasPython)("a role change, or a pin or lease after the reservation, stops the removal", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    const w = await world(fx);
+    w.write("scratch/r.bin");
+    await w.reg(w.A, [{ path: "scratch/r.bin", role: "scratch" }]);
+    await w.ev(w.A, "seal", ["scratch/r.bin"]);
+    const [seen] = await fx.db.select().from(schema.runFiles).where(eq(schema.runFiles.path, "scratch/r.bin"));
+    if (!seen) throw new Error("no row");
+    await w.reg(w.A, [{ path: "scratch/r.bin", role: "canonical" }]);
+    expect(await reserve(fx.db, seen, "stale-decision")).toBe(false);
+    expect(w.on("scratch/r.bin")).toBe(true);
+  });
+
+  test.skipIf(!hasPython)("files that stay never starve newer ones", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    const w = await world(fx);
+    const outside = Array.from({ length: 250 }, (_, i) => `elsewhere/${i}.bin`);
+    for (let i = 0; i < outside.length; i += 100)
+      await w.reg(
+        w.A,
+        outside.slice(i, i + 100).map((path) => ({ path, role: "scratch" })),
+      );
+    await w.ev(w.A, "seal", outside.slice(0, 100));
+    await w.ev(w.A, "seal", outside.slice(100, 200));
+    await w.ev(w.A, "seal", outside.slice(200));
+    for (let i = 0; i < 3; i++) await w.gc();
+    w.write("scratch/new.bin");
+    await w.reg(w.A, [{ path: "scratch/new.bin", role: "scratch" }]);
+    await w.ev(w.A, "seal", ["scratch/new.bin"]);
+    await w.gc();
+    await w.gc();
+    expect(w.on("scratch/new.bin")).toBe(false);
   });
 });
 

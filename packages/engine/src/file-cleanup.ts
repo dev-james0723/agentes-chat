@@ -443,6 +443,14 @@ export async function runFileCleanup(
       blocked.set(r.id, "No longer registered as scratch or rebuildable on that computer.");
       continue;
     }
+    // A pin, a person's decision or the collector's claim since the approval (ADR 0213) keeps it.
+    if (["protected", "kept", "review", "reserved"].includes(own.state)) {
+      blocked.set(
+        r.id,
+        `Since approved, it was ${own.state === "reserved" ? "claimed by continuous cleanup" : own.state}.`,
+      );
+      continue;
+    }
     const others = same.filter((g) => g.runId !== r.runId && (g.machineId === r.machineId || g.machineId === null));
     const kept = others.find((g) => g.role !== "scratch" && g.role !== "derived");
     if (kept) {
@@ -455,6 +463,20 @@ export async function runFileCleanup(
     if (others.some((g) => g.updatedAt > report.createdAt))
       blocked.set(r.id, "Registered again after the work ended: something else may use it now.");
   }
+  // Anyone reading the file now, or a later stage that needs it (ADR 0213 leases, any registration of the path).
+  const held = await db.execute(sql`
+    select distinct f.path, f.machine_id from ${schema.artifactLeases} l join ${runFiles} f on f.id = l.run_file_id
+    where l.org_id = ${orgId} and l.status in ('open', 'expired') and f.path in (${sql.join(
+      claimed.map((r) => sql`${r.path}`),
+      sql`, `,
+    )})`);
+  const heldRows = (held as unknown as { rows: { path: string; machine_id: string | null }[] }).rows ?? [];
+  for (const r of claimed)
+    if (
+      !blocked.has(r.id) &&
+      heldRows.some((h) => h.path === r.path && (h.machine_id === r.machineId || h.machine_id === null))
+    )
+      blocked.set(r.id, "An agent is using it or a later step needs it.");
   for (const [id, reason] of blocked) await finish(db, [id], { status: "blocked", reason, executedAt: new Date() });
   const regOf = new Map(regs.map((g) => [`${g.runId}:${g.path}`, g]));
   const live = claimed.filter((r) => !blocked.has(r.id));
@@ -628,7 +650,13 @@ export async function pendingCleanups(db: Database, orgId: string) {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(fileCleanups)
-    .where(and(eq(fileCleanups.orgId, orgId), notInArray(fileCleanups.status, ["done", "skipped", "blocked"])));
+    .where(
+      and(
+        eq(fileCleanups.orgId, orgId),
+        eq(fileCleanups.source, "approved"),
+        notInArray(fileCleanups.status, ["done", "skipped", "blocked"]),
+      ),
+    );
   return row?.n ?? 0;
 }
 

@@ -426,6 +426,22 @@ describe("approving and running a cleanup", () => {
     expect(run.id).not.toBe(next.id);
   });
 
+  test("a file pinned or kept after the approval is not removed (ADR 0213)", async () => {
+    f = await setup({ machines: true });
+    const fx = f;
+    calls.length = 0;
+    const { report } = await endedTaskWithFiles(fx);
+    await approveFileCleanup(fx.db, fx.owner.id, fx.org.id, report.id);
+    await fx.db
+      .update(schema.runFiles)
+      .set({ state: "protected" })
+      .where(eq(schema.runFiles.path, "scratch/frame-1.png"));
+    await runFileCleanup({ db: fx.db, hub: fx.machineHub }, fx.org.id, report.id);
+    const frame = (await fx.db.select().from(schema.fileCleanups)).find((r) => r.path === "scratch/frame-1.png");
+    expect(frame).toMatchObject({ status: "blocked" });
+    expect(String(frame?.reason)).toContain("protected");
+  });
+
   test("two jobs at once send each file once", async () => {
     f = await setup({ machines: true });
     const fx = f;

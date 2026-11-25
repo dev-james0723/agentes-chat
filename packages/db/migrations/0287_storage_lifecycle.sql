@@ -73,6 +73,7 @@ ALTER TABLE "run_files" ADD COLUMN "version" integer DEFAULT 0 NOT NULL;--> stat
 ALTER TABLE "run_files" ADD COLUMN "sealed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "run_files" ADD COLUMN "reserved_token" text;--> statement-breakpoint
 ALTER TABLE "run_files" ADD COLUMN "reserved_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "run_files" ADD COLUMN "gc_checked_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "artifact_leases" ADD CONSTRAINT "artifact_leases_org_id_organizations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "artifact_leases" ADD CONSTRAINT "artifact_leases_run_file_id_run_files_id_fk" FOREIGN KEY ("run_file_id") REFERENCES "public"."run_files"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "artifact_transitions" ADD CONSTRAINT "artifact_transitions_org_id_organizations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -87,5 +88,7 @@ CREATE INDEX "artifact_leases_org_id_status_expires_at_index" ON "artifact_lease
 CREATE INDEX "artifact_transitions_org_id_created_at_index" ON "artifact_transitions" USING btree ("org_id","created_at");--> statement-breakpoint
 CREATE INDEX "storage_review_items_org_id_status_index" ON "storage_review_items" USING btree ("org_id","status");--> statement-breakpoint
 CREATE INDEX "run_files_org_id_machine_id_state_index" ON "run_files" USING btree ("org_id","machine_id","state");--> statement-breakpoint
-ALTER TABLE "file_cleanups" ADD CONSTRAINT "file_cleanups_source" CHECK ("file_cleanups"."source" in ('approved', 'auto', 'review'));--> statement-breakpoint
-ALTER TABLE "run_files" ADD CONSTRAINT "run_files_state" CHECK ("run_files"."state" in ('created', 'writing', 'sealed', 'released', 'reserved', 'deleted', 'review', 'protected', 'kept', 'archived', 'relocated', 'failed', 'unknown'));
+ALTER TABLE "file_cleanups" ADD CONSTRAINT "file_cleanups_source" CHECK ("file_cleanups"."source" in ('approved', 'auto', 'review')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "file_cleanups" VALIDATE CONSTRAINT "file_cleanups_source";--> statement-breakpoint
+ALTER TABLE "run_files" ADD CONSTRAINT "run_files_state" CHECK ("run_files"."state" in ('created', 'writing', 'sealed', 'released', 'reserved', 'deleted', 'review', 'protected', 'kept', 'archived', 'relocated', 'failed', 'unknown')) NOT VALID;--> statement-breakpoint
+ALTER TABLE "run_files" VALIDATE CONSTRAINT "run_files_state";

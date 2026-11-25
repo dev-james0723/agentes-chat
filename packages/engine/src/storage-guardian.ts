@@ -36,6 +36,8 @@ const { fileCleanups, agentRuns, agents, machines } = schema;
 export const STORAGE_GC_JOB = "files.gc";
 /** A lease's life without a heartbeat. Its end makes the file a review item, never a removal. */
 export const LEASE_TTL_SECONDS = 15 * 60;
+/** A later stage is usually a later run: its reservation lives a day unless renewed or released. */
+export const FUTURE_TTL_SECONDS = 24 * 3600;
 /** A collector's claim older than this was left by a stopped server: the computer checks the file again. */
 export const STALE_RESERVATION_MS = 15 * 60 * 1000;
 const GC_COALESCE_MS = 5_000;
@@ -88,7 +90,16 @@ export async function reserve(db: Database, file: RunFile, token: string): Promi
           eq(runFiles.id, file.id),
           eq(runFiles.version, file.version),
           inArray(runFiles.state, ["sealed", "released", "review", "created"]),
-          sql`not exists (select 1 from ${artifactLeases} l where l.run_file_id = ${runFiles.id} and l.status = 'open')`,
+          // Every registration of the same file on the same computer counts: a lease or a pin on any of them,
+          // or one still being written, keeps the file (one row per run and path, the file is one).
+          sql.raw(`not exists (select 1 from artifact_leases l join run_files s on s.id = l.run_file_id
+            where s.org_id = "run_files"."org_id" and s.machine_id = "run_files"."machine_id"
+              and s.path = "run_files"."path" and l.status in ('open', 'expired'))`),
+          sql.raw(`not exists (select 1 from run_files s
+            where s.org_id = "run_files"."org_id" and s.machine_id = "run_files"."machine_id"
+              and s.path = "run_files"."path" and s.id <> "run_files"."id"
+              and (s.state in (${SIBLING_BLOCKING.map((x) => `'${x}'`).join(", ")})
+                   or s.role not in ('scratch', 'derived')))`),
         ),
       )
       .returning({ id: runFiles.id });
@@ -107,9 +118,12 @@ export async function reserve(db: Database, file: RunFile, token: string): Promi
   });
 }
 
-/** The latest registration of a path on a computer (any run, any agent of the workspace). */
-async function fileAt(db: Database, orgId: string, machineId: string | null, path: string) {
-  const [row] = await db
+/** Another registration of the same file in one of these states keeps it (it is pinned, decided, or being written). */
+const SIBLING_BLOCKING = ["protected", "kept", "review", "reserved", "created", "writing", "unknown", "failed"];
+
+/** Every registration of a path on a computer (any run, any agent of the workspace), latest first. */
+async function registrationsAt(db: Database, orgId: string, machineId: string | null, path: string) {
+  return db
     .select()
     .from(runFiles)
     .where(
@@ -119,9 +133,7 @@ async function fileAt(db: Database, orgId: string, machineId: string | null, pat
         machineId ? eq(runFiles.machineId, machineId) : isNull(runFiles.machineId),
       ),
     )
-    .orderBy(desc(runFiles.updatedAt))
-    .limit(1);
-  return row ?? null;
+    .orderBy(desc(runFiles.updatedAt));
 }
 
 /** Asks for a collector cycle on a computer soon; events within a few seconds share one. */
@@ -152,7 +164,10 @@ export async function lifecycleEvent(
   if (op === "heartbeat") {
     const rows = await db
       .update(artifactLeases)
-      .set({ heartbeatAt: now, expiresAt: new Date(now.getTime() + LEASE_TTL_SECONDS * 1000) })
+      .set({
+        heartbeatAt: now,
+        expiresAt: sql`${now}::timestamptz + (case when ${artifactLeases.kind} = 'future' then ${FUTURE_TTL_SECONDS} else ${LEASE_TTL_SECONDS} end) * interval '1 second'`,
+      })
       .where(
         and(
           eq(artifactLeases.orgId, who.orgId),
@@ -165,7 +180,9 @@ export async function lifecycleEvent(
   }
   for (const raw of paths) {
     const path = cleanRunPath(raw);
-    const file = await fileAt(db, who.orgId, who.machineId, path);
+    const all = await registrationsAt(db, who.orgId, who.machineId, path);
+    // Seal names the caller's own registration; every other event the file's latest one.
+    const file = op === "seal" ? (all.find((r) => r.agentId === who.agentId) ?? all[0]) : all[0];
     if (!file) {
       out.push({ path, state: "unregistered", note: "not registered on this computer: register_files it first" });
       continue;
@@ -201,23 +218,29 @@ export async function lifecycleEvent(
         kind: op,
         stage: stage?.slice(0, 200) ?? null,
         generation: file.version,
-        expiresAt: new Date(now.getTime() + LEASE_TTL_SECONDS * 1000),
+        expiresAt: new Date(now.getTime() + (op === "future" ? FUTURE_TTL_SECONDS : LEASE_TTL_SECONDS) * 1000),
       });
     } else if (op === "release") {
+      // Its own leases on any registration of the file, open or expired (a holder back from silence releases).
       await db
         .update(artifactLeases)
         .set({ status: "released", releasedAt: now })
         .where(
           and(
-            eq(artifactLeases.runFileId, file.id),
+            inArray(
+              artifactLeases.runFileId,
+              all.map((r) => r.id),
+            ),
             eq(artifactLeases.holderAgentId, who.agentId),
-            eq(artifactLeases.status, "open"),
+            inArray(artifactLeases.status, ["open", "expired"]),
           ),
         );
     } else if (op === "pin") {
-      // Any agent may protect a file; only a person undoes it (in review).
-      if (file.state !== "protected" && file.state !== "deleted")
-        await transition(db, file, "protected", actor, "agent_pinned");
+      // Any agent may protect a file, every registration of it; only a person undoes it (in review). A pin on a
+      // file the collector reserved cancels the reservation unless the computer already has it.
+      for (const r of all)
+        if (r.state !== "protected" && r.state !== "deleted")
+          await transition(db, r, "protected", actor, "agent_pinned");
     }
     const [now2] = await db.select({ state: runFiles.state }).from(runFiles).where(eq(runFiles.id, file.id));
     out.push({ path, state: now2?.state ?? file.state });
@@ -279,15 +302,15 @@ export function fileLifecycleTool(
 }
 
 /**
- * Lease housekeeping before a cycle: a lease whose run ended is released (the run can no longer read: that is
- * evidence); a lease whose heartbeat stopped while its run is still open is `expired` (§6: nothing is proven, its
+ * Lease housekeeping before a cycle: a read or write lease whose run ended is released (the run can no longer read:
+ * that is evidence; a `future` lease is for a later run and stays until released or expired); a lease whose heartbeat stopped while its run is still open is `expired` (§6: nothing is proven, its
  * file goes to review).
  */
 export async function settleLeases(db: Database, orgId: string, now = new Date()) {
   const released = await db.execute(sql`
     update ${artifactLeases} l set status = 'released', released_at = ${now}
     from ${agentRuns} r
-    where l.org_id = ${orgId} and l.status = 'open' and l.holder_run_id = r.id
+    where l.org_id = ${orgId} and l.status = 'open' and l.holder_run_id = r.id and l.kind <> 'future'
       and r.status::text in (${sql.join(
         FINISHED_RUNS.map((s) => sql`${s}`),
         sql`, `,
@@ -347,10 +370,16 @@ export async function factsFor(
   const out = new Map<string, ArtifactFacts>();
   if (files.length === 0) return out;
   const ids = files.map((f) => f.id);
-  const leases = await db.select().from(artifactLeases).where(inArray(artifactLeases.runFileId, ids));
   const reviews = await db.select().from(storageReviewItems).where(inArray(storageReviewItems.runFileId, ids));
+  // Every registration of the same paths: one file has one row per run that registered it.
   const others = await db
-    .select({ id: runFiles.id, path: runFiles.path, machineId: runFiles.machineId, role: runFiles.role })
+    .select({
+      id: runFiles.id,
+      path: runFiles.path,
+      machineId: runFiles.machineId,
+      role: runFiles.role,
+      state: runFiles.state,
+    })
     .from(runFiles)
     .where(
       and(
@@ -361,10 +390,21 @@ export async function factsFor(
         ),
       ),
     );
+  const leases = await db
+    .select()
+    .from(artifactLeases)
+    .where(
+      inArray(
+        artifactLeases.runFileId,
+        others.map((o) => o.id),
+      ),
+    );
   const scopes = await db.select().from(storageScopes).where(eq(storageScopes.orgId, orgId));
   const now = context.now ?? Date.now();
   for (const f of files) {
-    const mine = leases.filter((l) => l.runFileId === f.id);
+    const same = others.filter((o) => o.path === f.path && (o.machineId === f.machineId || o.machineId === null));
+    const sameIds = new Set(same.map((o) => o.id));
+    const mine = leases.filter((l) => sameIds.has(l.runFileId));
     const open = mine.filter((l) => l.status === "open");
     const review = reviews.find((r) => r.runFileId === f.id);
     const scope = scopeFor(scopes, f);
@@ -378,14 +418,8 @@ export async function factsFor(
       openReaders: open.filter((l) => l.kind === "read").length,
       futureStages: open.filter((l) => l.kind === "future").length,
       expiredLeases: mine.filter((l) => l.status === "expired").length,
-      otherRegistrationKeeps: others.some(
-        (o) =>
-          o.id !== f.id &&
-          o.path === f.path &&
-          (o.machineId === f.machineId || o.machineId === null) &&
-          o.role !== "scratch" &&
-          o.role !== "derived",
-      ),
+      otherRegistrationKeeps: same.some((o) => o.id !== f.id && o.role !== "scratch" && o.role !== "derived"),
+      siblingBlocks: same.filter((o) => o.id !== f.id && SIBLING_BLOCKING.includes(o.state)).length,
       review:
         review?.status === "open" ||
         review?.status === "kept" ||
@@ -491,8 +525,19 @@ export async function runStorageGc(
         or(inArray(runFiles.state, ["sealed", "released", "unknown"]), inArray(runFiles.id, reviewDeletes)),
       ),
     )
-    .orderBy(runFiles.sealedAt)
+    // Least recently looked at first, so files that stay (outside any folder, held, shadow) never starve new ones.
+    .orderBy(sql`${runFiles.gcCheckedAt} asc nulls first`, runFiles.sealedAt)
     .limit(budget.files * 4);
+  if (candidates.length > 0)
+    await db
+      .update(runFiles)
+      .set({ gcCheckedAt: new Date(now) })
+      .where(
+        inArray(
+          runFiles.id,
+          candidates.map((c) => c.id),
+        ),
+      );
   const facts = await factsFor(db, orgId, candidates, {
     machinePosix: posix,
     pressure,
@@ -564,19 +609,37 @@ export async function runStorageGc(
     return cycle;
   }
   // Reserve each, then send them, grouped by the agent that made them (it runs as that agent, in its folder).
-  const reserved: typeof live = [];
+  const reserved: ((typeof live)[number] & { token: string })[] = [];
   for (const r of live) {
     const token = Bun.randomUUIDv7();
     if (await reserve(db, r.file, token)) {
-      reserved.push({ ...r, file: { ...r.file, state: "reserved", version: r.file.version + 1 } });
+      reserved.push({ ...r, token, file: { ...r.file, state: "reserved", version: r.file.version + 1 } });
       cycle.reserved++;
     }
   }
   const byAgent = new Map<string, typeof reserved>();
   for (const r of reserved) byAgent.set(r.file.agentId, [...(byAgent.get(r.file.agentId) ?? []), r]);
   const receipts = new Map<string, string[]>();
-  for (const [agentId, rows] of byAgent) {
-    if (options.signal?.aborted) break;
+  for (const [agentId, claimed] of byAgent) {
+    if (options.signal?.aborted) {
+      for (const r of claimed)
+        await transition(db, r.file, "released", "collector", "interrupted", { reservedToken: null });
+      continue;
+    }
+    // Checked again right before the computer is asked: still ours, nobody took a lease, pinned or decided it.
+    const rows: typeof claimed = [];
+    for (const r of claimed) {
+      const fresh = await stillReserved(db, r.file.id, r.token);
+      if (fresh === "gone") continue;
+      if (fresh === "held") {
+        const [row] = await db.select().from(runFiles).where(eq(runFiles.id, r.file.id));
+        if (row?.state === "reserved")
+          await transition(db, row, "released", "collector", "held_after_reserve", { reservedToken: null });
+        continue;
+      }
+      rows.push({ ...r, file: fresh });
+    }
+    if (rows.length === 0) continue;
     const [agent] = await db
       .select({ id: agents.id, handle: agents.handle, name: agents.name })
       .from(agents)
@@ -653,9 +716,7 @@ export async function runStorageGc(
           .where(eq(fileCleanups.id, id));
       const note = receipts.get(r.file.runId) ?? [];
       if (status === "done" || status === "skipped") {
-        await transition(db, r.file, "deleted", "collector", status === "done" ? "removed" : "already_gone", {
-          reservedToken: null,
-        });
+        await markRemoved(db, r.file, status === "done" ? "removed" : "already_gone");
         if (status === "done") {
           cycle.removed++;
           cycle.logicalBytes += r.file.size ?? 0;
@@ -685,6 +746,67 @@ export async function runStorageGc(
   }
   await postReceipts(db, orgId, receipts, cycle);
   return cycle;
+}
+
+/**
+ * A reserved file as it stands now: the row when it is still ours and nothing holds it, `held` when a lease, a pin,
+ * a decision or another registration being written appeared since, `gone` when the claim is no longer ours.
+ */
+async function stillReserved(db: Database, id: string, token: string): Promise<RunFile | "held" | "gone"> {
+  const [row] = await db.select().from(runFiles).where(eq(runFiles.id, id));
+  if (!row || row.reservedToken !== token) return "gone";
+  if (row.state !== "reserved") return "held";
+  const same = await db
+    .select({ id: runFiles.id, state: runFiles.state, role: runFiles.role })
+    .from(runFiles)
+    .where(
+      and(
+        eq(runFiles.orgId, row.orgId),
+        eq(runFiles.path, row.path),
+        row.machineId ? eq(runFiles.machineId, row.machineId) : isNull(runFiles.machineId),
+      ),
+    );
+  if (
+    same.some(
+      (o) => o.id !== row.id && (SIBLING_BLOCKING.includes(o.state) || (o.role !== "scratch" && o.role !== "derived")),
+    )
+  )
+    return "held";
+  const [lease] = await db
+    .select({ id: artifactLeases.id })
+    .from(artifactLeases)
+    .where(
+      and(
+        inArray(
+          artifactLeases.runFileId,
+          same.map((o) => o.id),
+        ),
+        inArray(artifactLeases.status, ["open", "expired"]),
+      ),
+    )
+    .limit(1);
+  return lease ? "held" : row;
+}
+
+/**
+ * The computer removed it (or found it gone): the registry says so, whatever changed meanwhile. A pin or a decision
+ * that came after the file was sent can't bring the bytes back; the journal records that it came too late.
+ */
+async function markRemoved(db: Database, file: RunFile, code: "removed" | "already_gone") {
+  if (await transition(db, file, "deleted", "collector", code, { reservedToken: null })) return;
+  const [now] = await db.select().from(runFiles).where(eq(runFiles.id, file.id));
+  if (now && now.state !== "deleted")
+    await transition(
+      db,
+      now,
+      "deleted",
+      "collector",
+      `${code}_after_late_change`,
+      { reservedToken: null },
+      {
+        lateState: now.state,
+      },
+    );
 }
 
 /** One quiet line per run in the agent's own conversation (§15): never wakes it, never news to people. */
@@ -819,7 +941,12 @@ export async function decideStorageReview(
     else if (action === "keep") await transition(db, file, "kept", actor, "person_kept");
     else if (action === "archive") await transition(db, file, "kept", actor, "person_archive_requested");
     else if (action === "restore") await transition(db, file, "sealed", actor, "person_restored");
-    else if (action === "delete" && file.machineId) machinesToRun.add(file.machineId);
+    else if (action === "delete") {
+      // A person changing their mind: a file they kept or protected goes back to review, now approved for removal.
+      if (file.state === "kept" || file.state === "protected")
+        await transition(db, file, "review", actor, "person_delete");
+      if (file.machineId) machinesToRun.add(file.machineId);
+    }
     results.push({ id: item.id, ok: true });
   }
   for (const m of machinesToRun) await scheduleGc(db, orgId, m);
