@@ -12285,6 +12285,60 @@
   },
   "storage": {
     "title": "Archiviazione",
+    "guardian": {
+      "title": "Guardiano dello spazio",
+      "intro": "Pulisce i file temporanei degli agenti mentre lavorano: solo i file di lavoro che hanno finito e che nessuno usa più, nelle cartelle che autorizzi. Consegne, prove e tutto ciò che è incerto restano. I file incerti ti aspettano qui sotto.",
+      "on": "Pulizia mentre gli agenti lavorano",
+      "off": "Spento: non viene rimosso nulla",
+      "turnOff": "Spegni",
+      "turnOn": "Accendi",
+      "holdBack": "Trattenersi mentre gli agenti usano il computer",
+      "resume": "Smetti di trattenerti",
+      "figures": "Cosa è stato pulito",
+      "unlinked": "File rimossi",
+      "logical": "La loro dimensione registrata",
+      "allocated": "Blocchi del disco misurati prima della rimozione",
+      "freeDelta_one": "Variazione dello spazio libero in {{count}} giro misurato (intero disco)",
+      "freeDelta_many": "Variazione dello spazio libero in {{count}} giri misurati (intero disco)",
+      "freeDelta_other": "Variazione dello spazio libero in {{count}} giri misurati (intero disco)",
+      "shadow": "La modalità ombra avrebbe rimosso",
+      "shadowValue_one": "{{count}} file, {{size}} in tutto",
+      "shadowValue_many": "{{count}} file, {{size}} in tutto",
+      "shadowValue_other": "{{count}} file, {{size}} in tutto",
+      "moved": "Spostati",
+      "movedValue": "{{archived}} archiviati, {{relocated}} trasferiti",
+      "computers": "Computer degli agenti",
+      "mode": {
+        "normal": "Normale",
+        "elevated": "Poco spazio: pulizia un po’ maggiore",
+        "critical": "Quasi pieno: più pulizia, stessa protezione",
+        "performance": "Trattenuto per gli agenti"
+      },
+      "folders": "Cartelle autorizzate",
+      "foldersIntro": "Solo i file in queste cartelle vengono puliti senza chiedertelo. Inizia con la modalità ombra: mostra cosa verrebbe tolto e non rimuove nulla.",
+      "computer": "Dispositivo",
+      "folder": "Cartella, relativa allo spazio di lavoro degli agenti",
+      "addFolder": "Autorizza cartella",
+      "removeFolder": "Ritira",
+      "scopeMode": {
+        "shadow": "Ombra: solo resoconto",
+        "enforce": "Pulisci"
+      },
+      "review": "Revisione",
+      "reviewCount_one": "{{count}} file ti aspetta",
+      "reviewCount_many": "{{count}} file ti aspettano",
+      "reviewCount_other": "{{count}} file ti aspettano",
+      "reviewNone": "Niente attende una decisione.",
+      "action": {
+        "keep": "Mantieni",
+        "protect": "Proteggi",
+        "archive": "Archivia",
+        "delete": "Elimina",
+        "restore": "Annulla decisione"
+      },
+      "receipts": "Ultime ricevute",
+      "shadowReceipt": "Verrebbe rimosso (ombra)"
+    },
     "clean": {
       "title": "Pulisci lo spazio di lavoro",
       "intro": "Ciò che le attività concluse hanno lasciato sui computer degli agenti. Consegne, prove e tutto ciò che non ha spiegazione restano. Scegli tu quali file temporanei pulire.",
@@ -16353,6 +16407,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Costo per successo verificato",
+      "intro": "Ultimi 30 giorni. Un successo è un'attività i cui criteri di accettazione sono stati spuntati da una persona e che nessuno ha riaperto da allora. Ogni esecuzione conta nel costo.",
+      "perSuccess": "{{cost}} per successo",
+      "unknown": "Costo sconosciuto",
+      "noSuccess": "Ancora nessun successo verificato",
+      "line": "{{runs}} esecuzioni · {{successes}} verificate · {{failed}} non riuscite · {{retries}} nuovi tentativi"
+    },
     "signedOut": "Disconnesso",
     "whose": "di {{name}}",
     "serves": {
@@ -16419,14 +16481,6 @@
       "oldSub": "Consumi di prima che l'account venisse registrato",
       "ofMonth": "{{percent}} del mese",
       "shareLabel": "{{source}}: {{percent}} del mese"
-    },
-    "costPerSuccess": {
-      "title": "Costo per successo verificato",
-      "intro": "Ultimi 30 giorni. Un successo è un'attività i cui criteri di accettazione sono stati spuntati da una persona e che nessuno ha riaperto da allora. Ogni esecuzione conta nel costo.",
-      "perSuccess": "{{cost}} per successo",
-      "unknown": "Costo sconosciuto",
-      "noSuccess": "Ancora nessun successo verificato",
-      "line": "{{runs}} esecuzioni · {{successes}} verificate · {{failed}} non riuscite · {{retries}} nuovi tentativi"
     }
   },
   "budget": {

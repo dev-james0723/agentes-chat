@@ -11438,6 +11438,54 @@
   },
   "storage": {
     "title": "Penyimpanan",
+    "guardian": {
+      "title": "Penjaga penyimpanan",
+      "intro": "Membersihkan file sementara agen selagi mereka bekerja: hanya file kerja yang sudah selesai dan tidak dipakai siapa pun lagi, di folder yang kamu izinkan. Hasil kerja, bukti, dan apa pun yang belum pasti tetap disimpan. File yang belum pasti menunggumu di bawah.",
+      "on": "Membersihkan selagi agen bekerja",
+      "off": "Dimatikan: tidak ada yang dihapus",
+      "turnOff": "Matikan",
+      "turnOn": "Nyalakan",
+      "holdBack": "Menahan diri selagi agen butuh komputernya",
+      "resume": "Berhenti menahan diri",
+      "figures": "Yang sudah dibersihkan",
+      "unlinked": "File dihapus",
+      "logical": "Ukuran tercatatnya",
+      "allocated": "Blok disk yang diukur sebelum dihapus",
+      "freeDelta_other": "Perubahan ruang kosong selama {{count}} putaran terukur (seluruh disk)",
+      "shadow": "Mode bayangan akan menghapus",
+      "shadowValue_other": "{{count}} file, {{size}}",
+      "moved": "Dipindahkan",
+      "movedValue": "{{archived}} diarsipkan, {{relocated}} dipindahkan",
+      "computers": "Komputer",
+      "mode": {
+        "normal": "Biasa",
+        "elevated": "Ruang hampir habis: membersihkan sedikit lebih banyak",
+        "critical": "Hampir penuh: membersihkan lebih banyak, perlindungan tetap sama",
+        "performance": "Ditahan demi agen"
+      },
+      "folders": "Folder yang diizinkan",
+      "foldersIntro": "Hanya file di dalam folder ini yang dibersihkan tanpa bertanya kepadamu. Mulailah dengan mode bayangan: mode ini menunjukkan apa yang akan dihapus tanpa menghapus apa pun.",
+      "computer": "Komputer",
+      "folder": "Folder, relatif terhadap ruang kerja agen",
+      "addFolder": "Izinkan folder",
+      "removeFolder": "Cabut",
+      "scopeMode": {
+        "shadow": "Bayangan: hanya melaporkan",
+        "enforce": "Bersihkan"
+      },
+      "review": "Tinjauan",
+      "reviewCount_other": "{{count}} file menunggumu",
+      "reviewNone": "Tidak ada yang menunggu keputusan.",
+      "action": {
+        "keep": "Simpan",
+        "protect": "Lindungi",
+        "archive": "Arsipkan",
+        "delete": "Hapus",
+        "restore": "Batalkan keputusan"
+      },
+      "receipts": "Tanda terima terbaru",
+      "shadowReceipt": "Akan dihapus (bayangan)"
+    },
     "clean": {
       "title": "Bersihkan ruang kerja",
       "intro": "Yang ditinggalkan tugas yang sudah selesai di komputer agen. Hasil kerja, bukti, dan apa pun yang tidak jelas gunanya tetap disimpan. Kamu memilih file sementara mana yang dibersihkan.",
@@ -15366,6 +15414,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Biaya per keberhasilan terverifikasi",
+      "intro": "30 hari terakhir. Keberhasilan adalah tugas yang kriteria penerimaannya dicentang seseorang dan tidak dibuka kembali sejak itu. Setiap proses dihitung dalam biaya.",
+      "perSuccess": "{{cost}} per keberhasilan",
+      "unknown": "Biaya tidak diketahui",
+      "noSuccess": "Belum ada keberhasilan terverifikasi",
+      "line": "{{runs}} proses · {{successes}} terverifikasi · {{failed}} gagal · {{retries}} percobaan ulang"
+    },
     "signedOut": "Sudah keluar",
     "whose": "Milik {{name}}",
     "serves": {
@@ -15434,14 +15490,6 @@
       "oldSub": "Pemakaian dari sebelum akun dicatat",
       "ofMonth": "{{percent}} dari bulan ini",
       "shareLabel": "{{source}}: {{percent}} dari bulan ini"
-    },
-    "costPerSuccess": {
-      "title": "Biaya per keberhasilan terverifikasi",
-      "intro": "30 hari terakhir. Keberhasilan adalah tugas yang kriteria penerimaannya dicentang seseorang dan tidak dibuka kembali sejak itu. Setiap proses dihitung dalam biaya.",
-      "perSuccess": "{{cost}} per keberhasilan",
-      "unknown": "Biaya tidak diketahui",
-      "noSuccess": "Belum ada keberhasilan terverifikasi",
-      "line": "{{runs}} proses · {{successes}} terverifikasi · {{failed}} gagal · {{retries}} percobaan ulang"
     }
   },
   "budget": {

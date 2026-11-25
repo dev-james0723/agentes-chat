@@ -12076,7 +12076,7 @@ export const en = {
     guardian: {
       title: "Storage Guardian",
       intro:
-        "Cleans agents' temporary files while they work: only scratch they finished and nobody still uses, in folders you authorize. Deliverables, evidence and anything uncertain stay; uncertain files wait for you below.",
+        "Cleans agents' temporary files while they work: only scratch they finished and nobody still uses, in folders you authorize. Deliverables, evidence and anything uncertain stay. Uncertain files wait for you below.",
       on: "Cleaning as agents work",
       off: "Switched off: nothing is removed",
       turnOff: "Switch off",

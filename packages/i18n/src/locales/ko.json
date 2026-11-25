@@ -11378,6 +11378,54 @@
   },
   "storage": {
     "title": "저장 공간",
+    "guardian": {
+      "title": "저장 공간 지킴이",
+      "intro": "에이전트가 작업하는 동안 임시 파일을 정리합니다. 작업이 끝났고 아무도 쓰지 않는 임시 파일만, 허용한 폴더 안에서 정리합니다. 결과물, 증거, 확실하지 않은 것은 남습니다. 확실하지 않은 파일은 아래에서 결정을 기다립니다.",
+      "on": "에이전트가 작업하는 동안 정리 중",
+      "off": "꺼짐: 아무것도 삭제하지 않음",
+      "turnOff": "끄기",
+      "turnOn": "켜기",
+      "holdBack": "에이전트가 컴퓨터를 쓰는 동안 물러나기",
+      "resume": "물러나기 중단",
+      "figures": "정리한 내용",
+      "unlinked": "삭제한 파일",
+      "logical": "등록된 크기",
+      "allocated": "삭제 전에 측정한 디스크 블록",
+      "freeDelta_other": "측정한 {{count}}회 동안의 여유 공간 변화 (디스크 전체)",
+      "shadow": "섀도 모드였다면 삭제했을 항목",
+      "shadowValue_other": "파일 {{count}}개, {{size}}",
+      "moved": "이동함",
+      "movedValue": "보관 {{archived}}개, 위치 이동 {{relocated}}개",
+      "computers": "컴퓨터",
+      "mode": {
+        "normal": "보통",
+        "elevated": "공간 부족: 조금 더 정리하는 중",
+        "critical": "거의 가득 참: 더 정리하되 보호는 그대로",
+        "performance": "에이전트를 위해 물러남"
+      },
+      "folders": "허용한 폴더",
+      "foldersIntro": "이 폴더 안의 파일만 묻지 않고 정리합니다. 섀도 모드로 시작하세요. 무엇이 삭제될지 보여 주기만 하고 아무것도 지우지 않습니다.",
+      "computer": "컴퓨터",
+      "folder": "폴더 (에이전트 작업 공간 기준 경로)",
+      "addFolder": "폴더 허용",
+      "removeFolder": "철회",
+      "scopeMode": {
+        "shadow": "섀도: 보고만 함",
+        "enforce": "정리"
+      },
+      "review": "검토",
+      "reviewCount_other": "파일 {{count}}개가 결정을 기다립니다",
+      "reviewNone": "결정을 기다리는 항목이 없습니다.",
+      "action": {
+        "keep": "유지",
+        "protect": "보호",
+        "archive": "보관",
+        "delete": "삭제",
+        "restore": "결정 취소"
+      },
+      "receipts": "최근 기록",
+      "shadowReceipt": "삭제 예정 (섀도)"
+    },
     "clean": {
       "title": "작업 공간 정리",
       "intro": "끝난 작업이 에이전트의 컴퓨터에 남긴 것입니다. 결과물, 증거, 용도를 알 수 없는 파일은 남습니다. 정리할 임시 파일은 직접 고릅니다.",
@@ -15304,6 +15352,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "검증된 성공당 비용",
+      "intro": "최근 30일. 성공은 사람이 인수 조건을 체크했고 그 후 아무도 다시 열지 않은 작업입니다. 모든 실행이 비용에 포함됩니다.",
+      "perSuccess": "성공당 {{cost}}",
+      "unknown": "비용 알 수 없음",
+      "noSuccess": "아직 검증된 성공이 없습니다",
+      "line": "실행 {{runs}}회 · 검증 {{successes}} · 실패 {{failed}} · 재시도 {{retries}}"
+    },
     "signedOut": "로그아웃됨",
     "whose": "{{name}}의 계정",
     "serves": {
@@ -15372,14 +15428,6 @@
       "oldSub": "계정이 기록되기 전의 사용량",
       "ofMonth": "이번 달의 {{percent}}",
       "shareLabel": "{{source}}: 이번 달의 {{percent}}"
-    },
-    "costPerSuccess": {
-      "title": "검증된 성공당 비용",
-      "intro": "최근 30일. 성공은 사람이 인수 조건을 체크했고 그 후 아무도 다시 열지 않은 작업입니다. 모든 실행이 비용에 포함됩니다.",
-      "perSuccess": "성공당 {{cost}}",
-      "unknown": "비용 알 수 없음",
-      "noSuccess": "아직 검증된 성공이 없습니다",
-      "line": "실행 {{runs}}회 · 검증 {{successes}} · 실패 {{failed}} · 재시도 {{retries}}"
     }
   },
   "budget": {

@@ -12120,9 +12120,9 @@ export const ptBR = {
   storage: {
     title: "Armazenamento",
     guardian: {
-      title: "Storage Guardian",
+      title: "Guardião do armazenamento",
       intro:
-        "Limpa os arquivos temporários dos agentes enquanto trabalham: só o rascunho que terminaram e que ninguém usa mais, nas pastas que você autoriza. Entregas, evidências e o que for incerto ficam; o incerto espera por você aqui embaixo.",
+        "Limpa os arquivos temporários dos agentes enquanto trabalham: só o rascunho que terminaram e que ninguém usa mais, nas pastas que você autoriza. Entregas, evidências e o que for incerto ficam. O incerto espera por você aqui embaixo.",
       on: "Limpando enquanto os agentes trabalham",
       off: "Desligado: nada é removido",
       turnOff: "Desligar",
@@ -12142,7 +12142,7 @@ export const ptBR = {
       movedValue: "{{archived}} arquivados, {{relocated}} realocados",
       computers: "Computadores",
       mode: {
-        normal: "Normal",
+        normal: "Padrão",
         elevated: "Pouco espaço: limpando um pouco mais",
         critical: "Quase cheio: limpando mais, protegendo igual",
         performance: "Segurado para os agentes",

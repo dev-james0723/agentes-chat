@@ -12706,6 +12706,63 @@
   },
   "storage": {
     "title": "Miejsce na dane",
+    "guardian": {
+      "title": "Strażnik pamięci",
+      "intro": "Sprząta pliki tymczasowe agentów w trakcie ich pracy: tylko robocze pliki, które są już skończone i których nikt nie używa, w folderach, na które pozwolisz. Rezultaty, dowody i wszystko niepewne zostają. Niepewne pliki czekają na ciebie niżej.",
+      "on": "Sprząta w trakcie pracy agentów",
+      "off": "Wyłączony: nic nie jest usuwane",
+      "turnOff": "Wyłącz",
+      "turnOn": "Włącz",
+      "holdBack": "Wstrzymaj się, gdy agenci potrzebują komputera",
+      "resume": "Przestań się wstrzymywać",
+      "figures": "Co posprzątano",
+      "unlinked": "Usunięte pliki",
+      "logical": "Ich zarejestrowany rozmiar",
+      "allocated": "Bloki dysku zmierzone przed usunięciem",
+      "freeDelta_one": "Zmiana wolnego miejsca w {{count}} zmierzonej rundzie (cały dysk)",
+      "freeDelta_few": "Zmiana wolnego miejsca w {{count}} zmierzonych rundach (cały dysk)",
+      "freeDelta_many": "Zmiana wolnego miejsca w {{count}} zmierzonych rundach (cały dysk)",
+      "freeDelta_other": "Zmiana wolnego miejsca w {{count}} zmierzonej rundy (cały dysk)",
+      "shadow": "Tryb cienia usunąłby",
+      "shadowValue_one": "{{count}} plik, {{size}}",
+      "shadowValue_few": "{{count}} pliki, {{size}}",
+      "shadowValue_many": "{{count}} plików, {{size}}",
+      "shadowValue_other": "{{count}} pliku, {{size}}",
+      "moved": "Przeniesione",
+      "movedValue": "{{archived}} w archiwum, {{relocated}} przeniesionych",
+      "computers": "Komputery",
+      "mode": {
+        "normal": "Normalny",
+        "elevated": "Mało miejsca: sprzątanie trochę więcej",
+        "critical": "Prawie pełny: więcej sprzątania, ta sama ochrona",
+        "performance": "Wstrzymany dla agentów"
+      },
+      "folders": "Dozwolone foldery",
+      "foldersIntro": "Tylko pliki w tych folderach są sprzątane bez pytania cię. Zacznij od trybu cienia: pokazuje, co by zniknęło, i niczego nie usuwa.",
+      "computer": "Komputer",
+      "folder": "Folder względem przestrzeni roboczej agentów",
+      "addFolder": "Zezwól na folder",
+      "removeFolder": "Cofnij zgodę",
+      "scopeMode": {
+        "shadow": "Cień: tylko raport",
+        "enforce": "Sprzątaj"
+      },
+      "review": "Przegląd",
+      "reviewCount_one": "{{count}} plik czeka na ciebie",
+      "reviewCount_few": "{{count}} pliki czekają na ciebie",
+      "reviewCount_many": "{{count}} plików czeka na ciebie",
+      "reviewCount_other": "{{count}} pliku czeka na ciebie",
+      "reviewNone": "Nic nie czeka na decyzję.",
+      "action": {
+        "keep": "Zachowaj",
+        "protect": "Chroń",
+        "archive": "Archiwizuj",
+        "delete": "Usuń",
+        "restore": "Cofnij decyzję"
+      },
+      "receipts": "Ostatnie potwierdzenia",
+      "shadowReceipt": "Usunąłby (cień)"
+    },
     "clean": {
       "title": "Porządki w przestrzeni roboczej",
       "intro": "To, co zakończone zadania zostawiły na komputerach agentów. Rezultaty, dowody i wszystko bez wyjaśnienia zostają. Ty wybierasz, które pliki tymczasowe usunąć.",
@@ -16847,6 +16904,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Koszt na zweryfikowany sukces",
+      "intro": "Ostatnie 30 dni. Sukces to zadanie, którego kryteria akceptacji zaznaczyła osoba i którego nikt od tego czasu nie otworzył ponownie. Każde uruchomienie wlicza się do kosztu.",
+      "perSuccess": "{{cost}} na sukces",
+      "unknown": "Koszt nieznany",
+      "noSuccess": "Brak zweryfikowanych sukcesów",
+      "line": "Uruchomienia: {{runs}} · zweryfikowane: {{successes}} · nieudane: {{failed}} · ponowienia: {{retries}}"
+    },
     "signedOut": "Wylogowane",
     "whose": "Należy do: {{name}}",
     "serves": {
@@ -16915,14 +16980,6 @@
       "oldSub": "Zużycie sprzed zarejestrowania konta",
       "ofMonth": "{{percent}} miesiąca",
       "shareLabel": "{{source}}: {{percent}} miesiąca"
-    },
-    "costPerSuccess": {
-      "title": "Koszt na zweryfikowany sukces",
-      "intro": "Ostatnie 30 dni. Sukces to zadanie, którego kryteria akceptacji zaznaczyła osoba i którego nikt od tego czasu nie otworzył ponownie. Każde uruchomienie wlicza się do kosztu.",
-      "perSuccess": "{{cost}} na sukces",
-      "unknown": "Koszt nieznany",
-      "noSuccess": "Brak zweryfikowanych sukcesów",
-      "line": "Uruchomienia: {{runs}} · zweryfikowane: {{successes}} · nieudane: {{failed}} · ponowienia: {{retries}}"
     }
   },
   "budget": {

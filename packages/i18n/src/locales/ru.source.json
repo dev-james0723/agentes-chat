@@ -62,6 +62,261 @@
   "openRouterFallback.routes": {
     "value": "Engineering: openrouter/auto-code · General: openrouter/auto"
   },
+  "globalModelRouter.title": {
+    "value": "Global Model Router"
+  },
+  "globalModelRouter.intro": {
+    "value": "Primary subscriptions run first. Eligible agents and routines fall back through OpenCode Go, verified free APIs, capped low-cost models, and approved direct API providers."
+  },
+  "globalModelRouter.cascade": {
+    "value": "Order: Subscriptions · OpenCode Go · Free APIs · Low-cost paid · Direct APIs · Bounded escalation"
+  },
+  "globalModelRouter.refresh": {
+    "value": "Refresh"
+  },
+  "globalModelRouter.syncCatalog": {
+    "value": "Sync catalog"
+  },
+  "globalModelRouter.syncing": {
+    "value": "Syncing catalog"
+  },
+  "globalModelRouter.unknown": {
+    "value": "Unknown"
+  },
+  "globalModelRouter.freeCap": {
+    "value": "US$0 (free or included)"
+  },
+  "globalModelRouter.states.loading": {
+    "value": "Loading router status"
+  },
+  "globalModelRouter.states.disconnected": {
+    "value": "No fallback API lanes connected"
+  },
+  "globalModelRouter.states.serverDisabled": {
+    "value": "Disabled by server policy"
+  },
+  "globalModelRouter.states.disabled": {
+    "value": "Disabled. Subscriptions only"
+  },
+  "globalModelRouter.states.authorization_needed": {
+    "value": "Authorization needed. Check provider key"
+  },
+  "globalModelRouter.states.stale_catalog": {
+    "value": "Catalog expired. Sync catalog to verify offers"
+  },
+  "globalModelRouter.states.unverified": {
+    "value": "Waiting for verified catalog and key"
+  },
+  "globalModelRouter.states.eligible": {
+    "value": "Ready. Guarded before dispatch"
+  },
+  "globalModelRouter.states.quota_warning": {
+    "value": "Approaching quota or monthly budget threshold"
+  },
+  "globalModelRouter.states.rate_limited": {
+    "value": "Rate limited. Waiting for window reset"
+  },
+  "globalModelRouter.states.provider_outage": {
+    "value": "Provider unavailable. Routing to next eligible lane"
+  },
+  "globalModelRouter.states.incompatible": {
+    "value": "Skipped for incompatible tools or modalities"
+  },
+  "globalModelRouter.states.privacy_blocked": {
+    "value": "Blocked by data retention or region policy"
+  },
+  "globalModelRouter.states.budget_held": {
+    "value": "Paused. Unresolved budget hold or cap reached"
+  },
+  "globalModelRouter.states.needs_owner": {
+    "value": "Waiting for workspace owner approval"
+  },
+  "globalModelRouter.states.recovered": {
+    "value": "Recovered to primary subscription"
+  },
+  "globalModelRouter.lanes.opencode_go": {
+    "value": "OpenCode Go plan"
+  },
+  "globalModelRouter.lanes.free_api": {
+    "value": "Free API pool"
+  },
+  "globalModelRouter.lanes.paid_low_cost": {
+    "value": "Low-cost paid"
+  },
+  "globalModelRouter.lanes.direct_api": {
+    "value": "Direct vendor API"
+  },
+  "globalModelRouter.lanes.paid_dynamic": {
+    "value": "Dynamic auto router"
+  },
+  "globalModelRouter.entitlements.subscription_go": {
+    "value": "Go subscription ($0 extra)"
+  },
+  "globalModelRouter.entitlements.free_only": {
+    "value": "Free tier only ($0 cap)"
+  },
+  "globalModelRouter.entitlements.paid_capped": {
+    "value": "Paid with monthly cap"
+  },
+  "globalModelRouter.policy.heading": {
+    "value": "Workspace routing policy"
+  },
+  "globalModelRouter.policy.enable": {
+    "value": "Save policy"
+  },
+  "globalModelRouter.policy.disable": {
+    "value": "Disable router"
+  },
+  "globalModelRouter.policy.enabledLabel": {
+    "value": "Enable Global Model Router fallback"
+  },
+  "globalModelRouter.policy.killSwitchLabel": {
+    "value": "Emergency kill switch (block all fallback dispatches)"
+  },
+  "globalModelRouter.policy.maxEscalations": {
+    "value": "Max quality escalations per turn (0 to 2)"
+  },
+  "globalModelRouter.policy.maxRetries": {
+    "value": "Max transport retries per route (0 to 1)"
+  },
+  "globalModelRouter.policy.optOutAgents": {
+    "value": "Opted-out agent IDs (inherit router when empty)"
+  },
+  "globalModelRouter.policy.warnThresholds": {
+    "value": "Emit budget alerts at 50%, 80%, and 95%"
+  },
+  "globalModelRouter.accounts.caption": {
+    "value": "Configured provider lanes and quota windows"
+  },
+  "globalModelRouter.accounts.empty": {
+    "value": "No provider lanes configured yet."
+  },
+  "globalModelRouter.accounts.configureHeading": {
+    "value": "Configure provider lane"
+  },
+  "globalModelRouter.accounts.provider": {
+    "value": "Model provider"
+  },
+  "globalModelRouter.accounts.lane": {
+    "value": "Routing lane"
+  },
+  "globalModelRouter.accounts.entitlement": {
+    "value": "Billing mode"
+  },
+  "globalModelRouter.accounts.key": {
+    "value": "Dedicated provider key"
+  },
+  "globalModelRouter.accounts.chooseKey": {
+    "value": "Select a dedicated key"
+  },
+  "globalModelRouter.accounts.cloudflareAccount": {
+    "value": "Cloudflare 32-hex Account ID"
+  },
+  "globalModelRouter.accounts.cap": {
+    "value": "Monthly cap (USD)"
+  },
+  "globalModelRouter.accounts.models": {
+    "value": "Allowed concrete model IDs (one per line)"
+  },
+  "globalModelRouter.accounts.zdr": {
+    "value": "Require zero data retention (ZDR)"
+  },
+  "globalModelRouter.accounts.save": {
+    "value": "Save lane"
+  },
+  "globalModelRouter.accounts.columns.provider": {
+    "value": "API provider"
+  },
+  "globalModelRouter.accounts.columns.lane": {
+    "value": "Lane"
+  },
+  "globalModelRouter.accounts.columns.state": {
+    "value": "State"
+  },
+  "globalModelRouter.accounts.columns.budget": {
+    "value": "Spent / cap"
+  },
+  "globalModelRouter.accounts.columns.quota": {
+    "value": "Daily quota"
+  },
+  "globalModelRouter.accounts.columns.reset": {
+    "value": "Window / observed"
+  },
+  "globalModelRouter.catalog.summary": {
+    "value": "Catalog offers: {{eligible}} eligible · {{total}} recorded"
+  },
+  "globalModelRouter.catalog.caption": {
+    "value": "Qualified API model offers"
+  },
+  "globalModelRouter.catalog.columns.model": {
+    "value": "Model ID"
+  },
+  "globalModelRouter.catalog.columns.provider": {
+    "value": "API provider"
+  },
+  "globalModelRouter.catalog.columns.lane": {
+    "value": "Lane"
+  },
+  "globalModelRouter.catalog.columns.status": {
+    "value": "Eligibility"
+  },
+  "globalModelRouter.catalog.columns.context": {
+    "value": "Context window"
+  },
+  "globalModelRouter.receipts.caption": {
+    "value": "Recent routing receipts and verified quality"
+  },
+  "globalModelRouter.receipts.empty": {
+    "value": "No fallback dispatches recorded in this period."
+  },
+  "globalModelRouter.receipts.reconcileNoSend": {
+    "value": "Release hold"
+  },
+  "globalModelRouter.receipts.columns.requested": {
+    "value": "Requested model"
+  },
+  "globalModelRouter.receipts.columns.actual": {
+    "value": "Actual model"
+  },
+  "globalModelRouter.receipts.columns.lane": {
+    "value": "Lane"
+  },
+  "globalModelRouter.receipts.columns.cost": {
+    "value": "Actual / reserved"
+  },
+  "globalModelRouter.receipts.columns.quality": {
+    "value": "Quality"
+  },
+  "globalModelRouter.receipts.columns.state": {
+    "value": "State"
+  },
+  "globalModelRouter.receipts.verified": {
+    "value": "Verified"
+  },
+  "globalModelRouter.receipts.unverified": {
+    "value": "Failed check"
+  },
+  "globalModelRouter.metrics.caption": {
+    "value": "Cost per verified success and latency"
+  },
+  "globalModelRouter.metrics.columns.model": {
+    "value": "Model ID"
+  },
+  "globalModelRouter.metrics.columns.successes": {
+    "value": "Verified / attempts"
+  },
+  "globalModelRouter.metrics.columns.costPerSuccess": {
+    "value": "Cost per verified success"
+  },
+  "globalModelRouter.metrics.columns.latency": {
+    "value": "p50 / p95 latency"
+  },
+  "globalModelRouter.benchmarkSummary": {
+    "value": "Latest benchmark: {{tasks}} tasks · {{models}} models"
+  },
+  "globalModelRouter.error": {
+    "value": "Could not update Global Model Router settings. Check the key, cap, and allowed models."
+  },
   "app.name": {
     "value": "agentes"
   },
@@ -3283,6 +3538,24 @@
   },
   "onboarding.keyInvalid.openrouter": {
     "value": "OpenRouter keys start with sk-or-v1-. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.groq": {
+    "value": "Groq keys start with gsk_. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.cloudflare": {
+    "value": "Paste the whole Cloudflare Workers AI token, with no spaces. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.opencode": {
+    "value": "Paste the whole OpenCode API key, with no spaces. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.tencent": {
+    "value": "Paste the whole Tencent Hunyuan API key, with no spaces. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.xiaomi": {
+    "value": "Paste the whole Xiaomi MiMo API key, with no spaces. Check it and paste it again."
+  },
+  "onboarding.keyInvalid.nvidia": {
+    "value": "NVIDIA NIM keys start with nvapi-. Check it and paste it again."
   },
   "onboarding.keyFromOther": {
     "value": "Is it from another provider?"
@@ -28469,6 +28742,135 @@
   "storage.title": {
     "value": "Storage"
   },
+  "storage.guardian.title": {
+    "value": "Storage Guardian"
+  },
+  "storage.guardian.intro": {
+    "value": "Cleans agents' temporary files while they work: only scratch they finished and nobody still uses, in folders you authorize. Deliverables, evidence and anything uncertain stay. Uncertain files wait for you below."
+  },
+  "storage.guardian.on": {
+    "value": "Cleaning as agents work"
+  },
+  "storage.guardian.off": {
+    "value": "Switched off: nothing is removed"
+  },
+  "storage.guardian.turnOff": {
+    "value": "Switch off"
+  },
+  "storage.guardian.turnOn": {
+    "value": "Switch on"
+  },
+  "storage.guardian.holdBack": {
+    "value": "Hold back while agents need the computer"
+  },
+  "storage.guardian.resume": {
+    "value": "Stop holding back"
+  },
+  "storage.guardian.figures": {
+    "value": "What was cleaned"
+  },
+  "storage.guardian.unlinked": {
+    "value": "Files removed"
+  },
+  "storage.guardian.logical": {
+    "value": "Their registered size"
+  },
+  "storage.guardian.allocated": {
+    "value": "Disk blocks measured before removal"
+  },
+  "storage.guardian.freeDelta": {
+    "value": {
+      "one": "Free-space change over {{count}} measured round (whole disk)",
+      "other": "Free-space change over {{count}} measured rounds (whole disk)"
+    }
+  },
+  "storage.guardian.shadow": {
+    "value": "Shadow mode would have removed"
+  },
+  "storage.guardian.shadowValue": {
+    "value": {
+      "one": "{{count}} file, {{size}}",
+      "other": "{{count}} files, {{size}}"
+    }
+  },
+  "storage.guardian.moved": {
+    "value": "Moved"
+  },
+  "storage.guardian.movedValue": {
+    "value": "{{archived}} archived, {{relocated}} relocated"
+  },
+  "storage.guardian.computers": {
+    "value": "Computers"
+  },
+  "storage.guardian.mode.normal": {
+    "value": "Normal"
+  },
+  "storage.guardian.mode.elevated": {
+    "value": "Space is short: cleaning a little more"
+  },
+  "storage.guardian.mode.critical": {
+    "value": "Nearly full: cleaning more, protecting the same"
+  },
+  "storage.guardian.mode.performance": {
+    "value": "Held back for the agents"
+  },
+  "storage.guardian.folders": {
+    "value": "Authorized folders"
+  },
+  "storage.guardian.foldersIntro": {
+    "value": "Only files inside these folders are cleaned without asking you. Start with shadow: it shows what would go and removes nothing."
+  },
+  "storage.guardian.computer": {
+    "value": "Computer"
+  },
+  "storage.guardian.folder": {
+    "value": "Folder, relative to the agents' workspace"
+  },
+  "storage.guardian.addFolder": {
+    "value": "Authorize folder"
+  },
+  "storage.guardian.removeFolder": {
+    "value": "Withdraw"
+  },
+  "storage.guardian.scopeMode.shadow": {
+    "value": "Shadow: report only"
+  },
+  "storage.guardian.scopeMode.enforce": {
+    "value": "Clean"
+  },
+  "storage.guardian.review": {
+    "value": "Review"
+  },
+  "storage.guardian.reviewCount": {
+    "value": {
+      "one": "{{count}} file waits for you",
+      "other": "{{count}} files wait for you"
+    }
+  },
+  "storage.guardian.reviewNone": {
+    "value": "Nothing waits for a decision."
+  },
+  "storage.guardian.action.keep": {
+    "value": "Keep"
+  },
+  "storage.guardian.action.protect": {
+    "value": "Protect"
+  },
+  "storage.guardian.action.archive": {
+    "value": "Archive"
+  },
+  "storage.guardian.action.delete": {
+    "value": "Delete"
+  },
+  "storage.guardian.action.restore": {
+    "value": "Undo decision"
+  },
+  "storage.guardian.receipts": {
+    "value": "Latest receipts"
+  },
+  "storage.guardian.shadowReceipt": {
+    "value": "Would remove (shadow)"
+  },
   "storage.clean.title": {
     "value": "Clean workspace"
   },
@@ -38106,6 +38508,24 @@
   "peopleUsage.actions.see": {
     "value": "See their usage"
   },
+  "usageViews.costPerSuccess.title": {
+    "value": "Cost per verified success"
+  },
+  "usageViews.costPerSuccess.intro": {
+    "value": "Last 30 days. A success is a task whose acceptance criteria a person checked and nobody reopened since. Every run counts toward cost."
+  },
+  "usageViews.costPerSuccess.perSuccess": {
+    "value": "{{cost}} per success"
+  },
+  "usageViews.costPerSuccess.unknown": {
+    "value": "Cost unknown"
+  },
+  "usageViews.costPerSuccess.noSuccess": {
+    "value": "No verified success yet"
+  },
+  "usageViews.costPerSuccess.line": {
+    "value": "{{runs}} runs · {{successes}} verified · {{failed}} failed · {{retries}} retries"
+  },
   "usageViews.signedOut": {
     "value": "Signed out"
   },
@@ -38781,11 +39201,11 @@
   "chat.notice.wakeSkipped": {
     "value": "{{name}}'s mention didn't reach {{agents}}"
   },
-  "chat.notice.cleanupReceipt": {
-    "value": "Storage Guardian cleaned up {{name}}'s temporary files"
-  },
   "chat.notice.wakeSkippedAnon": {
     "value": "{{name}}'s mention didn't reach another agent"
+  },
+  "chat.notice.cleanupReceipt": {
+    "value": "Storage Guardian cleaned up {{name}}'s temporary files"
   },
   "chat.notice.wakeSkippedAudience": {
     "value": "Only some people may call {{agents}}, and this work of {{name}} didn't come from one of them. Someone who may call {{agents}} can pass the request on."
@@ -45447,296 +45867,5 @@
   },
   "feedback.offer.askFirst": {
     "value": "Ask before sending"
-  },
-  "usageViews.costPerSuccess.title": {
-    "value": "Cost per verified success"
-  },
-  "usageViews.costPerSuccess.intro": {
-    "value": "Last 30 days. A success is a task whose acceptance criteria a person checked and nobody reopened since. Every run counts toward cost."
-  },
-  "usageViews.costPerSuccess.perSuccess": {
-    "value": "{{cost}} per success"
-  },
-  "usageViews.costPerSuccess.unknown": {
-    "value": "Cost unknown"
-  },
-  "usageViews.costPerSuccess.noSuccess": {
-    "value": "No verified success yet"
-  },
-  "usageViews.costPerSuccess.line": {
-    "value": "{{runs}} runs · {{successes}} verified · {{failed}} failed · {{retries}} retries"
-  },
-  "globalModelRouter.title": {
-    "value": "Global Model Router"
-  },
-  "globalModelRouter.intro": {
-    "value": "Primary subscriptions run first. Eligible agents and routines fall back through OpenCode Go, verified free APIs, capped low-cost models, and approved direct API providers."
-  },
-  "globalModelRouter.cascade": {
-    "value": "Order: Subscriptions · OpenCode Go · Free APIs · Low-cost paid · Direct APIs · Bounded escalation"
-  },
-  "globalModelRouter.refresh": {
-    "value": "Refresh"
-  },
-  "globalModelRouter.syncCatalog": {
-    "value": "Sync catalog"
-  },
-  "globalModelRouter.syncing": {
-    "value": "Syncing catalog"
-  },
-  "globalModelRouter.unknown": {
-    "value": "Unknown"
-  },
-  "globalModelRouter.freeCap": {
-    "value": "US$0 (free or included)"
-  },
-  "globalModelRouter.states.loading": {
-    "value": "Loading router status"
-  },
-  "globalModelRouter.states.disconnected": {
-    "value": "No fallback API lanes connected"
-  },
-  "globalModelRouter.states.serverDisabled": {
-    "value": "Disabled by server policy"
-  },
-  "globalModelRouter.states.disabled": {
-    "value": "Disabled. Subscriptions only"
-  },
-  "globalModelRouter.states.authorization_needed": {
-    "value": "Authorization needed. Check provider key"
-  },
-  "globalModelRouter.states.stale_catalog": {
-    "value": "Catalog expired. Sync catalog to verify offers"
-  },
-  "globalModelRouter.states.unverified": {
-    "value": "Waiting for verified catalog and key"
-  },
-  "globalModelRouter.states.eligible": {
-    "value": "Ready. Guarded before dispatch"
-  },
-  "globalModelRouter.states.quota_warning": {
-    "value": "Approaching quota or monthly budget threshold"
-  },
-  "globalModelRouter.states.rate_limited": {
-    "value": "Rate limited. Waiting for window reset"
-  },
-  "globalModelRouter.states.provider_outage": {
-    "value": "Provider unavailable. Routing to next eligible lane"
-  },
-  "globalModelRouter.states.incompatible": {
-    "value": "Skipped for incompatible tools or modalities"
-  },
-  "globalModelRouter.states.privacy_blocked": {
-    "value": "Blocked by data retention or region policy"
-  },
-  "globalModelRouter.states.budget_held": {
-    "value": "Paused. Unresolved budget hold or cap reached"
-  },
-  "globalModelRouter.states.needs_owner": {
-    "value": "Waiting for workspace owner approval"
-  },
-  "globalModelRouter.states.recovered": {
-    "value": "Recovered to primary subscription"
-  },
-  "globalModelRouter.lanes.opencode_go": {
-    "value": "OpenCode Go plan"
-  },
-  "globalModelRouter.lanes.free_api": {
-    "value": "Free API pool"
-  },
-  "globalModelRouter.lanes.paid_low_cost": {
-    "value": "Low-cost paid"
-  },
-  "globalModelRouter.lanes.direct_api": {
-    "value": "Direct vendor API"
-  },
-  "globalModelRouter.lanes.paid_dynamic": {
-    "value": "Dynamic auto router"
-  },
-  "globalModelRouter.entitlements.subscription_go": {
-    "value": "Go subscription ($0 extra)"
-  },
-  "globalModelRouter.entitlements.free_only": {
-    "value": "Free tier only ($0 cap)"
-  },
-  "globalModelRouter.entitlements.paid_capped": {
-    "value": "Paid with monthly cap"
-  },
-  "globalModelRouter.policy.heading": {
-    "value": "Workspace routing policy"
-  },
-  "globalModelRouter.policy.enable": {
-    "value": "Save policy"
-  },
-  "globalModelRouter.policy.disable": {
-    "value": "Disable router"
-  },
-  "globalModelRouter.policy.enabledLabel": {
-    "value": "Enable Global Model Router fallback"
-  },
-  "globalModelRouter.policy.killSwitchLabel": {
-    "value": "Emergency kill switch (block all fallback dispatches)"
-  },
-  "globalModelRouter.policy.maxEscalations": {
-    "value": "Max quality escalations per turn (0 to 2)"
-  },
-  "globalModelRouter.policy.maxRetries": {
-    "value": "Max transport retries per route (0 to 1)"
-  },
-  "globalModelRouter.policy.optOutAgents": {
-    "value": "Opted-out agent IDs (inherit router when empty)"
-  },
-  "globalModelRouter.policy.warnThresholds": {
-    "value": "Emit budget alerts at 50%, 80%, and 95%"
-  },
-  "globalModelRouter.accounts.caption": {
-    "value": "Configured provider lanes and quota windows"
-  },
-  "globalModelRouter.accounts.empty": {
-    "value": "No provider lanes configured yet."
-  },
-  "globalModelRouter.accounts.configureHeading": {
-    "value": "Configure provider lane"
-  },
-  "globalModelRouter.accounts.provider": {
-    "value": "Model provider"
-  },
-  "globalModelRouter.accounts.lane": {
-    "value": "Routing lane"
-  },
-  "globalModelRouter.accounts.entitlement": {
-    "value": "Billing mode"
-  },
-  "globalModelRouter.accounts.key": {
-    "value": "Dedicated provider key"
-  },
-  "globalModelRouter.accounts.chooseKey": {
-    "value": "Select a dedicated key"
-  },
-  "globalModelRouter.accounts.cloudflareAccount": {
-    "value": "Cloudflare 32-hex Account ID"
-  },
-  "globalModelRouter.accounts.cap": {
-    "value": "Monthly cap (USD)"
-  },
-  "globalModelRouter.accounts.models": {
-    "value": "Allowed concrete model IDs (one per line)"
-  },
-  "globalModelRouter.accounts.zdr": {
-    "value": "Require zero data retention (ZDR)"
-  },
-  "globalModelRouter.accounts.save": {
-    "value": "Save lane"
-  },
-  "globalModelRouter.accounts.columns.provider": {
-    "value": "API provider"
-  },
-  "globalModelRouter.accounts.columns.lane": {
-    "value": "Lane"
-  },
-  "globalModelRouter.accounts.columns.state": {
-    "value": "State"
-  },
-  "globalModelRouter.accounts.columns.budget": {
-    "value": "Spent / cap"
-  },
-  "globalModelRouter.accounts.columns.quota": {
-    "value": "Daily quota"
-  },
-  "globalModelRouter.accounts.columns.reset": {
-    "value": "Window / observed"
-  },
-  "globalModelRouter.catalog.summary": {
-    "value": "Catalog offers: {{eligible}} eligible · {{total}} recorded"
-  },
-  "globalModelRouter.catalog.caption": {
-    "value": "Qualified API model offers"
-  },
-  "globalModelRouter.catalog.columns.model": {
-    "value": "Model ID"
-  },
-  "globalModelRouter.catalog.columns.provider": {
-    "value": "API provider"
-  },
-  "globalModelRouter.catalog.columns.lane": {
-    "value": "Lane"
-  },
-  "globalModelRouter.catalog.columns.status": {
-    "value": "Eligibility"
-  },
-  "globalModelRouter.catalog.columns.context": {
-    "value": "Context window"
-  },
-  "globalModelRouter.receipts.caption": {
-    "value": "Recent routing receipts and verified quality"
-  },
-  "globalModelRouter.receipts.empty": {
-    "value": "No fallback dispatches recorded in this period."
-  },
-  "globalModelRouter.receipts.reconcileNoSend": {
-    "value": "Release hold"
-  },
-  "globalModelRouter.receipts.columns.requested": {
-    "value": "Requested model"
-  },
-  "globalModelRouter.receipts.columns.actual": {
-    "value": "Actual model"
-  },
-  "globalModelRouter.receipts.columns.lane": {
-    "value": "Lane"
-  },
-  "globalModelRouter.receipts.columns.cost": {
-    "value": "Actual / reserved"
-  },
-  "globalModelRouter.receipts.columns.quality": {
-    "value": "Quality"
-  },
-  "globalModelRouter.receipts.columns.state": {
-    "value": "State"
-  },
-  "globalModelRouter.receipts.verified": {
-    "value": "Verified"
-  },
-  "globalModelRouter.receipts.unverified": {
-    "value": "Failed check"
-  },
-  "globalModelRouter.metrics.caption": {
-    "value": "Cost per verified success and latency"
-  },
-  "globalModelRouter.metrics.columns.model": {
-    "value": "Model ID"
-  },
-  "globalModelRouter.metrics.columns.successes": {
-    "value": "Verified / attempts"
-  },
-  "globalModelRouter.metrics.columns.costPerSuccess": {
-    "value": "Cost per verified success"
-  },
-  "globalModelRouter.metrics.columns.latency": {
-    "value": "p50 / p95 latency"
-  },
-  "globalModelRouter.benchmarkSummary": {
-    "value": "Latest benchmark: {{tasks}} tasks · {{models}} models"
-  },
-  "globalModelRouter.error": {
-    "value": "Could not update Global Model Router settings. Check the key, cap, and allowed models."
-  },
-  "onboarding.keyInvalid.groq": {
-    "value": "Groq keys start with gsk_. Check it and paste it again."
-  },
-  "onboarding.keyInvalid.cloudflare": {
-    "value": "Paste the whole Cloudflare Workers AI token, with no spaces. Check it and paste it again."
-  },
-  "onboarding.keyInvalid.opencode": {
-    "value": "Paste the whole OpenCode API key, with no spaces. Check it and paste it again."
-  },
-  "onboarding.keyInvalid.tencent": {
-    "value": "Paste the whole Tencent Hunyuan API key, with no spaces. Check it and paste it again."
-  },
-  "onboarding.keyInvalid.xiaomi": {
-    "value": "Paste the whole Xiaomi MiMo API key, with no spaces. Check it and paste it again."
-  },
-  "onboarding.keyInvalid.nvidia": {
-    "value": "NVIDIA NIM keys start with nvapi-. Check it and paste it again."
   }
 }

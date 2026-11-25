@@ -11450,6 +11450,54 @@
   },
   "storage": {
     "title": "存储",
+    "guardian": {
+      "title": "存储守护",
+      "intro": "在智能体工作时清理它们的临时文件：只清理它们已用完、也没人再使用的草稿文件，并且只在你授权的文件夹中。交付物、证据和不确定的内容都会保留。不确定的文件在下方等你处理。",
+      "on": "智能体工作时同步清理",
+      "off": "已关闭：不会删除任何内容",
+      "turnOff": "关闭",
+      "turnOn": "开启",
+      "holdBack": "智能体需要电脑时暂缓",
+      "resume": "不再暂缓",
+      "figures": "已清理的内容",
+      "unlinked": "已删除的文件",
+      "logical": "登记的大小",
+      "allocated": "删除前测得的磁盘块",
+      "freeDelta_other": "{{count}} 轮测量中的可用空间变化（整个磁盘）",
+      "shadow": "影子模式本会删除",
+      "shadowValue_other": "{{count}} 个文件，{{size}}",
+      "moved": "已移动",
+      "movedValue": "已归档 {{archived}} 个，已迁移 {{relocated}} 个",
+      "computers": "电脑",
+      "mode": {
+        "normal": "常规",
+        "elevated": "空间不足：多清理一些",
+        "critical": "几乎已满：清理更多，保护不变",
+        "performance": "为智能体暂缓"
+      },
+      "folders": "已授权的文件夹",
+      "foldersIntro": "只有这些文件夹中的文件会在不询问你的情况下被清理。先从影子模式开始：它只显示会删除什么，不会删除任何内容。",
+      "computer": "电脑",
+      "folder": "文件夹，相对于智能体的工作区",
+      "addFolder": "授权文件夹",
+      "removeFolder": "撤回",
+      "scopeMode": {
+        "shadow": "影子：仅报告",
+        "enforce": "清理"
+      },
+      "review": "审核",
+      "reviewCount_other": "{{count}} 个文件等你处理",
+      "reviewNone": "没有等待决定的内容。",
+      "action": {
+        "keep": "保留",
+        "protect": "保护",
+        "archive": "归档",
+        "delete": "删除",
+        "restore": "撤销决定"
+      },
+      "receipts": "最近的回执",
+      "shadowReceipt": "将会删除（影子）"
+    },
     "clean": {
       "title": "清理工作区",
       "intro": "已结束的任务在智能体电脑上留下的内容。交付物、证据和用途不明的文件都会保留。由你选择要清理哪些临时文件。",
@@ -15374,6 +15422,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "每次已验证成功的成本",
+      "intro": "最近 30 天。成功是指验收条件由人勾选、之后无人重新打开的任务。每次运行都计入成本。",
+      "perSuccess": "每次成功 {{cost}}",
+      "unknown": "成本未知",
+      "noSuccess": "还没有已验证的成功",
+      "line": "{{runs}} 次运行 · {{successes}} 个已验证 · {{failed}} 次失败 · {{retries}} 次重试"
+    },
     "signedOut": "已退出登录",
     "whose": "{{name}} 的",
     "serves": {
@@ -15436,14 +15492,6 @@
       "oldSub": "记录账号之前的用量",
       "ofMonth": "本月的 {{percent}}",
       "shareLabel": "{{source}}：本月的 {{percent}}"
-    },
-    "costPerSuccess": {
-      "title": "每次已验证成功的成本",
-      "intro": "最近 30 天。成功是指验收条件由人勾选、之后无人重新打开的任务。每次运行都计入成本。",
-      "perSuccess": "每次成功 {{cost}}",
-      "unknown": "成本未知",
-      "noSuccess": "还没有已验证的成功",
-      "line": "{{runs}} 次运行 · {{successes}} 个已验证 · {{failed}} 次失败 · {{retries}} 次重试"
     }
   },
   "budget": {

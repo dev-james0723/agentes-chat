@@ -58,7 +58,7 @@ describe("Storage Guardian (ADR 0213)", () => {
     state.storageReview = [item];
     await renderApp(`/org/${ORG_ID}/settings/storage`, { api: createFakeApi(state) });
     await settle(5);
-    expect(screen().getByText("Storage Guardian")).toBeTruthy();
+    expect(screen().getByText("Guardião do armazenamento")).toBeTruthy();
     expect(screen().getByText("Limpando enquanto os agentes trabalham")).toBeTruthy();
     expect(screen().getByText("Arquivos removidos")).toBeTruthy();
     expect(screen().getByText(/Blocos de disco medidos/)).toBeTruthy();

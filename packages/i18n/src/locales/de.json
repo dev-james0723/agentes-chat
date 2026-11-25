@@ -11845,6 +11845,57 @@
   },
   "storage": {
     "title": "Speicher",
+    "guardian": {
+      "title": "Speicherwächter",
+      "intro": "Räumt die temporären Dateien der Agenten auf, während sie arbeiten: nur Zwischendateien, die fertig sind und die niemand mehr nutzt, in Ordnern, die du freigibst. Ergebnisse, Nachweise und alles Ungeklärte bleiben. Ungeklärte Dateien warten unten auf dich.",
+      "on": "Räumt auf, während die Agenten arbeiten",
+      "off": "Ausgeschaltet: Es wird nichts entfernt",
+      "turnOff": "Ausschalten",
+      "turnOn": "Einschalten",
+      "holdBack": "Zurückhalten, solange die Agenten den Computer brauchen",
+      "resume": "Nicht mehr zurückhalten",
+      "figures": "Was aufgeräumt wurde",
+      "unlinked": "Entfernte Dateien",
+      "logical": "Ihre erfasste Größe",
+      "allocated": "Vor dem Entfernen gemessene Festplattenblöcke",
+      "freeDelta_one": "Änderung des freien Speichers über {{count}} gemessene Runde (ganze Festplatte)",
+      "freeDelta_other": "Änderung des freien Speichers über {{count}} gemessene Runden (ganze Festplatte)",
+      "shadow": "Der Schattenmodus hätte entfernt",
+      "shadowValue_one": "{{count}} Datei, {{size}}",
+      "shadowValue_other": "{{count}} Dateien, {{size}}",
+      "moved": "Verschoben",
+      "movedValue": "{{archived}} archiviert, {{relocated}} verlagert",
+      "computers": "Rechner",
+      "mode": {
+        "normal": "Standard",
+        "elevated": "Wenig Platz: Es wird etwas mehr aufgeräumt",
+        "critical": "Fast voll: Es wird mehr aufgeräumt, gleich viel geschützt",
+        "performance": "Für die Agenten zurückgehalten"
+      },
+      "folders": "Freigegebene Ordner",
+      "foldersIntro": "Nur Dateien in diesen Ordnern werden aufgeräumt, ohne dich zu fragen. Fang mit dem Schattenmodus an: Er zeigt, was weg würde, und entfernt nichts.",
+      "computer": "Rechner",
+      "folder": "Ordner, relativ zum Arbeitsbereich der Agenten",
+      "addFolder": "Ordner freigeben",
+      "removeFolder": "Zurückziehen",
+      "scopeMode": {
+        "shadow": "Schatten: nur berichten",
+        "enforce": "Aufräumen"
+      },
+      "review": "Prüfen",
+      "reviewCount_one": "{{count}} Datei wartet auf dich",
+      "reviewCount_other": "{{count}} Dateien warten auf dich",
+      "reviewNone": "Nichts wartet auf eine Entscheidung.",
+      "action": {
+        "keep": "Behalten",
+        "protect": "Schützen",
+        "archive": "Archivieren",
+        "delete": "Löschen",
+        "restore": "Entscheidung rückgängig machen"
+      },
+      "receipts": "Letzte Belege",
+      "shadowReceipt": "Würde entfernt (Schatten)"
+    },
     "clean": {
       "title": "Arbeitsbereich aufräumen",
       "intro": "Was beendete Aufgaben auf den Computern der Agenten hinterlassen haben. Ergebnisse, Nachweise und alles Ungeklärte bleiben. Du entscheidest, welche temporären Dateien entfernt werden.",
@@ -15845,6 +15896,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Kosten pro bestätigtem Erfolg",
+      "intro": "Letzte 30 Tage. Ein Erfolg ist eine Aufgabe, deren Abnahmekriterien eine Person abgehakt hat und die seitdem niemand wieder geöffnet hat. Jeder Lauf zählt zu den Kosten.",
+      "perSuccess": "{{cost}} pro Erfolg",
+      "unknown": "Kosten unbekannt",
+      "noSuccess": "Noch kein bestätigter Erfolg",
+      "line": "{{runs}} Läufe · {{successes}} bestätigt · {{failed}} fehlgeschlagen · {{retries}} Wiederholungen"
+    },
     "signedOut": "Abgemeldet",
     "whose": "von {{name}}",
     "serves": {
@@ -15915,14 +15974,6 @@
       "oldSub": "Verbrauch von vor der Erfassung des Kontos",
       "ofMonth": "{{percent}} des Monats",
       "shareLabel": "{{source}}: {{percent}} des Monats"
-    },
-    "costPerSuccess": {
-      "title": "Kosten pro bestätigtem Erfolg",
-      "intro": "Letzte 30 Tage. Ein Erfolg ist eine Aufgabe, deren Abnahmekriterien eine Person abgehakt hat und die seitdem niemand wieder geöffnet hat. Jeder Lauf zählt zu den Kosten.",
-      "perSuccess": "{{cost}} pro Erfolg",
-      "unknown": "Kosten unbekannt",
-      "noSuccess": "Noch kein bestätigter Erfolg",
-      "line": "{{runs}} Läufe · {{successes}} bestätigt · {{failed}} fehlgeschlagen · {{retries}} Wiederholungen"
     }
   },
   "budget": {
