@@ -12254,6 +12254,16 @@
       "list": "Servidores MCP conectados",
       "none": "Aquí aparecen los servidores MCP que conectes por su dirección."
     },
+    "hostMcp": {
+      "title": "Host MCP en tu ordenador",
+      "intro": "Usa un perfil Host MCP revisado en un ordenador de confianza. Solo el agente seleccionado obtiene acceso de lectura.",
+      "connectRead": "Conectar y conceder lectura",
+      "bindFailed": "No se confirmó la vinculación. Borra la selección, recarga la lista de perfiles y revisa el ordenador, la versión del perfil y el agente antes de reintentar.",
+      "grantUnconfirmed": "El perfil está vinculado, pero no se ha confirmado el acceso de lectura. Reintenta para este agente o borra la selección sin cambiar los permisos existentes. Tras recargar, elige la misma versión del perfil y el mismo agente.",
+      "retryRead": "Reintentar acceso de lectura",
+      "resetSelection": "Borrar selección",
+      "note": "La lista de permisos del ordenador sigue vigente. Verifica el acceso con una llamada real a una herramienta del agente."
+    },
     "addTitle": "Agregar conector",
     "catalogText": "Conéctalo una vez para {{org}}. Luego elige qué puede usar cada agente.",
     "catalog": "Conectores disponibles",

@@ -12196,6 +12196,19 @@ export const ptBR = {
       list: "Servidores MCP conectados",
       none: "Os servidores MCP que você conectar pelo endereço aparecem aqui.",
     },
+    hostMcp: {
+      title: "Host MCP no seu computador",
+      intro:
+        "Use um perfil Host MCP revisado em um computador confiável. Só o agente selecionado recebe acesso de leitura.",
+      connectRead: "Conectar e conceder leitura",
+      bindFailed:
+        "A vinculação não foi confirmada. Limpe a seleção, recarregue a lista de perfis e confira o computador, a versão do perfil e o agente antes de tentar novamente.",
+      grantUnconfirmed:
+        "O perfil está vinculado, mas o acesso de leitura não foi confirmado. Tente novamente para este agente ou limpe a seleção sem alterar as permissões existentes. Após recarregar, escolha a mesma versão do perfil e o mesmo agente.",
+      retryRead: "Tentar acesso de leitura novamente",
+      resetSelection: "Limpar seleção",
+      note: "A lista de permissões do computador continua válida. Verifique o acesso com uma chamada real de ferramenta do agente.",
+    },
     addTitle: "Adicionar conector",
     catalogText: "Conecte uma vez para a {{org}}. Depois escolha o que cada agente pode usar.",
     catalog: "Conectores disponíveis",

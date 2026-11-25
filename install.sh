@@ -427,9 +427,13 @@ wait_docker() {
 # Each change after asking (--yes doesn't ask).
 mac_docker() {
   # Where those put the docker command, often not on the PATH a piped script gets.
-  for d in /opt/homebrew/bin "$HOME/.orbstack/bin" /Applications/Docker.app/Contents/Resources/bin; do
-    if [ -d "$d" ]; then PATH=$PATH:$d; fi
-  done
+  # In an explicit --plan-only hermetic test, do not discover tools
+  # from the real Mac outside the caller's stubbed PATH.
+  if [ "$PLAN" != 1 ] || [ "${AGENTES_INSTALL_PLAN_HERMETIC:-0}" != 1 ]; then
+    for d in /opt/homebrew/bin "$HOME/.orbstack/bin" /Applications/Docker.app/Contents/Resources/bin; do
+      if [ -d "$d" ]; then PATH=$PATH:$d; fi
+    done
+  fi
   export PATH
   if DOCKER_VERSION=$(docker_version); then
     t_step "Docker $DOCKER_VERSION"
@@ -464,9 +468,11 @@ mac_colima() {
     "This installer runs agentes.chat on Docker, and this Mac doesn't have it." \
     "Install Docker Desktop, OrbStack or Colima, start it, and run this again (--yes installs Colima with Homebrew). Or, with no Docker, open the agentes.chat app: Use your own server, then Run agentes.chat on this Mac."
   BREW=$(command -v brew 2>/dev/null) || BREW=''
-  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-    if [ -z "$BREW" ] && [ -x "$b" ]; then BREW=$b; fi
-  done
+  if [ "$PLAN" != 1 ] || [ "${AGENTES_INSTALL_PLAN_HERMETIC:-0}" != 1 ]; then
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+      if [ -z "$BREW" ] && [ -x "$b" ]; then BREW=$b; fi
+    done
+  fi
   if [ "$PLAN" = 1 ]; then
     t_step "No Docker: installing Colima with Homebrew and starting it, once you say yes (--yes doesn't ask)"
   fi

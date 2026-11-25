@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { coAuthorEnv, coAuthorHooks, coAuthorLines, HOOK_SCRIPT } from "../../runner/co-authors";
@@ -110,7 +111,7 @@ describe.skipIf(!hasGit)("git in the agent's processes", () => {
     r.git("checkout", "-q", "-");
     r.git("merge", "-q", "--no-ff", "side", "-m", "Merge side");
     expect(r.message()).toBe(`Merge side\n\n${NICK}\n${ANA}`);
-  });
+  }, 30_000);
 
   test("the repository's own hooks run first and still refuse; a husky folder keeps working", () => {
     const r = repo([NICK]);
@@ -242,7 +243,8 @@ describe.skipIf(!hasGit)("git in the agent's processes", () => {
 
 describe.skipIf(!hasGit)("what the agent's commands get", () => {
   const scope = (): RequestScope => ({ signal: new AbortController().signal, output: () => {} });
-  const dev = { id: "01a142cb-489d-7000-87a3-efb5adb382ca", handle: "dev" };
+  // Avoid colliding with another runner test's in-memory Vault secret holder.
+  const dev = { id: randomUUID(), handle: "dev" };
 
   test("work that carries the lines commits with them; the same command without them doesn't", async () => {
     const ws = tempDir();

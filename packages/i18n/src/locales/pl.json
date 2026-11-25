@@ -12762,6 +12762,16 @@
       "list": "Połączone serwery MCP",
       "none": "Tu pojawiają się serwery MCP połączone przez ich adres."
     },
+    "hostMcp": {
+      "title": "Host MCP na Twoim komputerze",
+      "intro": "Użyj sprawdzonego profilu Host MCP na zaufanym komputerze. Tylko wybrany agent otrzyma dostęp do odczytu.",
+      "connectRead": "Połącz i przyznaj odczyt",
+      "bindFailed": "Powiązanie nie zostało potwierdzone. Wyczyść wybór, odśwież listę profili i sprawdź komputer, wersję profilu oraz agenta przed ponowną próbą.",
+      "grantUnconfirmed": "Profil jest powiązany, ale dostęp do odczytu nie został potwierdzony. Ponów próbę dla tego agenta lub wyczyść wybór bez zmiany istniejących uprawnień. Po odświeżeniu wybierz tę samą wersję profilu i tego samego agenta.",
+      "retryRead": "Ponów dostęp do odczytu",
+      "resetSelection": "Wyczyść wybór",
+      "note": "Lista dozwolonych zasobów komputera nadal obowiązuje. Sprawdź dostęp prawdziwym wywołaniem narzędzia przez agenta."
+    },
     "addTitle": "Dodaj konektor",
     "catalogText": "Połącz raz dla {{org}}. Potem wybierz, z czego może korzystać każdy agent.",
     "catalog": "Dostępne konektory",

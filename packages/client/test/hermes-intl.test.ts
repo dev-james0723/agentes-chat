@@ -45,7 +45,7 @@ test("the board's due label, relative time and the undo line still read without 
 
 test("without Intl.PluralRules, ordinals follow each language's rule", () => {
   for (const l of LOCALES)
-    for (const n of [1, 2, 3, 4, 8, 11, 12, 13, 21, 22, 23, 101, 111])
+    for (const n of [1, 2, 3, 4, 8, 11, 12, 13, 21, 22, 23, 101, 111, 113, 213])
       expect([l.code, n, ordinalForm(l.intl, n)]).toEqual([
         l.code,
         n,

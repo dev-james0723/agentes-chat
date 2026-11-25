@@ -12148,6 +12148,18 @@ export const en = {
       list: "Connected MCP servers",
       none: "MCP servers you connect by their address show up here.",
     },
+    hostMcp: {
+      title: "Host MCP on your computer",
+      intro: "Use a reviewed Host MCP profile on a trusted computer. Only the selected agent gets read access.",
+      connectRead: "Connect and grant read",
+      bindFailed:
+        "Binding was not confirmed. Clear the selection, reload the profile list, and review the computer, profile version and agent before retrying.",
+      grantUnconfirmed:
+        "The profile is bound, but read access is not confirmed. Retry read access for this agent, or clear the selection without changing existing permissions. After a reload, choose the same profile version and agent.",
+      retryRead: "Retry read access",
+      resetSelection: "Clear selection",
+      note: "The computer's allowlist still applies. Verify access with a real agent tool call.",
+    },
     addTitle: "Add connector",
     catalogText: "Connect once for {{org}}. Then choose what each agent can use.",
     catalog: "Available connectors",

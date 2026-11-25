@@ -11480,6 +11480,16 @@
       "list": "Server MCP yang terhubung",
       "none": "Server MCP yang kamu hubungkan lewat alamatnya muncul di sini."
     },
+    "hostMcp": {
+      "title": "Host MCP di komputer Anda",
+      "intro": "Gunakan profil Host MCP yang telah ditinjau di komputer tepercaya. Hanya agen yang dipilih mendapat akses baca.",
+      "connectRead": "Hubungkan dan beri akses baca",
+      "bindFailed": "Pengikatan belum dikonfirmasi. Hapus pilihan, muat ulang daftar profil, dan periksa komputer, versi profil, serta agen sebelum mencoba lagi.",
+      "grantUnconfirmed": "Profil telah diikat, tetapi akses baca belum dikonfirmasi. Coba lagi untuk agen ini atau hapus pilihan tanpa mengubah izin yang ada. Setelah memuat ulang, pilih versi profil dan agen yang sama.",
+      "retryRead": "Coba lagi akses baca",
+      "resetSelection": "Hapus pilihan",
+      "note": "Daftar izin komputer tetap berlaku. Verifikasi melalui pemanggilan alat nyata oleh agen."
+    },
     "addTitle": "Tambah konektor",
     "catalogText": "Hubungkan sekali untuk {{org}}. Lalu pilih apa yang bisa dipakai tiap agen.",
     "catalog": "Konektor yang tersedia",

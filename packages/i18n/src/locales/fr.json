@@ -12325,6 +12325,16 @@
       "list": "Serveurs MCP connectés",
       "none": "Les serveurs MCP que vous connectez par leur adresse s'affichent ici."
     },
+    "hostMcp": {
+      "title": "Host MCP sur votre ordinateur",
+      "intro": "Utilisez un profil Host MCP vérifié sur un ordinateur de confiance. Seul l’agent choisi obtient un accès en lecture.",
+      "connectRead": "Connecter et autoriser la lecture",
+      "bindFailed": "La liaison n’a pas été confirmée. Effacez la sélection, rechargez la liste des profils et vérifiez l’ordinateur, la version du profil et l’agent avant de réessayer.",
+      "grantUnconfirmed": "Le profil est lié, mais l’accès en lecture n’est pas confirmé. Réessayez pour cet agent ou effacez la sélection sans modifier les autorisations existantes. Après rechargement, choisissez la même version du profil et le même agent.",
+      "retryRead": "Réessayer l’accès en lecture",
+      "resetSelection": "Effacer la sélection",
+      "note": "Les autorisations de l’ordinateur restent en vigueur. Vérifiez l’accès par un véritable appel d’outil de l’agent."
+    },
     "addTitle": "Ajouter un connecteur",
     "catalogText": "Connectez une seule fois pour {{org}}. Choisissez ensuite ce que chaque agent peut utiliser.",
     "catalog": "Connecteurs disponibles",
