@@ -16,6 +16,7 @@ import {
 import {
   createQualifiedFoundryExecutor,
   type FoundryExecutionRequest,
+  FoundryExecutorError,
   type FoundryFrozenVersion,
   type FoundryRunnerExecutionRequest,
 } from "./foundry-executor";
@@ -98,7 +99,8 @@ export function createFoundryRuntimeService(
       authorityId: config.authorityId,
     }),
     evaluationTimeoutMs: 120000,
-    controlTimeoutMs: 5000,
+    // The ceiling the executor allows: a busy host answers docker slowly, and a timeout here fails closed.
+    controlTimeoutMs: 10000,
   });
   // Separate pools so long evaluations cannot starve calls, and one slot per workspace in each.
   const evaluations = createFoundryAdmission({ limit: 2, perOrg: 1 });
@@ -138,14 +140,15 @@ export function createFoundryRuntimeService(
   const methods: Record<string, FoundryRpcMethod> = {
     qualify: async () => executor.qualify(),
     evaluate: evaluations(
-      async ({ version, job }) => executor.evaluate(version as FoundryFrozenVersion, text(job)),
+      refusedBeforeStart(async ({ version, job }) => executor.evaluate(version as FoundryFrozenVersion, text(job))),
       ({ version }) => (version as { orgId?: unknown } | null)?.orgId,
     ),
     reconcileEvaluation: async ({ job }) => executor.reconcileEvaluation(text(job)),
     cancelEvaluation: async ({ job }) => executor.cancelEvaluation(text(job)),
     execute: executions(
-      async ({ request }, signal) =>
+      refusedBeforeStart(async ({ request }, signal) =>
         executor.execute({ ...(request as Omit<FoundryExecutionRequest, "abort">), abort: signal }),
+      ),
       ({ request }) => (request as { orgId?: unknown } | null)?.orgId,
     ),
     cancel: async ({ invocationId, fencingToken }) => executor.cancel(text(invocationId), fence(fencingToken)),
@@ -172,6 +175,23 @@ export function createFoundryRuntimeService(
       evaluationLedger.close();
       ledger.close();
     },
+  };
+}
+
+/**
+ * The runtime not qualified right now (`BLOCKED_SANDBOX`, thrown only by admission, before any runner call) is a
+ * refusal before anything started, like a full pool: answered as busy, so the caller retries or refunds instead of
+ * cancelling and holding an unknown outcome. Every later failure stays as it was, for reconciliation.
+ */
+export function refusedBeforeStart(method: FoundryRpcMethod): FoundryRpcMethod {
+  return async (input, signal) => {
+    try {
+      return await method(input, signal);
+    } catch (error) {
+      if (error instanceof FoundryExecutorError && error.code === "BLOCKED_SANDBOX")
+        throw new FoundryRuntimeBusyError();
+      throw error;
+    }
   };
 }
 
