@@ -14,7 +14,7 @@ import type {
   VaultKeysImportResult,
   VaultOverview,
 } from "../vault/types";
-import type { CleanWorkspace, HttpApi, OpenedWorkspace } from "./client";
+import type { CleanWorkspace, HttpApi, OpenedWorkspace, StorageGuardianView, StorageReviewItem } from "./client";
 import { ApiError, createFileRequester, createRequester, enc, type TransportOptions } from "./http";
 import type {
   AccountDeletionPlan,
@@ -1427,6 +1427,25 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       mine: async (orgId) =>
         (await request<{ suggestions: MySuggestion[] }>(`${org(orgId)}/join-requests/mine`)).suggestions,
       cancel: (orgId, id) => request<void>(`${org(orgId)}/join-requests/${enc(id)}`, { method: "DELETE" }),
+    },
+    storageGuardian: {
+      get: (orgId) => request<StorageGuardianView>(`${org(orgId)}/storage-guardian`),
+      settings: (orgId, input) =>
+        request<{ enabled: boolean; modeOverride: string | null }>(`${org(orgId)}/storage-guardian/settings`, {
+          method: "PUT",
+          json: input,
+        }),
+      addScope: (orgId, input) =>
+        request<{ id: string; root: string; mode: string }>(`${org(orgId)}/storage-guardian/scopes`, { json: input }),
+      removeScope: (orgId, scopeId) =>
+        request<void>(`${org(orgId)}/storage-guardian/scopes/${enc(scopeId)}`, { method: "DELETE" }),
+      review: async (orgId) =>
+        (await request<{ items: StorageReviewItem[] }>(`${org(orgId)}/storage-guardian/review`)).items,
+      decide: (orgId, ids, action) =>
+        request<{ results: { id: string; ok: boolean; note?: string }[] }>(
+          `${org(orgId)}/storage-guardian/review/decisions`,
+          { json: { ids, action } },
+        ),
     },
     cleanWorkspace: {
       get: (orgId) => request<CleanWorkspace>(`${org(orgId)}/clean-workspace`),

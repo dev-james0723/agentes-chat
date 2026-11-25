@@ -70,6 +70,7 @@ import { sandboxRoutes } from "./routes/app/sandboxes";
 import { secretRoutes } from "./routes/app/secrets";
 import { skillRoutes } from "./routes/app/skills";
 import { storageRoutes } from "./routes/app/storage";
+import { storageGuardianRoutes } from "./routes/app/storage-guardian";
 import { teamWeekRoutes } from "./routes/app/team-week";
 import { telemetryRoutes } from "./routes/app/telemetry";
 import { threadRoutes } from "./routes/app/threads";
@@ -228,6 +229,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", roleRoutes(deps));
     api.route("/app", storageRoutes(deps));
     api.route("/app", cleanWorkspaceRoutes(deps));
+    api.route("/app", storageGuardianRoutes(deps));
     api.route("/app", billingRoutes(deps));
     api.route("/app", artifactRoutes(deps));
     api.route("/app", issueRoutes(deps));

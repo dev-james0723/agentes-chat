@@ -38781,6 +38781,9 @@
   "chat.notice.wakeSkipped": {
     "value": "{{name}}'s mention didn't reach {{agents}}"
   },
+  "chat.notice.cleanupReceipt": {
+    "value": "Storage Guardian cleaned up {{name}}'s temporary files"
+  },
   "chat.notice.wakeSkippedAnon": {
     "value": "{{name}}'s mention didn't reach another agent"
   },

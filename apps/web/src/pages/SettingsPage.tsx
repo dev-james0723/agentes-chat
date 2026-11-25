@@ -97,6 +97,7 @@ import { MyFace, OrgLogoDialog, OrgMark } from "@/components/ProfilePhoto";
 import { KeyMismatch, KeyRefused, KeySite, ProviderKeySelect } from "@/components/ProviderKey";
 import { RolesSection } from "@/components/roles/RolesSection";
 import { SkillsSection } from "@/components/Skills";
+import { StorageGuardianSection } from "@/components/StorageGuardian";
 import { StorageSection } from "@/components/StorageSettings";
 import { TeamMemoryCard } from "@/components/TeamMemory";
 import { VoiceSettingsSection } from "@/components/VoiceSettings";
@@ -261,6 +262,7 @@ function Settings({
       {current === "storage" && (
         <>
           <StorageSection />
+          <StorageGuardianSection />
           <CleanWorkspaceSection />
         </>
       )}

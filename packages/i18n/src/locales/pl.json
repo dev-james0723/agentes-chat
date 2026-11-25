@@ -17159,6 +17159,7 @@
       "other": "Powiadomienie dla: {{name}}",
       "wakeSkipped": "Wzmianka od {{name}} nie dotarła do: {{agents}}",
       "wakeSkippedAnon": "Wzmianka {{name}} nie dotarła do innego agenta",
+      "cleanupReceipt": "Storage Guardian uporządkował pliki tymczasowe agenta {{name}}",
       "wakeSkippedAudience": "Tylko niektóre osoby mogą wywołać {{agents}}, a ta praca {{name}} nie pochodzi od żadnej z nich. Ktoś, kto może wywołać {{agents}}, może przekazać prośbę dalej.",
       "wakeSkippedCallable": "Ustawienia {{name}} nie pozwalają wywołać {{agents}} (inny projekt albo spoza listy agentów, których może wywołać). Osoba, która opiekuje się {{name}}, może to zmienić na stronie agenta.",
       "github": {

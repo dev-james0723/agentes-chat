@@ -1996,6 +1996,13 @@
       "when": 1795599204523,
       "tag": "0286_global_model_router",
       "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1795641731166,
+      "tag": "0287_storage_lifecycle",
+      "breakpoints": true
     }
   ]
 }

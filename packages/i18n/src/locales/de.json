@@ -16134,6 +16134,7 @@
       "other": "Hinweis für {{name}}",
       "wakeSkipped": "Die Erwähnung von {{name}} hat {{agents}} nicht erreicht",
       "wakeSkippedAnon": "Die Erwähnung von {{name}} hat keinen anderen Agenten erreicht",
+      "cleanupReceipt": "Storage Guardian hat die temporären Dateien von {{name}} aufgeräumt",
       "wakeSkippedAudience": "Nur bestimmte Personen dürfen {{agents}} aufrufen, und diese Arbeit von {{name}} kam von keiner von ihnen. Jemand, der {{agents}} aufrufen darf, kann die Anfrage weitergeben.",
       "wakeSkippedCallable": "Die Einstellungen von {{name}} erlauben nicht, {{agents}} aufzurufen (ein anderes Projekt oder nicht auf der Liste der aufrufbaren Agenten). Wer sich um {{name}} kümmert, kann das auf der Seite des Agenten ändern.",
       "github": {

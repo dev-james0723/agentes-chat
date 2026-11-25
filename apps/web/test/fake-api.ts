@@ -93,7 +93,9 @@ import type {
   SidebarView,
   SignInOptions,
   SpeechKey,
+  StorageGuardianView,
   StoragePlatform,
+  StorageReviewItem,
   StorageUsage,
   TaskManagerView,
   TaskSteps,
@@ -321,6 +323,8 @@ export interface FakeState {
   calls: { method: string; args: unknown[] }[];
   /** What the Clean workspace card reads (ADR 0201); unset = no computers and no reports. */
   cleanWorkspace?: CleanWorkspace;
+  storageGuardian?: StorageGuardianView;
+  storageReview?: StorageReviewItem[];
   context?: string;
   defaultCredentialId?: string | null;
   /** The workspace default agent budget (US$); 50 when unset. */
@@ -1336,6 +1340,45 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
     return budget > 0 ? Math.round((spent / budget) * 1000) / 10 : 0;
   };
   return {
+    storageGuardian: {
+      get: async () =>
+        state.storageGuardian ?? {
+          enabled: true,
+          modeOverride: null,
+          computers: [],
+          scopes: [],
+          states: {},
+          figures: {
+            unlinked: 0,
+            logicalBytes: 0,
+            allocatedBytes: 0,
+            freeDeltaBytes: 0,
+            measuredRounds: 0,
+            shadowFiles: 0,
+            shadowBytes: 0,
+            relocated: 0,
+            archived: 0,
+            openReview: 0,
+          },
+          recent: [],
+        },
+      settings: async (orgId, input) => {
+        log("storageGuardian.settings", orgId, input);
+        return { enabled: input.enabled ?? true, modeOverride: input.modeOverride ?? null };
+      },
+      addScope: async (orgId, input) => {
+        log("storageGuardian.addScope", orgId, input);
+        return { id: "s1", root: input.root, mode: input.mode ?? "shadow" };
+      },
+      removeScope: async (orgId, scopeId) => {
+        log("storageGuardian.removeScope", orgId, scopeId);
+      },
+      review: async () => state.storageReview ?? [],
+      decide: async (orgId, ids, action) => {
+        log("storageGuardian.decide", orgId, ids, action);
+        return { results: ids.map((id) => ({ id, ok: true })) };
+      },
+    },
     cleanWorkspace: {
       get: async () => state.cleanWorkspace ?? { computers: [], pending: 0, reports: [] },
       approve: async (orgId, reportId) => {

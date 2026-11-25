@@ -104,14 +104,14 @@ export async function approveCleanup(
 }
 
 /** What the computer answers for each file. `later`: over this round's byte budget, for the next job. */
-interface ScriptResult {
+export interface ScriptResult {
   path: string;
   status: "done" | "skipped" | "blocked" | "later";
   reason?: string;
   identity?: Record<string, unknown>;
   bytes?: number;
 }
-interface ScriptOutput {
+export interface ScriptOutput {
   freeBefore: number;
   freeAfter: number;
   results: ScriptResult[];
@@ -239,8 +239,11 @@ def check(f):
         if not stat.S_ISREG(st.st_mode): raise Refuse("not a regular file")
         if st.st_dev != dev: raise Refuse("on another disk")
         if st.st_nlink != 1: raise Refuse("has other names (hard links)")
-        if time.time() - st.st_mtime < 600: raise Refuse("changed in the last ten minutes")
-        if st.st_mtime > req["notAfter"]: raise Refuse("changed after the work ended: something else may use it now")
+        quiet = req.get("quiet", 600)
+        if time.time() - st.st_mtime < quiet: raise Refuse("changed in the last ten minutes" if quiet == 600 else "changed in the last %d seconds" % quiet)
+        if "notAfter" in f:
+            if st.st_mtime > f["notAfter"]: raise Refuse("changed after it was sealed: something else may use it now")
+        elif st.st_mtime > req["notAfter"]: raise Refuse("changed after the work ended: something else may use it now")
         name = real_name(dfd, parts[-1], st)
         identity = {"dev": st.st_dev, "ino": st.st_ino, "size": st.st_size, "mtimeNs": st.st_mtime_ns}
         if f.get("size") is not None and f["size"] != st.st_size: raise Refuse("its size changed since it was registered")
@@ -317,21 +320,30 @@ export function shellWord(s: string) {
  * the shell sees only letters, digits, `+`, `/` and `=`.
  */
 export function cleanupCommand(
-  files: { path: string; size?: number | null; sha256?: string | null }[],
+  files: { path: string; size?: number | null; sha256?: string | null; notAfter?: Date | null }[],
   notAfter: Date,
   maxBytes: number = CLEANUP_LIMITS.bytes,
+  /**
+   * Continuous cleanup (ADR 0213): `quiet` is how long the file must have been unchanged (ten minutes by default;
+   * shorter only for a file its writer sealed), `seconds` the round's time budget, `lowPriority` runs it under `nice`
+   * so it yields to the agents' own work.
+   */
+  options: { quiet?: number; seconds?: number; lowPriority?: boolean } = {},
 ) {
   const payload = {
-    seconds: CLEANUP_LIMITS.scriptSeconds,
+    seconds: options.seconds ?? CLEANUP_LIMITS.scriptSeconds,
     notAfter: Math.floor(notAfter.getTime() / 1000),
     maxBytes,
+    ...(options.quiet !== undefined ? { quiet: Math.max(30, options.quiet) } : {}),
     files: files.map((f) => ({
       path: f.path,
       ...(typeof f.size === "number" ? { size: f.size } : {}),
       ...(f.sha256 ? { sha256: f.sha256 } : {}),
+      ...(f.notAfter ? { notAfter: Math.floor(f.notAfter.getTime() / 1000) } : {}),
     })),
   };
-  return `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+  const python = `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+  return options.lowPriority ? `nice -n 19 ${python}` : python;
 }
 
 export function parseCleanupOutput(stdout: string): ScriptOutput | null {
@@ -382,6 +394,7 @@ export async function runFileCleanup(
       and(
         eq(fileCleanups.orgId, orgId),
         eq(fileCleanups.reportId, reportId),
+        eq(fileCleanups.source, "approved"),
         or(
           inArray(fileCleanups.status, ["approved", "unknown"]),
           and(eq(fileCleanups.status, "running"), lt(fileCleanups.executedAt, new Date(Date.now() - STALE_CLAIM_MS))),
