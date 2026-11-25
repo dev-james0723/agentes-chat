@@ -88,6 +88,7 @@ import type {
   ConnectorCatalog,
   ConsultationConversation,
   CostlyDecision,
+  CostPerSuccessReport,
   CreatedPersonalToken,
   Credential,
   CustomConnectStart,
@@ -713,6 +714,8 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         request<{ roleIds: string[] }>(`${org(orgId)}/invitations/${enc(id)}`, { method: "PATCH", json: { roleIds } }),
       usageReport: (orgId, since) => request<UsageReport>(`${org(orgId)}/usage/report`, { query: { since } }),
       planUsage: (orgId) => request<OrgPlanUsage>(`${org(orgId)}/usage/plans`),
+      costPerSuccess: (orgId, window = {}) =>
+        request<CostPerSuccessReport>(`${org(orgId)}/usage/cost-per-success`, { query: window }),
       peopleUsage: (orgId, period = {}) => request<PeopleUsage>(`${org(orgId)}/usage/people`, { query: period }),
       peopleUsageCsvUrl: (orgId, period = {}) => {
         const qs = new URLSearchParams(Object.entries(period).filter((e): e is [string, string] => !!e[1]));

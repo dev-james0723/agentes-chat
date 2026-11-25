@@ -7519,6 +7519,29 @@ export interface PlanAccountUsage extends PlanAccountInfo {
   equivalentUsd?: number | null;
 }
 
+/** One row of `GET …/usage/cost-per-success` (ADR 0207). Null money is unknown, never 0. */
+export interface CostPerSuccessRow {
+  runs: number;
+  failedRuns: number;
+  retries: number;
+  verifiedSuccesses: number;
+  tokens: number;
+  costUsd: number | null;
+  unknownCostRuns: number;
+  costPerSuccessUsd: number | null;
+  missing: "no_success" | "unknown_cost" | null;
+  /** The number in plain Hong Kong Chinese, from the server. */
+  text: string;
+}
+
+/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0207). */
+export interface CostPerSuccessReport {
+  from: string;
+  to: string;
+  groups: (CostPerSuccessRow & { agentId: string; agentName: string; brain: string; model: string | null })[];
+  total: CostPerSuccessRow;
+}
+
 /** `GET …/usage/plans`: every plan account by computer, and the API per agent this month. */
 export interface OrgPlanUsage {
   /** `YYYY-MM`. */

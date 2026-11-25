@@ -16072,6 +16072,14 @@
       "oldSub": "Uso de antes de que se registrara la cuenta",
       "ofMonth": "{{percent}} del mes",
       "shareLabel": "{{source}}: {{percent}} del mes"
+    },
+    "costPerSuccess": {
+      "title": "Costo por éxito verificado",
+      "intro": "Últimos 30 días. Un éxito es una tarea cuyos criterios de aceptación marcó una persona y que nadie reabrió desde entonces. Cada ejecución cuenta en el costo.",
+      "perSuccess": "{{cost}} por éxito",
+      "unknown": "Costo desconocido",
+      "noSuccess": "Aún no hay éxitos verificados",
+      "line": "{{runs}} ejecuciones · {{successes}} verificadas · {{failed}} fallidas · {{retries}} reintentos"
     }
   },
   "budget": {

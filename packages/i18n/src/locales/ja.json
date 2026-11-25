@@ -15120,6 +15120,14 @@
       "oldSub": "アカウントが記録される前の使用量",
       "ofMonth": "月の{{percent}}",
       "shareLabel": "{{source}}: 月の{{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "検証済み成功あたりのコスト",
+      "intro": "過去30日間。成功とは、受け入れ条件を人がチェックし、その後誰も再オープンしていないタスクです。すべての実行がコストに含まれます。",
+      "perSuccess": "成功あたり{{cost}}",
+      "unknown": "コスト不明",
+      "noSuccess": "検証済みの成功はまだありません",
+      "line": "実行{{runs}}回 · 検証済み{{successes}} · 失敗{{failed}} · 再試行{{retries}}"
     }
   },
   "budget": {

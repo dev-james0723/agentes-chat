@@ -15578,6 +15578,14 @@
       "oldSub": "Hesap kaydedilmeden önceki kullanım",
       "ofMonth": "Ayın {{percent}} kadarı",
       "shareLabel": "{{source}}: ayın {{percent}} kadarı"
+    },
+    "costPerSuccess": {
+      "title": "Doğrulanmış başarı başına maliyet",
+      "intro": "Son 30 gün. Başarı, kabul ölçütlerini bir kişinin işaretlediği ve o zamandan beri kimsenin yeniden açmadığı görevdir. Her çalıştırma maliyete dahildir.",
+      "perSuccess": "Başarı başına {{cost}}",
+      "unknown": "Maliyet bilinmiyor",
+      "noSuccess": "Henüz doğrulanmış başarı yok",
+      "line": "{{runs}} çalıştırma · {{successes}} doğrulandı · {{failed}} başarısız · {{retries}} yeniden deneme"
     }
   },
   "budget": {

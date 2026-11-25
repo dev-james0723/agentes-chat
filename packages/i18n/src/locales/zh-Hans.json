@@ -15176,6 +15176,14 @@
       "oldSub": "记录账号之前的用量",
       "ofMonth": "本月的 {{percent}}",
       "shareLabel": "{{source}}：本月的 {{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "每次已验证成功的成本",
+      "intro": "最近 30 天。成功是指验收条件由人勾选、之后无人重新打开的任务。每次运行都计入成本。",
+      "perSuccess": "每次成功 {{cost}}",
+      "unknown": "成本未知",
+      "noSuccess": "还没有已验证的成功",
+      "line": "{{runs}} 次运行 · {{successes}} 个已验证 · {{failed}} 次失败 · {{retries}} 次重试"
     }
   },
   "budget": {

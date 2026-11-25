@@ -15667,6 +15667,16 @@ export const ptBR = {
     actions: { raise: "Aumentar para {{amount}} este mês", refuse: "Recusar", see: "Ver o uso" },
   },
   usageViews: {
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
+    costPerSuccess: {
+      title: "Custo por sucesso verificado",
+      intro:
+        "Últimos 30 dias. Um sucesso é uma tarefa cujos critérios de aceite uma pessoa marcou e que ninguém reabriu desde então. Toda execução conta no custo.",
+      perSuccess: "{{cost}} por sucesso",
+      unknown: "Custo desconhecido",
+      noSuccess: "Nenhum sucesso verificado ainda",
+      line: "{{runs}} execuções · {{successes}} verificadas · {{failed}} com falha · {{retries}} novas tentativas",
+    },
     signedOut: "Saiu da conta",
     whose: "de {{name}}",
     /** Who uses a plan (ADR 0059 §3): its row's status, and the choice in its details for whoever connected it. */
