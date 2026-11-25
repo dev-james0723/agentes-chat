@@ -49,7 +49,7 @@ import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
 
-import { createHttpApi, UNREAD_REFRESH_MS } from "@agenteschat/client";
+import { createHttpApi, type Message, UNREAD_REFRESH_MS } from "@agenteschat/client";
 import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { DESKTOP_QUERY } from "@/components/NavDrawer";
 import { renderApp, settle, showIn } from "./render";
@@ -372,8 +372,10 @@ describe("other things that appear after my socket connected", () => {
     const messages = `/channels/${w.general}/messages`;
     const rootResponse = await w.as.me(messages, { json: { body: "pergunta" } });
     expect(rootResponse.status).toBe(201);
-    const root = (await rootResponse.json()) as { id: string };
-    expect(root).toMatchObject({ id: expect.any(String), threadId: null, author: { id: w.ids.me } });
+    const root = (await rootResponse.json()) as Message;
+    expect(typeof root.id).toBe("string");
+    expect(root.threadId).toBeNull();
+    expect(root.author.id).toBe(w.ids.me);
 
     const rootRow = () => {
       const row = document.querySelector<HTMLElement>(`main article[data-message-id="${root.id}"]`);
@@ -384,7 +386,9 @@ describe("other things that appear after my socket connected", () => {
 
     const replyResponse = await w.as.admin(messages, { json: { body: "resposta", threadId: root.id } });
     expect(replyResponse.status).toBe(201);
-    expect(await replyResponse.json()).toMatchObject({ threadId: root.id, author: { id: w.ids.admin } });
+    const reply = (await replyResponse.json()) as Message;
+    expect(reply.threadId).toBe(root.id);
+    expect(reply.author.id).toBe(w.ids.admin);
     await waitFor(() => rootRow().getByRole("button", { name: /\b1 reply\b/i }));
   });
 });
