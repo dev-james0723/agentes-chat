@@ -648,23 +648,26 @@ export function GlobalModelRouterView({
                         )
                       : t("globalModelRouter.unknown")}
                   </td>
-                  <td>
-                    {rec.state}
-                    {rec.state === "unknown" && status.canManagePolicy && onReleaseHold && (
-                      <>
-                        {" "}
-                        <Button size="sm" type="button" disabled={pending} onClick={() => onReleaseHold(rec.id)}>
-                          {t("globalModelRouter.receipts.reconcileNoSend")}
-                        </Button>
-                      </>
-                    )}
-                  </td>
+                  <td>{rec.state}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </TableBox>
       )}
+      {/* Under the table, not in its last column: on a phone that column is scrolled out of sight. */}
+      {status.canManagePolicy &&
+        onReleaseHold &&
+        status.recentReceipts
+          .filter((rec) => rec.state === "unknown")
+          .map((rec) => (
+            <p key={`hold-${rec.id}`} className="small">
+              {rec.requestedModel}{" "}
+              <Button size="sm" type="button" disabled={pending} onClick={() => onReleaseHold(rec.id)}>
+                {t("globalModelRouter.receipts.reconcileNoSend")}
+              </Button>
+            </p>
+          ))}
 
       {status.metrics.length > 0 && (
         <TableBox>
