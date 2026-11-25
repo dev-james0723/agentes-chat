@@ -2,7 +2,7 @@
 
 The official MCP tool `read_skill_evidence` requires the connection's `manage` scope. It is read-only. The grant owner, workspace and channel visibility come from native authorization. An existing read or write grant continues to expose its original tools.
 
-The request takes a `skill_id`, one to eight distinct `agent_ids`, and exactly one of `task_ids` or `run_ids` (one to eight distinct UUIDs). Prefer the `task_id` persisted from the caller's own `send_to_agent` receipt. It is the trigger message UUID. A task with multiple directly triggered runs is ambiguous. In that case provide known run IDs and compare each returned trigger ID with the stored receipt. Runs from another grant, another person or another workspace, unreadable conversations and runs of agents outside the requested set are refused. Each request reads one database snapshot.
+The request takes a `skill_id`, one to eight distinct `agent_ids`, and optionally one of `task_ids` or `run_ids` (one to eight distinct UUIDs). Omit both for a registry and assignment read with an empty `runs` object. This read does not access any conversation message. Prefer the `task_id` persisted from the caller's own `send_to_agent` receipt. It is the trigger message UUID. A task with multiple directly triggered runs is ambiguous. In that case provide known run IDs and compare each returned trigger ID with the stored receipt. Runs from another grant, another person or another workspace, unreadable conversations and runs of agents outside the requested set are refused. Each request reads one database snapshot.
 
 The structured response includes the following fields.
 

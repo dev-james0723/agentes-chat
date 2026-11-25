@@ -233,3 +233,24 @@ test("only current-version package metadata is exposed, without blob locators or
   expect(JSON.stringify(result)).not.toContain("PRIVATE_STORAGE_KEY");
   expect(JSON.stringify(result)).not.toContain("future.md");
 });
+
+test("assignment-only reads stay scoped and never read adoption reply text", async () => {
+  const f = await fixture();
+  await t.db
+    .update(schema.messages)
+    .set({ body: "x".repeat(10000) })
+    .where(eq(schema.messages.id, f.reply.id));
+  const args = { skill_id: f.skill.id, agent_ids: [f.agentId] };
+  const result = await f.call(args);
+  expect(result.isError).not.toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    skill: { id: f.skill.id },
+    assignments: { [f.agentId]: { skills: [{ id: f.skill.id, enabled: true }] } },
+    runs: {},
+  });
+  expect(Object.keys(result.structuredContent?.runs ?? {})).toHaveLength(0);
+  const other = await seedOrg(f.b);
+  const foreign = await connectApp(t, f.b, other.orgId, manage);
+  expect((await f.call(args, foreign.access)).isError).toBe(true);
+  expect((await f.call({ ...f.args })).isError).toBe(true);
+});

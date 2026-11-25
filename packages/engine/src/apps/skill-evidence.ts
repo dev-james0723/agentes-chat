@@ -15,7 +15,7 @@ const ids = z
 export const skillEvidenceInput = z
   .object({ skill_id: z.uuid(), agent_ids: ids, run_ids: ids.optional(), task_ids: ids.optional() })
   .strict()
-  .refine((v) => !!v.run_ids !== !!v.task_ids, "Give run_ids or task_ids");
+  .refine((v) => !(v.run_ids && v.task_ids), "Give at most one of run_ids and task_ids");
 
 function exactText(raw: string, limit: number) {
   const cleaned = cleanUntrusted(raw, limit);
