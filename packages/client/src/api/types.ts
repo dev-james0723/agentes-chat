@@ -706,6 +706,8 @@ export interface Agent {
    * Without it `instructions` is empty and its tools, memory, usage and activity are refused: only its public card.
    */
   seesDetails?: boolean;
+  /** Its uploaded portrait; null or absent keeps the pixel look. */
+  avatarUrl?: string | null;
   /** Its look (color, eyes, accessory), from the backend's allow-list. */
   appearance?: AgentLookInput;
   /** Who thinks for it (ADR 0032): the brain, a computer brain's model label, its computer (owner and admins). */
@@ -799,6 +801,7 @@ export interface FormerAgent {
   name: string;
   role: string;
   appearance: AgentLookInput | null;
+  avatarUrl?: string | null;
   /** Deleted for good; false: archived (an admin may still delete it). */
   deleted: boolean;
 }
@@ -834,6 +837,7 @@ export interface AgentGroupPatch {
 
 /** An agent on the team screen: what it can do. What it does comes from its instructions (`Agent`). */
 export interface TeamAgent {
+  avatarUrl?: string | null;
   id: string;
   name: string;
   handle: string;
@@ -2600,6 +2604,7 @@ export interface AgentChannel {
 }
 
 export interface AgentDetail {
+  avatarUrl?: string | null;
   id: string;
   name: string;
   handle: string;

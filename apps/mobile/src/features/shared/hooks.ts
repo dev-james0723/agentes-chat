@@ -99,7 +99,8 @@ export function useDirectory(): Directory {
 export function useRememberAgentLooks() {
   const agents = useAgents(useOrgId());
   useEffect(() => {
-    if (agents.data) rememberAgentLooks(agents.data.map((a) => ({ id: a.id, ...agentLook(a) })));
+    if (agents.data)
+      rememberAgentLooks(agents.data.map((a) => ({ id: a.id, ...agentLook(a), avatarUrl: a.avatarUrl })));
   }, [agents.data]);
 }
 

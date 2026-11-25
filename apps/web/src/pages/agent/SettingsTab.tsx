@@ -28,7 +28,7 @@ import {
   Select,
   SettingNote,
 } from "@agenteschat/ui";
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AudienceChoice } from "@/components/AgentAudience";
 import { AgentAvatar } from "@/components/AgentAvatar";
@@ -43,6 +43,7 @@ import {
   RoleTag,
   usd,
 } from "@/components/AgentFields";
+import { AgentPhotoDialog } from "@/components/AgentPhoto";
 import { AgentSecretsList } from "@/components/AgentSecrets";
 import { LoadingLine } from "@/components/Loading";
 import { useOrg } from "@/components/org-context";
@@ -244,6 +245,7 @@ export function SettingsTab({
   // Where I may put it or take it out (the channels' ⓘ says so when some aren't).
   const placeable = visibleChannels.filter((c) => addsAgentsTo(c, me.user.id, org));
   const look = draft.look;
+  const [photoOpen, setPhotoOpen] = useState(false);
   return (
     <>
       <ReadOnlyNote />
@@ -286,15 +288,20 @@ export function SettingsTab({
               }}
               action={
                 can("look") ? (
-                  <Button
-                    size="sm"
-                    icon="shuffle"
-                    onClick={() =>
-                      set("look", { ...BLANK_LOOK, ...randomAppearance(look) } as Required<AgentAppearance>)
-                    }
-                  >
-                    {t("newAgent.shuffle")}
-                  </Button>
+                  <div className="ac-acts">
+                    <Button size="sm" icon="image" onClick={() => setPhotoOpen(true)}>
+                      {t("photo.change")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon="shuffle"
+                      onClick={() =>
+                        set("look", { ...BLANK_LOOK, ...randomAppearance(look) } as Required<AgentAppearance>)
+                      }
+                    >
+                      {t("newAgent.shuffle")}
+                    </Button>
+                  </div>
                 ) : undefined
               }
             >
@@ -303,7 +310,13 @@ export function SettingsTab({
                   className="agp-id__look"
                   style={{ "--a": agentGradient(look.color)[0], "--b": agentGradient(look.color)[1] } as CSSProperties}
                 >
-                  <AgentAvatar size="lg" framed={false} name={draft.name || agent.name} appearance={look} />
+                  <AgentAvatar
+                    size="lg"
+                    framed={false}
+                    name={draft.name || agent.name}
+                    appearance={look}
+                    imageUrl={agent.avatarUrl}
+                  />
                 </span>
                 <div className="agp-id__fields">
                   <IdentityCard />
@@ -335,6 +348,7 @@ export function SettingsTab({
                   {part === "all" && <ReportsTo />}
                 </div>
               </div>
+              {can("look") && <AgentPhotoDialog agent={agent} open={photoOpen} onClose={() => setPhotoOpen(false)} />}
               {can("look") ? (
                 <>
                   <LookRows look={look} onChange={(next) => set("look", next)} />

@@ -2146,6 +2146,19 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
       },
     },
     agents: {
+      setAgentAvatar: async (orgId, agentId, input) => {
+        log("agents.setAgentAvatar", orgId, agentId, { contentType: input.contentType, bytes: input.data.length });
+        const agent = state.agents.find((a) => a.id === agentId);
+        if (!agent) throw new ApiError(404, "agent.not_found", "Not found");
+        agent.avatarUrl = `data:${input.contentType};base64,${input.data}`;
+        return { avatarUrl: agent.avatarUrl };
+      },
+      removeAgentAvatar: async (orgId, agentId) => {
+        log("agents.removeAgentAvatar", orgId, agentId);
+        const agent = state.agents.find((a) => a.id === agentId);
+        if (!agent) throw new ApiError(404, "agent.not_found", "Not found");
+        agent.avatarUrl = null;
+      },
       planUsage: async (_orgId, agentId) => {
         const money = seesCost();
         const account = fakePlanAccount(money);

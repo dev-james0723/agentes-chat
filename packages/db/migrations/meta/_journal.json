@@ -1996,6 +1996,13 @@
       "when": 1795599204523,
       "tag": "0286_global_model_router",
       "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1795647168097,
+      "tag": "0287_agent_image_avatars",
+      "breakpoints": true
     }
   ]
 }

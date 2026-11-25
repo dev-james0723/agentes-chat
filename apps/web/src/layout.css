@@ -6427,6 +6427,11 @@ html:not([data-pointer]) .live-code-toggle__btn:focus-visible {
 }
 
 /* Profile photo: drop zone and the square crop. */
+/* "Remover foto" starts the photo dialog's footer; Cancelar and Salvar stay together at its end. */
+.photo-remove {
+  display: flex;
+  margin-inline-end: auto;
+}
 .photo-drop {
   display: flex;
   flex-direction: column;

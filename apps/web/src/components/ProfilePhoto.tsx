@@ -302,16 +302,18 @@ export function ImageCropDialog({
       </Locked>
       <DialogFooter>
         {hasImage && !file && (
-          <Button
-            variant="danger"
-            onClick={() => remove.mutate()}
-            loading={remove.isPending}
-            disabled={remove.isPending}
-          >
-            {removeLabel}
-          </Button>
+          // Its own slot at the row's start: the footer's group (Cancelar, Salvar) stays together at the end.
+          <span className="photo-remove">
+            <Button
+              variant="danger"
+              onClick={() => remove.mutate()}
+              loading={remove.isPending}
+              disabled={remove.isPending}
+            >
+              {removeLabel}
+            </Button>
+          </span>
         )}
-        <span style={{ flex: 1 }} />
         <Button onClick={onClose}>{t("common.cancel")}</Button>
         <Button
           variant="primary"

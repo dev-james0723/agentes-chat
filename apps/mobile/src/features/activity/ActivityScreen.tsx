@@ -225,7 +225,7 @@ function WaitingCardView({ item: n, first = false }: { item: AppNotification; fi
   const name = dir.nameOf(who);
   const kind = dash ? { icon: "chart" as const, label: dash.kind } : kindOf(t, card.kind, n.source.screen);
   const left = card.expiresAt ? timeLeft(t, card.expiresAt, new Date(now)) : null;
-  const place = placeOf(n);
+  const place = placeOf(n, notice.sourceLabel);
   const where = [place ? t("mobile.chats.waitIn", { where: place }) : null, when.short(n.updatedAt)]
     .filter(Boolean)
     .join(" · ");
@@ -441,7 +441,7 @@ const ActivityRow = memo(function ActivityRow({ item: n, divider }: { item: AppN
   const unread = n.readAt === null;
 
   // Who did what, as the island says it too; a restriction or several agents' failures go under it.
-  const { parts, names, title, restriction, failed } = useNoticeTitle(n);
+  const { parts, names, title, restriction, failed, sourceLabel } = useNoticeTitle(n);
   // Coded words in the person's language: why a routine paused or failed, who asked for an approval.
   const say: SayWords = (w, otherwise = "") => {
     const tt = t as unknown as (key: string, options?: Record<string, unknown>) => string;
@@ -461,7 +461,7 @@ const ActivityRow = memo(function ActivityRow({ item: n, divider }: { item: AppN
       : failed
         ? failed.sub
         : // A widget's or routine's name is often its line too: said once ("Assinaturas hoje", not twice).
-          [emojisOf(n).join(" "), [...new Set([line, placeOf(n)].filter(Boolean))].join(" · ")]
+          [emojisOf(n).join(" "), [...new Set([line, placeOf(n, sourceLabel)].filter(Boolean))].join(" · ")]
             .filter(Boolean)
             .join(" ");
   const time = when.short(n.updatedAt);

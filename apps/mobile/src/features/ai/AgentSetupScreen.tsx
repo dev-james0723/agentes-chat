@@ -171,7 +171,13 @@ export function AgentSetupScreen({ agentId }: { agentId: string }) {
                       return (
                         <GroupedRow
                           key={a.id}
-                          leading={<AgentAvatar agent={{ ...agentLook(a), id: a.id }} size={32} live={false} />}
+                          leading={
+                            <AgentAvatar
+                              agent={{ ...agentLook(a), id: a.id, avatarUrl: a.avatarUrl }}
+                              size={32}
+                              live={false}
+                            />
+                          }
                           label={a.name}
                           sub={setupResultLine(t, r, { now, owner })}
                           checked={changes(r) && picked.has(a.id)}

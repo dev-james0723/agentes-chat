@@ -44,6 +44,7 @@ import { useTranslation } from "react-i18next";
 import { AudienceChoice } from "@/components/AgentAudience";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { LookRows, modelOptions } from "@/components/AgentFields";
+import { AgentPhotoDialog } from "@/components/AgentPhoto";
 import { RightHandApprovalsCard } from "@/components/ApprovalCover";
 import { PlanHold, usePlanHold } from "@/components/ai/ConnectAiSteps";
 import type { HaveItem } from "@/components/arrival/ConnectHave";
@@ -359,6 +360,7 @@ function RightHandForm({ agent }: { agent: Agent }) {
   const [name, setName] = useState(agent.name);
   const [budget, setBudget] = useState(agent.monthlyBudgetUsd == null ? "" : String(agent.monthlyBudgetUsd));
   const [looking, setLooking] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [look, setLook] = useState(() => fullLook(lookOf(agent)));
@@ -522,6 +524,16 @@ function RightHandForm({ agent }: { agent: Agent }) {
             }
           />
           <PrefRow
+            id="rh-photo"
+            icon="image"
+            label={t("photo.title")}
+            control={
+              <Button size="sm" icon="image" onClick={() => setPhotoOpen(true)}>
+                {t("photo.change")}
+              </Button>
+            }
+          />
+          <PrefRow
             id="rh-ai"
             icon="members"
             label={t("rightHand.settings.workspace")}
@@ -620,6 +632,7 @@ function RightHandForm({ agent }: { agent: Agent }) {
         busy={busy || update.isPending}
         locked={!!hold}
       />
+      <AgentPhotoDialog agent={agent} open={photoOpen} onClose={() => setPhotoOpen(false)} />
       <Dialog
         open={looking}
         onOpenChange={setLooking}

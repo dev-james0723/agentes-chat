@@ -268,7 +268,7 @@ describe("a teammate's settings, on the right hand's card", () => {
         kind: "change_request",
         waiting: true,
         actors: [{ type: "user", id: "u-joao" }],
-        source: { proposalId: "set-1", agentId: LODI_ID, label: "Ada" },
+        source: { proposalId: "set-1", agentId: ADA_ID, label: "Ada" },
         latest: { text: "A Ada no Haiku" },
       }),
     ];
