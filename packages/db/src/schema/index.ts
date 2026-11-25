@@ -12,6 +12,7 @@ export * from "./early-access";
 export * from "./feedback";
 export * from "./forum";
 export * from "./foundry";
+export * from "./global-model-router";
 export * from "./imports";
 export * from "./instance-secrets";
 export * from "./machines";

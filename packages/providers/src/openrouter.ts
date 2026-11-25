@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsStreaming } from "openai/resources/chat/completions";
 import {
   isCustomModel,
+  MODEL_CATALOG,
   type ModelInfo,
   type ModelTier,
   modelInfo,
@@ -38,17 +39,23 @@ export const OPENROUTER_API = "https://openrouter.ai/api/v1";
 /** OpenRouter's app attribution: the product's name and site, never a self-hosted server's own address. */
 const ATTRIBUTION = { "HTTP-Referer": "https://agentes.chat", "X-OpenRouter-Title": "agentes.chat" };
 
-/** An OpenRouter model id (`z-ai/glm-5.3`, `~z-ai/glm-latest`): the catalog's ids never have a slash. */
-export const isOpenRouterModel = (model: string) => model.includes("/") && !isCustomModel(model);
+/** An OpenRouter model id (`z-ai/glm-5.3`, `~z-ai/glm-latest`): catalog ids and OpenCode Go prefixes keep their own provider. */
+export const isOpenRouterModel = (model: string) =>
+  model.includes("/") &&
+  !isCustomModel(model) &&
+  !Object.hasOwn(MODEL_CATALOG, model) &&
+  !model.startsWith("opencode:");
 
 /**
- * A model's provider: a workspace endpoint's by its id, the catalog's or the list's, else OpenRouter's by the id's
- * shape (its list not read yet).
+ * A model's provider: a workspace endpoint's by its id, OpenCode Go's by its prefix, the catalog's or the list's,
+ * else OpenRouter's by the id's shape (its list not read yet).
  */
 export const modelProvider = (model: string) =>
   isCustomModel(model)
     ? "custom"
-    : (modelInfo(model)?.provider ?? (isOpenRouterModel(model) ? "openrouter" : undefined));
+    : model.startsWith("opencode:")
+      ? "opencode"
+      : (modelInfo(model)?.provider ?? (isOpenRouterModel(model) ? "openrouter" : undefined));
 
 /**
  * The good picks, shown first: capable with tools and cheap. Each is a family's `~…-latest` alias, which follows the
@@ -411,6 +418,30 @@ function toMessages(request: ModelRequest, claude: boolean): Message[] {
 function toBody(request: ModelRequest, compatible: boolean, auto?: ReturnType<typeof autoRouterParameters>) {
   const claude = !compatible && isClaude(request.model);
   const reasoning = compatible || auto ? undefined : reasoningFor(request.effort, modelInfo(request.model));
+  const concreteProviderPolicy =
+    !compatible && !auto
+      ? request.openRouterFreeOnly
+        ? {
+            allow_fallbacks: false,
+            data_collection: "deny" as const,
+            max_price: { prompt: 0, completion: 0 },
+            ...(request.outputSchema ? { require_parameters: true } : {}),
+          }
+        : request.openRouterConcretePolicy
+          ? {
+              allow_fallbacks: false,
+              data_collection: "deny" as const,
+              ...(request.openRouterConcretePolicy.zdr ? { zdr: true } : {}),
+              max_price: {
+                prompt: request.openRouterConcretePolicy.maxPromptUsdPerMillion,
+                completion: request.openRouterConcretePolicy.maxCompletionUsdPerMillion,
+              },
+              ...(request.outputSchema ? { require_parameters: true } : {}),
+            }
+          : request.outputSchema
+            ? { require_parameters: true }
+            : undefined
+      : undefined;
   return {
     model: request.model,
     messages: toMessages(request, claude),
@@ -432,10 +463,9 @@ function toBody(request: ModelRequest, compatible: boolean, auto?: ReturnType<ty
             type: "json_schema" as const,
             json_schema: { name: "output", strict: true, schema: request.outputSchema },
           },
-          // Only to an upstream provider that honors the schema.
-          ...(compatible ? {} : { provider: { require_parameters: true } }),
         }
       : {}),
+    ...(concreteProviderPolicy ? { provider: concreteProviderPolicy } : {}),
     // Plain Chat Completions sends usage only when asked.
     ...(compatible ? { stream_options: { include_usage: true } } : {}),
     // Claude's automatic caching also covers the growing conversation of a tool loop.
@@ -679,9 +709,10 @@ export function createOpenRouterProvider(
                 cacheWriteTokens: 0,
               },
           ...(cost !== undefined ? { costNanoUsd: cost } : {}),
-          ...(auto &&
+          ...(!compatible &&
           usage &&
           cost !== undefined &&
+          (!request.openRouterFreeOnly || cost === 0) &&
           Number.isSafeInteger(usage.prompt_tokens) &&
           (usage.prompt_tokens ?? -1) >= 0 &&
           Number.isSafeInteger(usage.completion_tokens) &&

@@ -44,6 +44,7 @@ import { feedbackRoutes, registerFeedbackFiles, registerFeedbackInbox } from "./
 import { foundryRoutes } from "./routes/app/foundry";
 import { gifKeyRoutes } from "./routes/app/gif-key";
 import { gifRoutes } from "./routes/app/gifs";
+import { globalModelRouterRoutes } from "./routes/app/global-model-router";
 import { inviteRoutes } from "./routes/app/invites";
 import { issueRoutes } from "./routes/app/issues";
 import { jevRoutes } from "./routes/app/jev";
@@ -247,6 +248,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", modelInspectorRoutes(deps));
     api.route("/app", creditContinuityRoutes(deps));
     api.route("/app", openRouterFallbackRoutes(deps));
+    api.route("/app", globalModelRouterRoutes(deps));
     api.route("/app", personUsageRoutes(deps));
     api.route("/app", teamWeekRoutes(deps));
     api.route("/app", dashboardRoutes(deps));

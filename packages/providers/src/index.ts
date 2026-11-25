@@ -1,5 +1,11 @@
 import { createAnthropicProvider } from "./anthropic";
 import { PROVIDERS, type ProviderInfo } from "./catalog";
+import {
+  createCloudflareProvider,
+  createGroqProvider,
+  createOpenAICompatibleDirectProvider,
+  createOpenCodeProvider,
+} from "./cloud-router-providers";
 import { createCustomProvider } from "./custom";
 import { createGeminiProvider } from "./gemini";
 import { createOpenAIProvider } from "./openai";
@@ -8,11 +14,14 @@ import type { ModelProvider } from "./types";
 
 export * from "./anthropic";
 export * from "./catalog";
+export * from "./cloud-router-providers";
 export * from "./context-limits";
 export * from "./custom";
 export * from "./embeddings";
 export * from "./errors";
 export * from "./gemini";
+export * from "./global-router-catalog";
+export * from "./global-router-helpers";
 export * from "./key-check";
 export * from "./openai";
 export * from "./openrouter";
@@ -38,7 +47,15 @@ export function createModelProviders(
             ? createGeminiProvider()
             : p.protocol === "openrouter"
               ? createOpenRouterProvider()
-              : createAnthropicProvider({ id, baseURL: p.baseURL, compat: p.compat }),
+              : p.protocol === "groq"
+                ? createGroqProvider()
+                : p.protocol === "cloudflare"
+                  ? createCloudflareProvider()
+                  : p.protocol === "opencode"
+                    ? createOpenCodeProvider({ version: options.version })
+                    : p.protocol === "openai_compatible"
+                      ? createOpenAICompatibleDirectProvider({ id, baseURL: p.baseURL ?? "" })
+                      : createAnthropicProvider({ id, baseURL: p.baseURL, compat: p.compat }),
     ]),
   );
 }

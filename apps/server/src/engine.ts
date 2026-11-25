@@ -238,6 +238,7 @@ export function buildEngine(o: EngineOptions) {
     // Credit routes (ADR 0200): off unless the operator turns them on, and then only for routes they registered.
     creditRoutes: config.CREDIT_FALLBACK_ENABLED,
     openRouterFallbackEnabled: config.OPENROUTER_FALLBACK_ENABLED,
+    globalModelRouterEnabled: config.GLOBAL_MODEL_ROUTER_ENABLED || config.OPENROUTER_FALLBACK_ENABLED,
   });
   const context: ContextDeps = {
     db,
@@ -861,6 +862,7 @@ export function buildEngine(o: EngineOptions) {
     quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
     ...(config.CREDIT_FALLBACK_ENABLED ? { creditRoute: createCreditRouteQualifier(db) } : {}),
     openRouterFallbackEnabled: config.OPENROUTER_FALLBACK_ENABLED,
+    globalModelRouterEnabled: config.GLOBAL_MODEL_ROUTER_ENABLED || config.OPENROUTER_FALLBACK_ENABLED,
     modelInspector: {
       enabled: (orgId) => modelInspector.enabled(orgId),
       thresholdPercent: config.MODEL_INSPECTOR_THRESHOLD_PERCENT,

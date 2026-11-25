@@ -62,6 +62,12 @@ import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
 import {
+  executeGlobalRouterGatewayStream,
+  type GlobalRouterRouteRecord,
+  globalRouterKeyReserved,
+} from "./global-router-gateway";
+import { GlobalRouterRefusal } from "./global-router-ledger";
+import {
   OpenRouterFallbackRefusal,
   type OpenRouterFallbackRoute,
   openRouterFallbackConfig,
@@ -105,6 +111,8 @@ export interface ModelGatewayDeps {
   creditRoutes?: boolean;
   /** Disabled until the native route and its independently approved bounded transport are released. */
   openRouterFallbackEnabled?: boolean;
+  /** Enables multi-lane Global Model Router admission across free, Go, low-cost, dynamic and direct lanes. */
+  globalModelRouterEnabled?: boolean;
   openRouterKeyFetch?: typeof fetch;
   /** Embeddings for search (optional: without it search is full-text only). */
   embeddings?: GatewayEmbeddings;
@@ -188,6 +196,13 @@ export interface GatewayCall {
   };
   /** Native executor-owned, separately budgeted paid fallback; not a client API field. */
   openRouterFallback?: { route: OpenRouterFallbackRoute; claim: CreditNativeClaim; turn: number };
+  /** Native executor-owned multi-lane Global Model Router call; never set by external clients. */
+  globalRouterFallback?: {
+    route: GlobalRouterRouteRecord;
+    claim: CreditNativeClaim;
+    turn: number;
+    routineRunId?: string | null;
+  };
   onDelta(text: string): void;
   signal?: AbortSignal;
 }
@@ -456,6 +471,8 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (!credit) {
       if (providerId === "openrouter" && (await openRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey))))
         throw new OpenRouterFallbackRefusal("reserved_credential");
+      if (await globalRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey)))
+        throw new GlobalRouterRefusal("reserved_credential");
       // Credential selection may use its existing cache, but a protection verdict never does. A pool or retained
       // fingerprint committed after that cache was warmed must block the very next ordinary call. One fresh
       // statement covers provider, row and cross-workspace secret aliases without three database round trips.
@@ -1147,6 +1164,24 @@ export function createModelGateway(deps: ModelGatewayDeps) {
       if (!row || row.archivedAt) throw new NotFoundError("Agent not found");
       // Every agent has a budget: its own, else the organization's default.
       const agent = await withEffectiveBudget(db, row);
+      if (call.globalRouterFallback) {
+        return executeGlobalRouterGatewayStream({
+          db,
+          call,
+          agent,
+          native: call.globalRouterFallback,
+          sharedBudgetRequired,
+          globalRouterEnabled: Boolean(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled),
+          openRouterKeyFetch: deps.openRouterKeyFetch,
+          now,
+          providerFor,
+          resolveKey,
+          reserveAgentBudget: reserve,
+          releaseAgentBudget: (reservation, a) => db.transaction((tx) => settle(tx, reservation, 0, a)).then(() => {}),
+          settleAgentCall: settleCall,
+          checkThresholds,
+        });
+      }
       if (call.openRouterFallback) return streamOpenRouterFallback(call, agent);
       const providerId = modelProvider(agent.model);
       if (!providerId) throw new ValidationError(`Model ${agent.model} is not in the catalog`);

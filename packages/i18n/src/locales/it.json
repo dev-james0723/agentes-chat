@@ -22,6 +22,117 @@
     "error": "Impossibile salvare le impostazioni. Controlla la chiave e la politica.",
     "routes": "Ingegneria: openrouter/auto-code · Generale: openrouter/auto"
   },
+  "globalModelRouter": {
+    "title": "Router globale dei modelli",
+    "intro": "Gli abbonamenti principali partono per primi. Agenti e routine idonei passano a OpenCode Go, API gratuite verificate, modelli economici con tetto e fornitori diretti di API approvati.",
+    "cascade": "Ordine: Abbonamenti · OpenCode Go · API gratuite · Basso costo · API dirette · Escalation limitata",
+    "refresh": "Aggiorna",
+    "syncCatalog": "Sincronizza catalogo",
+    "syncing": "Sincronizzazione catalogo",
+    "unknown": "Sconosciuto",
+    "freeCap": "0 US$ (gratuito o incluso)",
+    "states": {
+      "loading": "Caricamento stato del router",
+      "disconnected": "Nessuna corsia API di riserva connessa",
+      "serverDisabled": "Disattivato dai criteri del server",
+      "disabled": "Disattivato. Solo abbonamenti",
+      "authorization_needed": "Autorizzazione richiesta. Controlla la chiave del fornitore",
+      "stale_catalog": "Catalogo scaduto. Sincronizza il catalogo per verificare le offerte",
+      "unverified": "In attesa di catalogo e chiave verificati",
+      "eligible": "Pronto. Controllato prima dell'invio",
+      "quota_warning": "Vicino alla soglia di quota o budget mensile",
+      "rate_limited": "Limite di frequenza raggiunto. In attesa del ripristino",
+      "provider_outage": "Fornitore non disponibile. Passaggio alla corsia idonea successiva",
+      "incompatible": "Ignorato per strumenti o modalità incompatibili",
+      "privacy_blocked": "Bloccato dai criteri di conservazione dati o regione",
+      "budget_held": "In pausa. Blocco budget irrisolto o tetto raggiunto",
+      "needs_owner": "In attesa dell'approvazione del proprietario dello spazio",
+      "recovered": "Ripristinato sull'abbonamento principale"
+    },
+    "lanes": {
+      "opencode_go": "Piano OpenCode Go",
+      "free_api": "Pool di API gratuite",
+      "paid_low_cost": "A pagamento a basso costo",
+      "direct_api": "API diretta del fornitore",
+      "paid_dynamic": "Router automatico dinamico"
+    },
+    "entitlements": {
+      "subscription_go": "Abbonamento Go (0 $ extra)",
+      "free_only": "Solo piano gratuito (tetto 0 $)",
+      "paid_capped": "A pagamento con tetto mensile"
+    },
+    "policy": {
+      "heading": "Criteri di instradamento dello spazio",
+      "enable": "Salva criteri",
+      "disable": "Disattiva router",
+      "enabledLabel": "Attiva riserva del router globale dei modelli",
+      "killSwitchLabel": "Interruttore di emergenza (blocca tutti gli invii di riserva)",
+      "maxEscalations": "Max escalation di qualità per turno (da 0 a 2)",
+      "maxRetries": "Max tentativi di trasporto per rotta (da 0 a 1)",
+      "optOutAgents": "ID agenti esclusi (vuoto eredita il router)",
+      "warnThresholds": "Invia avvisi di budget al 50%, 80% e 95%"
+    },
+    "accounts": {
+      "caption": "Corsie fornitori configurate e finestre di quota",
+      "empty": "Nessuna corsia fornitore ancora configurata.",
+      "configureHeading": "Configura corsia fornitore",
+      "provider": "Fornitore di modelli",
+      "lane": "Corsia di instradamento",
+      "entitlement": "Modalità di addebito",
+      "key": "Chiave dedicata del fornitore",
+      "chooseKey": "Seleziona una chiave dedicata",
+      "cloudflareAccount": "Account ID Cloudflare esadecimale di 32 caratteri",
+      "cap": "Tetto mensile (USD)",
+      "models": "ID concreti dei modelli consentiti (uno per riga)",
+      "zdr": "Richiedi zero conservazione dei dati (ZDR)",
+      "save": "Salva corsia",
+      "columns": {
+        "provider": "Fornitore API",
+        "lane": "Corsia",
+        "state": "Stato",
+        "budget": "Speso / tetto",
+        "quota": "Quota giornaliera",
+        "reset": "Finestra / rilevato"
+      }
+    },
+    "catalog": {
+      "summary": "Offerte a catalogo: {{eligible}} idonee · {{total}} registrate",
+      "caption": "Offerte qualificate di modelli API",
+      "columns": {
+        "model": "ID modello",
+        "provider": "Fornitore API",
+        "lane": "Corsia",
+        "status": "Idoneità",
+        "context": "Finestra di contesto"
+      }
+    },
+    "receipts": {
+      "caption": "Ricevute recenti di instradamento e qualità verificata",
+      "empty": "Nessun invio di riserva registrato in questo periodo.",
+      "reconcileNoSend": "Rilascia blocco",
+      "columns": {
+        "requested": "Modello richiesto",
+        "actual": "Modello effettivo",
+        "lane": "Corsia",
+        "cost": "Effettivo / riservato",
+        "quality": "Qualità",
+        "state": "Stato"
+      },
+      "verified": "Verificato",
+      "unverified": "Verifica fallita"
+    },
+    "metrics": {
+      "caption": "Costo per successo verificato e latenza",
+      "columns": {
+        "model": "ID modello",
+        "successes": "Verificati / tentativi",
+        "costPerSuccess": "Costo per successo verificato",
+        "latency": "Latenza p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Ultimo benchmark: {{tasks}} attività · {{models}} modelli",
+    "error": "Impossibile aggiornare il router globale dei modelli. Controlla chiave, tetto e modelli consentiti."
+  },
   "creditContinuity": {
     "title": "Continuità con crediti API",
     "refresh": "Aggiorna stato",
@@ -1443,7 +1554,13 @@
       "moonshot": "Le chiavi Kimi iniziano con sk-. Controllala e incollala di nuovo.",
       "zai": "Incolla tutta la chiave Z.ai, senza spazi. Controllala e incollala di nuovo.",
       "minimax": "Incolla tutta la chiave MiniMax, senza spazi. Le chiavi che iniziano con sk-cp- sono del piano e qui non funzionano.",
-      "openrouter": "Le chiavi OpenRouter iniziano con sk-or-v1-. Controllala e incollala di nuovo."
+      "openrouter": "Le chiavi OpenRouter iniziano con sk-or-v1-. Controllala e incollala di nuovo.",
+      "groq": "Le chiavi Groq iniziano con gsk_. Controllala e incollala di nuovo.",
+      "cloudflare": "Incolla l'intero token Cloudflare Workers AI senza spazi. Controllalo e incollalo di nuovo.",
+      "opencode": "Incolla l'intera chiave API OpenCode senza spazi. Controllala e incollala di nuovo.",
+      "tencent": "Incolla l'intera chiave API Tencent Hunyuan senza spazi. Controllala e incollala di nuovo.",
+      "xiaomi": "Incolla l'intera chiave API Xiaomi MiMo senza spazi. Controllala e incollala di nuovo.",
+      "nvidia": "Le chiavi NVIDIA NIM iniziano con nvapi-. Controllala e incollala di nuovo."
     },
     "keyFromOther": "È di un altro provider?",
     "anthropicWorkspace": "ID dello spazio di lavoro di Claude Console",

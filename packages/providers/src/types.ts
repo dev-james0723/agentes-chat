@@ -143,6 +143,14 @@ export interface ModelRequest {
   noTransportRetries?: true;
   /** Internal gateway-supplied, separately admitted policy for dynamic OpenRouter routers. */
   openRouterAuto?: OpenRouterAutoPolicy;
+  /** Enforces zero upstream spend and disables paid fallbacks for `:free` OpenRouter variants. */
+  openRouterFreeOnly?: true;
+  /** Enforces upstream price ceilings and privacy constraints on concrete OpenRouter paid calls. */
+  openRouterConcretePolicy?: {
+    maxPromptUsdPerMillion: number;
+    maxCompletionUsdPerMillion: number;
+    zdr?: boolean;
+  };
   /** Conservative admitted charge, used only for the upstream balance preflight. */
   openRouterReservedNanoUsd?: number;
   signal?: AbortSignal;

@@ -22,6 +22,117 @@
     "error": "Yedek ayarları kaydedilemedi. Anahtarı ve politikayı kontrol edin.",
     "routes": "Mühendislik: openrouter/auto-code · Genel: openrouter/auto"
   },
+  "globalModelRouter": {
+    "title": "Küresel Model Yönlendirici",
+    "intro": "Birincil abonelikler önce çalışır. Uygun ajanlar ve rutinler sırasıyla OpenCode Go, doğrulanmış ücretsiz API'ler, üst sınırlı düşük maliyetli modeller ve onaylı doğrudan API sağlayıcılarına geçer.",
+    "cascade": "Sıra: Abonelikler · OpenCode Go · Ücretsiz API'ler · Düşük maliyetli · Doğrudan API'ler · Sınırlı yükseltme",
+    "refresh": "Yenile",
+    "syncCatalog": "Kataloğu eşitle",
+    "syncing": "Katalog eşitleniyor",
+    "unknown": "Bilinmiyor",
+    "freeCap": "US$0 (ücretsiz veya dahil)",
+    "states": {
+      "loading": "Yönlendirici durumu yükleniyor",
+      "disconnected": "Bağlı yedek API hattı yok",
+      "serverDisabled": "Sunucu politikasıyla devre dışı",
+      "disabled": "Devre dışı. Yalnızca abonelikler",
+      "authorization_needed": "Yetkilendirme gerekli. Sağlayıcı anahtarını kontrol edin",
+      "stale_catalog": "Katalog süresi doldu. Teklifleri doğrulamak için eşitleyin",
+      "unverified": "Doğrulanmış katalog ve anahtar bekleniyor",
+      "eligible": "Hazır. Gönderimden önce denetlenir",
+      "quota_warning": "Kota veya aylık bütçe eşiğine yaklaşıldı",
+      "rate_limited": "Hız sınırına ulaşıldı. Pencere sıfırlaması bekleniyor",
+      "provider_outage": "Sağlayıcı kullanılamıyor. Sonraki uygun hatta geçiliyor",
+      "incompatible": "Uyumsuz araçlar veya modaliteler nedeniyle atlandı",
+      "privacy_blocked": "Veri saklama veya bölge politikasıyla engellendi",
+      "budget_held": "Duraklatıldı. Çözülmemiş bütçe blokesi veya sınıra ulaşıldı",
+      "needs_owner": "Çalışma alanı sahibinin onayı bekleniyor",
+      "recovered": "Birincil aboneliğe geri dönüldü"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go paketi",
+      "free_api": "Ücretsiz API havuzu",
+      "paid_low_cost": "Düşük maliyetli ücretli",
+      "direct_api": "Doğrudan sağlayıcı API",
+      "paid_dynamic": "Dinamik otomatik yönlendirici"
+    },
+    "entitlements": {
+      "subscription_go": "Go aboneliği ($0 ek ücret)",
+      "free_only": "Yalnızca ücretsiz katman ($0 sınır)",
+      "paid_capped": "Aylık üst sınırlı ücretli"
+    },
+    "policy": {
+      "heading": "Çalışma alanı yönlendirme politikası",
+      "enable": "Politikayı kaydet",
+      "disable": "Yönlendiriciyi kapat",
+      "enabledLabel": "Küresel Model Yönlendirici yedeğini etkinleştir",
+      "killSwitchLabel": "Acil durdurma anahtarı (tüm yedek gönderimleri engelle)",
+      "maxEscalations": "Tur başına azami kalite yükseltmesi (0 ile 2 arası)",
+      "maxRetries": "Rota başına azami aktarım yeniden denemesi (0 ile 1 arası)",
+      "optOutAgents": "Hariç tutulan ajan kimlikleri (boşsa yönlendiriciyi devralır)",
+      "warnThresholds": "%50, %80 ve %95 düzeyinde bütçe uyarısı gönder"
+    },
+    "accounts": {
+      "caption": "Yapılandırılmış sağlayıcı hatları ve kota pencereleri",
+      "empty": "Henüz yapılandırılmış sağlayıcı hattı yok.",
+      "configureHeading": "Sağlayıcı hattını yapılandır",
+      "provider": "Model sağlayıcısı",
+      "lane": "Yönlendirme hattı",
+      "entitlement": "Faturalandırma modu",
+      "key": "Özel sağlayıcı anahtarı",
+      "chooseKey": "Özel bir anahtar seçin",
+      "cloudflareAccount": "Cloudflare 32 karakterli onaltılık Hesap Kimliği",
+      "cap": "Aylık üst sınır (USD)",
+      "models": "İzin verilen somut model kimlikleri (her satıra bir tane)",
+      "zdr": "Sıfır veri saklama (ZDR) zorunlu tut",
+      "save": "Hattı kaydet",
+      "columns": {
+        "provider": "API sağlayıcısı",
+        "lane": "Hat",
+        "state": "Durum",
+        "budget": "Harcanan / sınır",
+        "quota": "Günlük kota",
+        "reset": "Pencere / gözlenen"
+      }
+    },
+    "catalog": {
+      "summary": "Katalog teklifleri: {{eligible}} uygun · {{total}} kayıtlı",
+      "caption": "Nitelikli API model teklifleri",
+      "columns": {
+        "model": "Model kimliği",
+        "provider": "API sağlayıcısı",
+        "lane": "Hat",
+        "status": "Uygunluk",
+        "context": "Bağlam penceresi"
+      }
+    },
+    "receipts": {
+      "caption": "Son yönlendirme makbuzları ve doğrulanmış kalite",
+      "empty": "Bu dönemde kayıtlı yedek gönderim yok.",
+      "reconcileNoSend": "Blokeyi kaldır",
+      "columns": {
+        "requested": "İstenen model",
+        "actual": "Gerçek model",
+        "lane": "Hat",
+        "cost": "Gerçek / ayrılan",
+        "quality": "Kalite",
+        "state": "Durum"
+      },
+      "verified": "Doğrulandı",
+      "unverified": "Kontrol başarısız"
+    },
+    "metrics": {
+      "caption": "Doğrulanmış başarı başına maliyet ve gecikme",
+      "columns": {
+        "model": "Model kimliği",
+        "successes": "Doğrulanan / deneme",
+        "costPerSuccess": "Başarı başına maliyet",
+        "latency": "p50 / p95 gecikme"
+      }
+    },
+    "benchmarkSummary": "Son kıyaslama: {{tasks}} görev · {{models}} model",
+    "error": "Küresel Model Yönlendirici ayarları güncellenemedi. Anahtarı, sınırı ve modelleri kontrol edin."
+  },
   "creditContinuity": {
     "title": "API kredileriyle süreklilik",
     "refresh": "Durumu yenile",
@@ -1402,7 +1513,13 @@
       "moonshot": "Kimi anahtarları sk- ile başlar. Kontrol edip tekrar yapıştırın.",
       "zai": "Z.ai anahtarının tamamını boşluksuz yapıştırın. Kontrol edip tekrar yapıştırın.",
       "minimax": "MiniMax anahtarının tamamını boşluksuz yapıştırın. sk-cp- ile başlayan anahtarlar plana aittir ve burada çalışmaz.",
-      "openrouter": "OpenRouter anahtarları sk-or-v1- ile başlar. Kontrol edip tekrar yapıştırın."
+      "openrouter": "OpenRouter anahtarları sk-or-v1- ile başlar. Kontrol edip tekrar yapıştırın.",
+      "groq": "Groq anahtarları gsk_ ile başlar. Kontrol edip tekrar yapıştırın.",
+      "cloudflare": "Cloudflare Workers AI belirtecinin tamamını boşluk bırakmadan yapıştırın. Kontrol edip tekrar deneyin.",
+      "opencode": "OpenCode API anahtarının tamamını boşluk bırakmadan yapıştırın. Kontrol edip tekrar deneyin.",
+      "tencent": "Tencent Hunyuan API anahtarının tamamını boşluk bırakmadan yapıştırın. Kontrol edip tekrar deneyin.",
+      "xiaomi": "Xiaomi MiMo API anahtarının tamamını boşluk bırakmadan yapıştırın. Kontrol edip tekrar deneyin.",
+      "nvidia": "NVIDIA NIM anahtarları nvapi- ile başlar. Kontrol edip tekrar yapıştırın."
     },
     "keyFromOther": "Başka bir sağlayıcıdan mı?",
     "anthropicWorkspace": "Claude Console çalışma alanı kimliği",

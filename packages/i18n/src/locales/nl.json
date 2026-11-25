@@ -22,6 +22,117 @@
     "error": "Opslaan mislukt. Controleer je sleutel en het beleid.",
     "routes": "Ontwikkeling: openrouter/auto-code · Algemeen: openrouter/auto"
   },
+  "globalModelRouter": {
+    "title": "Globale modelrouter",
+    "intro": "Primaire abonnementen draaien eerst. Geschikte agents en routines vallen terug op OpenCode Go, geverifieerde gratis API's, goedkope modellen met limiet en goedgekeurde directe API-aanbieders.",
+    "cascade": "Volgorde: Abonnementen · OpenCode Go · Gratis API's · Lage kosten · Directe API's · Begrensde escalatie",
+    "refresh": "Vernieuwen",
+    "syncCatalog": "Catalogus synchroniseren",
+    "syncing": "Catalogus synchroniseren",
+    "unknown": "Onbekend",
+    "freeCap": "US$ 0 (gratis of inbegrepen)",
+    "states": {
+      "loading": "Routerstatus laden",
+      "disconnected": "Geen terugval-API-routes verbonden",
+      "serverDisabled": "Uitgeschakeld door serverbeleid",
+      "disabled": "Uitgeschakeld. Alleen abonnementen",
+      "authorization_needed": "Autorisatie vereist. Controleer de aanbiederssleutel",
+      "stale_catalog": "Catalogus verlopen. Synchroniseer de catalogus om aanbod te controleren",
+      "unverified": "Wachten op geverifieerde catalogus en sleutel",
+      "eligible": "Gereed. Gecontroleerd voor verzending",
+      "quota_warning": "Nadert quotum of maandbudgetdrempel",
+      "rate_limited": "Snelheidslimiet bereikt. Wachten op nieuw tijdvenster",
+      "provider_outage": "Aanbieder niet beschikbaar. Schakelt naar volgende geschikte route",
+      "incompatible": "Overgeslagen wegens incompatibele tools of modaliteiten",
+      "privacy_blocked": "Geblokkeerd door gegevensbewaar- of regiobeleid",
+      "budget_held": "Gepauzeerd. Openstaande reservering of limiet bereikt",
+      "needs_owner": "Wachten op goedkeuring van eigenaar van werkruimte",
+      "recovered": "Hersteld naar primair abonnement"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go-pakket",
+      "free_api": "Gratis API-pool",
+      "paid_low_cost": "Betaald met lage kosten",
+      "direct_api": "Directe API van aanbieder",
+      "paid_dynamic": "Dynamische autorouter"
+    },
+    "entitlements": {
+      "subscription_go": "Go-abonnement ($ 0 extra)",
+      "free_only": "Alleen gratis laag ($ 0 limiet)",
+      "paid_capped": "Betaald met maandlimiet"
+    },
+    "policy": {
+      "heading": "Routeringsbeleid van werkruimte",
+      "enable": "Beleid opslaan",
+      "disable": "Router uitschakelen",
+      "enabledLabel": "Terugval via globale modelrouter inschakelen",
+      "killSwitchLabel": "Noodschakelaar (blokkeer alle terugvalverzendingen)",
+      "maxEscalations": "Max. kwaliteitsescalaties per beurt (0 tot 2)",
+      "maxRetries": "Max. transportpogingen per route (0 tot 1)",
+      "optOutAgents": "Uitgesloten agent-ID's (leeg erft de router)",
+      "warnThresholds": "Budgetmeldingen sturen bij 50%, 80% en 95%"
+    },
+    "accounts": {
+      "caption": "Geconfigureerde aanbiedersroutes en quotumvensters",
+      "empty": "Nog geen aanbiedersroutes geconfigureerd.",
+      "configureHeading": "Aanbiedersroute configureren",
+      "provider": "Modelaanbieder",
+      "lane": "Routeringsroute",
+      "entitlement": "Factureringsmodus",
+      "key": "Toegewezen aanbiederssleutel",
+      "chooseKey": "Kies een toegewezen sleutel",
+      "cloudflareAccount": "Cloudflare Account-ID van 32 hex-tekens",
+      "cap": "Maandlimiet (USD)",
+      "models": "Toegestane concrete model-ID's (een per regel)",
+      "zdr": "Geen gegevensbewaring (ZDR) vereisen",
+      "save": "Route opslaan",
+      "columns": {
+        "provider": "API-aanbieder",
+        "lane": "Route",
+        "state": "Status",
+        "budget": "Besteed / limiet",
+        "quota": "Dagquotum",
+        "reset": "Venster / gemeten"
+      }
+    },
+    "catalog": {
+      "summary": "Catalogusaanbod: {{eligible}} geschikt · {{total}} vastgelegd",
+      "caption": "Gekwalificeerd API-modelaanbod",
+      "columns": {
+        "model": "Model-ID",
+        "provider": "API-aanbieder",
+        "lane": "Route",
+        "status": "Geschiktheid",
+        "context": "Contextvenster"
+      }
+    },
+    "receipts": {
+      "caption": "Recente routeringsbewijzen en geverifieerde kwaliteit",
+      "empty": "Geen terugvalverzendingen vastgelegd in deze periode.",
+      "reconcileNoSend": "Reservering vrijgeven",
+      "columns": {
+        "requested": "Gevraagd model",
+        "actual": "Werkelijk model",
+        "lane": "Route",
+        "cost": "Werkelijk / gereserveerd",
+        "quality": "Kwaliteit",
+        "state": "Status"
+      },
+      "verified": "Geverifieerd",
+      "unverified": "Controle mislukt"
+    },
+    "metrics": {
+      "caption": "Kosten per geverifieerd succes en latentie",
+      "columns": {
+        "model": "Model-ID",
+        "successes": "Geverifieerd / pogingen",
+        "costPerSuccess": "Kosten per geverifieerd succes",
+        "latency": "p50 / p95 latentie"
+      }
+    },
+    "benchmarkSummary": "Laatste benchmark: {{tasks}} taken · {{models}} modellen",
+    "error": "Kan instellingen van globale modelrouter niet bijwerken. Controleer sleutel, limiet en modellen."
+  },
   "creditContinuity": {
     "title": "Doorgaan met API-tegoed",
     "refresh": "Status bijwerken",
@@ -1402,7 +1513,13 @@
       "moonshot": "Kimi-sleutels beginnen met sk-. Controleer hem en plak hem opnieuw.",
       "zai": "Plak de hele Z.ai-sleutel, zonder spaties. Controleer hem en plak hem opnieuw.",
       "minimax": "Plak de hele MiniMax-sleutel, zonder spaties. Sleutels die met sk-cp- beginnen horen bij het abonnement en werken hier niet.",
-      "openrouter": "OpenRouter-sleutels beginnen met sk-or-v1-. Controleer hem en plak hem opnieuw."
+      "openrouter": "OpenRouter-sleutels beginnen met sk-or-v1-. Controleer hem en plak hem opnieuw.",
+      "groq": "Groq-sleutels beginnen met gsk_. Controleer hem en plak hem opnieuw.",
+      "cloudflare": "Plak het volledige Cloudflare Workers AI-token zonder spaties. Controleer het en plak het opnieuw.",
+      "opencode": "Plak de volledige OpenCode API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "tencent": "Plak de volledige Tencent Hunyuan API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "xiaomi": "Plak de volledige Xiaomi MiMo API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "nvidia": "NVIDIA NIM-sleutels beginnen met nvapi-. Controleer hem en plak hem opnieuw."
     },
     "keyFromOther": "Is hij van een andere aanbieder?",
     "anthropicWorkspace": "Workspace-ID van Claude Console",

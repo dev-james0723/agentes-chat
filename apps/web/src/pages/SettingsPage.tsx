@@ -81,6 +81,7 @@ import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import type { ConnectStart } from "@/components/devices/ConnectDialog";
 import { DevicePage } from "@/components/devices/DevicePage";
 import { DevicesSection } from "@/components/devices/DevicesSection";
+import { GlobalModelRouterCard } from "@/components/GlobalModelRouterCard";
 import { ImportExportSection } from "@/components/ImportFlow";
 import { BillingMeters } from "@/components/Limits";
 import { ErrorState, LoadingLine, LoadingList } from "@/components/Loading";
@@ -1040,7 +1041,9 @@ export function KeyDialog({
                   provider,
                   label: label.trim() || providerLabel(provider),
                   apiKey: apiKey.trim(),
-                  ...(provider === "anthropic" && workspaceId.trim() ? { workspaceId: workspaceId.trim() } : {}),
+                  ...((provider === "anthropic" || provider === "cloudflare") && workspaceId.trim()
+                    ? { workspaceId: workspaceId.trim() }
+                    : {}),
                 },
                 {
                   onError: failed,
@@ -1081,19 +1084,31 @@ export function KeyDialog({
                 />
               </Field>
               {refused && <KeyRefused refusal={refused} />}
-              {mode === "add" && provider === "anthropic" && (
+              {mode === "add" && (provider === "anthropic" || provider === "cloudflare") && (
                 <Field
-                  label={t("onboarding.anthropicWorkspace")}
+                  label={
+                    provider === "cloudflare"
+                      ? t("globalModelRouter.accounts.cloudflareAccount")
+                      : t("onboarding.anthropicWorkspace")
+                  }
                   id="key-ws-set"
-                  hint={{
-                    name: t("common.about", { label: t("onboarding.anthropicWorkspace") }),
-                    text: t("onboarding.anthropicWorkspaceHelp"),
-                  }}
+                  hint={
+                    provider === "anthropic"
+                      ? {
+                          name: t("common.about", { label: t("onboarding.anthropicWorkspace") }),
+                          text: t("onboarding.anthropicWorkspaceHelp"),
+                        }
+                      : undefined
+                  }
                 >
                   <Input
                     value={workspaceId}
                     onChange={(e) => setWorkspaceId(e.target.value)}
-                    placeholder={t("settings.workspaceIdPlaceholder")}
+                    placeholder={
+                      provider === "cloudflare"
+                        ? "0123456789abcdef0123456789abcdef"
+                        : t("settings.workspaceIdPlaceholder")
+                    }
                     autoComplete="off"
                   />
                 </Field>
@@ -1136,6 +1151,7 @@ function UsageSection() {
       <PlanUsageCards />
       <CreditContinuityCard />
       <OpenRouterFallbackCard />
+      <GlobalModelRouterCard />
       {composio.data && showsComposioUsage(composio.data) && (
         <Card>
           <span className="small">{composioUsageText(t, i18n.language, composio.data)}</span>

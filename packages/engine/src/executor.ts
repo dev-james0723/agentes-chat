@@ -257,6 +257,8 @@ import type { FoundryExecutionPolicy } from "./foundry/execution-policy";
 import type { ModelGateway } from "./gateway";
 import { type CodeSetup, codeStart } from "./git/machine";
 import { agentRepositoryList, repositoriesPrompt } from "./git/repos";
+import { type GlobalRouterRouteRecord, qualifyGlobalRouterHandoff } from "./global-router-gateway";
+import { GlobalRouterRefusal } from "./global-router-ledger";
 import { askVerdict, handOffHolds, repeatedAsk, saysNeedsNothing } from "./hand-off";
 import { UPDATE_ISSUE_TOOL } from "./issue-tools";
 import { linkRunToIssue, mirrorReplyToIssue } from "./issues";
@@ -726,6 +728,7 @@ export interface QuotaCliQualification {
 export interface EngineDeps {
   db: Database;
   openRouterFallbackEnabled?: boolean;
+  globalModelRouterEnabled?: boolean;
   /** Proactive task-aware routing is enabled only for explicitly allowed organizations. */
   modelInspector?: {
     enabled(orgId: string): boolean;
@@ -1094,6 +1097,15 @@ export interface Transcript {
     ended?: string;
   };
   openRouterHold?: string;
+  globalRouterFallback?: GlobalRouterRouteRecord & {
+    sourceKind: BrainKind;
+    sourceMachineId: string;
+    sourceAccountId: string | null;
+    agentBinding: string;
+    routineRunId?: string | null;
+    ended?: string;
+  };
+  globalRouterHold?: string;
   creditInFlight?: CreditInFlight;
   creditHold?: CreditRunHold;
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
@@ -1562,20 +1574,39 @@ async function executeRunInner(
   const { db } = deps;
   let hasCreditContinuity = false;
   let hasOpenRouterContinuity = false;
+  let hasGlobalRouterContinuity = false;
   // Every native state transition after a credit handoff is fenced by the caller's existing outbox lease.
   // Posting and a final transition in the same transaction both roll back if that worker lost ownership.
   const transitionRun: typeof transitionNativeRun = async (source, id, from, to, patch = {}, waitClaim) => {
-    if (!hasCreditContinuity && !hasOpenRouterContinuity)
+    if (!hasCreditContinuity && !hasOpenRouterContinuity && !hasGlobalRouterContinuity)
       return transitionNativeRun(source, id, from, to, patch, waitClaim);
     const [hint] = await source
       .select({ orgId: agentRuns.orgId, transcript: agentRuns.transcript })
       .from(agentRuns)
       .where(eq(agentRuns.id, id));
-    if (!hint?.transcript?.creditRoute && !hint?.transcript?.openRouterFallback)
+    if (
+      !hint?.transcript?.creditRoute &&
+      !hint?.transcript?.openRouterFallback &&
+      !hint?.transcript?.globalRouterFallback
+    )
       return transitionNativeRun(source, id, from, to, patch, waitClaim);
     const apply = async (writer: Executor) => {
       await lockCreditClaim(writer, hint.orgId, id, options.creditClaim);
       let committed = patch;
+      if (to === "done" && hint.transcript?.globalRouterFallback) {
+        const [unsettledGlobal] = await writer
+          .select({ id: schema.globalRouterAttempts.id })
+          .from(schema.globalRouterAttempts)
+          .where(
+            and(
+              eq(schema.globalRouterAttempts.orgId, hint.orgId),
+              eq(schema.globalRouterAttempts.runId, id),
+              inArray(schema.globalRouterAttempts.state, ["held", "unknown"]),
+            ),
+          )
+          .limit(1);
+        if (unsettledGlobal) throw new GlobalRouterRefusal("reconciliation_required");
+      }
       if (to === "done" && hint.transcript?.openRouterFallback) {
         const [unsettled] = await writer
           .select({ id: schema.openRouterFallbackAttempts.id })
@@ -1632,7 +1663,8 @@ async function executeRunInner(
   } | null;
   hasCreditContinuity = Boolean(creditState?.creditRoute || creditState?.creditInFlight || creditState?.creditHold);
   hasOpenRouterContinuity = Boolean(effectHold?.transcript?.openRouterFallback);
-  if (effectHold?.transcript?.openRouterHold) return;
+  hasGlobalRouterContinuity = Boolean(effectHold?.transcript?.globalRouterFallback);
+  if (effectHold?.transcript?.openRouterHold || effectHold?.transcript?.globalRouterHold) return;
   // The existing outbox recovery enters here; ordinary runs add no ledger or recovery queries.
   if (hasCreditContinuity && (await recoverCreditRun(deps, runId, options.creditClaim))) return;
   if (
@@ -2760,7 +2792,14 @@ async function executeRunInner(
 
   const saveTranscript = async (tx: Executor, t: Transcript) => {
     const write = async (writer: Executor) => {
-      if (t.creditRoute || t.creditInFlight || t.creditHold || t.openRouterFallback)
+      if (
+        t.creditRoute ||
+        t.creditInFlight ||
+        t.creditHold ||
+        t.openRouterFallback ||
+        t.globalRouterFallback ||
+        t.globalRouterHold
+      )
         await lockCreditClaim(writer, run.orgId, run.id, options.creditClaim);
       return writer
         .update(agentRuns)
@@ -2768,7 +2807,13 @@ async function executeRunInner(
         .where(eq(agentRuns.id, run.id));
     };
     // The lease and transcript write share a transaction. A tool that outlives its worker cannot clear a successor's hold.
-    return tx === db && (t.creditRoute || t.creditInFlight || t.creditHold || t.openRouterFallback)
+    return tx === db &&
+      (t.creditRoute ||
+        t.creditInFlight ||
+        t.creditHold ||
+        t.openRouterFallback ||
+        t.globalRouterFallback ||
+        t.globalRouterHold)
       ? db.transaction(write)
       : write(tx);
   };
@@ -3734,6 +3779,57 @@ async function executeRunInner(
     await publishChannelEvent(deps.pubsub, event("waiting_input"));
     await finished("waiting_input");
   };
+  const holdGlobalRouter = async (reason: string) => {
+    const t = transcript as Transcript;
+    t.globalRouterHold = reason;
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await addRunStep(tx, run, "error", { reason: "global_router_blocked", code: reason });
+      const held = await transitionRun(tx, run.id, "running", "waiting_input", { transcript: storedTranscript(t) });
+      if (!held) throw new PermanentJobError("run changed while holding Global Model Router");
+    });
+    await publishChannelEvent(deps.pubsub, event("waiting_input"));
+    await finished("waiting_input");
+  };
+  let globalRouterSource: BrainPlan | null = null;
+  const savedGlobalRouter = transcript.globalRouterFallback;
+  if (savedGlobalRouter && !savedGlobalRouter.ended) {
+    const [uncommittedGlobal] = await db
+      .select({ id: schema.globalRouterAttempts.id })
+      .from(schema.globalRouterAttempts)
+      .where(
+        and(
+          eq(schema.globalRouterAttempts.orgId, run.orgId),
+          eq(schema.globalRouterAttempts.runId, run.id),
+          or(
+            inArray(schema.globalRouterAttempts.state, ["held", "unknown"]),
+            sql`${schema.globalRouterAttempts.turn} > ${run.turns}`,
+          ),
+        ),
+      )
+      .limit(1);
+    if (
+      uncommittedGlobal ||
+      !options.creditClaim ||
+      savedGlobalRouter.agentBinding !== openRouterAgentBinding(agent) ||
+      brainPlan.missionId ||
+      brainPlan.kind !== savedGlobalRouter.sourceKind ||
+      (brainPlan.account?.id ?? null) !== savedGlobalRouter.sourceAccountId ||
+      brainPlan.session?.machineId !== savedGlobalRouter.sourceMachineId
+    ) {
+      return holdGlobalRouter("reconciliation_required");
+    }
+    globalRouterSource = brainPlan;
+    brainPlan = { kind: "model" };
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running")));
+    });
+    run = { ...run, brain: "model", brainSessionId: null };
+  }
   let openRouterSource: BrainPlan | null = null;
   const savedRouter = transcript.openRouterFallback;
   if (savedRouter && !savedRouter.ended) {
@@ -3867,7 +3963,7 @@ async function executeRunInner(
   let thinker: Agent = agent;
   /** The computer brain's model is "Automático": a model of its plan the key can't use gives way (`autoPlanModel`). */
   const autoBrain = brainPlan.kind !== "model" && isAutoModel(brainPlan.model);
-  if (!openRouterSource && needsAutoChoice(agent, brainPlan)) {
+  if (!openRouterSource && !globalRouterSource && needsAutoChoice(agent, brainPlan)) {
     const t = transcript;
     const kept = t.autoModel;
     const choice: AutoModelRecord =
@@ -4556,6 +4652,141 @@ async function executeRunInner(
         text: "API grant fallback paused. The existing checkpoint is retained while subscription routes are evaluated.",
       }).catch(() => {});
     return brainUnavailable({ code: "plan_limit", message: "The source subscription is still at its limit." });
+  };
+  const moveToGlobalRouterRoute = async (): Promise<boolean> => {
+    const t = transcript as Transcript;
+    const enabled = Boolean(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled);
+    if (
+      !enabled ||
+      !options.creditClaim ||
+      !plan.session ||
+      plan.missionId ||
+      isRightHand(agent) ||
+      agent.brainAccountLentBy ||
+      agent.brainFallback === false ||
+      agent.brainExtraUsage !== false ||
+      t.creditRoute ||
+      t.openRouterFallback ||
+      t.globalRouterFallback ||
+      t.pending ||
+      t.effectUncertain ||
+      t.hostAcpUncertain ||
+      t.continuityCheckpoint ||
+      plan.kind !== agent.brain ||
+      (plan.account?.id ?? null) !== agent.brainAccountId ||
+      plan.session.machineId !== agent.machineId ||
+      t.quotaCliHandoff ||
+      t.spill
+    ) {
+      return false;
+    }
+    const evidence = await openRouterSubscriptionEvidence(
+      db,
+      deps.machines,
+      agent,
+      plan,
+      inspectorPolicy()?.maxAgeMs ?? 300_000,
+    ).catch(() => null);
+    if (!evidence) return false;
+    const body = JSON.stringify({ system: t.system, messages: t.messages });
+    const bytes = new TextEncoder().encode(body).length;
+    if (hasCredentialText(body) || bytes > PORTABLE_CONTEXT_MAX_BYTES) return false;
+    const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+    const taskClass = routineRunId
+      ? "routine"
+      : /engineering|developer|coding|software|programming|code|debug|工程|開發|程式/i.test(
+            `${agent.role} ${triggerText}`,
+          )
+        ? "engineering"
+        : "general";
+    const qualified = await qualifyGlobalRouterHandoff(db, {
+      orgId: run.orgId,
+      agentId: agent.id,
+      taskClass,
+      estimatedPromptTokens: Math.max(256, Math.ceil(bytes / 4)),
+      maxOutputTokens: deps.maxOutputTokens,
+      requiresTools: tools.length > 0,
+      requiresImages: false,
+      requiresPdf: false,
+      subscriptionSourceState: evidence.source,
+      subscriptionAlternatives: evidence.alternatives,
+    }).catch(() => null);
+    if (!qualified?.ok) return false;
+    if (deps.foundryPolicy) {
+      const allowed = await deps.foundryPolicy.beforeBrain(
+        { orgId: run.orgId, agentId: run.agentId, runId: run.id },
+        "model",
+      );
+      if (!allowed.ok) return false;
+    }
+    const next = {
+      ...t,
+      messages: portableMessages(t.messages, await runWorkDigest(db, run.id), await conversationDigest(db, run)),
+    };
+    if (hasCredentialText(JSON.stringify(next.messages))) return false;
+    appendUserText(next, QUOTA_HANDOFF_RESUME_PROMPT);
+    const route: NonNullable<Transcript["globalRouterFallback"]> = {
+      ...qualified.route,
+      sourceKind: plan.kind,
+      sourceMachineId: plan.session.machineId,
+      sourceAccountId: plan.account?.id ?? null,
+      agentBinding: openRouterAgentBinding(agent),
+      ...(routineRunId ? { routineRunId } : {}),
+    };
+    next.globalRouterFallback = route;
+    const moved = await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      const [current] = await tx
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)))
+        .for("update");
+      if (!current || current.archivedAt || current.deletedAt || openRouterAgentBinding(current) !== route.agentBinding)
+        return null;
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null, transcript: storedTranscript(next), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            eq(agentRuns.brainSessionId, plan.session?.id ?? ""),
+            sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+            sql`not exists (select 1 from agent_run_steps c where c.run_id = ${run.id} and c.kind = 'tool_call' and not exists (select 1 from agent_run_steps r where r.run_id = c.run_id and r.kind = 'tool_result' and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')))`,
+          ),
+        )
+        .returning();
+      if (!row) return null;
+      await addRunStep(tx, row, "context", {
+        globalRouterFallback: {
+          state: "selected",
+          from: route.sourceKind,
+          provider: qualified.initialProvider,
+          model: qualified.initialModel,
+          taskClass: route.taskClass,
+        },
+      });
+      if (routineRunId)
+        await tx
+          .update(routineRuns)
+          .set({ brain: "model" })
+          .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+      return row;
+    });
+    if (!moved) return false;
+    globalRouterSource = plan;
+    hasGlobalRouterContinuity = true;
+    run = moved;
+    t.messages = next.messages;
+    t.globalRouterFallback = route;
+    await leaveLine();
+    plan = { kind: "model" };
+    onDemandForOtherBrain(t);
+    brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
+    return true;
   };
   const moveToOpenRouterRoute = async (): Promise<boolean> => {
     const t = transcript as Transcript;
@@ -5328,7 +5559,7 @@ async function executeRunInner(
       u.quotaReserve !== true &&
       !onlyThisComputer &&
       !u.queued &&
-      (await moveToOpenRouterRoute())
+      ((await moveToGlobalRouterRoute()) || (await moveToOpenRouterRoute()))
     )
       return "fallback";
     // A reserve reading is not provider exhaustion. If no alternate qualified, leave existing admission unchanged.
@@ -6832,6 +7063,102 @@ async function executeRunInner(
           if (moved === "waited" || moved === "failed") return;
         }
       }
+      if (transcript.globalRouterFallback && !transcript.globalRouterFallback.ended) {
+        const t = transcript;
+        const route = t.globalRouterFallback;
+        if (!globalRouterSource || !route || !options.creditClaim) return holdGlobalRouter("source_unverified");
+        const [current] = await db
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)));
+        if (
+          !current ||
+          current.archivedAt ||
+          current.deletedAt ||
+          openRouterAgentBinding(current) !== route.agentBinding
+        )
+          return holdGlobalRouter("agent_changed");
+        const evidence = await openRouterSubscriptionEvidence(
+          db,
+          deps.machines,
+          agent,
+          globalRouterSource,
+          inspectorPolicy()?.maxAgeMs ?? 300_000,
+        ).catch(() => null);
+        if (evidence?.source === "healthy") {
+          if (t.pending || t.effectUncertain || t.hostAcpUncertain || t.continuityCheckpoint)
+            return holdGlobalRouter("unsafe_checkpoint");
+          const content = portableMessages(
+            t.messages,
+            await runWorkDigest(db, run.id),
+            await conversationDigest(db, run),
+          );
+          if (hasCredentialText(JSON.stringify(content))) return holdGlobalRouter("context_unqualified");
+          const fresh = Bun.randomUUIDv7();
+          const source = globalRouterSource;
+          if (!source.session) return holdGlobalRouter("source_unverified");
+          t.system = [
+            ...t.system,
+            {
+              turn: true,
+              found: true,
+              text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+            } as ContextBlock,
+          ];
+          route.ended = "subscription_recovered";
+          const moved = await db.transaction(async (tx) => {
+            await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+            const [row] = await tx
+              .update(agentRuns)
+              .set({
+                brain: source.kind,
+                brainSessionId: fresh,
+                transcript: storedTranscript(t),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(agentRuns.id, run.id),
+                  eq(agentRuns.status, "running"),
+                  sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+                ),
+              )
+              .returning();
+            if (!row) return null;
+            await addRunStep(tx, row, "context", {
+              globalRouterFallback: { state: "recovered", to: source.kind },
+            });
+            const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+            if (routineRunId)
+              await tx
+                .update(routineRuns)
+                .set({ brain: source.kind })
+                .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+            return row;
+          });
+          if (!moved) return holdGlobalRouter("run_changed");
+          run = moved;
+          plan = {
+            ...source,
+            unavailable: undefined,
+            quotaReserve: undefined,
+            session: { ...source.session, id: fresh, resume: false },
+          };
+          thinker = agent;
+          brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
+          nextPrompt = [QUOTA_HANDOFF_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+          globalRouterSource = null;
+        } else if (
+          evidence?.source !== "exhausted" ||
+          evidence.alternatives.some((a) => a.state !== "exhausted" && a.state !== "unavailable")
+        )
+          return holdGlobalRouter("subscription_recheck_required");
+        else if (!(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled))
+          return holdGlobalRouter("disabled");
+      }
       if (transcript.openRouterFallback && !transcript.openRouterFallback.ended) {
         const t = transcript;
         const route = t.openRouterFallback;
@@ -7666,6 +7993,9 @@ async function executeRunInner(
         // A turn on a credit route that failed (ADR 0209). A refusal before anything was sent, or a provider's refusal
         // that charged nothing and ends the route, sends the run back to its subscription's choices. A call that went
         // out and whose outcome nobody knows is never sent again: it may have been charged.
+        const onGlobalRouter = turnPlan.kind === "model" && (transcript as Transcript).globalRouterFallback;
+        if (onGlobalRouter && !onGlobalRouter.ended)
+          return holdGlobalRouter(error instanceof GlobalRouterRefusal ? error.reason : "reconciliation_required");
         const onRouter = turnPlan.kind === "model" && (transcript as Transcript).openRouterFallback;
         if (onRouter && !onRouter.ended)
           return holdOpenRouter(error instanceof OpenRouterFallbackRefusal ? error.reason : "reconciliation_required");
@@ -8594,6 +8924,17 @@ function createUnboundBrain(
       if (!route || route.ended) return undefined;
       if (!token.creditClaim || token.creditTurn < 1) throw new OpenRouterFallbackRefusal("stale_owner");
       return { route, claim: token.creditClaim, turn: token.creditTurn };
+    },
+    globalRouterFallback: () => {
+      const route = transcript().globalRouterFallback;
+      if (!route || route.ended) return undefined;
+      if (!token.creditClaim || token.creditTurn < 1) throw new GlobalRouterRefusal("stale_owner");
+      return {
+        route,
+        claim: token.creditClaim,
+        turn: token.creditTurn,
+        routineRunId: route.routineRunId ?? null,
+      };
     },
     // A run on a credit route (ADR 0209): read at each call, so a run that left the route stops asking for it.
     credit: () => {

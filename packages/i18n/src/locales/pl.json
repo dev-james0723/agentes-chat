@@ -22,6 +22,117 @@
     "error": "Nie udało się zapisać ustawień. Sprawdź klucz i politykę.",
     "routes": "Inżynieria: openrouter/auto-code · Ogólne: openrouter/auto"
   },
+  "globalModelRouter": {
+    "title": "Globalny router modeli",
+    "intro": "Główne subskrypcje działają jako pierwsze. Uprawnieni agenci i rutyny przełączają się kolejno na OpenCode Go, zweryfikowane darmowe API, tanie modele z limitem oraz zatwierdzonych dostawców API.",
+    "cascade": "Kolejność: Subskrypcje · OpenCode Go · Darmowe API · Niski koszt · Bezpośrednie API · Ograniczona eskalacja",
+    "refresh": "Odśwież",
+    "syncCatalog": "Synchronizuj katalog",
+    "syncing": "Synchronizowanie katalogu",
+    "unknown": "Nieznane",
+    "freeCap": "0 US$ (darmowe lub w pakiecie)",
+    "states": {
+      "loading": "Ładowanie stanu routera",
+      "disconnected": "Brak podłączonych zapasowych ścieżek API",
+      "serverDisabled": "Wyłączony przez politykę serwera",
+      "disabled": "Wyłączony. Tylko subskrypcje",
+      "authorization_needed": "Wymagana autoryzacja. Sprawdź klucz dostawcy",
+      "stale_catalog": "Katalog wygasł. Zsynchronizuj katalog, aby zweryfikować oferty",
+      "unverified": "Oczekiwanie na zweryfikowany katalog i klucz",
+      "eligible": "Gotowy. Sprawdzany przed wysłaniem",
+      "quota_warning": "Blisko progu limitu lub budżetu miesięcznego",
+      "rate_limited": "Osiągnięto limit zapytań. Oczekiwanie na nowe okno",
+      "provider_outage": "Dostawca niedostępny. Przełączanie na kolejną ścieżkę",
+      "incompatible": "Pominięto z powodu niezgodnych narzędzi lub modalności",
+      "privacy_blocked": "Zablokowano przez politykę retencji danych lub regionu",
+      "budget_held": "Wstrzymany. Nierozliczona blokada budżetu lub osiągnięty limit",
+      "needs_owner": "Oczekiwanie na zgodę właściciela przestrzeni",
+      "recovered": "Przywrócono główną subskrypcję"
+    },
+    "lanes": {
+      "opencode_go": "Pakiet OpenCode Go",
+      "free_api": "Pula darmowych API",
+      "paid_low_cost": "Płatne niskokosztowe",
+      "direct_api": "Bezpośrednie API dostawcy",
+      "paid_dynamic": "Dynamiczny router automatyczny"
+    },
+    "entitlements": {
+      "subscription_go": "Subskrypcja Go (0 $ dopłaty)",
+      "free_only": "Tylko plan darmowy (limit 0 $)",
+      "paid_capped": "Płatne z limitem miesięcznym"
+    },
+    "policy": {
+      "heading": "Polityka routingu przestrzeni roboczej",
+      "enable": "Zapisz politykę",
+      "disable": "Wyłącz router",
+      "enabledLabel": "Włącz zapasowy globalny router modeli",
+      "killSwitchLabel": "Wyłącznik awaryjny (zablokuj wszystkie wywołania zapasowe)",
+      "maxEscalations": "Maks. eskalacji jakości na turę (od 0 do 2)",
+      "maxRetries": "Maks. ponowień transportu na trasę (od 0 do 1)",
+      "optOutAgents": "ID wykluczonych agentów (puste dziedziczy router)",
+      "warnThresholds": "Wysyłaj alerty budżetowe przy 50%, 80% i 95%"
+    },
+    "accounts": {
+      "caption": "Skonfigurowane ścieżki dostawców i okna limitów",
+      "empty": "Nie skonfigurowano jeszcze żadnych ścieżek dostawców.",
+      "configureHeading": "Skonfiguruj ścieżkę dostawcy",
+      "provider": "Dostawca modeli",
+      "lane": "Ścieżka routingu",
+      "entitlement": "Tryb rozliczeń",
+      "key": "Dedykowany klucz dostawcy",
+      "chooseKey": "Wybierz dedykowany klucz",
+      "cloudflareAccount": "32-znakowy szesnastkowy Account ID Cloudflare",
+      "cap": "Limit miesięczny (USD)",
+      "models": "Dozwolone konkretne ID modeli (jeden w wierszu)",
+      "zdr": "Wymagaj zerowej retencji danych (ZDR)",
+      "save": "Zapisz ścieżkę",
+      "columns": {
+        "provider": "Dostawca API",
+        "lane": "Ścieżka",
+        "state": "Stan",
+        "budget": "Wydano / limit",
+        "quota": "Limit dzienny",
+        "reset": "Okno / odczyt"
+      }
+    },
+    "catalog": {
+      "summary": "Oferty w katalogu: kwalifikujące się {{eligible}} · zapisane {{total}}",
+      "caption": "Zakwalifikowane oferty modeli API",
+      "columns": {
+        "model": "ID modelu",
+        "provider": "Dostawca API",
+        "lane": "Ścieżka",
+        "status": "Uprawnienie",
+        "context": "Okno kontekstu"
+      }
+    },
+    "receipts": {
+      "caption": "Ostatnie potwierdzenia routingu i zweryfikowana jakość",
+      "empty": "Brak wywołań zapasowych w tym okresie.",
+      "reconcileNoSend": "Zwolnij blokadę",
+      "columns": {
+        "requested": "Żądany model",
+        "actual": "Rzeczywisty model",
+        "lane": "Ścieżka",
+        "cost": "Rzeczywisty / zarezerwowany",
+        "quality": "Jakość",
+        "state": "Stan"
+      },
+      "verified": "Zweryfikowano",
+      "unverified": "Błąd weryfikacji"
+    },
+    "metrics": {
+      "caption": "Koszt zweryfikowanego sukcesu i opóźnienie",
+      "columns": {
+        "model": "ID modelu",
+        "successes": "Zweryfikowane / próby",
+        "costPerSuccess": "Koszt zweryfikowanego sukcesu",
+        "latency": "Opóźnienie p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Ostatni benchmark: zadania {{tasks}} · modele {{models}}",
+    "error": "Nie udało się zaktualizować ustawień globalnego routera modeli. Sprawdź klucz, limit i modele."
+  },
   "creditContinuity": {
     "title": "Ciągłość pracy dzięki środkom API",
     "refresh": "Odśwież stan",
@@ -1483,7 +1594,13 @@
       "moonshot": "Klucze Kimi zaczynają się od sk-. Sprawdź go i wklej ponownie.",
       "zai": "Wklej cały klucz Z.ai, bez spacji. Sprawdź go i wklej ponownie.",
       "minimax": "Wklej cały klucz MiniMax, bez spacji. Klucze zaczynające się od sk-cp- należą do planu i tu nie działają.",
-      "openrouter": "Klucze OpenRouter zaczynają się od sk-or-v1-. Sprawdź go i wklej ponownie."
+      "openrouter": "Klucze OpenRouter zaczynają się od sk-or-v1-. Sprawdź go i wklej ponownie.",
+      "groq": "Klucze Groq zaczynają się od gsk_. Sprawdź go i wklej ponownie.",
+      "cloudflare": "Wklej cały token Cloudflare Workers AI bez spacji. Sprawdź go i wklej ponownie.",
+      "opencode": "Wklej cały klucz API OpenCode bez spacji. Sprawdź go i wklej ponownie.",
+      "tencent": "Wklej cały klucz API Tencent Hunyuan bez spacji. Sprawdź go i wklej ponownie.",
+      "xiaomi": "Wklej cały klucz API Xiaomi MiMo bez spacji. Sprawdź go i wklej ponownie.",
+      "nvidia": "Klucze NVIDIA NIM zaczynają się od nvapi-. Sprawdź go i wklej ponownie."
     },
     "keyFromOther": "Jest od innego dostawcy?",
     "anthropicWorkspace": "ID przestrzeni roboczej w Claude Console",

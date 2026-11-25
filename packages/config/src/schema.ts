@@ -536,6 +536,15 @@ export const envVars = {
       "Permit owner-configured OpenRouter fallback after verified subscription exhaustion. Disabled by default.",
     section: "Agents",
   },
+  GLOBAL_MODEL_ROUTER_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "Permit owner-configured multi-lane Global Model Router fallback after verified subscription exhaustion. Disabled by default.",
+    section: "Agents",
+  },
   CREDIT_FALLBACK_ENABLED: {
     schema: z
       .enum(["true", "false"])

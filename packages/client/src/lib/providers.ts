@@ -82,7 +82,7 @@ export const PROVIDERS = [
   {
     id: "zai",
     label: "Z.ai",
-    pattern: /^(?!sk-|AQ\.|AIza)[A-Za-z0-9._-]{16,}$/,
+    pattern: /^(?!sk-|AQ\.|AIza|gsk_|cfut_|oc_sk_|hy-|mimo-|nvapi-)[A-Za-z0-9._-]{16,}$/,
     site: "z.ai/manage-apikey/apikey-list",
     plans: true,
   },
@@ -90,9 +90,52 @@ export const PROVIDERS = [
     id: "minimax",
     label: "MiniMax",
     // `sk-cp-` keys are its coding plan's.
-    pattern: /^(?!sk-ant-|sk-cp-|sk-or-|AQ\.|AIza)[A-Za-z0-9._-]{16,}$/,
+    pattern: /^(?!sk-ant-|sk-cp-|sk-or-|AQ\.|AIza|gsk_|cfut_|oc_sk_|hy-|mimo-|nvapi-)[A-Za-z0-9._-]{16,}$/,
     site: "platform.minimax.io/user-center/basic-information/interface-key",
     plans: true,
+  },
+  {
+    id: "groq",
+    label: "GroqCloud",
+    placeholder: "gsk_…",
+    pattern: /^gsk_[A-Za-z0-9_-]{20,}$/,
+    site: "console.groq.com/keys",
+  },
+  {
+    id: "cloudflare",
+    label: "Cloudflare Workers AI",
+    placeholder: "cfut_…",
+    pattern: /^cfut_[A-Za-z0-9_-]{20,}$/,
+    site: "dash.cloudflare.com/profile/api-tokens",
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    placeholder: "oc_sk_…",
+    pattern: /^oc_sk_[A-Za-z0-9._-]{8,}$/,
+    site: "opencode.ai/console",
+    plans: true,
+  },
+  {
+    id: "tencent",
+    label: "Tencent Hunyuan",
+    placeholder: "hy-…",
+    pattern: /^hy-[A-Za-z0-9_-]{16,}$/,
+    site: "console.cloud.tencent.com/hunyuan/api-key",
+  },
+  {
+    id: "xiaomi",
+    label: "Xiaomi MiMo",
+    placeholder: "mimo-…",
+    pattern: /^mimo-[A-Za-z0-9_-]{16,}$/,
+    site: "platform.xiaomimimo.com/api-keys",
+  },
+  {
+    id: "nvidia",
+    label: "NVIDIA NIM",
+    placeholder: "nvapi-…",
+    pattern: /^nvapi-[A-Za-z0-9_-]{20,}$/,
+    site: "build.nvidia.com/explore/discover",
   },
 ] as const satisfies readonly ProviderEntry[];
 

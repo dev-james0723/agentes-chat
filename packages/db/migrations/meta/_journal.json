@@ -1982,6 +1982,13 @@
       "when": 1795468772318,
       "tag": "0284_openrouter_fallback",
       "breakpoints": true
+    },
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1795490599831,
+      "tag": "0285_global_model_router",
+      "breakpoints": true
     }
   ]
 }
