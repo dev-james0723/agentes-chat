@@ -1211,6 +1211,31 @@ test("a deploy record is written only for the source this server runs (ADR 0204)
   expect(unknown.status).toBe(409);
 });
 
+test("test receipts (ADR 0211): recorded once as an operator-sourced outcome; bad input refused", async () => {
+  const input = {
+    repo: "acme/app",
+    commit: "a".repeat(40),
+    suite: "unit",
+    testsDigest: `sha256:${"3".repeat(64)}`,
+    passed: true,
+  };
+  const app = createOperatorApp(deps, TOKEN);
+  const post = (json: unknown) =>
+    app.request(`/api/operator/v1/orgs/${acme.orgId}/test-receipts`, {
+      method: "POST",
+      headers: { authorization: BEARER, "content-type": "application/json" },
+      body: JSON.stringify(json),
+    });
+  const first = await post(input);
+  expect(first.status).toBe(200);
+  const one = (await first.json()) as { id: string; kind: string };
+  expect(one.kind).toBe("tests_passed");
+  expect(((await (await post(input)).json()) as { id: string }).id).toBe(one.id);
+  expect((await post({ ...input, testsDigest: "nope" })).status).toBe(400);
+  const [row] = await deps.db.select().from(schema.outcomes).where(eq(schema.outcomes.id, one.id));
+  expect(row).toMatchObject({ source: "operator", subject: "tests:acme/app" });
+});
+
 test("the OpenAPI document is the committed contract (ADR 0056)", async () => {
   const doc = await body(await op("/openapi.json"));
   const file = Bun.file(`${import.meta.dir}/operator-openapi.json`);

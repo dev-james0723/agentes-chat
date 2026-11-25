@@ -1,20 +1,24 @@
 import { and, type Database, eq, gte, inArray, lt, ne, schema, sql } from "@agenteschat/db";
 import { nanoUsdToUsd } from "@agenteschat/providers";
+import { contractHash, contractOf, type StoredContract, verdictOf } from "./completion-contract";
 import { ForbiddenError, ValidationError } from "./errors";
+import type { EvidenceOutcome } from "./founder-status";
 import { canViewCost } from "./usage";
 
 /**
  * Cost per independently verified successful task (ADR 0207). Measurement only: nothing here changes routing.
  *
- * - A success is a task (`agent_runs.issue_id`) whose newest `criteria_met` outcome has every criterion checked by a
- *   person and no `issue_reopened` after it. A task counts once, for the group of its latest finished run.
+ * - A success is a task (`agent_runs.issue_id`) an independent verifier confirmed against its completion contract
+ *   (`task_verified`, ADR 0211), with no reopen, new claim or rejection since and the contract unchanged. People's ticks
+ *   alone (`criteria_met`) are evidence for the verifier, not a success. A task counts once, for the group of its
+ *   latest finished run.
  * - Every finished run (done, failed, canceled) counts toward cost, verified or not.
  * - A run's cost is known only when it has usage rows and none is a plan turn (`billed_to = plan` records no price).
  *   One unknown run makes its group's cost unknown: never summed as 0.
  * - Retries are the runs on a task after its first in the window.
  */
 
-const { agentRuns, usageRecords, outcomes, agents } = schema;
+const { agentRuns, usageRecords, outcomes, agents, issues } = schema;
 const FINISHED = ["done", "failed", "canceled"] as const;
 const DAY = 86_400_000;
 /** The longest window one request reads (ADR 0207): the report loads the window's runs in memory. */
@@ -47,21 +51,116 @@ export interface CostPerSuccessGroup extends CostPerSuccessRow {
   model: string | null;
 }
 
+/**
+ * False-pass counts (ADR 0211): tasks claimed done in the window (an `issue_closed` claim, by anyone), how many an
+ * independent verifier confirmed, and how many a verifier rejected after the claim. Read only.
+ */
+export interface ClaimCounts {
+  claimedDone: number;
+  verified: number;
+  rejectedAfterClaim: number;
+  /** Claimed, neither verified nor rejected after the claim: done in name only so far. */
+  unverified: number;
+  /** `rejectedAfterClaim / claimedDone`; null with no claim. */
+  falseClaimRate: number | null;
+  text: string;
+}
+
 export interface CostPerSuccessReport {
   from: string;
   to: string;
   groups: CostPerSuccessGroup[];
   total: CostPerSuccessRow;
+  claims: ClaimCounts;
+}
+
+const VERDICT_ROW_KINDS = ["task_verified", "task_rejected", "issue_reopened", "issue_closed"];
+
+/** Each task's verdict rows and the hash of its contract and criteria now, for `verdictOf`. */
+async function verdictInputs(db: Database, orgId: string, issueIds: string[]) {
+  const rows = new Map<string, EvidenceOutcome[]>();
+  const hashes = new Map<string, string>();
+  if (issueIds.length === 0) return { rows, hashes };
+  const found = await db
+    .select({ id: outcomes.id, kind: outcomes.kind, details: outcomes.details, createdAt: outcomes.createdAt })
+    .from(outcomes)
+    .where(
+      and(
+        eq(outcomes.orgId, orgId),
+        inArray(outcomes.kind, VERDICT_ROW_KINDS),
+        inArray(sql<string>`${outcomes.details}->>'issueId'`, issueIds),
+      ),
+    );
+  for (const o of found) {
+    const issueId = o.details.issueId;
+    if (typeof issueId !== "string") continue;
+    rows.set(issueId, [...(rows.get(issueId) ?? []), { ...o, subject: "" }]);
+  }
+  const tasks = await db
+    .select({ id: issues.id, criteria: issues.criteria, contract: issues.completionContract })
+    .from(issues)
+    .where(and(eq(issues.orgId, orgId), inArray(sql<string>`${issues.id}::text`, issueIds)));
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  // A task no longer here: the default contract over no criteria.
+  for (const id of issueIds) {
+    const t = byId.get(id);
+    hashes.set(id, contractHash(contractOf((t?.contract as StoredContract | null) ?? null), t?.criteria ?? []));
+  }
+  return { rows, hashes };
+}
+
+function claimText(c: Omit<ClaimCounts, "text">): string {
+  if (c.claimedDone === 0) return "完成宣稱：呢段時間冇任務標完成。";
+  return `完成宣稱：${c.claimedDone} 個任務標咗完成，${c.verified} 個經獨立核實，${c.rejectedAfterClaim} 個宣稱完成後被核實者退回，${c.unverified} 個未核實。`;
+}
+
+async function claimCounts(db: Database, orgId: string, from: Date, to: Date): Promise<ClaimCounts> {
+  const claims = await db
+    .select({ details: outcomes.details, createdAt: outcomes.createdAt })
+    .from(outcomes)
+    .where(
+      and(
+        eq(outcomes.orgId, orgId),
+        eq(outcomes.kind, "issue_closed"),
+        gte(outcomes.createdAt, from),
+        lt(outcomes.createdAt, to),
+      ),
+    );
+  const firstClaim = new Map<string, Date>();
+  for (const c of claims) {
+    const id = c.details.issueId;
+    if (typeof id !== "string") continue;
+    const seen = firstClaim.get(id);
+    if (!seen || c.createdAt < seen) firstClaim.set(id, c.createdAt);
+  }
+  const ids = [...firstClaim.keys()];
+  const { rows, hashes } = await verdictInputs(db, orgId, ids);
+  let verified = 0;
+  let rejectedAfterClaim = 0;
+  for (const id of ids) {
+    const own = rows.get(id) ?? [];
+    if (verdictOf(own, hashes.get(id) ?? "").state === "verified") verified++;
+    else if (own.some((r) => r.kind === "task_rejected" && r.createdAt > (firstClaim.get(id) as Date)))
+      rejectedAfterClaim++;
+  }
+  const counts = {
+    claimedDone: ids.length,
+    verified,
+    rejectedAfterClaim,
+    unverified: ids.length - verified - rejectedAfterClaim,
+    falseClaimRate: ids.length > 0 ? rejectedAfterClaim / ids.length : null,
+  };
+  return { ...counts, text: claimText(counts) };
 }
 
 const usd = (n: number) => `US$${n.toFixed(2)}`;
 
 function textOf(r: Omit<CostPerSuccessRow, "text">): string {
   if (r.missing === "unknown_cost")
-    return `每次成功成本：未知。有 ${r.unknownCostRuns} 次運行冇價錢紀錄（例如用訂閱計劃），唔會當係 0。經人核實嘅成功任務：${r.verifiedSuccesses} 個。`;
+    return `每次成功成本：未知。有 ${r.unknownCostRuns} 次運行冇價錢紀錄（例如用訂閱計劃），唔會當係 0。經獨立核實嘅成功任務：${r.verifiedSuccesses} 個。`;
   if (r.missing === "no_success")
-    return `每次成功成本：計唔到，未有經人核實嘅成功任務。${r.runs} 次運行共用咗 ${usd(r.costUsd ?? 0)}。`;
-  return `每個經人核實嘅成功任務平均成本 ${usd(r.costPerSuccessUsd ?? 0)}（${r.verifiedSuccesses} 個成功，${r.runs} 次運行共用 ${usd(r.costUsd ?? 0)}）。`;
+    return `每次成功成本：計唔到，未有經獨立核實嘅成功任務。${r.runs} 次運行共用咗 ${usd(r.costUsd ?? 0)}。`;
+  return `每個經獨立核實嘅成功任務平均成本 ${usd(r.costPerSuccessUsd ?? 0)}（${r.verifiedSuccesses} 個成功，${r.runs} 次運行共用 ${usd(r.costUsd ?? 0)}）。`;
 }
 
 function finish(r: Omit<CostPerSuccessRow, "costPerSuccessUsd" | "missing" | "text">): CostPerSuccessRow {
@@ -70,16 +169,6 @@ function finish(r: Omit<CostPerSuccessRow, "costPerSuccessUsd" | "missing" | "te
   const costPerSuccessUsd = missing === null && r.costUsd !== null ? r.costUsd / r.verifiedSuccesses : null;
   const row = { ...r, costPerSuccessUsd, missing };
   return { ...row, text: textOf(row) };
-}
-
-/** People must have checked every criterion: an agent ticking its own is no independent verification. */
-function personVouched(details: Record<string, unknown>): boolean {
-  const by = details.checkedBy;
-  return (
-    Array.isArray(by) &&
-    by.length > 0 &&
-    by.every((b) => typeof b === "object" && b !== null && (b as { type?: unknown }).type === "person")
-  );
 }
 
 export async function costPerSuccess(
@@ -150,26 +239,10 @@ export async function costPerSuccess(
 
   const issueIds = [...new Set(runs.flatMap((r) => (r.issueId ? [r.issueId] : [])))];
   const verified = new Set<string>();
-  if (issueIds.length) {
-    const rows = await db
-      .select({ kind: outcomes.kind, details: outcomes.details, createdAt: outcomes.createdAt })
-      .from(outcomes)
-      .where(
-        and(
-          eq(outcomes.orgId, orgId),
-          inArray(outcomes.kind, ["criteria_met", "issue_reopened"]),
-          inArray(sql<string>`${outcomes.details}->>'issueId'`, issueIds),
-        ),
-      )
-      .orderBy(outcomes.createdAt, outcomes.id);
-    // The newest event per task decides: met by people and not reopened since.
-    const last = new Map<string, boolean>();
-    for (const o of rows) {
-      const issueId = o.details.issueId;
-      if (typeof issueId !== "string") continue;
-      last.set(issueId, o.kind === "criteria_met" && personVouched(o.details));
-    }
-    for (const [id, ok] of last) if (ok) verified.add(id);
+  {
+    const { rows, hashes } = await verdictInputs(db, orgId, issueIds);
+    for (const id of issueIds)
+      if (verdictOf(rows.get(id) ?? [], hashes.get(id) ?? "").state === "verified") verified.add(id);
   }
 
   // Per run: its group (agent × brain × model).
@@ -237,5 +310,11 @@ export async function costPerSuccess(
     };
   });
   list.sort((a, b) => a.agentName.localeCompare(b.agentName) || b.runs - a.runs);
-  return { from: from.toISOString(), to: to.toISOString(), groups: list, total: sum(runIds, creditTo.size) };
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    groups: list,
+    total: sum(runIds, creditTo.size),
+    claims: await claimCounts(db, orgId, from, to),
+  };
 }

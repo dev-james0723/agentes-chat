@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { and, eq, schema } from "@agenteschat/db";
 import {
   ConflictError,
+  contractHash,
+  contractOf,
   createIssue,
   deriveFounderStatus,
   type FounderEvidence,
@@ -138,7 +140,7 @@ describe("delivery: available only when the running server is the deploy that ho
   });
 });
 
-describe("verification: only a persisted, person-vouched outcome is verified", () => {
+describe("verification: only an independent verifier's verdict over stored evidence is verified (ADR 0211)", () => {
   const criteria = (doneBy: "person" | "agent" | null) => [
     { id: "c1", text: "Opens", done: doneBy !== null, doneBy: doneBy ? { type: doneBy, id: "x" } : null },
   ];
@@ -180,8 +182,27 @@ describe("verification: only a persisted, person-vouched outcome is verified", (
     expect(s.verification.verified).toBe(false);
   });
 
-  test("criteria_met with every criterion checked by a person: verified", () => {
+  test("negative control: criteria_met by people alone is evidence, not a verdict", () => {
     const s = deriveFounderStatus(evidence({ outcomes: [met()] }, { status: "done", criteria: criteria("person") }));
+    expect(s.verification.state).toBe("done_unverified");
+    expect(s.verification.verified).toBe(false);
+  });
+
+  test("criteria met and an independent verifier confirmed it under the default contract: verified", () => {
+    const verdict = {
+      id: "v",
+      kind: "task_verified",
+      subject: "",
+      details: {
+        issueId: "issue-1",
+        by: { type: "person", id: "james" },
+        contractHash: contractHash(contractOf(null), criteria("person")),
+      },
+      createdAt: at(45),
+    };
+    const s = deriveFounderStatus(
+      evidence({ outcomes: [met(), verdict] }, { status: "done", criteria: criteria("person") }),
+    );
     expect(s.verification.state).toBe("verified");
     expect(s.verification.verified).toBe(true);
   });
@@ -432,7 +453,7 @@ describe("founderStatus: read from the database", () => {
     expect(again.id).toBe(ok.id);
   });
 
-  test("a person-vouched criteria_met makes it verified; a task they can't see is a 404", async () => {
+  test("a person-vouched criteria_met is not yet verified (ADR 0211); a task they can't see is a 404", async () => {
     f = await setup();
     const issue = await createIssue(deps(), owner(), f.org.id, {
       title: "Preview",
@@ -443,7 +464,8 @@ describe("founderStatus: read from the database", () => {
     if (!c) throw new Error("no criterion");
     await setCriterion(deps(), owner(), f.org.id, issue.id, c.id, true);
     const s = await founderStatus(f.db, f.owner.id, f.org.id, issue.id, null);
-    expect(s.verification.state).toBe("verified");
+    expect(s.verification.state).toBe("unverified");
+    expect(s.verification.verified).toBe(false);
     const member = await addMember(f.db, f.org.id, "member", "Bea");
     await expect(founderStatus(f.db, member.id, f.org.id, issue.id, null)).rejects.toBeInstanceOf(NotFoundError);
   });

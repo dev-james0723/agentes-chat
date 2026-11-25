@@ -385,6 +385,11 @@ const PLAIN_LINE = new Set([
   "run.effect_person_only",
   // Only the operator API answers it (a deploy record for a source this server doesn't run, ADR 0204): no person meets it.
   "deploy_not_running",
+  // Independent verification (ADR 0211) has no screen yet: only the API and the engine meet these.
+  "evidence_missing",
+  "reasons_required",
+  "self_verification",
+  "verifier_can_write",
   // Only an agent names a project by a name that isn't one, and the pickers offer only projects that exist.
   "issue_project.unknown",
   "issue_project.not_found",

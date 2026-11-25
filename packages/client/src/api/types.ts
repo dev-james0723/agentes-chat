@@ -3737,10 +3737,37 @@ export interface FounderStatus {
     text: string;
   };
   verification: {
-    state: "verified" | "done_unverified" | "unverified" | "no_criteria";
+    state: "verified" | "stale" | "rejected" | "done_unverified" | "unverified" | "no_criteria";
+    /** An independent verifier confirmed it and the evidence still meets its completion contract (ADR 0211). */
     verified: boolean;
     criteria: { total: number; checkedByPerson: number };
     checks: { kind: string; positive: boolean; at: string }[];
+    contract: {
+      evidence: ("criteria" | "person_vouched" | "pr_merged" | "deploy_running" | "tests_passed")[];
+      tests: { suite: string; digest: string } | null;
+      isDefault: boolean;
+    };
+    verifier: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    missing: (
+      | "not_claimed"
+      | "no_criteria"
+      | "criteria_unchecked"
+      | "not_person_vouched"
+      | "not_merged"
+      | "merge_reverted"
+      | "merge_commit_unknown"
+      | "not_deployed"
+      | "deploy_stale"
+      | "deploy_rolled_back"
+      | "runtime_unknown"
+      | "tests_not_pinned"
+      | "tests_receipt_missing"
+      | "tests_receipt_untrusted"
+      | "tests_wrong_commit"
+      | "tests_changed"
+      | "tests_failed"
+    )[];
+    rejectedReasons: string[];
     text: string;
   };
   blockers: { reason: string; since: string; text: string }[];
@@ -7543,6 +7570,15 @@ export interface CostPerSuccessReport {
   to: string;
   groups: (CostPerSuccessRow & { agentId: string; agentName: string; brain: string; model: string | null })[];
   total: CostPerSuccessRow;
+  /** False-pass counts (ADR 0211): tasks claimed done in the window, verified, rejected after the claim. */
+  claims: {
+    claimedDone: number;
+    verified: number;
+    rejectedAfterClaim: number;
+    unverified: number;
+    falseClaimRate: number | null;
+    text: string;
+  };
 }
 
 /** `GET …/usage/plans`: every plan account by computer, and the API per agent this month. */

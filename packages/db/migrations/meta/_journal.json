@@ -1982,6 +1982,13 @@
       "when": 1795588013237,
       "tag": "0284_issue_owner_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1795590220909,
+      "tag": "0285_issue_completion_contract",
+      "breakpoints": true
     }
   ]
 }
