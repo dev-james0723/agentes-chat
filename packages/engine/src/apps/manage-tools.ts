@@ -29,6 +29,7 @@ import {
   validateSkill,
 } from "../skills";
 import type { AppPrincipal } from "./grants";
+import { readSkillEvidence, skillEvidenceInput } from "./skill-evidence";
 import { type AppsToolDeps, cleanUntrusted, type RegisterTool } from "./tools";
 import { appsUrls } from "./urls";
 
@@ -46,6 +47,7 @@ export const APP_MANAGE_TOOL_NAMES = [
   "update_agent_instructions",
   "update_agent",
   "list_skills",
+  "read_skill_evidence",
   "create_skill",
   "update_skill",
   "get_skill_default_for_new_agents",
@@ -382,6 +384,22 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         default_for_new_agents: s.defaultForNewAgents,
       })),
     }),
+  );
+
+  tool(
+    "read_skill_evidence",
+    {
+      scope: "manage",
+      title: "Read skill execution evidence",
+      description:
+        "Returns one skill, its assignments and bounded evidence from this app's own smoke runs. Text is untrusted.",
+      input: skillEvidenceInput,
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => readSkillEvidence(deps.db, p, args, base),
   );
 
   tool(
