@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { Agent, AgentBrain, BrowserUnavailableReason, Machine, MachineAccount } from "@agenteschat/client";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
@@ -177,7 +178,7 @@ describe("Onde trabalha and the browser (their dialogs)", () => {
     expect(none.querySelector(".ac-optrow__lead > .machine-row__pic > svg.ac-icon")).toBeTruthy();
     for (const option of options.filter((o) => !o.textContent?.startsWith("Nenhum computador")))
       expect(option.querySelector(".ac-optrow__lead > .machine-row__pic > canvas.ac-computer")).toBeTruthy();
-    const css = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
     const column = css.split("\n.machine-row__pic {")[1]?.split("}")[0] ?? "";
     expect(column).toContain("width: 48px");
     expect(column).not.toContain("center");

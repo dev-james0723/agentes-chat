@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -446,7 +447,7 @@ describe("Setting it up here", () => {
     ));
 
   test("it stays where it opened: the room above is pinned as it starts, so the slow line grows it downward", async () => {
-    const css = await Bun.file(new URL("../src/styles.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles.css", import.meta.url))).text();
     expect(css.split("\n.dk-fr__setup > :first-child {")[1]?.split("}")[0]).toContain(
       "margin-top: var(--dk-setup-lead, auto);",
     );
@@ -559,7 +560,7 @@ describe("Setting it up here", () => {
   });
 
   test("every reason's end gives its fix first, then where to try again on a line of its own", async () => {
-    const css = await Bun.file(new URL("../src/styles.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles.css", import.meta.url))).text();
     // Under a link or words as under a command: never run on after "Turn it on".
     expect(css.split("\n.dk-fr__problem .dk-fr__retry {")[1]?.split("}")[0]).toContain("display: block;");
     for (const [reason, fix] of [

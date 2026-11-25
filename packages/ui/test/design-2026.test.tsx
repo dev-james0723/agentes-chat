@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -40,7 +41,7 @@ describe("buttons and kbd", () => {
   });
 
   test("no keyboard hints on a touch screen or at phone width, wherever the kit draws one", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const narrow = css.split("\n@media (max-width: 760px), (pointer: coarse) {")[1]?.split("\n}")[0] ?? "";
     const hidden = narrow.split("{").at(-2)?.split("}").at(-1) ?? "";
     for (const hint of [
@@ -62,7 +63,7 @@ describe("buttons and kbd", () => {
   test("a Button that toggles stays pushed in while on (aria-pressed), hovered or not; a ghost one keeps its plate", async () => {
     render(<Button aria-pressed>Teclado</Button>);
     expect(body().getByRole("button", { name: "Teclado" }).getAttribute("aria-pressed")).toBe("true");
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) =>
       new RegExp(`(^|\\n)${selector.replace(/[.[\]()"=]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[2] ?? "";
     const pressed = rule('.ac-btn[aria-pressed="true"]');
@@ -95,14 +96,14 @@ describe("buttons and kbd", () => {
   });
 
   test("off, a button is a faint plate over what it sits on, so its shape shows on the dark page too", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const off = css.split('\n.ac-btn:disabled,\n.ac-btn[aria-disabled="true"] {').at(-1)?.split("}")[0] ?? "";
     expect(off).toContain("background: var(--plate)");
     expect(off).not.toContain("var(--sunken)");
   });
 
   test("a chosen option is pressed the same in both themes and never moves, so a row of options keeps its words on one line", async () => {
-    const tokens = await Bun.file(new URL("../src/styles/tokens.css", import.meta.url).pathname).text();
+    const tokens = await Bun.file(fileURLToPath(new URL("../src/styles/tokens.css", import.meta.url))).text();
     const blocks = [...tokens.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)].map(
       ([, selector, rule]) => ({
         selector: (selector ?? "").trim().replace(/\s+/g, " "),
@@ -230,7 +231,7 @@ describe("the count chip", () => {
     const small = body().getByRole("radio", { name: /^Um/ });
     expect(small.querySelector(".ac-countchip")?.className).toBe("ac-countchip ac-countchip--sm");
     expect(body().getByText("6").className).toBe("ac-countchip ac-countchip--strong");
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = /\.ac-countchip \{(\s*--count-h[^}]*)\}/.exec(css)?.[1] ?? "";
     for (const decl of ["align-self: center", "height: var(--count-h)", "min-width: var(--count-h)"]) {
       expect(rule).toContain(decl);
@@ -303,7 +304,7 @@ describe("list toolbars", () => {
   });
 
   test("one shape: ruler controls on the field surface; pressed and set chips are filled neutral; phones scroll the filters", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) =>
       new RegExp(`(^|\\n)${selector.replace(/[.[\]()"=]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[2] ?? "";
     expect(rule(".ac-searchfield")).toContain("border-radius: var(--tool-r, var(--control-r-md))");
@@ -321,7 +322,7 @@ describe("list toolbars", () => {
   });
 
   test("one height: the search, the toggles and the chips all read --tool-h, so a row lines up", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) =>
       new RegExp(`(^|\\n)${selector.replace(/[.[\]()"=]/g, "\\$&")} \\{([^}]*)\\}`).exec(css)?.[2] ?? "";
     // A search on its own is a default field (40); filters default to the compact step (32).
@@ -587,7 +588,7 @@ describe("work summary and reactions", () => {
 
 describe("reduced motion (2026-10 block)", () => {
   test("halo, mark and tab animations only run without reduced motion (the agent's own motion is the engine's)", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const block = css.slice(css.indexOf("Design system 2026-10 (docs/design"));
     const outside = block.replace(/@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g, "");
     expect(outside).not.toMatch(/\banimation:\s*ac-/);

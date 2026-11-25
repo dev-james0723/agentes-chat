@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -41,7 +42,7 @@ describe("provider marks", () => {
   });
 
   test("Gemini draws its own image on the neutral tile, at a path mark's size, dimmed only by opacity", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     for (const size of ["xs", "chip", "sm", "tile"] as const) {
       const el = logo(render(<ProviderLogo id="gemini" size={size} />).container);
@@ -141,7 +142,7 @@ describe("provider marks", () => {
   });
 
   test("off only dims a mark, in its own colors; the chip is a 20 px tile with a 12 px mark", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-brand--off")).toContain("opacity: 0.5");
     expect(rule(".ac-brand--off")).not.toContain("filter");
@@ -170,7 +171,7 @@ describe("provider marks", () => {
     expect(named.getAttribute("role")).toBe("img");
     expect(named.getAttribute("aria-label")).toBe("Claude e OpenAI");
     expect(named.hasAttribute("aria-hidden")).toBe(false);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     const px = (selector: string, property: RegExp) => Number(property.exec(rule(selector))?.[1]);
     const overlap = -px(".ac-brand-stack > .ac-brand + .ac-brand", /margin-left: (-?\d+)px/);
@@ -183,7 +184,7 @@ describe("provider marks", () => {
   });
 
   test("a one-color mark is drawn in ink at every size, even beside muted text", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     // Every rule that sets a mark's color: the brand's, or the ink for a one-color mark (an initial isn't a mark).
     const colors = [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
       .filter(([, selector]) => selector?.includes(".ac-brand") && !selector.includes("__initial"))

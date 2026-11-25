@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -117,7 +118,7 @@ describe("Dashboards: in the sidebar's More, and the list (ADR 0135 §14)", () =
   });
 
   test("a thumbnail's tiles stay inside the picture: an empty board's dashed tile fills it, a third row fits", async () => {
-    const css = (await Bun.file(new URL("../src/pages/dashboards.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/pages/dashboards.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );

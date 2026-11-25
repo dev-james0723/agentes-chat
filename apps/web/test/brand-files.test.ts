@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -17,7 +18,7 @@ import { MAIL_PROVIDERS } from "./fakes/mail";
 
 afterEach(() => cleanup());
 
-const PUBLIC = new URL("../public/", import.meta.url).pathname;
+const PUBLIC = fileURLToPath(new URL("../public/", import.meta.url));
 
 describe("the brand files the app serves", () => {
   test("every SVG is a drawing on the 24×24 grid that runs nothing and loads nothing", async () => {
@@ -41,7 +42,9 @@ describe("the brand files the app serves", () => {
     const images = Object.values(PROVIDER_MARKS).flatMap((mark) => ("image" in mark ? [mark.image] : []));
     expect(images).toEqual(["/brands/soniox.png", "/brands/gemini.png", "/brands/vscode.png"]);
     for (const image of images) {
-      const png = new DataView(await Bun.file(new URL(`../public${image}`, import.meta.url).pathname).arrayBuffer());
+      const png = new DataView(
+        await Bun.file(fileURLToPath(new URL(`../public${image}`, import.meta.url))).arrayBuffer(),
+      );
       // The PNG signature, then the header's width and height.
       expect([image, png.getUint32(0), png.getUint32(16), png.getUint32(20)]).toEqual([image, 0x89504e47, 128, 128]);
     }

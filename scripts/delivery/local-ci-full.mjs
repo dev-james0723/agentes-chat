@@ -52,7 +52,9 @@ export const FULL_STEPS = Object.freeze({
     argv: sh('GEOMETRY_OUT="$CI_GEOMETRY_DIR" bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui'),
     timeoutMs: 1_800_000,
   },
-  geometry: { argv: sh('bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl'), timeoutMs: 600_000 },
+  // The inner Geometry watchdog permits at most 120 minutes plus bounded cleanup.
+  // Keep the outer deadline longer, without reducing the captured coverage.
+  geometry: { argv: sh('bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl'), timeoutMs: 7_215_000 },
   "event-dialog": {
     argv: sh("RUN_NEW_EVENT=1 bun test --timeout 20000 apps/web/test/new-event.test.tsx"),
     timeoutMs: 300_000,

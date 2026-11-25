@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentBrain, Credential, MachineAccount, PlanUsage } from "@agenteschat/client";
 import { newAgentStart } from "@agenteschat/client/lib/agent-setup";
 import { accountTitle, ownSignInTitle } from "@agenteschat/client/lib/ai-accounts";
@@ -203,7 +204,8 @@ describe("the agent's AI", () => {
 
   test("the new agent's AI step: Conectar uma IA opens the same sheet as Settings, for the agent being made", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (path: string) => Bun.file(new URL(`../../src/features/${path}`, import.meta.url).pathname).text();
+    const read = (path: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/${path}`, import.meta.url))).text();
     const [screen, sheet] = await Promise.all([read("agents/NewAgentScreen.tsx"), read("ai/ConnectAi.tsx")]);
     expect(screen).toContain('label={t("aiAccounts.page.connect")}');
     expect(screen).toContain('openConnectAi({ forNew: "1" });');
@@ -216,7 +218,8 @@ describe("the agent's AI", () => {
   });
 
   test("Conectar uma IA opens under the team's scene, and a new agent's app shows its account under its name", async () => {
-    const read = (path: string) => Bun.file(new URL(`../../src/features/${path}`, import.meta.url).pathname).text();
+    const read = (path: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/${path}`, import.meta.url))).text();
     const [sheet, scene, screen] = await Promise.all([
       read("ai/ConnectAi.tsx"),
       read("ai/ConnectScene.tsx"),
@@ -235,7 +238,9 @@ describe("the agent's AI", () => {
 
   test("under a hold, Uso's empty plans card says what comes first and invites no plan", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const usage = await Bun.file(new URL("../../src/features/usage/UsageScreen.tsx", import.meta.url).pathname).text();
+    const usage = await Bun.file(
+      fileURLToPath(new URL("../../src/features/usage/UsageScreen.tsx", import.meta.url)),
+    ).text();
     expect(usage).toContain("usePlanHold(orgId, org)");
     expect(usage.indexOf("<PlanHoldNote")).toBeGreaterThan(-1);
     expect(usage.indexOf("<PlanHoldNote")).toBeLessThan(usage.indexOf('place="ai"'));
@@ -244,7 +249,8 @@ describe("the agent's AI", () => {
 
   test("the agent's AI and a plan's page draw the same switch, line and ⓘ, and nothing asks to accept the terms", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     // The agent's switch is in its advanced settings (ADR 0086).
     const [screen, connect, parts] = await Promise.all([
       read("AgentAdvancedScreen.tsx"),
@@ -279,7 +285,7 @@ describe("the agent's AI", () => {
 
   test("Claude's sign-in asks for no address: Claude's page picks the account, an account already there is offered", async () => {
     // The flow is a component the tests can't render: what it wires in, as text.
-    const flow = await Bun.file(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url).pathname).text();
+    const flow = await Bun.file(fileURLToPath(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url))).text();
     expect(flow).not.toMatch(/TextInput|emailAddress|aiAccounts\.add\.email/);
     // The hint (the account's own email, signing in again) goes through the shared start the client tests pin.
     expect(flow).toMatch(/beginLogin\(\s*\(input\) => api\.machines\.beginAccountLogin\(/);
@@ -307,7 +313,7 @@ describe("the agent's AI", () => {
 
   test("a Gemini sign-in the computer can't share with every agent says so and what to use instead, no Tentar de novo", async () => {
     // The flow is a component the tests can't render: what it wires in, as text.
-    const flow = await Bun.file(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url).pathname).text();
+    const flow = await Bun.file(fileURLToPath(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url))).text();
     expect(flow).toContain("const notShared = geminiNotShared(kind, result);");
     expect(flow).toMatch(/: notShared\s+\? t\("agentPage\.work\.brain\.add\.geminiNotShared", \{ computer \}\)/);
     expect(flow).toMatch(/\{notShared \? null : \(\s*<Button[^>]*?label=\{t\("common\.retry"\)\}/s);
@@ -318,7 +324,8 @@ describe("the agent's AI", () => {
   });
 
   test("signing in again sends the account's own email as the hint, from Settings and from Connect an AI", async () => {
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const settings = await read("AiAccountsScreen.tsx");
     const connect = await read("ConnectAiSteps.tsx");
     expect(settings).toMatch(/again=\{again\.id\}\s+email=\{again\.email\}/);
@@ -338,7 +345,8 @@ describe("the agent's AI", () => {
 
   test("Claude's code goes by itself however it lands in the field; anything else waits for Enviar, with a line", async () => {
     // The flow and its field are components the tests can't render: what they wire in, as text.
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const [flow, parts] = await Promise.all([read("AddAccount.tsx"), read("parts.tsx")]);
     // Typed, pasted with the keyboard or by Colar: one path, and only this sign-in's code sends with no tap.
     expect(flow).toMatch(
@@ -360,7 +368,7 @@ describe("the agent's AI", () => {
   test("a sign-in that ended on the computer says why by its code; Google's code field refuses its page's address", async () => {
     // The flow is a component the tests can't render: what it wires in, as text. The codes' lines are the client's
     // `loginFailureLine` (its tests pin them).
-    const flow = await Bun.file(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url).pathname).text();
+    const flow = await Bun.file(fileURLToPath(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url))).text();
     expect(flow).toContain("const failure = loginFailureLine(result?.code);");
     expect(flow).toMatch(
       /: t\(failure\.key \?\? "agentPage\.work\.brain\.add\.failed", \{\s+brand: plan\?\.label \?\? t\(/,
@@ -397,7 +405,7 @@ describe("the agent's AI", () => {
 
   test("while the code or the key goes and the computer signs in, the orbit and a line stand in for the field and Enviar", async () => {
     // The flow is a component the tests can't render: what it wires in, as text.
-    const flow = await Bun.file(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url).pathname).text();
+    const flow = await Bun.file(fileURLToPath(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url))).text();
     expect(flow).toContain("const busy = (sending || sent) && !ended;");
     // Claude's code, Gemini's and a plan's key: the line in place of the field and its button, never beside them.
     expect(flow.match(/\{busy\s+\? busyLine\s+: pasteRow\(/g)).toHaveLength(3);
@@ -412,7 +420,8 @@ describe("the agent's AI", () => {
   });
 
   test("an account other agents think with, where it may have a login per agent: one row, signed in again for this one", async () => {
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const [screen, sheet, connect] = await Promise.all([
       read("AgentAiScreen.tsx"),
       read("ConnectAi.tsx"),
@@ -473,7 +482,7 @@ describe("the agent's AI", () => {
     ]);
     // The first page lists them before the plans, drawn as the agent's AI draws its accounts.
     const connect = await Bun.file(
-      new URL("../../src/features/ai/ConnectAiSteps.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/ConnectAiSteps.tsx", import.meta.url)),
     ).text();
     const home = connect.slice(connect.indexOf("function Home("));
     expect(home.indexOf('t("connectAi.have.title")')).toBeGreaterThan(-1);
@@ -497,7 +506,8 @@ describe("the agent's AI", () => {
   });
 
   test("a card whose plan's sign-in ended: the agent says so, and Entrar de novo opens on its own plan", async () => {
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const [card, sheet] = await Promise.all([read("NoAiCard.tsx"), read("ConnectAi.tsx")]);
     expect(card).toContain("t(noAiLineKey(card), agentGrammar(name))");
     // The plan the client tests pin (`signInAgainPlan`): ChatGPT for a Codex agent, never Claude's page.
@@ -513,7 +523,8 @@ describe("the agent's AI", () => {
 
   test("the computer's own sign-in: listed only where it can think for the agent, and a card that says how when it isn't", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const [screen, card, connect] = await Promise.all([
       read("AgentAiScreen.tsx"),
       read("NoAiCard.tsx"),
@@ -542,7 +553,7 @@ describe("the agent's AI", () => {
   });
 
   test("nothing to pick on someone else's computer says who adds sign-ins there; Conectar opens on the agent's plan", async () => {
-    const read = (path: string) => Bun.file(new URL(`../../src/${path}`, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(`../../src/${path}`, import.meta.url))).text();
     const [screen, grouped, card, connect, profile] = await Promise.all([
       read("features/ai/AgentAiScreen.tsx"),
       read("ui/Grouped.tsx"),
@@ -591,7 +602,7 @@ describe("the agent's AI", () => {
 
   test("on the Cloud the account's sign-in says the computer, never its name; its being ready is a card of its own", async () => {
     const connect = await Bun.file(
-      new URL("../../src/features/ai/ConnectAiSteps.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/ConnectAiSteps.tsx", import.meta.url)),
     ).text();
     expect(connect).toMatch(/computer=\{edition === "cloud" \? t\("connectAi\.theComputer"\) : computer\}/);
     // Where the wait's card was: never read as the head of the account choice under it.
@@ -626,7 +637,8 @@ describe("the agent's AI", () => {
     // The agent's AI and Connect an AI (their rows), Contas de IA and Você name accounts so, and a computer's own
     // sign-in by its maker the same way ("Claude · Max").
     expect(ownSignInTitle(await translator("pt-BR"), { kind: "claude_code", plan: "max" })).toBe("Claude · Max");
-    const read = (file: string) => Bun.file(new URL(`../../src/features/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/${file}`, import.meta.url))).text();
     expect(await read("ai/logic.ts")).toContain("label: accountTitle(choice.login),");
     // AI accounts' grouped rows take a `label`, the Me page's rows a `title`.
     for (const [screen, row, prop] of [["ai/AiAccountsScreen.tsx", "a", "label"]]) {
@@ -828,7 +840,9 @@ describe("the agent's AI", () => {
     expect(accountSaved(t, "pt-BR", "Ada", null, accountInput(opus, null), { ...opus, account: null })).toBe(
       "Ada agora pensa com a conta que os seus agentes dividem.",
     );
-    const screen = await Bun.file(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url).pathname).text();
+    const screen = await Bun.file(
+      fileURLToPath(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url)),
+    ).text();
     expect(screen).toContain(
       "const done = (saved: AgentBrain) => accountSaved(t, i18n.language, name, a, input, saved);",
     );
@@ -837,7 +851,9 @@ describe("the agent's AI", () => {
 
   test("its page: the account first (the plan choice), then the model with how to give what it needs, a refused key's own row", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const screen = await Bun.file(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url).pathname).text();
+    const screen = await Bun.file(
+      fileURLToPath(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url)),
+    ).text();
     const accountAt = screen.indexOf('<GroupedHeader>{t("agentPage.work.brain.account")}</GroupedHeader>');
     const modelAt = screen.indexOf('<GroupedHeader>{t("agentPage.work.brain.planModel")}</GroupedHeader>');
     expect(accountAt).toBeGreaterThan(0);
@@ -867,21 +883,26 @@ describe("the agent's AI", () => {
 
   test("the agent's AI opens its model on a page of its own, pushed over it", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const screen = await Bun.file(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url).pathname).text();
+    const screen = await Bun.file(
+      fileURLToPath(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url)),
+    ).text();
     expect(screen).toContain("router.push(`/agent-model/");
     expect(screen).toContain("onPress={() => openAgentModel(agentId)}");
     expect(screen).toContain("void save(modelInput(r.value, view), done);");
     expect(screen).toContain("modelSections(rows).map(");
     expect(screen).toContain("<GroupedHeader>{providerLabel(s.maker)}</GroupedHeader>");
     expect(screen).toContain('hint: { name: t("common.about", { label: r.label }), text: r.note }');
-    const route = await Bun.file(new URL("../../app/(app)/agent-model/[id].tsx", import.meta.url).pathname).text();
+    const route = await Bun.file(
+      fileURLToPath(new URL("../../app/(app)/agent-model/[id].tsx", import.meta.url)),
+    ).text();
     expect(route).toContain("<AgentModelScreen agentId={id");
   });
 
   test("a sign-in through a restart or a reconnect: Reconectando while reads fail, the same sign-in kept, then a failure", async () => {
     // The flow and its panel are components the tests can't render: what they wire in, as text. How long reads may
     // fail, and which failures pass, are the client's `loginRead` (its tests pin them).
-    const read = (file: string) => Bun.file(new URL(`../../src/features/ai/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/ai/${file}`, import.meta.url))).text();
     const [flow, connect] = await Promise.all([read("AddAccount.tsx"), read("ConnectAiSteps.tsx")]);
     expect(flow).toContain("const read = loginRead(status);");
     expect(flow).not.toContain("status.isError");
@@ -953,7 +974,7 @@ describe("the agent's AI", () => {
       "Opus pelo plano do Claude · Esforço alto · Autonomia: Não pergunta",
     );
     const advanced = await Bun.file(
-      new URL("../../src/features/ai/AgentAdvancedScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/AgentAdvancedScreen.tsx", import.meta.url)),
     ).text();
     // Velocidade as on the web: only where it fits, read-only for who can't edit, saved at once.
     expect(advanced).toContain("{viewSpeedFits(view) ? (");
@@ -961,7 +982,7 @@ describe("the agent's AI", () => {
     expect(advanced).toContain("disabled={!view.canEdit}");
     expect(advanced).toContain('speed: viewSpeedFits(view) ? view.speed : "standard"');
     const setup = await Bun.file(
-      new URL("../../src/features/ai/AgentSetupScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/AgentSetupScreen.tsx", import.meta.url)),
     ).text();
     expect(setup).toContain("disabled={busy || !changes(r)}");
     expect(setup).toContain('t("agentPage.work.brain.copy.autonomyOnly", { count: autonomyOnly })');
@@ -971,9 +992,13 @@ describe("the agent's AI", () => {
     expect(t("agentPage.work.brain.copy.withAutonomyLine", { value: t("missions.commandApproval.never") })).toBe(
       "Não pergunta, como neste agente. Desligado, cada um fica com a sua.",
     );
-    const screen = await Bun.file(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url).pathname).text();
+    const screen = await Bun.file(
+      fileURLToPath(new URL("../../src/features/ai/AgentAiScreen.tsx", import.meta.url)),
+    ).text();
     expect(screen).toContain("onPress={() => openAgentSetup(agentId)}");
-    const route = await Bun.file(new URL("../../app/(app)/agent-setup/[id].tsx", import.meta.url).pathname).text();
+    const route = await Bun.file(
+      fileURLToPath(new URL("../../app/(app)/agent-setup/[id].tsx", import.meta.url)),
+    ).text();
     expect(route).toContain("<AgentSetupScreen agentId={id");
   });
 
@@ -996,7 +1021,7 @@ describe("the agent's AI", () => {
     });
     // Asked before anything saves: Cancelar returns before the one call.
     const setup = await Bun.file(
-      new URL("../../src/features/ai/AgentSetupScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/AgentSetupScreen.tsx", import.meta.url)),
     ).text();
     const asked = setup.indexOf("await confirmQuestion(t, setupPlanQuestion(");
     expect(asked).toBeGreaterThan(-1);
@@ -1028,7 +1053,7 @@ describe("the agent's AI", () => {
     });
     expect(newAgentAi(newAgentStart(api, runs))).toMatchObject({ model: "claude-opus-5-5", credentialId: null });
     const screen = await Bun.file(
-      new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain('{ brain: "model", contextTokens: thinks.contextTokens }');
     const input = { brain: "claude_code" as const, account: "a1", model: "opus", effort: "high" as const };
@@ -1088,7 +1113,7 @@ describe("the agent's AI", () => {
       connect: "opencode",
     });
     const screen = await Bun.file(
-      new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain("openConnectAi({ agentId: agent.id, plan: thinks.connect })");
     expect(screen).toContain("<BrainPickSheet");
@@ -1100,7 +1125,7 @@ describe("the agent's AI", () => {
 
 test("a Cursor sign-in on the phone: its own steps, or its API key when chosen, never Claude's code", async () => {
   // The flow is a component the tests can't render: what it wires in, as text.
-  const flow = await Bun.file(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url).pathname).text();
+  const flow = await Bun.file(fileURLToPath(new URL("../../src/features/ai/AddAccount.tsx", import.meta.url))).text();
   expect(flow).toContain('} else if (kind === "cursor") {');
   expect(flow).toContain("agentPage.work.brain.add.cursorFinish");
   expect(flow).toContain("signInKey(planId, kind, cursorKey)");
@@ -1133,7 +1158,9 @@ describe("Back in Connect an AI", () => {
 describe("Outro provedor on the phone", () => {
   test("the API under a header across the width, Buscar modelos on the add line's header, + in the field, × per model", async () => {
     // The screen is a component the tests can't render: what it wires in, as text.
-    const form = await Bun.file(new URL("../../src/features/ai/EndpointForm.tsx", import.meta.url).pathname).text();
+    const form = await Bun.file(
+      fileURLToPath(new URL("../../src/features/ai/EndpointForm.tsx", import.meta.url)),
+    ).text();
     expect(form).toContain('<GroupedHeader>{t("endpoint.style")}</GroupedHeader>');
     expect(form).toContain('wide="fit"');
     expect(form.indexOf('t("endpoint.style")')).toBeLessThan(form.indexOf('t("endpoint.address")'));

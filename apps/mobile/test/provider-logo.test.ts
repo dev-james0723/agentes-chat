@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { AgentBrainLine } from "@agenteschat/client";
 import { brainLine } from "@agenteschat/client/lib/brain";
 import { KEY_MARKS, PLAN_MARKS } from "@agenteschat/client/lib/no-ai";
@@ -135,12 +136,12 @@ describe("the marks as the phone draws them", () => {
       { id: "gemini", image: "/brands/gemini.png" },
       { id: "vscode", image: "/brands/vscode.png" },
     ]);
-    const source = await Bun.file(new URL("../src/ui/ProviderLogo.tsx", import.meta.url).pathname).text();
+    const source = await Bun.file(fileURLToPath(new URL("../src/ui/ProviderLogo.tsx", import.meta.url))).text();
     for (const { id, image } of images) {
       expect(markShapes(id, "dark", INK)).toEqual({ key: id, image: true, gradient: null, shapes: [] });
       const file = image.slice("/brands/".length);
-      const phone = await Bun.file(new URL(`../assets/images/brands/${file}`, import.meta.url).pathname).bytes();
-      const web = await Bun.file(new URL(`../../web/public${image}`, import.meta.url).pathname).bytes();
+      const phone = await Bun.file(fileURLToPath(new URL(`../assets/images/brands/${file}`, import.meta.url))).bytes();
+      const web = await Bun.file(fileURLToPath(new URL(`../../web/public${image}`, import.meta.url))).bytes();
       expect(phone).toEqual(web);
       // Bundled under the mark's id: the file just compared.
       expect(source).toContain(`${id}: require("../../assets/images/brands/${file}")`);

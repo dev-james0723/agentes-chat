@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -302,7 +303,7 @@ test("the worst case keeps its shape: a very long account and owner name stay un
   expect(value.textContent).toBe(`Plano ${long} · conta de Maximiliana-Bernardette · Sonnet`);
   // Under the name, in the words' column: never a second column squeezing the name, never cut.
   expect(value.closest(".settings-row__text")).toBeTruthy();
-  const css = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
   const rule = css.split("\n.rh-value {")[1]?.split("}")[0] ?? "";
   expect(rule).toContain("overflow-wrap: anywhere");
   expect(rule).not.toMatch(/ellipsis|nowrap/);
@@ -314,7 +315,7 @@ test("Quem pode usar sits one card gap under its head, with no margin of its own
   await settle(8);
   const card = document.getElementById("rh-audience")?.closest(".ac-card") as HTMLElement;
   expect(card.querySelector(".ac-card__head")?.nextElementSibling?.querySelector('[role="radiogroup"]')).toBeTruthy();
-  expect(await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text()).not.toContain(
+  expect(await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text()).not.toContain(
     "rh-set__audience",
   );
 });

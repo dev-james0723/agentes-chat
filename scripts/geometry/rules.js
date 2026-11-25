@@ -2369,8 +2369,8 @@
   };
 
   window.geometry = {
-    /** Puts a captured screen in the page and waits for the type its words use. */
-    async load(html) {
+    /** Puts a captured screen in the page. The driver checks font readiness separately with a host deadline. */
+    load(html) {
       document.body.innerHTML = html;
       // The tests' DOM measures nothing, so a captured popover says it has no room (-24px) and its cap folds it to
       // nothing: it gets the window's, as Radix gives a card on a side with the room.
@@ -2378,7 +2378,15 @@
         if (parseFloat(w.style.getPropertyValue("--radix-popper-available-height")) <= 0)
           w.style.setProperty("--radix-popper-available-height", "calc(100vh - 24px)");
       }
-      await document.fonts.ready;
+      // Force style/layout before inspecting FontFaceSet.status. An await on document.fonts.ready inside
+      // a background target can remain pending indefinitely even though CDP is still reachable.
+      document.body.getBoundingClientRect();
+    },
+    fontsReady() {
+      document.body.getBoundingClientRect();
+      const failed = [...document.fonts].filter((font) => font.status === "error");
+      if (failed.length) throw new Error(`Geometry font load failed: ${failed.map((font) => font.family).join(", ")}`);
+      return document.fonts.status === "loaded";
     },
     detect() {
       stackToolbars();

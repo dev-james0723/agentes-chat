@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { BrowserHandoff, ComputerSetup } from "@agenteschat/client";
 import {
   type AgentComputerFacts,
@@ -229,7 +230,9 @@ describe("the agent's computer full screen on the phone: what its stage shows", 
     expect(pt("browser.inCard.hiddenHelp", agentGrammar("Ada"))).toBe(
       "Por privacidade, a tela fica oculta até voltar para a Ada.",
     );
-    const card = await Bun.file(new URL("../../src/features/browser/BrowserCard.tsx", import.meta.url).pathname).text();
+    const card = await Bun.file(
+      fileURLToPath(new URL("../../src/features/browser/BrowserCard.tsx", import.meta.url)),
+    ).text();
     expect(card).toContain('? t("browser.inCard.hiddenHelp", agentGrammar(name))');
   });
 });
@@ -324,7 +327,7 @@ describe("the workspace's computer on its way, on Conversas", () => {
     expect(setupNoticeStatusKey(early)).toBeNull();
     expect(setupNoticeStatusKey(wait)).toBe("computerSetup.status.capacity");
     const source = await Bun.file(
-      new URL("../../src/features/computer/SetupWait.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/computer/SetupWait.tsx", import.meta.url)),
     ).text();
     expect(source).toContain("{line ? (");
   });
@@ -344,7 +347,7 @@ describe("the workspace's computer on its way, on Conversas", () => {
 
   test("under that header the wait names nothing and says no status the header says (`said`), as on the web", async () => {
     const source = await Bun.file(
-      new URL("../../src/features/computer/SetupWait.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/computer/SetupWait.tsx", import.meta.url)),
     ).text();
     // Its title is the computer's name, in every state, and only where no header names it; a personal workspace's
     // is its person's agents' computer (ADR 0159).
@@ -361,7 +364,7 @@ describe("the workspace's computer on its way, on Conversas", () => {
     expect(statusRestatesChip(viewOf({ state: "preparing", step: null, secondsLeft: null }))).toBe(true);
     expect(statusRestatesChip(viewOf({ state: "problem", step: null, secondsLeft: null }))).toBe(false);
     const screen = await Bun.file(
-      new URL("../../src/features/computer/ComputerScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/computer/ComputerScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain("<SetupWait view={f.setup} said />");
   });
@@ -408,7 +411,7 @@ describe("the workspace's computer on its way, on Conversas", () => {
 });
 
 describe("the agent's computer, from the app's own pieces", () => {
-  const read = (path: string) => Bun.file(new URL(`../../src/features/${path}`, import.meta.url).pathname).text();
+  const read = (path: string) => Bun.file(fileURLToPath(new URL(`../../src/features/${path}`, import.meta.url))).text();
 
   test("actions ride the screen's capsule; a request is the chat's card; Agora is the live trail", async () => {
     const [screen, page, cover] = await Promise.all([

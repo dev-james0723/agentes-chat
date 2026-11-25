@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { CHAT_RHYTHM, CHAT_STYLES } from "@agenteschat/client/lib/chat-look";
 import { rowFrame } from "../../src/features/chat/logic";
 
-const read = (rel: string) => Bun.file(new URL(`../../src/features/${rel}`, import.meta.url).pathname).text();
+const read = (rel: string) => Bun.file(fileURLToPath(new URL(`../../src/features/${rel}`, import.meta.url))).text();
 
 /** The style's body in a sheet: from its key to the next key at its depth. */
 const styleOf = (sheet: string, key: string) => {

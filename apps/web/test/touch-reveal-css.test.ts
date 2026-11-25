@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const css = (file: string) => Bun.file(new URL(`../src/pages/${file}`, import.meta.url).pathname).text();
+const css = (file: string) => Bun.file(fileURLToPath(new URL(`../src/pages/${file}`, import.meta.url))).text();
 /** What the `(hover: none)` blocks of a sheet set, as one text. */
 const onTouch = (sheet: string) =>
   [...sheet.matchAll(/@media \(hover: none\) \{([\s\S]*?)\n\}/g)].map((m) => m[1] ?? "").join("\n");

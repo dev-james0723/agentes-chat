@@ -1869,6 +1869,8 @@ export interface RunnerExecutorInfo {
    * Protocol 43, `grok`: the models `grok models` lists. Protocol 44, `antigravity`: the models `agy models` lists.
    */
   models?: CursorModelInfo[];
+  /** OpenCode only: IDs returned by a successful isolated, signed-out inventory probe. */
+  isolatedFreeModelIds?: string[];
   /** The local user explicitly opted this single-user Mac into host authentication (protocol 56). */
   hostAuth?: true;
 }
@@ -3356,6 +3358,20 @@ export function parseCursorModels(v: unknown): CursorModelInfo[] {
   return out;
 }
 
+/** Treat absent or malformed observations as unverified, including in previously stored JSON. */
+export function isolatedOpencodeIds(value: unknown, models: readonly { id: string; free?: boolean }[] = []): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > CURSOR_MODEL_LIMITS.models ||
+    !value.every(
+      (id) => typeof id === "string" && id.length <= CURSOR_MODEL_LIMITS.id && /^opencode\/[\w.:-]+$/.test(id),
+    )
+  )
+    return [];
+  const listed = new Set(models.filter((m) => m.free === true).map((m) => m.id));
+  return [...new Set<string>(value)].filter((id) => listed.has(id));
+}
+
 /** `hello.executors`: only `claude`, `codex`, `cursor`, `opencode`, `grok` and `antigravity`, each with a short version line (and Claude Code's login). */
 export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerInfo["executors"]> {
   const out: NonNullable<RunnerInfo["executors"]> = {};
@@ -3383,6 +3399,10 @@ export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerIn
     };
     const models = name === "claude" || name === "codex" ? [] : parseCursorModels(e.models);
     if (models.length) out[name] = { ...out[name], models } as RunnerExecutorInfo;
+    if (name === "opencode") {
+      const ids = isolatedOpencodeIds(e.isolatedFreeModelIds, models);
+      if (ids.length) out[name].isolatedFreeModelIds = ids;
+    }
   }
   return out;
 }

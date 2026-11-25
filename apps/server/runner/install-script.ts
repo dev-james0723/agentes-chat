@@ -672,10 +672,14 @@ get_chrome() {
 # Without root nothing installs Chrome: a runner that updates here says what the agents' browser needs (the paths
 # findChrome looks at, but Windows, which has no sh installer; Chromium's too on Linux on ARM).
 chrome_or_warn() {
-  for EXE in "$CHROME_EXE" "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
-    if [ -x "$EXE" ]; then return 0; fi
-  done
+  if [ -x "$CHROME_EXE" ]; then return 0; fi
+  # macOS bundle paths must not satisfy Chromium checks on Linux.
+  if [ "$(uname -s)" = Darwin ]; then
+    for EXE in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
+      if [ -x "$EXE" ]; then return 0; fi
+    done
+  fi
   if ! on_arm_linux; then
     t_warn "$CHROME_NEEDED"
     return 0

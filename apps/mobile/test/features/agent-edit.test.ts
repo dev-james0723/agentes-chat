@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { agentsByAnyHandle } from "@agenteschat/client/lib/directory";
 import type { ImportCard } from "@agenteschat/client/lib/import/flow";
 import {
@@ -244,7 +245,7 @@ describe("creating an agent on the phone", () => {
     expect(importMarkCards((c): c is ImportCard => c.length === 0)).toEqual([]);
     // The row sits right under "Do zero" with the web card's words, and the channels say what marking one does.
     const screen = await Bun.file(
-      new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/agents/NewAgentScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain('label={t("newAgent.importCard")}');
     expect(screen).toContain('sub={t("newAgent.importCardLine")}');
@@ -267,7 +268,8 @@ describe("creating an agent on the phone", () => {
 
   test("Create agent on the grouped gray: the step said once, presets as checked rows, a level picked from a list", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (f: string) => Bun.file(new URL(`../../src/features/agents/${f}`, import.meta.url).pathname).text();
+    const read = (f: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/agents/${f}`, import.meta.url))).text();
     const [screen, look] = await Promise.all([read("NewAgentScreen.tsx"), read("LookPicker.tsx")]);
     // Not in the header's subtitle: once, under the bar ("2 of 4 · Who it is").
     expect(screen).not.toContain("newAgent.stepOf");
@@ -287,7 +289,9 @@ describe("creating an agent on the phone", () => {
 
   test("the custom color sheet: starts from the current color, applies it on done, keeps the drag from the scroll", async () => {
     // The sheet is a component the tests can't render: what it wires in, as text.
-    const sheet = await Bun.file(new URL("../../src/features/agents/ColorSheet.tsx", import.meta.url).pathname).text();
+    const sheet = await Bun.file(
+      fileURLToPath(new URL("../../src/features/agents/ColorSheet.tsx", import.meta.url)),
+    ).text();
     expect(sheet).toContain("hexToHsv(pickerStart(value))");
     expect(sheet).toContain("onResponderTerminationRequest: () => false");
     expect(sheet).toMatch(/const done = \(\) => \{\s*onChange\(hex as `#\$\{string\}`\);\s*onClose\(\);/);

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -303,7 +304,7 @@ describe("Criar agente: steps", () => {
     // One more than the roles: "De outro app", beside Do zero.
     expect(firstRows).toEqual([...ROLE_IDS, "import"].map(() => "newag__role-head"));
     expect(step.querySelector(".newag__role .ac-captop, .newag__role .ac-faceline")).toBeNull();
-    const css = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
     expect(css).toMatch(/\n\.newag__role-head \{\s*display: flex;\s*align-items: center;/);
     // Smaller tiles than a profile's 56px face, the + as big as a face.
     expect(css).toMatch(/\n\.newag__role-head > \.ac-avatar \{\s*width: 44px;\s*height: 44px;/);
@@ -484,7 +485,7 @@ describe("Criar agente: steps", () => {
     const hint = document.querySelector(".newag__hint");
     expect(hint?.querySelectorAll(":scope > kbd.ac-kbd")).toHaveLength(2);
     expect(hint?.textContent).toContain("continua daqui");
-    const css = await Bun.file(new URL("../src/responsive.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/responsive.css", import.meta.url))).text();
     const touch = css.split("\n@media (max-width: 760px), (pointer: coarse) {")[1]?.split("\n}")[0] ?? "";
     expect(touch).toMatch(/\.newag__hint:has\(> \.ac-kbd\) \{\s*display: none;/);
   });

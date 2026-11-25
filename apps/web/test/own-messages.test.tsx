@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -10,7 +11,7 @@ import { renderApp, screen, settle } from "./render";
 
 afterEach(() => cleanup());
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** A message in #eng, `minutes` before now; people by user id ("u-walter" is me), agents by agent id. */
 const said = (id: string, who: string, body: string, minutes: number, extra: Partial<Message> = {}) =>

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -132,7 +133,7 @@ describe("Dialog", () => {
   });
 
   test("after the head's own actions, the close is a whole plate 8 from the one before it", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toContain(
       ".ac-actline:has(> .ac-dialog__acts) + .ac-dialog__close {\n  margin-inline-start: calc(var(--space-2) + 2 * var(--ghost-plate) - var(--space-3));\n}",
     );
@@ -149,10 +150,9 @@ describe("Dialog", () => {
     );
     const head = body().getByRole("dialog").querySelector(".ac-dialog__head") as HTMLElement;
     expect(head.querySelector(".ac-actline:has(> .ac-dialog__title) + .ac-dialog__close")).not.toBeNull();
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     // On the middle an app measured for its title's face, --cap-mid without one: the actions beside the title and
     // the close after its line.
     expect(css).toContain(
@@ -276,7 +276,7 @@ describe("Dialog", () => {
     });
     expect(closes).toBe(1);
     // A modal dialog turns the page's pointer events off; a toast turns its own back on.
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css.split("\n.ac-toast {")[1]?.split("}")[0]).toContain("pointer-events: auto");
   });
 
@@ -369,7 +369,7 @@ describe("Dialog without a footer", () => {
     );
     const dialog = body().getByRole("dialog", { name: "Conectar uma IA" });
     expect(dialog.lastElementChild?.classList.contains("ac-dialog__body")).toBe(true);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toMatch(
       /\n:is\(\.ac-dialog__body, \.ac-dialog__list\):last-child:not\(\.ac-locked:not\(:last-child\) > \*\) \{\s*padding-bottom: var\(--dialog-pad\);/,
     );
@@ -390,7 +390,7 @@ describe("Dialog without a footer", () => {
     const foot = body().getByRole("dialog").querySelector(".ac-dialog__foot") as HTMLElement;
     expect([...foot.children].map((c) => c.className)).toEqual(["ac-dialog__foot-note", "ac-dialog__foot-acts"]);
     expect([...(foot.lastElementChild?.children ?? [])].map((b) => b.textContent)).toEqual(["Cancelar", "Conectar"]);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     // Beside the note while it keeps one line, else on a row of their own under it, at the footer's end, 8 apart.
     expect(rule(".ac-dialog__foot-note")).toContain("flex: 1 1 auto;");

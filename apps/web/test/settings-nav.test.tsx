@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { domWindow, setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -251,7 +252,7 @@ describe("finding the settings", () => {
 
 describe("the current section in the nav", () => {
   test("is the agent page's current tab, a raised key with its edge, so light shows it as dark does", async () => {
-    const css = (await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );

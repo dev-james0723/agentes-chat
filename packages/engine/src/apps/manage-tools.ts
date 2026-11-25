@@ -1,4 +1,5 @@
 import { and, eq, gte, schema, sql } from "@agenteschat/db";
+import { OPENCODE_FREE_MODELS } from "@agenteschat/providers/plans";
 import { z } from "zod";
 import {
   type Agent,
@@ -11,9 +12,11 @@ import {
 } from "../agents";
 import { AGENT_LOOK, setAgentAppearance } from "../appearance";
 import { recordAudit } from "../audit";
+import { type AgentBrainView, getAgentBrain, setAgentBrain } from "../brain-settings";
 import { createChannel, listChannels } from "../channels";
 import { addContextItemByPerson } from "../context/items";
 import { ConflictError, TooManyError, ValidationError } from "../errors";
+import { publishAgentsChanged } from "../events";
 import { handleFromName } from "../imports";
 import { publishMachineAgentsChanged } from "../machines";
 import { notifyAppCreated } from "../notification-producers";
@@ -44,6 +47,8 @@ export const APP_MANAGE_TOOL_NAMES = [
   "create_agent",
   "update_agent_instructions",
   "update_agent",
+  "get_agent_ai_settings",
+  "set_agent_free_opencode",
   "list_skills",
   "create_skill",
   "update_skill",
@@ -177,6 +182,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
           instructions: z.string().max(50_000).optional().describe("How it works: its system prompt"),
           avatar_color: z.enum(AGENT_LOOK.colors).optional().describe("Its avatar's color"),
           handle: z.string().max(32).optional().describe("Its @handle; made from the name when left out"),
+          owner_only: z.literal(true).optional().describe("Create with an owner-only audience."),
           idempotency_key: KEY,
         })
         .strict(),
@@ -204,6 +210,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
           handle: taken.has(wanted) ? freeHandle(wanted, taken) : wanted,
           role: args.role,
           instructions: args.instructions,
+          ...(args.owner_only ? { audienceMode: "owner" as const } : {}),
         },
         NEW_AGENT_DEFAULTS,
         { pubsub: deps.pubsub },
@@ -326,6 +333,102 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         },
       });
       return agentOut(updated, true);
+    },
+  );
+
+  // Do not return account inventories, key IDs, credentials or unrelated workspace settings.
+  const aiSettings = (view: AgentBrainView) => {
+    const models = view.options.find((o) => o.kind === "opencode")?.isolatedFreeModelIds ?? [];
+    return {
+      agent_id: view.agentId,
+      config_hash: view.configHash ?? null,
+      brain: view.brain,
+      model: view.effectiveModel,
+      fallback: view.fallback,
+      extra_usage: view.extraUsage,
+      owner_only: view.onlyOwner,
+      computer_online: view.computer?.online === true,
+      free_opencode_available: models.length > 0,
+      free_opencode_models: models,
+      // A stored configuration is not proof of a successful provider turn or a future free offer.
+      runtime_verified: false,
+    };
+  };
+
+  tool(
+    "get_agent_ai_settings",
+    {
+      scope: "manage",
+      title: "Read an agent's AI settings",
+      description:
+        "Read the target agent's current AI settings and conditional-update hash. Native agent ownership and workspace permissions apply. Does not reveal credentials.",
+      input: z.object({ agent: AGENT_REF }).strict(),
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async ({ agent: ref }) => {
+      const agent = await resolveAgent(ref);
+      return aiSettings(await getAgentBrain({ db: deps.db }, p.userId, p.orgId, agent.id));
+    },
+  );
+
+  tool(
+    "set_agent_free_opencode",
+    {
+      scope: "manage",
+      title: "Set an agent to a free OpenCode model",
+      description:
+        "Set only this owner's agent to a catalog-listed free OpenCode model, with API fallback and paid extra usage disabled. Requires a fresh config hash, an owner-only agent on the owner's computer, and a signed-out observation of that model on the computer. Workspace defaults, grants, accounts and audience are unchanged. The response reports configuration, not live inference.",
+      input: z
+        .object({
+          agent: AGENT_REF,
+          expected_config_hash: z.string().regex(/^[a-f0-9]{64}$/),
+          model: z
+            .string()
+            .max(80)
+            .refine(
+              (id) => OPENCODE_FREE_MODELS.some((m) => m.id === id),
+              "Choose a catalog-listed free OpenCode model",
+            ),
+        })
+        .strict(),
+      readOnly: false,
+      destructive: false,
+      idempotent: false,
+      openWorld: false,
+    },
+    async ({ agent: ref, expected_config_hash, model }) => {
+      const agent = await resolveAgent(ref);
+      const current = await getAgentBrain({ db: deps.db }, p.userId, p.orgId, agent.id);
+      if (!current.configHash || !current.onlyOwner)
+        throw new ValidationError(
+          "Use an ordinary owner-only agent on the owner's own computer, without an assigned account.",
+        );
+      if (current.configHash !== expected_config_hash)
+        throw new ConflictError("Agent AI settings changed. Read them again before editing.");
+      if (!aiSettings(current).free_opencode_models.includes(model))
+        throw new ValidationError("The computer is offline or does not currently offer this free OpenCode model.");
+      await allow();
+      const updated = await setAgentBrain(
+        { db: deps.db },
+        p.userId,
+        p.orgId,
+        agent.id,
+        {
+          expectedConfigHash: expected_config_hash,
+          brain: "opencode",
+          model,
+          fallback: false,
+          extraUsage: false,
+          effort: null,
+        },
+        { remember: false, requireIsolatedFreeOpencode: true, audit: { grantId: p.grantId, client: p.app.name } },
+      );
+      await publishMachineAgentsChanged(deps.pubsub, p.orgId);
+      await publishAgentsChanged(deps.pubsub, p.orgId);
+      return aiSettings(updated);
     },
   );
 

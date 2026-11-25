@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -47,7 +48,7 @@ describe("DatePicker", () => {
     // Without a date there's nothing to clear.
     await click(trigger);
     expect(body().queryByRole("button", { name: "Tirar o prazo" })).toBeNull();
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toMatch(
       /\.ac-select--sm \.ac-select__trigger,\s*\.ac-date__trigger--sm \{\s*height: var\(--control-h-sm\);/,
     );

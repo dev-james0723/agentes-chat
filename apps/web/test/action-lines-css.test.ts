@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const sheet = (path: string) => Bun.file(new URL(`../src/${path}`, import.meta.url).pathname).text();
+const sheet = (path: string) => Bun.file(fileURLToPath(new URL(`../src/${path}`, import.meta.url))).text();
 /** The declarations of the first rule written exactly as `selector {`, at the top level or one block deep. */
 const rule = (css: string, selector: string) =>
   (css.split(`\n${selector} {`)[1] ?? css.split(`\n  ${selector} {`)[1])?.split("}")[0] ?? "";

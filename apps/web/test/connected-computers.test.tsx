@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -720,7 +721,7 @@ describe("the computer page: pause, folders and tools (ADR 0036)", () => {
   test("its facts start at the card's edge, under the portrait, whatever the portrait's width", async () => {
     await open();
     expect(document.querySelector(".ac-card > .dv-facts")?.textContent).toContain("macOS");
-    const css = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
     expect(css).toContain("\n.machine-page__facts {\n  display: flex;");
     // No indent past a portrait: a tower is half as wide as a laptop.
     expect(css).not.toMatch(/\.machine-page__facts\s*\{[^}]*padding/);

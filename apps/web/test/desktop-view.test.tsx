@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, setSystemTime, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -1265,7 +1266,9 @@ describe("the agent's screen in the computer dialog", () => {
     expect(classes()).not.toContain("is-bar-hidden");
     // The screen and what floats over it alone: anything else in the dialog (its sky strip) is hidden by the class
     // it really has, or it would take a row of the display.
-    const css = await Bun.file(new URL("../src/components/computer/computer.css", import.meta.url).pathname).text();
+    const css = await Bun.file(
+      fileURLToPath(new URL("../src/components/computer/computer.css", import.meta.url)),
+    ).text();
     const others = [...(document.querySelector(".cmp-dialog")?.children ?? [])].filter(
       (el) => !el.matches(".ac-dialog__head, .cmp-body"),
     );
@@ -1416,7 +1419,7 @@ describe("the agent's screen in the computer dialog", () => {
 });
 
 describe("the dialog's size (computer.css)", () => {
-  const css = () => Bun.file(new URL("../src/components/computer/computer.css", import.meta.url).pathname).text();
+  const css = () => Bun.file(fileURLToPath(new URL("../src/components/computer/computer.css", import.meta.url))).text();
   const rule = (text: string, selector: string) => text.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
 
   test("the screen fills what its stage gets, keeping its shape; no mode sizes it on its own", async () => {
@@ -1476,7 +1479,9 @@ describe("the dialog's size (computer.css)", () => {
     expect(text).not.toContain("--cmp-side");
     expect(text).not.toContain("min-aspect-ratio");
     expect(rule(text, ".cmp-body:has(> .dsk.is-control) > .cmp-steps-row")).toContain("display: none");
-    const desk = await Bun.file(new URL("../src/components/desktop/desktop.css", import.meta.url).pathname).text();
+    const desk = await Bun.file(
+      fileURLToPath(new URL("../src/components/desktop/desktop.css", import.meta.url)),
+    ).text();
     expect(rule(desk, ".dsk-line")).toContain("min-height: 22px");
     // In the window its words stay one 22 px line, whatever the window's width: what programs there can see first
     // (the Cloud's ⓘ with it), cut short only where nothing else fits, and the keys after it only when they fit whole
@@ -1495,7 +1500,9 @@ describe("the dialog's size (computer.css)", () => {
   });
 
   test("a phone's Keyboard button leads the line with the words' first line on its middle", async () => {
-    const desk = await Bun.file(new URL("../src/components/desktop/desktop.css", import.meta.url).pathname).text();
+    const desk = await Bun.file(
+      fileURLToPath(new URL("../src/components/desktop/desktop.css", import.meta.url)),
+    ).text();
     // Not a baseline: a button's is its icon's bottom edge, about 4 px under its label's.
     const line = rule(desk, ".dsk-line");
     expect(line).toContain("align-items: flex-start");
@@ -1503,14 +1510,14 @@ describe("the dialog's size (computer.css)", () => {
     // The 22 px line's middle on the button's, a small button that keeps its 32 px plate on touch: (32 − 22) / 2.
     expect(rule(desk, ".dsk-line > .ac-btn ~ *")).toContain("margin-top: calc((var(--control-h-sm) - 22px) / 2)");
     const kit = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     expect(kit).not.toContain("@media (pointer: coarse) {\n  .ac-btn--sm {\n    min-height");
   });
 
   test("the line's ⓘ is its sentence's: 4 px after its last letter", async () => {
     const kit = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     // The kit's hint line: the ⓘ 4 px after the last letter, in the 18 px it keeps for it.
     expect(rule(kit, ".ac-hintline > .ac-hint")).toContain("margin-inline: -1px -23px");
@@ -1659,7 +1666,9 @@ describe("the dialog's size (computer.css)", () => {
     expect(rule(text, ".cmp-body .brw-dim__box > *")).toContain("max-width: 100%");
     // A tablet's line is as tall as the room the frame keeps for it, watching or in control, its words on its middle
     // where no Keyboard button leads them, as the steps are in its place: (40 − 22) / 2, nothing on a 22 px line.
-    const desk = await Bun.file(new URL("../src/components/desktop/desktop.css", import.meta.url).pathname).text();
+    const desk = await Bun.file(
+      fileURLToPath(new URL("../src/components/desktop/desktop.css", import.meta.url)),
+    ).text();
     const frame = desk.split("@media (min-width: 721px) {")[1]?.split("\n}\n")[0] ?? "";
     const inFrame = (selector: string) => frame.split(`\n  ${selector} {`)[1]?.split("}")[0] ?? "";
     expect(inFrame(".cmp-dialog:not(.is-screen-only) .dsk-line")).toContain("min-height: var(--cmp-line)");
@@ -1703,7 +1712,7 @@ describe("the dialog's size (computer.css)", () => {
     const text = await css();
     expect(rule(text, ".cmp-acts > .cmp-full")).toContain("--glyph-air: calc(var(--control-icon-sm) * 2.7 / 20)");
     const kit = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     expect(rule(kit, ".ac-dialog__close > .ac-btn--glyph")).toContain(
       "--glyph-air: calc(var(--control-icon-sm) * 5.2 / 20)",
@@ -1731,7 +1740,7 @@ describe("the dialog's size (computer.css)", () => {
 
   test("Take control's icon keeps the pill's padding by its ink, on its words' capitals' middle", async () => {
     const kit = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     // The kit's button reaches a leading icon out by the air its drawing leaves before it and lifts it as far as asked.
     // Unset, the icon's box places it, and at no weight, so any rule of a page's own still wins.
@@ -1763,7 +1772,7 @@ describe("the dialog's size (computer.css)", () => {
     // one-line head's, whatever the line under the name says, or while it says nothing.
     expect(head).toContain("margin-top: calc((24px - var(--cmp-button)) / 2 - var(--title-cap-mid, var(--cap-mid)))");
     const kit = await Bun.file(
-      new URL("../../../packages/ui/src/styles/components.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/components.css", import.meta.url)),
     ).text();
     expect(rule(kit, ".ac-dialog__title")).toContain("line-height: 24px");
     expect(
@@ -1783,7 +1792,7 @@ describe("the dialog's size (computer.css)", () => {
     const text = await css();
     expect(rule(text, ".cmp-acts > .cmp-take")).toContain("margin-inline: 1.5px");
     const tokens = await Bun.file(
-      new URL("../../../packages/ui/src/styles/tokens.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/tokens.css", import.meta.url)),
     ).text();
     expect(tokens).toContain("0 0 0 1px var(--line)");
   });
@@ -1814,7 +1823,9 @@ describe("the dialog's size (computer.css)", () => {
     expect(room?.split("}")[0]).toContain("height: calc(var(--control-h-lg) + 8px)");
     expect(text).not.toContain("is-surface) {\n  --cmp-line");
     expect(rule(text, ".cmp-body .brw-ac__foot")).toContain("padding: 8px 0 0");
-    const browser = await Bun.file(new URL("../src/components/browser/browser.css", import.meta.url).pathname).text();
+    const browser = await Bun.file(
+      fileURLToPath(new URL("../src/components/browser/browser.css", import.meta.url)),
+    ).text();
     expect(rule(browser, ".brw-tfield")).toContain("height: var(--control-h-lg)");
   });
 
@@ -1825,13 +1836,13 @@ describe("the dialog's size (computer.css)", () => {
     )[1];
     expect(app?.split("}")[0]).toContain("--cmp-bar: var(--titlebar-h)");
     expect(app?.split("}")[0]).toContain("top: calc(50% + var(--titlebar-h) / 2)");
-    const desktop = await Bun.file(new URL("../src/desktop.css", import.meta.url).pathname).text();
+    const desktop = await Bun.file(fileURLToPath(new URL("../src/desktop.css", import.meta.url))).text();
     expect(desktop).toContain("--titlebar-h: calc(48px / var(--app-zoom, 1))");
   });
 
   test("the desktop app: the ⌘K field stands midway between the window's edge and the work's sheet", async () => {
-    const desktop = await Bun.file(new URL("../src/desktop.css", import.meta.url).pathname).text();
-    const layout = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+    const desktop = await Bun.file(fileURLToPath(new URL("../src/desktop.css", import.meta.url))).text();
+    const layout = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
     // A 32px field centred in the 48px bar: 8px over it and 8px under it, the sheet starting right under the bar.
     expect(desktop).toContain("--titlebar-h: calc(48px / var(--app-zoom, 1))");
     expect(desktop.split("\n.titlebar__search {")[1]?.split("}")[0]).toContain("height: var(--control-h-sm)");
@@ -1855,12 +1866,14 @@ describe("the dialog's size (computer.css)", () => {
   });
 
   test("the picture held over a hand back is only a picture: the pointer goes through it", async () => {
-    const desk = await Bun.file(new URL("../src/components/desktop/desktop.css", import.meta.url).pathname).text();
+    const desk = await Bun.file(
+      fileURLToPath(new URL("../src/components/desktop/desktop.css", import.meta.url)),
+    ).text();
     expect(rule(desk, ".dsk-screen > .dsk-still")).toContain("pointer-events: none");
   });
 
   test("a note to the agent: one line in the middle of its field, growing up to four, with no grip", async () => {
-    const brw = await Bun.file(new URL("../src/components/browser/browser.css", import.meta.url).pathname).text();
+    const brw = await Bun.file(fileURLToPath(new URL("../src/components/browser/browser.css", import.meta.url))).text();
     const note = rule(brw, ".brw-ac__note.ac-input");
     expect(note).toContain("resize: none");
     expect(note).toContain("max-height: 110px");
@@ -1880,7 +1893,7 @@ describe("the dialog's size (computer.css)", () => {
     expect(rule(text, ".cmp-dialog.is-screen-only .dsk-screen")).toContain("width: min(100cqw, 100cqh * 1280 / 900)");
     // The ground is the screen's own in both themes: one token, no dark value of its own.
     const tokens = await Bun.file(
-      new URL("../../../packages/ui/src/styles/tokens.css", import.meta.url).pathname,
+      fileURLToPath(new URL("../../../packages/ui/src/styles/tokens.css", import.meta.url)),
     ).text();
     expect(tokens.match(/--screen-bg: #1f2128;/g)).toHaveLength(1);
   });
@@ -1931,7 +1944,7 @@ describe("the dialog's size (computer.css)", () => {
 
 describe("the person's clipboard", () => {
   test("is never read in the computer dialog: only a paste they make gives it", async () => {
-    const dir = new URL("../src/components/", import.meta.url).pathname;
+    const dir = fileURLToPath(new URL("../src/components/", import.meta.url));
     const files = [...new Bun.Glob("{desktop,computer}/**/*.{ts,tsx}").scanSync({ cwd: dir })];
     expect(files.length).toBeGreaterThan(5);
     const reads: string[] = [];

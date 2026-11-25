@@ -19,8 +19,11 @@ fi
 root=$(pwd)
 tag=${CI_CANDIDATE_SHA:0:12}
 project="agentes-ci-$tag"
+s3_container="${project}-s3"
 port=${CI_BOOT_PORT:-39300}
 if [ "$port" -lt 1024 ] || [ "$port" = 3000 ]; then echo "refusing port $port" >&2; exit 2; fi
+# Compose gives inherited S3 settings precedence over the fixture .env.
+unset S3_ENDPOINT S3_REGION S3_PROVIDER S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BACKUP_BUCKET
 work=$(mktemp -d "${TMPDIR:-/tmp}/agentes-boot.XXXXXX")
 export AGENTES_IMAGE="agentes-ci:$tag" AGENTES_BACKUP_IMAGE="agentes-backup-ci:$tag"
 export HOST_PORT=$port BIND_ADDRESS=127.0.0.1
@@ -30,10 +33,11 @@ compose() { docker-compose -p "$project" --project-directory "$work" -f "$root/d
 cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then compose logs --no-color > "$work/compose.log" 2>&1 || true; tail -200 "$work/compose.log" || true; fi
+  # The run-once S3 container can keep the project network attached.
+  docker rm -f "$s3_container" > /dev/null 2>&1 || true
   compose down -v --remove-orphans > /dev/null 2>&1 || true
-  docker rm -f "$project-s3" > /dev/null 2>&1 || true
   docker image rm "$AGENTES_IMAGE" "$AGENTES_BACKUP_IMAGE" > /dev/null 2>&1 || true
-  rm -rf "$work"
+  rm -rf "$work" || true
   exit "$status"
 }
 trap cleanup EXIT
@@ -86,10 +90,40 @@ compose run --rm -T agentes telemetry > report.json
 jq -e '.report == 1 and .install == "docker" and .host.container and .people.total == 1' report.json
 
 echo "== back up and restore"
-printf 'S3_ENDPOINT=http://s3:8080\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' >> .env
-compose run -d --name "$project-s3" --entrypoint sh backup -c \
+s3_endpoint="http://$s3_container:8080"
+printf 'S3_ENDPOINT=%s\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_ACCESS_KEY=ci-secret\nS3_BACKUP_BUCKET=backups\n' \
+  "$s3_endpoint" >> .env
+compose run -d --name "$s3_container" --entrypoint sh backup -c \
   'mkdir -p /tmp/s3/backups && exec rclone serve s3 --auth-key ci-key,ci-secret --addr :8080 /tmp/s3'
-sleep 3
+# Require an authenticated root listing, even when no buckets exist.
+# The operation and backoff budget is 30 × 2s + 29 × 1s.
+# shellcheck disable=SC2016
+compose run --rm --no-deps -T --entrypoint sh backup -c '
+  set -eu
+  export RCLONE_CONFIG=/dev/null
+  export RCLONE_S3_PROVIDER="${S3_PROVIDER:-Cloudflare}"
+  export RCLONE_S3_ENDPOINT="${S3_ENDPOINT:-}"
+  export RCLONE_S3_REGION="${S3_REGION:-auto}"
+  export RCLONE_S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-}"
+  export RCLONE_S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-}"
+  export RCLONE_S3_NO_CHECK_BUCKET=true
+
+  attempt=1
+  while :; do
+    if timeout -s KILL 2 rclone lsd :s3: --retries 1 --low-level-retries 1 > /dev/null 2>&1; then
+      echo "S3 fixture ready (attempt $attempt)"
+      exit 0
+    else
+      status=$?
+    fi
+    if [ "$attempt" -eq 30 ]; then
+      echo "S3 fixture was not ready after $attempt attempts (probe exit status: $status)" >&2
+      exit "$status"
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+'
 compose run --rm backup now
 name=$(compose run --rm -T backup list | awk '{print $NF}' | tail -1)
 compose run --rm -T backup fetch "$name" > ci.dump

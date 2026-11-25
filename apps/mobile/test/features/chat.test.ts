@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { LiveConsult, LiveRun, LiveWork, Message, RunConsultation, SecretRequest } from "@agenteschat/client";
 import { activitySentence, barElapsed, barFaces, barWords } from "@agenteschat/client/lib/activity";
 import { questionWaitsOn } from "@agenteschat/client/lib/agent-questions";
@@ -77,7 +78,7 @@ import { pacedClock } from "../../src/features/shared/logic";
 import { at, message, translator } from "./fixtures";
 
 /** A screen's source, for the wiring a test can't render (React Native). */
-const source = (path: string) => Bun.file(new URL(`../../src/${path}`, import.meta.url).pathname).text();
+const source = (path: string) => Bun.file(fileURLToPath(new URL(`../../src/${path}`, import.meta.url))).text();
 
 describe("timeline", () => {
   test("top-level messages and loaded thread replies, in time order, no duplicates", () => {

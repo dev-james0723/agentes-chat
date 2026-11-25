@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -393,7 +394,7 @@ describe("Adicionar conector: one catalog", () => {
   });
 
   test("the close sits on its big title's capitals' middle; a service's, in the corner, isn't lifted", async () => {
-    const css = (await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );

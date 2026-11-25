@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -234,7 +235,7 @@ describe("Tarefas: a card", () => {
   });
 
   test("the card's CSS: the title wraps whole, a long name wraps under the face, the state moves whole", async () => {
-    const css = await Bun.file(new URL("../src/pages/issues.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/pages/issues.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".issue-card__title")).toContain("overflow-wrap: anywhere");
     expect(rule(".issue-card__title")).not.toContain("line-clamp");
@@ -275,7 +276,7 @@ describe("Tarefas: + in a column's head", () => {
     await click(buttons[0] as HTMLElement);
     await settle(3);
     expect(screen().getByRole("dialog", { name: "Nova tarefa" })).toBeTruthy();
-    const css = await Bun.file(new URL("../src/pages/issues.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/pages/issues.css", import.meta.url))).text();
     expect(css.split("\n.issues-col__head {")[1]?.split("}")[0]).toContain("gap: 8px");
   });
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -94,7 +95,7 @@ describe("a connect flow's title", () => {
       if (height) Object.defineProperty(HTMLElement.prototype, "clientHeight", height);
       else delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
     }
-    const css = (await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );
@@ -102,7 +103,7 @@ describe("a connect flow's title", () => {
     expect(rule(".cflow__title")).toContain("align-items: center");
     // One line: the tile rises to the title's capitals' middle, as measured for the app's 18/24 title.
     expect(rule(".cflow__title > :first-child")).toContain("translate: 0 calc(-1 * var(--title-cap-mid))");
-    const app = await Bun.file(new URL("../src/styles.css", import.meta.url).pathname).text();
+    const app = await Bun.file(fileURLToPath(new URL("../src/styles.css", import.meta.url))).text();
     expect(app).toContain("--title-cap-mid: 1.19px;");
     expect(rule(".cflow__title:has(> .ac-captop)")).toContain("align-items: flex-start");
     expect(rule(".cflow__title:has(> .ac-captop) > :first-child")).toContain("translate: none");

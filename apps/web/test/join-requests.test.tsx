@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -630,7 +631,7 @@ describe("an invitation link asks to join", () => {
   });
 
   test("at phone width the step bars take the column; wider, they start where the bubble does", async () => {
-    const css = (await Bun.file(new URL("../src/pages/invite.css", import.meta.url).pathname).text()).replace(
+    const css = (await Bun.file(fileURLToPath(new URL("../src/pages/invite.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );
@@ -988,7 +989,7 @@ describe("Members › Convidar pessoas", () => {
 
 describe("Members › the invitation link", () => {
   test("Desativar's word ends where Copiar link ends above it: the text button's padding hangs past the edge", async () => {
-    const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
     expect(await read("../src/components/invite/invite.css")).toMatch(
       /\.invite-link__foot > \.ac-btn--ghost:last-child \{\s*margin-right: calc\(-1 \* var\(--control-px-sm\)\);\s*\}/,
     );

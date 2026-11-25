@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { PubSub } from "@agenteschat/adapters";
 import { type Database, eq, schema, sql } from "@agenteschat/db";
 import { type ModelRequest, systemText } from "@agenteschat/providers";
@@ -367,7 +368,7 @@ describe("create_widget", () => {
     const [onShared] = await f.db.insert(schema.dashboardWidgets).values(row(shared.id)).returning();
     await f.db.update(schema.dashboardWidgets).set({ createdByUserId: null });
     const text = await Bun.file(
-      new URL("../../db/migrations/0257_widget_creator_backfill.sql", import.meta.url).pathname,
+      fileURLToPath(new URL("../../db/migrations/0257_widget_creator_backfill.sql", import.meta.url)),
     ).text();
     for (const statement of text.split("--> statement-breakpoint")) await f.db.execute(sql.raw(statement));
     const by = new Map((await widgets()).map((w) => [w.id, w.createdByUserId]));

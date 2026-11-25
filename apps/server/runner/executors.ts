@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { accessSync, constants, mkdtempSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join, win32 } from "node:path";
 import {
   type CursorModelInfo,
@@ -10,6 +10,7 @@ import {
 } from "@agenteschat/adapters/machine-protocol";
 import { isOpencodeFreeModel, OPENCODE_FREE_MODELS } from "@agenteschat/providers/plans";
 import { readSmallJson, writeJson } from "./json-file";
+import { opencodeFreeEnv, opencodeMajor } from "./opencode-cli";
 import { SHARED_BIN_ENV } from "./shared-folder";
 
 /**
@@ -27,7 +28,11 @@ export const EXECUTORS_EXIT_STRIKES = 3;
 
 type Executors = NonNullable<RunnerInfo["executors"]>;
 type RunResult = { status: number | null; stdout: string; stderr?: string; error?: unknown };
-export type ExecutorRun = (command: string, args: string[]) => RunResult | Promise<RunResult>;
+export type ExecutorRun = (
+  command: string,
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv; cwd?: string },
+) => RunResult | Promise<RunResult>;
 type Run = ExecutorRun;
 
 /** Shells' "command not found" (127), "not executable" (126) and cmd.exe's (9009). */
@@ -201,9 +206,9 @@ export function cliSpawn(
   return { file: resolveCommand(file, pathList), args: [...pre, ...args] };
 }
 
-const defaultRun: Run = (command, args) =>
+const defaultRun: Run = (command, args, options) =>
   new Promise((resolve) => {
-    const run = cliSpawn([command], args);
+    const run = cliSpawn([command], args, options?.env?.PATH);
     execFile(
       run.file,
       run.args,
@@ -212,7 +217,8 @@ const defaultRun: Run = (command, args) =>
         timeout: 8000,
         maxBuffer: 1024 * 1024,
         windowsHide: true,
-        env: run.env ? { ...process.env, ...run.env } : process.env,
+        cwd: options?.cwd,
+        env: { ...(options?.env ?? process.env), ...run.env },
         windowsVerbatimArguments: run.windowsVerbatimArguments,
       },
       (err, stdout, stderr) => {
@@ -365,12 +371,13 @@ export const OPENCODE_BIN = "opencode";
  * key that is OpenCode's free tier and whatever providers the computer's own config signs in; `free` marks the free
  * tier's. Anything that isn't a `provider/model` id is skipped.
  */
-export function parseOpencodeModels(output: string): CursorModelInfo[] {
+export function parseOpencodeModels(output: string, freeOnly = false): CursorModelInfo[] {
   const out: CursorModelInfo[] = [];
   // biome-ignore lint/suspicious/noControlCharactersInRegex: the CLI's colors
   for (const raw of output.replace(/\u001b\[[0-9;]*m/g, "").split("\n")) {
     const id = raw.trim();
     if (!/^[\w.-]{1,40}\/[\w.:-]{1,79}$/.test(id) || id.length > 80 || out.some((x) => x.id === id)) continue;
+    if (freeOnly && !isOpencodeFreeModel(id)) continue;
     const label = OPENCODE_FREE_MODELS.find((m) => m.id === id)?.label;
     out.push({ id, ...(label ? { label } : {}), ...(isOpencodeFreeModel(id) ? { free: true } : {}) });
     if (out.length >= 60) break;
@@ -378,20 +385,45 @@ export function parseOpencodeModels(output: string): CursorModelInfo[] {
   return out;
 }
 
-/**
- * OpenCode's versions are plain semver (`1.19.5`), behind its name since 2.2 (`opencode v2.2.7`): an `opencode` on the
- * PATH that says anything else is skipped.
- */
-const OPENCODE_VERSION = /^(?:opencode\s+)?v?\d+\.\d+\.\d+\b/;
-
-/**
- * Protocol 39 (ADR 0132): OpenCode's CLI and the models it lists (`opencode models`: the free tier with no key). Its
- * version is kept without the name.
- */
-async function detectOpencode(run: Run): Promise<Probe> {
-  const probe = await detectWithModels(run, OPENCODE_BIN, OPENCODE_VERSION, parseOpencodeModels);
-  if (probe.entry) probe.entry = { ...probe.entry, version: probe.entry.version.replace(/^opencode\s+/, "") };
-  return probe;
+/** Inventory from the person's configuration plus models actually visible to a signed-out, isolated CLI. */
+async function detectOpencode(run: Run, previous?: RunnerExecutorInfo): Promise<Probe> {
+  const version = await run(OPENCODE_BIN, ["--version"]);
+  if (version.error || version.status !== 0) return versionFailed(version);
+  const major = opencodeMajor(version.stdout);
+  if (!major) return {};
+  const args = major === 2 ? ["models", "--standalone"] : ["models"];
+  const own = await run(OPENCODE_BIN, args);
+  const ownUnsure = Boolean(own.error && !missing(own));
+  const personal = ownUnsure
+    ? (previous?.models ?? [])
+    : !own.error && own.status === 0
+      ? parseOpencodeModels(own.stdout)
+      : [];
+  const home = mkdtempSync(join(tmpdir(), "agentes-opencode-models-"));
+  try {
+    const listed = await run(OPENCODE_BIN, args, { cwd: home, env: opencodeFreeEnv(home, process.env) });
+    const free = !listed.error && listed.status === 0 ? parseOpencodeModels(listed.stdout, true) : [];
+    const freeIds = new Set(free.map((model) => model.id));
+    // Reserve room in the wire format for every verified free ID, keeping the person's own order for the rest.
+    const personalIds = new Set(
+      personal
+        .filter((model) => !freeIds.has(model.id))
+        .slice(0, 60 - free.length)
+        .map((model) => model.id),
+    );
+    const models = personal.filter((model) => personalIds.has(model.id) || freeIds.has(model.id));
+    models.push(...free.filter((model) => !models.some((other) => other.id === model.id)));
+    return {
+      entry: {
+        version: version.stdout.trim().replace(/^opencode /, ""),
+        ...(models.length ? { models } : {}),
+        ...(freeIds.size ? { isolatedFreeModelIds: [...freeIds] } : {}),
+      },
+      ...(ownUnsure || listed.error || listed.status !== 0 ? { unsure: true } : {}),
+    };
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
 }
 
 /** xAI's Grok Build CLI. Always `grok`: its installer also makes `~/.local/bin/agent`, which is Cursor's name. */
@@ -504,7 +536,7 @@ export async function detectExecutors(
     safe(() => detectVersion(run, "claude")),
     safe(() => detectVersion(run, "codex")),
     safe(() => detectCursor(run)),
-    safe(() => detectOpencode(run)),
+    safe(() => detectOpencode(run, prev.opencode)),
     safe(() => detectGrok(run)),
     safe(() => detectAntigravity(run)),
   ]);
@@ -514,19 +546,32 @@ export async function detectExecutors(
     let p = probes[i] ?? {};
     strikes[name] = p.exited ? (strikes[name] ?? 0) + 1 : 0;
     if ((strikes[name] ?? 0) >= EXECUTORS_EXIT_STRIKES) p = {};
-    const entry = p.unsure ? (prev[name] ?? p.entry) : p.entry;
+    // Only this probe can establish isolated availability, even when normal inventory is kept for display.
+    const entry =
+      p.unsure && name === "opencode"
+        ? (p.entry ?? withoutIsolatedObservation(prev.opencode))
+        : p.unsure
+          ? (prev[name] ?? p.entry)
+          : p.entry;
     if (entry) found[name] = entry;
     if (p.unsure) unsure = true;
   });
   return { found, unsure };
 }
 
+function withoutIsolatedObservation(entry: RunnerExecutorInfo | undefined) {
+  if (!entry) return undefined;
+  const { isolatedFreeModelIds: _previous, ...inventory } = entry;
+  return inventory;
+}
+
 /** The last list kept on disk, believed only as far as `hello` would carry it; null when there is none. */
 function keptExecutors(file: string): Executors | null {
   const kept = readSmallJson(file, 1024 * 1024);
-  return kept && typeof kept === "object" && !Array.isArray(kept)
-    ? parseExecutors(kept as Record<string, unknown>)
-    : null;
+  if (!kept || typeof kept !== "object" || Array.isArray(kept)) return null;
+  const inventory = parseExecutors(kept as Record<string, unknown>);
+  if (inventory.opencode) inventory.opencode = withoutIsolatedObservation(inventory.opencode);
+  return inventory;
 }
 
 export interface ExecutorsCache {
@@ -557,8 +602,13 @@ export function cachedExecutors(
   let retry = 0;
   let running: Promise<Executors> | null = null;
   const strikes: Partial<Record<string, number>> = {};
-  const look = (): Promise<Executors> =>
-    (running ??= detectExecutors(opts.run, value, strikes)
+  const notify = () => {
+    try {
+      opts.onChange?.(value);
+    } catch {}
+  };
+  const look = (): Promise<Executors> => {
+    running ??= detectExecutors(opts.run, value, strikes)
       .then(({ found, unsure }) => {
         at = now();
         retry = unsure ? Math.min(retry ? retry * 2 : EXECUTORS_RETRY_MS, EXECUTORS_TTL_MS) : 0;
@@ -573,15 +623,21 @@ export function cachedExecutors(
               writeJson(opts.file, found);
             } catch {}
           }
-          try {
-            opts.onChange?.(found);
-          } catch {}
+          notify();
         }
         return value;
       })
       .finally(() => {
         running = null;
-      }));
+      });
+    // While the next observation is pending, hello and executors.changed carry only the display inventory.
+    // Update the comparison baseline so that re-observing identical IDs announces them again.
+    if (now() - at >= wait && value.opencode?.isolatedFreeModelIds?.length) {
+      value = { ...value, opencode: withoutIsolatedObservation(value.opencode) };
+      notify();
+    }
+    return running;
+  };
   const get = (() => {
     if (now() - at >= wait) void look();
     return value;

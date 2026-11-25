@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -16,19 +17,19 @@ const off = (el: Element) => (el as HTMLButtonElement).disabled || el.closest("f
 
 describe("a form whose action is on its way", () => {
   test("what the CSS reached as a child it still reaches through the lock's fieldset", async () => {
-    const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
     expect(await read("../src/components/tasks/tasks.css")).toMatch(/\.tm-saywhy \.tm-why \{\s*flex: 1;/);
     expect(await read("../src/layout.css")).toContain(".rq > .ac-locked > .waitcard__lines {");
   });
 
   test("the kit's small buttons with no disabled look of their own dim with the form", async () => {
-    const css = await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text();
     for (const name of [".ac-recur__day", ".ac-token__remove", ".ac-searchfield__clear", ".ac-setmore__toggle"])
       expect(css).toMatch(new RegExp(`\\.ac-locked:disabled :is\\([^)]*\\${name}`));
   });
 
   test("what a fieldset can't stop waits on the flag itself: a dropped file, the photo's crop", async () => {
-    const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
     expect(await read("../src/components/vault/VaultImportDialog.tsx")).toContain("return !importer.busy;");
     const photo = await read("../src/components/ProfilePhoto.tsx");
     expect(photo).toContain("if (busy) return;");
@@ -36,7 +37,7 @@ describe("a form whose action is on its way", () => {
   });
 
   test("the island's reply and a mission's join role lock with their send", async () => {
-    const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
     const island = await read("../src/components/NoticeIsland.tsx");
     expect(island).toMatch(/<Locked when=\{reply\.isPending\}>\s*<input/);
     const mission = await read("../src/components/missions/MissionDialogs.tsx");

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** Each rule's selectors and its `user-select`, comments left out. */
 async function userSelect(path: string) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +25,71 @@ function repo() {
 test("the step table is exactly the release contract's 22 steps, in its order", () => {
   assertStepTable();
   assert.deepEqual(Object.keys(FULL_STEPS), [...REQUIRED_RELEASE_STEPS]);
+});
+
+test("full geometry keeps coverage and permits the inner watchdog to clean up", () => {
+  assert.deepEqual(FULL_STEPS.geometry.argv, [
+    "bash",
+    "-c",
+    'bun run check:geometry "$CI_GEOMETRY_DIR" --text-size xs,xl',
+  ]);
+  assert.equal(FULL_STEPS.geometry.timeoutMs, 7_215_000);
+});
+
+function runMigrationStep(generatorExit, drift = "") {
+  const source = readFileSync(new URL("../ci-local.sh", import.meta.url), "utf8");
+  const lines = source.split("\n");
+  const start = lines.findIndex((line) => line.startsWith('step "migrations up to date with the schema"'));
+  assert.notEqual(start, -1, "migration step is missing from scripts/ci-local.sh");
+  const migrationStep = lines.slice(start, start + 2).join("\n");
+  const script = String.raw`
+    generator_exit=$1
+    migration_drift=$2
+    step() { (eval "$2"); }
+    bun() { return "$generator_exit"; }
+    git() {
+      printf 'git %s\n' "$*" >&2
+      if [ "$1" = status ]; then
+        printf '%s\n' "$migration_drift"
+      fi
+    }
+    ${migrationStep}
+  `;
+  const result = spawnSync("/bin/bash", ["-c", script, "migration-check", String(generatorExit), drift], {
+    cwd: tmpdir(),
+    encoding: "utf8",
+    env: { PATH: "/dev/null" },
+  });
+  assert.ifError(result.error);
+  return result;
+}
+
+test("the migration guard propagates generator failure before checking drift", () => {
+  const result = runMigrationStep(23);
+  assert.equal(result.status, 23, result.stderr);
+  assert.equal(result.stderr, "");
+});
+
+test("the migration guard passes successful generation without drift", () => {
+  const result = runMigrationStep(0);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "git status --porcelain -- packages/db/migrations\n");
+});
+
+test("the migration guard fails and cleans up migration drift", () => {
+  const drift = "?? packages/db/migrations/generated.sql";
+  const result = runMigrationStep(0, drift);
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, `${drift}\n`);
+  assert.equal(
+    result.stderr,
+    [
+      "git status --porcelain -- packages/db/migrations",
+      "git checkout -- packages/db/migrations",
+      "git clean -fdq -- packages/db/migrations",
+      "",
+    ].join("\n"),
+  );
 });
 
 test("a clean candidate at the remote branch's commit is verified", async () => {

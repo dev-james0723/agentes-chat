@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { AgentAccess, AgentForYouItem, AgentStatusLine, Memory, OrgSummary, PlanUsage } from "@agenteschat/client";
 import { listsAgent, mailLossText, widenQuestion } from "@agenteschat/client/lib/audience";
 import { planMeterText } from "@agenteschat/client/lib/plan-usage";
@@ -370,7 +371,8 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
 
   test("the screen: one row for the month, the plan's account named first, the budget only once it spent through the API", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (file: string) => Bun.file(new URL(`../../src/features/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/${file}`, import.meta.url))).text();
     const [screen, parts] = await Promise.all([read("agents/AgentProfileScreen.tsx"), read("usage/parts.tsx")]);
     expect(screen).toContain("const shown = usageShown(agent?.brain, detail.data?.budgetUsedPercent ?? 0);");
     // Its name: the plan's account, else the plan, else its model; its value: the plan's tightest window.
@@ -394,7 +396,7 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
 
   test("Pensa com: the plan as the row's name, the model and a fixed model's effort under it, on two lines", async () => {
     const screen = await Bun.file(
-      new URL("../../src/features/agents/AgentProfileScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/agents/AgentProfileScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain("label={thinksPlan ?? thinks.text}");
     expect(screen).toContain("{...(thinksUnder ? { sub: thinksUnder, subLines: 2 } : {})}");
@@ -402,7 +404,7 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
     // Its owner and admins change it in place, in the DM header's sheet; the header shows its maker's logo to all.
     expect(screen).toContain("sheet.open(<ModelPickerSheet agent={agent} />)");
     const sheet = await Bun.file(
-      new URL("../../src/features/ai/ModelPickerSheet.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/ai/ModelPickerSheet.tsx", import.meta.url)),
     ).text();
     const button = sheet.slice(
       sheet.indexOf("export function DmModelButton("),
@@ -415,7 +417,7 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
   });
 
   test("the bars as the web colors them: each window by its own level, the words and the compact bar by the plan's", async () => {
-    const parts = await Bun.file(new URL("../../src/features/usage/parts.tsx", import.meta.url).pathname).text();
+    const parts = await Bun.file(fileURLToPath(new URL("../../src/features/usage/parts.tsx", import.meta.url))).text();
     expect(parts).toContain('const tone = c[PLAN_TONE[planLevel(shown.top?.used ?? 0, shown.state === "limited")]];');
     expect(parts).toContain('{ color: c[PLAN_TONE[planLevel(used, state === "limited")]] }');
     expect(parts).toContain("const level = planLevel(w.used);");
@@ -423,7 +425,7 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
   });
 
   test("an account's name wraps beside its plan's tag, and whose it is too, as on the web: never an ellipsis", async () => {
-    const parts = await Bun.file(new URL("../../src/features/usage/parts.tsx", import.meta.url).pathname).text();
+    const parts = await Bun.file(fileURLToPath(new URL("../../src/features/usage/parts.tsx", import.meta.url))).text();
     const head = parts.slice(parts.indexOf("export function AccountHead("), parts.indexOf("function Tag("));
     expect(head).toContain("{accountName(t, account)}");
     expect(head).not.toContain("numberOfLines");
@@ -432,7 +434,7 @@ describe("Perfil: o mês, com os limites do plano (ADR 0063 §5)", () => {
 
   test("an agent's usage by account: the figures under the account, as on the web's phone width, never a narrow column", async () => {
     const screen = await Bun.file(
-      new URL("../../src/features/usage/AgentUsageScreen.tsx", import.meta.url).pathname,
+      fileURLToPath(new URL("../../src/features/usage/AgentUsageScreen.tsx", import.meta.url)),
     ).text();
     expect(screen).toContain("source: { gap: 6, paddingVertical: 12 },");
     expect(screen).toContain('n: { alignItems: "flex-start" },');
@@ -457,7 +459,8 @@ describe("Perfil: agora, cada coisa uma vez", () => {
 
   test("the screen: three views, the request as the shared card and out of the list, the jobs as rows, no pills", async () => {
     // The screens are components the tests can't render: what they wire in, as text.
-    const read = (file: string) => Bun.file(new URL(`../../src/features/${file}`, import.meta.url).pathname).text();
+    const read = (file: string) =>
+      Bun.file(fileURLToPath(new URL(`../../src/features/${file}`, import.meta.url))).text();
     const [screen, mail, computer] = await Promise.all([
       read("agents/AgentProfileScreen.tsx"),
       read("agents/AgentMailSection.tsx"),
@@ -542,7 +545,9 @@ describe("an agent that doesn't answer me", () => {
     expect(widenQuestion(t, onPlan, "João", [box])?.description).toContain(
       "João vai receber um email avisando. Ada tem acesso à caixa de email de João.",
     );
-    const screen = await Bun.file(new URL("../../src/features/chat/ReachLines.tsx", import.meta.url).pathname).text();
+    const screen = await Bun.file(
+      fileURLToPath(new URL("../../src/features/chat/ReachLines.tsx", import.meta.url)),
+    ).text();
     expect(screen.match(/ask\(audience\)/g)).toHaveLength(2);
   });
 });

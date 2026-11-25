@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const read = (file: string) => Bun.file(new URL(`../../src/features/${file}`, import.meta.url).pathname).text();
+const read = (file: string) => Bun.file(fileURLToPath(new URL(`../../src/features/${file}`, import.meta.url))).text();
 const style = (src: string, name: string) => src.match(new RegExp(`\\n  ${name}: \\{([^}]*)\\}`))?.[1] ?? "";
 
 describe("an agent's answer choices grow with their text and wrap", () => {

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const SOURCES = ["apps/web/src", "packages/ui/src", "apps/desktop/src"];
 
 function files(dir: string, ext: string): string[] {

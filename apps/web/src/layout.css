@@ -1470,6 +1470,19 @@ html:not([data-pointer]) .member-row--add:focus-visible {
   flex: 1 1 260px;
   min-width: 0;
 }
+/* The source and actions share a line on wide cards, and wrap without clipping on narrow screens. */
+.memory-item > .row > .ac-acts {
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+.memory-item__history ol,
+.memory-item__history ul {
+  padding-inline-start: 0;
+  list-style-position: inside;
+  margin: var(--space-2) 0 0;
+}
 .struck {
   text-decoration: line-through;
 }

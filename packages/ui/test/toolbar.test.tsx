@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -149,7 +150,7 @@ describe("FilterChip", () => {
 });
 
 test("a raised button in a toolbar takes the field look of the search beside it: nothing outside it for a scroller to cut", async () => {
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const raised =
     '.ac-toolbar .ac-btn:not(.ac-btn--primary, .ac-btn--ghost, .ac-btn--agent, .ac-btn--danger, [aria-pressed="true"])';
   const look = css.split(`\n${raised} {`)[1]?.split("}")[0] ?? "";

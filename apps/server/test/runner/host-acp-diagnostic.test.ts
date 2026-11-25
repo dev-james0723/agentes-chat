@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { parseBrainEvent } from "@agenteschat/adapters/machine-protocol";
 import { cliErrorWords } from "../../../../packages/engine/src/tool-detail";
 import { runHostAcpTurn } from "../../runner/host-acp-runtime";
 
-const root = mkdtempSync(path.join(import.meta.dir, ".acp-diagnostic-fixtures-"));
+const root = mkdtempSync(path.join(homedir(), ".acp-diagnostic-fixtures-"));
 /** The host ACP turn runs only on a Mac (`runHostAcpTurn` refuses any other platform): its turns are tested there. */
 const onMac = test.skipIf(process.platform !== "darwin");
 afterAll(() => rmSync(root, { recursive: true, force: true }));

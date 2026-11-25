@@ -15,8 +15,9 @@ const flag = (name) => {
 };
 
 if (args[0] === "--version") {
-  process.stdout.write("1.19.5\n");
-  process.exit(0);
+  if (env.FAKE_OPENCODE_VERSION === "wait") await new Promise(() => setInterval(() => {}, 1000));
+  process.stdout.write(`${env.FAKE_OPENCODE_VERSION || "1.19.5"}\n`);
+  process.exit(Number(env.FAKE_OPENCODE_VERSION_EXIT || 0));
 }
 if (args[0] === "models") {
   const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
@@ -42,12 +43,20 @@ const on = (id) => {
 };
 // `debug agent <name>`: the agent's tools as OpenCode resolves them (its built-in ones, plus $FAKE_OPENCODE_EXTRA_TOOL,
 // one a new version adds; MCP servers' tools are never listed) and its rules. $FAKE_OPENCODE_PROBE_FAIL: exit 1.
-if (args[0] === "debug" && args[1] === "agent") {
+if (args[0] === "debug" && (args[1] === "agent" || args[1] === "agents")) {
   if (env.FAKE_OPENCODE_LOG) {
     appendFileSync(
       env.FAKE_OPENCODE_LOG,
       `${JSON.stringify({ probe: true, args, cwd: process.cwd(), config: env.OPENCODE_CONFIG_CONTENT ?? null })}\n`,
     );
+  }
+  if (args[1] === "agents") {
+    const permissions = rules
+      .slice(0, -1)
+      .map((r) => ({ action: r.permission, resource: r.pattern, effect: r.action }));
+    permissions.push({ action: "skill", resource: "browser", effect: "deny" });
+    process.stdout.write(JSON.stringify([{ id: "build", name: "Build", permissions }]));
+    process.exit(env.FAKE_OPENCODE_PROBE_FAIL ? 1 : 0);
   }
   if (env.FAKE_OPENCODE_PROBE_FAIL) {
     process.stderr.write("Error: No providers found\n");
@@ -74,6 +83,7 @@ if (env.FAKE_OPENCODE_LOG) {
       cwd: process.cwd(),
       message,
       dataHome: env.XDG_DATA_HOME ?? null,
+      home: env.HOME,
       apiKey: env.OPENCODE_API_KEY ?? null,
       config: env.OPENCODE_CONFIG_CONTENT ?? null,
       projectConfig: env.OPENCODE_DISABLE_PROJECT_CONFIG ?? null,

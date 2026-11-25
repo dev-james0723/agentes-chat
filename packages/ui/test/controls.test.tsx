@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -91,7 +92,7 @@ describe("Locked", () => {
   });
 
   test("has no box of its own, and CSS can't miss a control it turned off", async () => {
-    const read = (path: string) => Bun.file(new URL(path, import.meta.url).pathname).text();
+    const read = (path: string) => Bun.file(fileURLToPath(new URL(path, import.meta.url))).text();
     const kit = await read("../src/styles/components.css");
     expect(kit).toMatch(/\.ac-locked \{\s*display: contents;/);
     // `[disabled]` only sees the control's own attribute, never a fieldset's.
@@ -204,7 +205,7 @@ describe("RadioCard", () => {
     const head = document.querySelector(".ac-option__head");
     expect([...(head?.children ?? [])].map((c) => c.className)).toEqual(["ac-option__title", "ac-option__aside"]);
     expect(head?.nextElementSibling?.className).toBe("ac-option__desc");
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-option__text:has(> .ac-option__head)")).toContain("flex: 1;");
     expect(rule(".ac-option__head")).toContain("display: flex;");
@@ -334,7 +335,7 @@ describe("PickerHeading", () => {
     render(<PickerHeading label="Papéis" description="Quem tem o papel pode falar." />);
     const head = document.querySelector(".ac-picker-head");
     expect([...(head?.children ?? [])].map((c) => c.textContent)).toEqual(["Papéis", "Quem tem o papel pode falar."]);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-picker-head")).toContain("flex-direction: column;");
     expect(rule(".ac-picker-head")).toContain("gap: var(--space-1);");

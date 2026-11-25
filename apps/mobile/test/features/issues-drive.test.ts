@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Artifact, Issue, IssueColumn } from "@agenteschat/client";
 import { githubLinkLabel, isGithubLink } from "@agenteschat/client/lib/github-link";
 import { conversationLine } from "@agenteschat/client/lib/issues";
@@ -471,7 +472,7 @@ describe("drive", () => {
   });
 });
 
-const read = (file: string) => Bun.file(new URL(`../../src/features/${file}`, import.meta.url).pathname).text();
+const read = (file: string) => Bun.file(fileURLToPath(new URL(`../../src/features/${file}`, import.meta.url))).text();
 
 describe("a task's number and title on one row; its conversation on the card", () => {
   test("the conversation line: how many, who (three faces), working or when; none before anyone wrote", () => {

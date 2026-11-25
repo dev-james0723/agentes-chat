@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const read = (path: string) => Bun.file(new URL(`../${path}`, import.meta.url).pathname).text();
+const read = (path: string) => Bun.file(fileURLToPath(new URL(`../${path}`, import.meta.url))).text();
 const NO_PREFERENCE = /@media \(prefers-reduced-motion: no-preference\) \{[\s\S]*?\n\}/g;
 const uncommented = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 

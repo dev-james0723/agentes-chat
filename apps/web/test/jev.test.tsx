@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -154,7 +155,7 @@ describe("Jev's key in Configurações › IA e uso", () => {
     expect(head.querySelector(":scope > .ac-mediarow__head .jev__title")).toBeTruthy();
     expect(head.querySelector(":scope > .ac-mediarow__end > .ac-chip")).toBeTruthy();
     expect(head.querySelector(":scope > .ac-mediarow__body")?.textContent).toBeTruthy();
-    const layout = (await Bun.file(new URL("../src/layout.css", import.meta.url).pathname).text()).replace(
+    const layout = (await Bun.file(fileURLToPath(new URL("../src/layout.css", import.meta.url))).text()).replace(
       /\/\*[\s\S]*?\*\//g,
       "",
     );

@@ -44,13 +44,19 @@ export interface MachinePlanUsage {
  * its desktops and its terminal (protocol 18), and the agents' use of their desktops (protocol 21).
  */
 export interface MachineExecutors {
+  /** Server-generated socket ID from the last accepted hello, used to fence reports from replaced sockets. */
+  inventoryConnectionId?: string;
   /** `loggedIn`/`authMethod`/`plan`: from `claude auth status` (protocol 8; absent = unknown). */
   claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string; claudeOrgId?: string };
   codex?: { version: string };
   /** Cursor's CLI (protocol 36, ADR 0114) and the models its sign-in lists; `inPlan`: the CLI said the plan includes it. */
   cursor?: { version: string; models?: { id: string; label?: string; inPlan?: boolean }[] };
   /** OpenCode's CLI (protocol 39, ADR 0132) and the models it lists; `free`: OpenCode's free tier. */
-  opencode?: { version: string; models?: { id: string; label?: string; free?: boolean }[] };
+  opencode?: {
+    version: string;
+    models?: { id: string; label?: string; free?: boolean }[];
+    isolatedFreeModelIds?: string[];
+  };
   /** Grok Build, xAI's CLI (protocol 43, ADR 0142), and the models it lists. */
   grok?: { version: string; models?: { id: string; label?: string }[] };
   /** Google's Antigravity CLI (protocol 44, ADR 0143), and the models it lists. */

@@ -10,6 +10,7 @@ import {
   GROK_PROTOCOL,
   isBrainEffort,
   isBrainSpeed,
+  isolatedOpencodeIds,
   OPENCODE_PROTOCOL,
   type OwnPlanUsage,
   PLAN_KEYS_PROTOCOL,
@@ -312,6 +313,8 @@ export interface BrainOption {
   available: boolean;
   reason?: BrainUnavailable;
   models: BrainModelOption[];
+  /** Catalog-listed free IDs observed with an isolated signed-out CLI on this available computer. */
+  isolatedFreeModelIds?: string[];
   defaultModel: string | null;
 }
 
@@ -398,7 +401,15 @@ function cliOption(machine: MachineLike | null, kind: "cursor" | "opencode" | "g
     reason = "runner_old";
   else if (tools && (tools[kind] ?? tools.codex) !== true) reason = "tool_off";
   else if (!machine.executors?.[kind]) reason = missingCli(machine);
+  const opencode =
+    kind === "opencode" && !reason && machine && machineOnline(machine) ? machine.executors?.opencode : null;
+  const ids = opencode
+    ? isolatedOpencodeIds(opencode.isolatedFreeModelIds, opencode.models).filter((id) =>
+        OPENCODE_FREE_MODELS.some((model) => model.id === id),
+      )
+    : [];
   return {
+    ...(ids.length ? { isolatedFreeModelIds: ids } : {}),
     kind,
     available: !reason,
     ...(reason ? { reason } : {}),
@@ -604,10 +615,8 @@ async function candidateMachines(
     .map((m) => ({ machineId: m.id, name: m.name, online: machineOnline(m), options: brainOptions(m) }));
 }
 
-async function agentMachine(db: Database, orgId: string, machineId: string | null) {
-  if (!machineId) return null;
-  const machine = await getMachine(db, orgId, machineId);
-  return machine && !machine.deletedAt ? machine : null;
+async function agentMachine(db: Database, orgId: string, machineId: string | null, lock?: "share") {
+  return machineId ? getMachine(db, orgId, machineId, lock) : null;
 }
 
 /** Stable raw fields used by guarded brain updates; never availability, quota, display values or secrets. */
@@ -1043,6 +1052,8 @@ function nextAudience(agent: Agent, ontoPlan: boolean, onlyOwner: boolean | unde
  * thinks with becomes what new agents start with, unless `options.remember` is false.
  */
 interface AgentBrainOptions {
+  /** Management-only native write guard, checked under the agent and machine row locks. */
+  requireIsolatedFreeOpencode?: true;
   remember?: boolean;
   audit?: Record<string, unknown>;
   onPlanOpened?: () => void;
@@ -1057,7 +1068,8 @@ export async function setAgentBrain(
   input: AgentBrainInput,
   options: AgentBrainOptions = {},
 ): Promise<AgentBrainView> {
-  if (input.expectedConfigHash === undefined) return applyAgentBrain(deps, userId, orgId, agentId, input, options);
+  if (input.expectedConfigHash === undefined && !options.requireIsolatedFreeOpencode)
+    return applyAgentBrain(deps, userId, orgId, agentId, input, options);
   // Permission precedes token validation/conflict reporting, and is checked again in the transaction.
   await agentBrainAccess(deps.db, userId, orgId, agentId, input.scope);
   if (typeof input.expectedConfigHash !== "string" || !/^[a-f0-9]{64}$/.test(input.expectedConfigHash)) {
@@ -1077,7 +1089,13 @@ export async function setAgentBrain(
       .for("update");
     if (!locked || locked.archivedAt) throw new NotFoundError("Agent not found");
     const fresh = await agentBrainAccess(db, userId, orgId, agentId, patch.scope);
-    const machine = await agentMachine(db, orgId, fresh.agent.machineId);
+    // Serialize a management update with runner inventory, ownership, access and online-state changes.
+    const machine = await agentMachine(
+      db,
+      orgId,
+      fresh.agent.machineId,
+      options.requireIsolatedFreeOpencode ? "share" : undefined,
+    );
     if (
       !guardedBrainScope(locked, userId, machine) ||
       patch.moveAccount === true ||
@@ -1092,6 +1110,18 @@ export async function setAgentBrain(
         "brain.config_changed",
       );
     }
+    if (
+      options.requireIsolatedFreeOpencode &&
+      (answersOthers(audienceOf(locked), locked.ownerUserId) ||
+        patch.brain !== "opencode" ||
+        patch.fallback !== false ||
+        patch.extraUsage !== false ||
+        typeof patch.model !== "string" ||
+        !cliOption(machine, "opencode").isolatedFreeModelIds?.includes(patch.model))
+    )
+      throw new ValidationError(
+        "An owner-only agent and a currently observed signed-out free OpenCode model are required.",
+      );
     // getAgent is a direct SELECT; this worker re-reads the same locked row, never precomputed stale settings.
     return applyAgentBrain(
       { db },

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -83,7 +84,7 @@ test("a server's tile: Tailscale's own icon for one on the Tailscale network, a 
   await act(async () => root.unmount());
   el.remove();
 
-  const css = await Bun.file(new URL("../src/styles.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   // The smallest size Tailscale's brand rules allow, and its own black and white files' colors by the app's theme.
   expect(rule(".dk-logo--lg")).toContain("width: 48px");

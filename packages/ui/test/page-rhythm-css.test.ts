@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const kit = readFileSync(new URL("../src/styles/components.css", import.meta.url).pathname, "utf8").replace(
+const kit = readFileSync(fileURLToPath(new URL("../src/styles/components.css", import.meta.url)), "utf8").replace(
   /\/\*[\s\S]*?\*\//g,
   "",
 );
@@ -70,7 +71,7 @@ describe("one page top and side", () => {
 
 describe("cards and rows", () => {
   test("a card is 16 inside, a list row 8 above and below (12 under a finger)", () => {
-    const tokens = readFileSync(new URL("../src/styles/tokens.css", import.meta.url).pathname, "utf8");
+    const tokens = readFileSync(fileURLToPath(new URL("../src/styles/tokens.css", import.meta.url)), "utf8");
     expect(tokens).toContain("--row-py: var(--space-2);");
     expect(body(":root", media("(pointer: coarse)"))).toContain("--row-py: var(--space-3);");
     expect(body(".ac-card")).toContain("--card-pad: var(--space-4);");

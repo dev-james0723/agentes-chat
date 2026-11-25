@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -196,7 +197,7 @@ describe("Chip", () => {
   });
 
   test("22 high with 12px words; an icon's side pads 6, its ink 2 into its box, so the ink reads 8 on both sides", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-chip")).toContain("height: 22px;");
     expect(rule(".ac-chip")).toContain("padding: 0 var(--space-2);");
@@ -230,7 +231,7 @@ describe("ApprovalCard", () => {
   });
 
   test("the detail sits in a well in both themes, never in the page's tone (the light card's own white)", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-approval")).toContain("background: var(--surface-raised);");
     expect(rule(".ac-approval__detail")).toContain("background: var(--surface-sunken);");
@@ -318,7 +319,7 @@ describe("Card", () => {
     expect(foot?.firstElementChild?.tagName.toLowerCase()).toBe("svg");
     expect(bare?.className).toBe("ac-card__foot");
     // The key follows the title's 20px line, not the title and its quiet line; the action stays in the middle.
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-card__head")).toContain("line-height: 20px");
     expect(rule(".ac-card__head")).toContain("align-items: flex-start");
@@ -338,7 +339,7 @@ describe("Card", () => {
 });
 
 test("an avatar's initials sit in the middle of its tile at any size: it brings its own line height", async () => {
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".ac-avatar")).toContain("place-items: center;");
   expect(rule(".ac-avatar")).toContain("line-height: 1;");
@@ -354,7 +355,7 @@ test("an avatar's initials are a box of their own trimmed to their capitals, so 
   const [initials, photo] = [...container.querySelectorAll(".ac-avatar")];
   expect(initials?.querySelector(":scope > .ac-avatar__initials")?.textContent).toBe("JS");
   expect(photo?.querySelector(".ac-avatar__initials")).toBeNull();
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".ac-avatar__initials")).toContain("text-box: trim-both cap alphabetic;");
   // Where text-box is unknown, the line's own offset: the capitals' middle sits --cap-mid above the line's.
@@ -375,7 +376,7 @@ test("an event pill's mark sits on its sentence's first line and its time on tha
     "ac-eventpill__text",
     "ac-eventpill__time",
   ]);
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".ac-eventpill__main")).toContain("align-items: flex-start;");
   expect(rule(".ac-eventpill__mark")).toContain("translate: 0 calc(9px - var(--cap-mid) - 50%);");
@@ -396,7 +397,7 @@ test("a glyph inside words sits on their capitals (Icon inline), with its size f
   expect(inline?.getAttribute("class")).toBe("ac-icon ac-icon--inline");
   expect((inline as SVGElement | undefined)?.style.getPropertyValue("--glyph")).toBe("14px");
   expect(plain?.getAttribute("class")).toBe("ac-icon");
-  const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+  const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   // The inline face's formula (`.ac-who > .ac-avatar`): its middle where the capitals' middle is, above the baseline.
   expect(rule(".ac-icon--inline")).toContain(
@@ -406,7 +407,7 @@ test("a glyph inside words sits on their capitals (Icon inline), with its size f
 
 describe("single-line controls", () => {
   test("buttons, inputs and selects centre their text in the box: the line is the text's own", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     for (const selector of [
       ".ac-btn",
@@ -432,7 +433,7 @@ describe("single-line controls", () => {
 
 describe("links", () => {
   test("any link reads as ours, never the browser's blue; .ac-link is underlined in the house hairline", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     // Zero specificity: a class that styles its link still wins.
     expect(rule(":where(a)")).toContain("color: inherit");
@@ -656,7 +657,7 @@ describe("Message", () => {
     expect(gutter?.getAttribute("aria-hidden")).toBe("true");
     expect(gutter?.textContent).toBe("10:03");
     // CSS: top-aligned row, and the avatar column and the gutter have the same fixed width.
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-msg")).toContain("align-items: flex-start");
     // One face size beside a name, in a message as in the sidebar's rows and a MediaRow: `--name-face`, 32.
@@ -807,7 +808,7 @@ describe("Menu", () => {
     expect(changed).toBe(1);
     expect(body().queryByRole("menu")).toBeNull();
     // Shown on hover and while the keys hold it, over the tile's hairline and under the presence badge.
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toContain(
       ".ac-face-edit:hover > .ac-face-edit__glyph,\n.ac-face-edit[data-highlighted] > .ac-face-edit__glyph {\n  opacity: 1;",
     );
@@ -1041,7 +1042,7 @@ describe("Diff", () => {
       ["ac-diff__block ac-diff__block--del", "Removido: velho"],
       ["ac-diff__block ac-diff__block--add", "Adicionado: novo"],
     ]);
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toContain("box-shadow: inset 3px 0 0 var(--ok);");
     expect(css).toContain("box-shadow: inset 3px 0 0 var(--danger);");
   });
@@ -1117,10 +1118,9 @@ describe("Message aside and foot", () => {
   });
 
   test("every menu's rows share one dense height and side padding, as dense as the message's bar", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const decls = (selector: string) =>
       [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
         .filter((m) => (m[1] ?? "").split(",").some((s) => s.trim() === selector))
@@ -1139,10 +1139,9 @@ describe("Message aside and foot", () => {
   });
 
   test("the action bar is small and sits on the row's top edge, in one place on every row", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const bodies = (selector: string, sheet = css) =>
       [...sheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
         .filter((m) => (m[1] ?? "").split(",").some((s) => s.trim() === selector))
@@ -1199,7 +1198,7 @@ describe("Message aside and foot", () => {
     expect(value(".ac-btn--sm.ac-btn--icon::after", "inset", touch)).toBe(
       "calc((var(--control-h-sm) - var(--touch-target)) / 2) calc(-1 * var(--space-1))",
     );
-    const tokens = await Bun.file(new URL("../src/styles/tokens.css", import.meta.url).pathname).text();
+    const tokens = await Bun.file(fileURLToPath(new URL("../src/styles/tokens.css", import.meta.url))).text();
     expect(tokens).toContain("--touch-target: 44px;");
     const buttons = ".ac-msg__actions .ac-btn--sm";
     // Its plates, square or with a count, grow to the 32 of every small button there.
@@ -1237,7 +1236,7 @@ describe("Message aside and foot", () => {
     for (const part of [".ac-msg__aside", ".ac-msg__foot"]) {
       expect(container.querySelector(part)?.childNodes.length).toBe(0);
     }
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     expect(css).toContain(".ac-msg__aside:empty,\n.ac-msg__foot:empty {\n  display: none;\n}");
   });
 });
@@ -1388,10 +1387,9 @@ describe("Message on touch", () => {
   });
 
   test("on touch the bar is the keyboard's, the lit row is a step above a hover, and the menu's targets are 40px", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const block = (media: string) =>
       [...css.matchAll(new RegExp(`@media \\(${media}\\) \\{((?:[^{}]*\\{[^{}]*\\})*[^{}]*)\\}`, "g"))]
         .map((m) => m[1] ?? "")
@@ -1436,7 +1434,7 @@ describe("ListRow and RunMark", () => {
     fireEvent.click(row);
     expect(clicked).toBe(1);
     // A long title wraps: never "…" with the rest only on hover.
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-row__title")).not.toContain("ellipsis");
     expect(rule(".ac-row__title")).toContain("overflow-wrap: anywhere");
@@ -1454,7 +1452,7 @@ describe("ListRow and RunMark", () => {
 
 describe("text and faces that are never cut", () => {
   test("an empty state's text wraps in even lines; initials in a stack keep their whole tile", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     expect(rule(".ac-empty__text")).toContain("text-wrap: balance");
     expect(rule('.ac-avatar-stack > .ac-avatar[data-kind="person"]:not(:has(img)) + .ac-avatar')).toContain(

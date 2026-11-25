@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 /** The surfaces where a literal color once broke a theme: the agent's browser, its computer and its desktop. */
 const SURFACES = [
   "apps/web/src/components/browser",

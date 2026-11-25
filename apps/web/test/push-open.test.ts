@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { AppNotification } from "@agenteschat/client";
 import { opensConnectAi, openTarget } from "@agenteschat/client/lib/notifications";
 import {
@@ -32,7 +33,7 @@ function routePath(file: string): string {
 
 /** The pages the app has. */
 const ROUTES = new Set(
-  readdirSync(new URL("../src/routes", import.meta.url).pathname)
+  readdirSync(fileURLToPath(new URL("../src/routes", import.meta.url)))
     .filter((f) => f.endsWith(".tsx") && !f.startsWith("__"))
     .map(routePath),
 );
@@ -383,7 +384,7 @@ const fakeWindow = (url: string): FakeWindow => ({
 });
 
 async function loadWorker(windows: FakeWindow[]) {
-  const source = await Bun.file(new URL("../public/sw.js", import.meta.url).pathname).text();
+  const source = await Bun.file(fileURLToPath(new URL("../public/sw.js", import.meta.url))).text();
   const listeners = new Map<string, (event: unknown) => void>();
   const shown: { title: string; options: { data: unknown; tag?: string } }[] = [];
   const opened: string[] = [];

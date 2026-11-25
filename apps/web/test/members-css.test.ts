@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { atRule, builtCss, declarations, topLevel } from "./built-css";
 
 test("the members column: 264px on the work's sheet, group titles in normal case, offline rows quieter, round role marks, a sheet on a phone", async () => {
@@ -62,7 +63,9 @@ test("the column's add row: a 24px plus tile and 13px text, so it fits one line 
 });
 
 test("a DM's sidebar: the row that opens its AI is a plate like the panel's other rows, its icon 8 inside it", async () => {
-  const css = await Bun.file(new URL("../src/components/agents/agent-sidebar.css", import.meta.url).pathname).text();
+  const css = await Bun.file(
+    fileURLToPath(new URL("../src/components/agents/agent-sidebar.css", import.meta.url)),
+  ).text();
   const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
   const row = rule(".dm-side__sec .settings-row--open");
   // The plate reaches 8 past the section's sides and pads 8, so the icon starts on the heading's edge.

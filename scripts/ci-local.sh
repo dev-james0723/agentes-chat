@@ -46,16 +46,17 @@ step "typecheck" "bun run typecheck"
 step "build web and server" "bun run build"
 # A drift check that finds a difference leaves the generated files behind; they are removed so the tree stays as it was.
 step "migrations up to date with the schema" \
-  "bun run db:generate ci-drift-check < /dev/null; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
+  "bun run db:generate ci-drift-check < /dev/null || exit \$?; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"
 step "test backend 2/3" "bun test packages/engine/test/[!a-m]*.test.ts packages/adapters packages/config packages/db packages/modules packages/providers packages/client packages/i18n packages/tokens packages/setup"
 step "test backend 3/3" "bun test apps/server"
-geometry=$(mktemp -d "${TMPDIR:-/tmp}/agentes-geometry.XXXXXX")
-step "test web and design system" "GEOMETRY_OUT=$geometry bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui"
-step "geometry" "bun run check:geometry $geometry --text-size xs,xl"
-rm -rf "$geometry"
+geometry=$(mktemp -d "${TMPDIR:-/tmp}/agentes-geometry.XXXXXX") || exit 2
+printf '%s\n' "$(git rev-parse HEAD)" > "$geometry/source-head" || exit 2
+step "test web and design system" "GEOMETRY_OUT=\"$geometry\" bun test --preload ./scripts/geometry/capture.ts apps/web packages/ui"
+step "geometry" "bun run check:geometry \"$geometry\" --text-size xs,xl && rm -rf \"$geometry\""
+if [ -d "$geometry" ]; then echo "Geometry failure captures retained: $geometry" >> "$log"; fi
 step "test new event dialog alone" "RUN_NEW_EVENT=1 bun test --timeout 20000 apps/web/test/new-event.test.tsx"
 step "test phone and desktop apps" "bun test apps/mobile/test apps/desktop/test"
 # This branch's own history: other local branches' commits are theirs to scan.

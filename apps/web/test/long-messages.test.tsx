@@ -1,4 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "@agenteschat/ui/testing/dom";
 
 setupDom();
@@ -9,7 +10,7 @@ import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { ADA_ID, comfortable, createFakeApi, ENG_ID, NOW, ORG_ID, seedState } from "./fake-api";
 import { renderApp, screen, settle } from "./render";
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const TALL = "Relatório longo do trimestre";
 
 // No layout here: the tall message's words measure past the rule's height, any other under it.

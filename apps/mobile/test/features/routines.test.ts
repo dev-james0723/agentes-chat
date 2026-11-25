@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Routine, RoutineRun } from "@agenteschat/client";
 import {
   cleanFilter,
@@ -554,7 +555,8 @@ test("a run's Abrir na conversa keeps off the Mostrar mais right above it: no sl
 
 test("Nova rotina's templates: one row opens the search, by area, and picking one fills the draft", async () => {
   // The screens are components the tests can't render: what they wire in, as text.
-  const read = (f: string) => Bun.file(new URL(`../../src/features/routines/${f}`, import.meta.url).pathname).text();
+  const read = (f: string) =>
+    Bun.file(fileURLToPath(new URL(`../../src/features/routines/${f}`, import.meta.url))).text();
   const [form, picker] = await Promise.all([read("RoutineForm.tsx"), read("TemplatePicker.tsx")]);
   expect(form).toContain("<TemplatePicker value={template?.value} onPick={pickTemplate} />");
   // The person's own words are never written over unasked, and a part in brackets holds "Criar" back.
@@ -571,7 +573,8 @@ test("Nova rotina's templates: one row opens the search, by area, and picking on
 
 test('a routine\'s row and its runs line show their words whole: they wrap, never end in a "…" that hides them', async () => {
   // The screens are components the tests can't render: what they hold back, as text.
-  const read = (f: string) => Bun.file(new URL(`../../src/features/routines/${f}`, import.meta.url).pathname).text();
+  const read = (f: string) =>
+    Bun.file(fileURLToPath(new URL(`../../src/features/routines/${f}`, import.meta.url))).text();
   const [parts, screen] = await Promise.all([read("parts.tsx"), read("RoutineScreen.tsx")]);
   const row = parts.slice(parts.indexOf("export const RoutineRow"), parts.indexOf("const styles = StyleSheet.create"));
   expect(row).toContain("{title}");

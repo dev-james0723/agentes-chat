@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -11,7 +12,7 @@ import { Segmented } from "../src/components/Segmented";
 
 afterEach(() => cleanup());
 
-const ROOT = new URL("../../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const kit = readFileSync(join(ROOT, "packages/ui/src/styles/components.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const tokens = readFileSync(join(ROOT, "packages/ui/src/styles/tokens.css"), "utf8");
 

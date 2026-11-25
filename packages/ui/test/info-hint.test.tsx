@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { setupDom } from "../testing/dom";
 
 setupDom();
@@ -201,7 +202,7 @@ describe("InfoHint", () => {
   });
 
   test("the bubble floats above dialogs: it shares their layer, where what opens later stacks above", async () => {
-    const css = (file: string) => Bun.file(new URL(`../src/styles/${file}`, import.meta.url).pathname).text();
+    const css = (file: string) => Bun.file(fileURLToPath(new URL(`../src/styles/${file}`, import.meta.url))).text();
     const [components, layers] = await Promise.all([css("components.css"), css("layers.css")]);
     const layer = (selector: string) => {
       const name = components
@@ -214,7 +215,7 @@ describe("InfoHint", () => {
   });
 
   test("the keyboard focus ring stays clear of the label: inside the target, past the part that reaches into it", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`${selector} {`)[1]?.split("}")[0] ?? "";
     const px = (text: string, prop: string) =>
       Number(text.match(new RegExp(`(?:^|\\s)${prop}:\\s*(-?[\\d.]+)px`))?.[1]);
@@ -264,10 +265,9 @@ describe("hints on fields and cards", () => {
   });
 
   test("a wrapped label's ⓘ follows its last word, 4px from it, in the room its lines leave: never alone", async () => {
-    const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
-      /\/\*[\s\S]*?\*\//g,
-      "",
-    );
+    const css = (
+      await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     const px = (text: string) => [...text.matchAll(/(-?[\d.]+)px/g)].map((m) => Number(m[1]));
     const line = rule(".ac-hintline");
@@ -291,7 +291,7 @@ describe("hints on fields and cards", () => {
   });
 
   test("beside a card's big title (`.ac-card__title`), the line takes the title's type: the ⓘ is on its line", async () => {
-    const css = await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text();
+    const css = await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text();
     const rule = (selector: string) => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
     const type = (text: string) =>
       [/font-size:\s*([\d.]+px)/, /line-height:\s*([\d.]+px)/].map((re) => text.match(re)?.[1]);

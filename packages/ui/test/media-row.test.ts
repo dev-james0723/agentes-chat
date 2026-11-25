@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const css = (await Bun.file(new URL("../src/styles/components.css", import.meta.url).pathname).text()).replace(
+const css = (await Bun.file(fileURLToPath(new URL("../src/styles/components.css", import.meta.url))).text()).replace(
   /\/\*[\s\S]*?\*\//g,
   "",
 );

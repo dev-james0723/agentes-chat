@@ -666,7 +666,15 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
     woke.length = 0;
     await runner.frame({
       type: "executors.changed",
-      executors: { claude: { version: "2.1.300", loggedIn: true, email: "never@stored" }, bogus: { version: "x" } },
+      executors: {
+        claude: { version: "2.1.300", loggedIn: true, email: "never@stored" },
+        bogus: { version: "x" },
+        opencode: {
+          version: "2.2.5",
+          models: [{ id: "opencode/big-pickle", free: true }],
+          isolatedFreeModelIds: ["opencode/big-pickle"],
+        },
+      },
     });
     await Bun.sleep(5);
     const executors = await row();
@@ -674,6 +682,7 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
       claude: { version: "2.1.300", loggedIn: true },
       browser: { available: true },
     });
+    expect(executors?.opencode?.isolatedFreeModelIds).toEqual(["opencode/big-pickle"]);
     expect(executors?.codex).toBeUndefined();
     expect(JSON.stringify(executors)).not.toContain("never@stored");
     expect(JSON.stringify(executors)).not.toContain("bogus");
@@ -684,9 +693,16 @@ describe("a runner that dies mid-request (brain turns never stay working)", () =
     expect((await row())?.claude).toMatchObject({ version: "2.1.300" });
     // A hello from a runner that hasn't looked yet leaves the CLIs out: the stored ones stand.
     const detectedAt = (await row())?.detectedAt;
+    await fakeRunner(hub).hello(paired.token);
+    expect((await row())?.opencode?.isolatedFreeModelIds).toBeUndefined();
+    expect((await row())?.browser?.available).toBe(true);
+    // A queued report from the old socket still names the same replica.
+    await runner.frame({ type: "executors.changed", executors: { opencode: executors?.opencode } });
+    expect((await row())?.opencode?.isolatedFreeModelIds).toBeUndefined();
     await fakeRunner(hub).hello(paired.token, { browser: { available: false } });
     await Bun.sleep(5);
     expect(await row()).toMatchObject({ claude: { version: "2.1.300" }, browser: { available: false }, detectedAt });
+    expect((await row())?.opencode).toEqual({ version: "2.2.5", models: [{ id: "opencode/big-pickle", free: true }] });
   });
 
   test("toolchains found mid-session replace the hello's (the rest stays) and tell the org", async () => {
