@@ -695,6 +695,34 @@ describe("one file, many registrations (independent review)", () => {
   });
 });
 
+describe("liveness and late readers (independent re-review)", () => {
+  test.skipIf(!hasPython)(
+    "a file still settling gets its own later cycle; a reader withdraws a pending claim",
+    async () => {
+      f = await setup({ machines: true });
+      const fx = f;
+      const w = await world(fx);
+      w.write("scratch/s1.bin");
+      await w.reg(w.A, [{ path: "scratch/s1.bin", role: "scratch" }]);
+      await w.ev(w.A, "seal", ["scratch/s1.bin"]);
+      const at = Date.now();
+      const cycle = await w.gc(at);
+      expect(cycle.decisions.settling).toBe(1);
+      const later = (await fx.db.select().from(schema.outbox).where(eq(schema.outbox.kind, STORAGE_GC_JOB))).filter(
+        (j) => j.nextAttemptAt.getTime() >= at + 60_000,
+      );
+      expect(later.length).toBeGreaterThan(0);
+      const [row] = await fx.db.select().from(schema.runFiles).where(eq(schema.runFiles.path, "scratch/s1.bin"));
+      if (!row) throw new Error("no row");
+      expect(await reserve(fx.db, row, "pending")).toBe(true);
+      await w.ev(w.B, "read", ["scratch/s1.bin"]);
+      expect(await w.state("scratch/s1.bin")).toBe("released");
+      await w.gc();
+      expect(w.on("scratch/s1.bin")).toBe(true);
+    },
+  );
+});
+
 describe("rollout controls (§12, §17)", () => {
   test.skipIf(!hasPython)(
     "shadow records what would go and touches nothing; the kill switch stops it all",

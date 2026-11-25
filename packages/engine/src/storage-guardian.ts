@@ -210,6 +210,10 @@ export async function lifecycleEvent(
           ),
         );
     } else if (op === "read" || op === "future") {
+      // A collector's claim on the file is withdrawn first: the reader wins unless the computer already has it.
+      for (const r of all)
+        if (r.state === "reserved")
+          await transition(db, r, "released", actor, "claim_withdrawn_for_reader", { reservedToken: null });
       await db.insert(artifactLeases).values({
         orgId: who.orgId,
         runFileId: file.id,
@@ -602,6 +606,8 @@ export async function runStorageGc(
     });
     cycle.shadow++;
   }
+  // A file still settling is looked at again once it has settled, even if no other event comes on this computer.
+  if ((cycle.decisions.settling ?? 0) > 0) await scheduleGc(db, orgId, machineId, now + SETTLE_SECONDS * 1000);
   const live = toRemove.filter((x) => !x.shadow);
   if (live.length === 0) return cycle;
   if (!deps.hub || !status?.online) {

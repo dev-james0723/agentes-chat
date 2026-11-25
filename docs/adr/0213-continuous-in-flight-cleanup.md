@@ -28,7 +28,9 @@ The rule that deletion never rests on a model's or a file's own word stays.
 12. **ADR 0201's approvals respect it.** An approved cleanup refuses a file that was since pinned, kept, put under review or claimed, or that an agent holds a lease on.
 13. **Kill switch.** `storage_gc_settings.enabled` false stops every removal at the next cycle.
 
-Migration 0287 adds its CHECK constraints `NOT VALID` and validates them in separate statements, so the existing rows are scanned without blocking writes.
+Migration 0287 runs in the migrator's single transaction, so its `ALTER TABLE`s, the CHECK validation and the index on `run_files` hold `run_files` and `file_cleanups` locked until it commits. Both tables are young (ADR 0197, 0201) and small; the deploy rehearsal on a copy of production measures the window before the real migration runs.
+
+A reader that takes a lease withdraws a collector's pending claim on the file. The only window left is between the final check and the computer receiving the command; the computer's own open-file check covers a reader that is actually reading. A file still settling gets its own later cycle.
 
 ## Consequences
 
