@@ -26,11 +26,13 @@ import type {
   ChannelCategory,
   ChannelMember,
   ChannelOverride,
+  CleanWorkspace,
   ComposioUsage,
   Connection,
   ConnectorCatalog,
   ConnectorDef,
   ConsultationConversation,
+  CostPerSuccessReport,
   Credential,
   Edition,
   EndpointCheck,
@@ -293,6 +295,7 @@ export interface FakeState {
   usageQueues?: Record<string, UsageQueue>;
   /** Uso › Pessoas (ADR 0141); unset: nobody used agents yet. */
   peopleUsage?: PeopleUsage;
+  costPerSuccess?: CostPerSuccessReport;
   /** A person's month by id; unset: an empty month. */
   personUsage?: Record<string, PersonUsage>;
   personLimits?: PersonLimits;
@@ -316,6 +319,8 @@ export interface FakeState {
     openedAt?: string;
   }[];
   calls: { method: string; args: unknown[] }[];
+  /** What the Clean workspace card reads (ADR 0200); unset = no computers and no reports. */
+  cleanWorkspace?: CleanWorkspace;
   context?: string;
   defaultCredentialId?: string | null;
   /** The workspace default agent budget (US$); 50 when unset. */
@@ -1331,6 +1336,13 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
     return budget > 0 ? Math.round((spent / budget) * 1000) / 10 : 0;
   };
   return {
+    cleanWorkspace: {
+      get: async () => state.cleanWorkspace ?? { computers: [], pending: 0, reports: [] },
+      approve: async (orgId, reportId) => {
+        log("cleanWorkspace.approve", orgId, reportId);
+        return { approved: 0, notOnAComputer: 0 };
+      },
+    },
     system: {
       health: async () => ({ status: "ok", version: "test", edition: state.edition ?? "cloud" }),
       instance: async () => ({
@@ -1965,6 +1977,24 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
         if (inv) inv.roleIds = roleIds;
         return { roleIds };
       },
+      costPerSuccess: async () =>
+        state.costPerSuccess ?? {
+          from: new Date().toISOString(),
+          to: new Date().toISOString(),
+          groups: [],
+          total: {
+            runs: 0,
+            failedRuns: 0,
+            retries: 0,
+            verifiedSuccesses: 0,
+            tokens: 0,
+            costUsd: 0,
+            unknownCostRuns: 0,
+            costPerSuccessUsd: null,
+            missing: "no_success" as const,
+            text: "",
+          },
+        },
       peopleUsage: async () =>
         state.peopleUsage ?? {
           month: new Date().toISOString().slice(0, 7),

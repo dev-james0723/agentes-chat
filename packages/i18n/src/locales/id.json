@@ -3026,6 +3026,8 @@
     "atOnceHelp": "Berapa banyak pekerjaan yang tidak diminta siapa pun yang dikerjakannya bersamaan. Sisanya menunggu giliran.",
     "prs": "Pull request per jam",
     "prsHelp": "Paling banyak yang dibuka pekerjaannya sendiri dalam satu jam.",
+    "shots": "Tangkapan layar per tugas",
+    "shotsHelp": "Jumlah terbanyak yang boleh diambil satu pekerjaannya. Naikkan untuk agen yang memeriksa tampilan halaman. Tangkapan layar baru juga dijeda saat disk komputernya hampir penuh.",
     "call": "Agen yang boleh dipanggil",
     "callHelp": "Siapa yang boleh disebut atau diberi pekerjaan.",
     "callAll": "Semua",
@@ -7302,6 +7304,14 @@
     "notFound": "Tugas ini tidak ada atau kamu tidak punya akses.",
     "createdBy": "#{{number}} · dibuat oleh {{name}}",
     "createdByShort": "Dibuat oleh {{name}}",
+    "founder": {
+      "title": "Status pengiriman",
+      "available": "Ada di aplikasi yang dipakai",
+      "notAvailable": "Belum di aplikasi yang dipakai",
+      "verified": "Terverifikasi",
+      "notVerified": "Belum terverifikasi",
+      "needsYou": "Perlu kamu"
+    },
     "fromMessage": "dari <0>pesan di #{{channel}}</0>",
     "fromAgent": "dari permintaan ke agen",
     "subIssues_other": "Subtugas · {{count}}",
@@ -11217,6 +11227,40 @@
   },
   "storage": {
     "title": "Penyimpanan",
+    "clean": {
+      "title": "Bersihkan ruang kerja",
+      "intro": "Yang ditinggalkan tugas yang sudah selesai di komputer agen. Hasil kerja, bukti, dan apa pun yang tidak jelas gunanya tetap disimpan. Kamu memilih file sementara mana yang dibersihkan.",
+      "computers": "Disk komputer",
+      "level": {
+        "ok": "{{free}} GB kosong",
+        "low": "Ruang hampir habis: {{free}} GB kosong",
+        "critical": "Hampir penuh: {{free}} GB kosong. Tangkapan layar dan rekaman baru dijeda.",
+        "unknown": "Belum diukur"
+      },
+      "none": "Belum ada tugas yang selesai sejak agen mulai mendaftarkan file mereka.",
+      "task": "Tugas",
+      "mission": "Misi",
+      "ended": {
+        "done": "Selesai",
+        "canceled": "Dibatalkan"
+      },
+      "kept_other": "{{count}} disimpan",
+      "candidates_other": "{{count}} file sementara, {{size}}",
+      "duplicates_other": "{{count}} salinan persis",
+      "restorable": "Bukti: {{restorable}} bisa dipulihkan dari Drive, {{manifestOnly}} hanya tercatat",
+      "approve": "Bersihkan file sementara",
+      "approved_other": "{{count}} file disetujui: masing-masing diperiksa lagi di komputernya sebelum dihapus.",
+      "status": {
+        "approved": "Menunggu komputernya",
+        "done": "Dihapus",
+        "skipped": "Sudah tidak ada",
+        "blocked": "Disimpan: {{reason}}",
+        "unknown": "Belum pasti: diperiksa lagi nanti"
+      },
+      "freed": "Ruang kosong di komputer: {{before}} sebelum, {{after}} sesudah",
+      "show": "Tampilkan file",
+      "hide": "Sembunyikan file"
+    },
     "options": "Tempat menyimpan file",
     "agentes": "Penyimpanan agentes.chat",
     "agentesText": "Filemu disimpan di penyimpanan kami, terpisah untuk tiap ruang kerja.",
@@ -15161,6 +15205,14 @@
       "oldSub": "Pemakaian dari sebelum akun dicatat",
       "ofMonth": "{{percent}} dari bulan ini",
       "shareLabel": "{{source}}: {{percent}} dari bulan ini"
+    },
+    "costPerSuccess": {
+      "title": "Biaya per keberhasilan terverifikasi",
+      "intro": "30 hari terakhir. Keberhasilan adalah tugas yang kriteria penerimaannya dicentang seseorang dan tidak dibuka kembali sejak itu. Setiap proses dihitung dalam biaya.",
+      "perSuccess": "{{cost}} per keberhasilan",
+      "unknown": "Biaya tidak diketahui",
+      "noSuccess": "Belum ada keberhasilan terverifikasi",
+      "line": "{{runs}} proses · {{successes}} terverifikasi · {{failed}} gagal · {{retries}} percobaan ulang"
     }
   },
   "budget": {

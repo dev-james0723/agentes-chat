@@ -3014,6 +3014,8 @@
     "atOnceHelp": "아무도 요청하지 않은 작업을 동시에 몇 개까지 하는지. 나머지는 차례를 기다립니다.",
     "prs": "시간당 풀 리퀘스트",
     "prsHelp": "자신의 작업이 한 시간에 여는 최대 개수입니다.",
+    "shots": "작업당 스크린샷",
+    "shotsHelp": "한 작업에서 찍을 수 있는 최대 개수입니다. 페이지 모양을 확인하는 에이전트라면 높이세요. 컴퓨터 디스크가 거의 가득 차면 새 스크린샷도 일시 중지됩니다.",
     "call": "부를 수 있는 에이전트",
     "callHelp": "언급하거나 작업을 넘길 수 있는 대상입니다.",
     "callAll": "모두",
@@ -7265,6 +7267,14 @@
     "notFound": "이 작업은 없거나 접근 권한이 없어요.",
     "createdBy": "#{{number}} · {{name}}이(가) 만듦",
     "createdByShort": "{{name}}이(가) 만듦",
+    "founder": {
+      "title": "전달 상태",
+      "available": "사용 중인 앱에 반영됨",
+      "notAvailable": "사용 중인 앱에 미반영",
+      "verified": "확인됨",
+      "notVerified": "확인 안 됨",
+      "needsYou": "결정이 필요해요"
+    },
     "fromMessage": "<0>#{{channel}}의 메시지</0>에서",
     "fromAgent": "에이전트에게 보낸 요청에서",
     "subIssues_other": "하위 작업 · {{count}}",
@@ -11157,6 +11167,40 @@
   },
   "storage": {
     "title": "저장 공간",
+    "clean": {
+      "title": "작업 공간 정리",
+      "intro": "끝난 작업이 에이전트의 컴퓨터에 남긴 것입니다. 결과물, 증거, 용도를 알 수 없는 파일은 남습니다. 정리할 임시 파일은 직접 고릅니다.",
+      "computers": "컴퓨터 디스크",
+      "level": {
+        "ok": "{{free}} GB 남음",
+        "low": "공간 부족: {{free}} GB 남음",
+        "critical": "거의 가득 참: {{free}} GB 남음. 새 스크린샷과 녹화가 일시 중지되었습니다.",
+        "unknown": "아직 측정되지 않음"
+      },
+      "none": "에이전트가 파일을 등록하기 시작한 뒤로 끝난 작업이 없습니다.",
+      "task": "작업",
+      "mission": "미션",
+      "ended": {
+        "done": "완료",
+        "canceled": "취소됨"
+      },
+      "kept_other": "{{count}}개 유지",
+      "candidates_other": "임시 파일 {{count}}개, {{size}}",
+      "duplicates_other": "완전히 같은 사본 {{count}}개",
+      "restorable": "증거: Drive에서 복원 가능 {{restorable}}개, 목록만 {{manifestOnly}}개",
+      "approve": "임시 파일 정리",
+      "approved_other": "파일 {{count}}개를 승인했습니다. 지우기 전에 각각 해당 컴퓨터에서 다시 확인합니다.",
+      "status": {
+        "approved": "컴퓨터를 기다리는 중",
+        "done": "삭제됨",
+        "skipped": "이미 없음",
+        "blocked": "유지: {{reason}}",
+        "unknown": "아직 불확실: 나중에 다시 확인"
+      },
+      "freed": "컴퓨터 여유 공간: 이전 {{before}}, 이후 {{after}}",
+      "show": "파일 보기",
+      "hide": "파일 숨기기"
+    },
     "options": "파일 보관 위치",
     "agentes": "agentes.chat 저장 공간",
     "agentesText": "파일은 워크스페이스별로 분리된 저희 저장 공간에 보관돼요.",
@@ -15099,6 +15143,14 @@
       "oldSub": "계정이 기록되기 전의 사용량",
       "ofMonth": "이번 달의 {{percent}}",
       "shareLabel": "{{source}}: 이번 달의 {{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "검증된 성공당 비용",
+      "intro": "최근 30일. 성공은 사람이 인수 조건을 체크했고 그 후 아무도 다시 열지 않은 작업입니다. 모든 실행이 비용에 포함됩니다.",
+      "perSuccess": "성공당 {{cost}}",
+      "unknown": "비용 알 수 없음",
+      "noSuccess": "아직 검증된 성공이 없습니다",
+      "line": "실행 {{runs}}회 · 검증 {{successes}} · 실패 {{failed}} · 재시도 {{retries}}"
     }
   },
   "budget": {

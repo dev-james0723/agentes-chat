@@ -3019,6 +3019,8 @@
     "atOnceHelp": "它同时进行多少项没人要求的工作。其余的排队等候。",
     "prs": "每小时拉取请求数",
     "prsHelp": "它自己的工作一小时内最多打开的数量。",
+    "shots": "每项任务的截图数",
+    "shotsHelp": "一项工作最多可截取的数量。对于检查页面外观的智能体，可以调高。电脑磁盘快满时，新的截图也会暂停。",
     "call": "可以呼叫的智能体",
     "callHelp": "它可以提及或交接工作的对象。",
     "callAll": "全部",
@@ -7313,6 +7315,14 @@
     "notFound": "这个任务不存在，或你无权访问。",
     "createdBy": "#{{number}} · 由 {{name}} 创建",
     "createdByShort": "由 {{name}} 创建",
+    "founder": {
+      "title": "交付状态",
+      "available": "已在使用中的应用里",
+      "notAvailable": "不在使用中的应用里",
+      "verified": "已核实",
+      "notVerified": "未核实",
+      "needsYou": "需要你"
+    },
     "fromMessage": "来自<0>#{{channel}} 中的一条消息</0>",
     "fromAgent": "来自对智能体的一个请求",
     "subIssues_other": "子任务 · {{count}}",
@@ -11229,6 +11239,40 @@
   },
   "storage": {
     "title": "存储",
+    "clean": {
+      "title": "清理工作区",
+      "intro": "已结束的任务在智能体电脑上留下的内容。交付物、证据和用途不明的文件都会保留。由你选择要清理哪些临时文件。",
+      "computers": "电脑磁盘",
+      "level": {
+        "ok": "可用 {{free}} GB",
+        "low": "空间不足：可用 {{free}} GB",
+        "critical": "几乎已满：可用 {{free}} GB。新的截图和录屏已暂停。",
+        "unknown": "尚未测量"
+      },
+      "none": "自智能体开始登记文件以来，还没有任务结束。",
+      "task": "任务",
+      "mission": "使命",
+      "ended": {
+        "done": "已完成",
+        "canceled": "已取消"
+      },
+      "kept_other": "保留 {{count}} 个",
+      "candidates_other": "{{count}} 个临时文件，{{size}}",
+      "duplicates_other": "{{count}} 个完全相同的副本",
+      "restorable": "证据：{{restorable}} 个可从 Drive 恢复，{{manifestOnly}} 个仅列出",
+      "approve": "清理临时文件",
+      "approved_other": "已批准 {{count}} 个文件：每个文件删除前都会在其电脑上再次检查。",
+      "status": {
+        "approved": "等待其电脑",
+        "done": "已删除",
+        "skipped": "已不存在",
+        "blocked": "已保留：{{reason}}",
+        "unknown": "尚不确定：稍后再次检查"
+      },
+      "freed": "电脑可用空间：之前 {{before}}，之后 {{after}}",
+      "show": "显示文件",
+      "hide": "隐藏文件"
+    },
     "options": "文件存放位置",
     "agentes": "agentes.chat 存储",
     "agentesText": "你的文件保存在我们的存储中，每个工作区彼此隔离。",
@@ -15163,6 +15207,14 @@
       "oldSub": "记录账号之前的用量",
       "ofMonth": "本月的 {{percent}}",
       "shareLabel": "{{source}}：本月的 {{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "每次已验证成功的成本",
+      "intro": "最近 30 天。成功是指验收条件由人勾选、之后无人重新打开的任务。每次运行都计入成本。",
+      "perSuccess": "每次成功 {{cost}}",
+      "unknown": "成本未知",
+      "noSuccess": "还没有已验证的成功",
+      "line": "{{runs}} 次运行 · {{successes}} 个已验证 · {{failed}} 次失败 · {{retries}} 次重试"
     }
   },
   "budget": {

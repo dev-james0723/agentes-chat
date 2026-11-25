@@ -3331,6 +3331,9 @@ export const en = {
     atOnceHelp: "How many jobs nobody asked for it runs at the same time. The others wait their turn.",
     prs: "Pull requests an hour",
     prsHelp: "The most its own work opens in an hour.",
+    shots: "Screenshots per task",
+    shotsHelp:
+      "The most one piece of its work may take. Raise it for an agent that checks how pages look. New screenshots also pause while its computer's disk is nearly full.",
     call: "Agents it may call",
     callHelp: "Who it may mention or hand work to.",
     callAll: "All",
@@ -7821,6 +7824,15 @@ export const en = {
     notFound: "This task doesn't exist or you don't have access.",
     createdBy: "#{{number}} · created by {{name}}",
     createdByShort: "Created by {{name}}",
+    /** A task's status from stored evidence (ADR 0204); its lines come from the server in Hong Kong Chinese. */
+    founder: {
+      title: "Delivery status",
+      available: "In the running app",
+      notAvailable: "Not in the running app",
+      verified: "Verified",
+      notVerified: "Not verified",
+      needsYou: "Needs you",
+    },
     fromMessage: "from <0>a message in #{{channel}}</0>",
     fromAgent: "from a request to an agent",
     subIssues_one: "Subtasks · {{count}}",
@@ -11842,6 +11854,45 @@ export const en = {
   },
   storage: {
     title: "Storage",
+    clean: {
+      title: "Clean workspace",
+      intro:
+        "What ended tasks left on agents' computers. Deliverables, evidence and anything unexplained stay. You choose which temporary files to clean.",
+      computers: "Computers' disks",
+      level: {
+        ok: "{{free}}\u00a0GB free",
+        low: "Space is short: {{free}}\u00a0GB free",
+        critical: "Nearly full: {{free}}\u00a0GB free. New screenshots and recordings are paused.",
+        unknown: "Not measured yet",
+      },
+      none: "No task has ended since agents started registering their files.",
+      task: "Task",
+      mission: "Mission",
+      ended: {
+        done: "Done",
+        canceled: "Canceled",
+      },
+      kept_one: "{{count}} kept",
+      kept_other: "{{count}} kept",
+      candidates_one: "{{count}} temporary file, {{size}}",
+      candidates_other: "{{count}} temporary files, {{size}}",
+      duplicates_one: "{{count}} exact copy",
+      duplicates_other: "{{count}} exact copies",
+      restorable: "Evidence: {{restorable}} restorable from the Drive, {{manifestOnly}} only listed",
+      approve: "Clean temporary files",
+      approved_one: "{{count}} file approved: it is checked again on its computer before it goes.",
+      approved_other: "{{count}} files approved: each is checked again on its computer before it goes.",
+      status: {
+        approved: "Waiting for its computer",
+        done: "Removed",
+        skipped: "Already gone",
+        blocked: "Kept: {{reason}}",
+        unknown: "Not sure yet: checked again later",
+      },
+      freed: "Free space on the computer: {{before}} before, {{after}} after",
+      show: "Show files",
+      hide: "Hide files",
+    },
     options: "Where to keep files",
     agentes: "agentes.chat storage",
     agentesText: "Your files stay in our storage, kept apart per workspace.",
@@ -15683,6 +15734,16 @@ export const en = {
     actions: { raise: "Raise to {{amount}} this month", refuse: "Decline", see: "See their usage" },
   },
   usageViews: {
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
+    costPerSuccess: {
+      title: "Cost per verified success",
+      intro:
+        "Last 30 days. A success is a task whose acceptance criteria a person checked and nobody reopened since. Every run counts toward cost.",
+      perSuccess: "{{cost}} per success",
+      unknown: "Cost unknown",
+      noSuccess: "No verified success yet",
+      line: "{{runs}} runs · {{successes}} verified · {{failed}} failed · {{retries}} retries",
+    },
     signedOut: "Signed out",
     whose: "{{name}}'s",
     serves: {

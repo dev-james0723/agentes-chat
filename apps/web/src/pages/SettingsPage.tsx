@@ -75,7 +75,9 @@ import { usePlanHold } from "@/components/ai/ConnectAiSteps";
 import { EndpointForm } from "@/components/ai/EndpointForm";
 import { WhoPicksSection } from "@/components/ai/Jev";
 import { BillingLinkButton } from "@/components/BillingLinkButton";
+import { CleanWorkspaceSection } from "@/components/CleanWorkspace";
 import { ConnectorsSection } from "@/components/Connectors";
+import { CostPerSuccessCard } from "@/components/CostPerSuccess";
 import { DeleteWorkspaceDialog } from "@/components/DeleteWorkspace";
 import type { ConnectStart } from "@/components/devices/ConnectDialog";
 import { DevicePage } from "@/components/devices/DevicePage";
@@ -253,7 +255,12 @@ function Settings({
         <ConnectorsSection connected={connected} outcome={outcome} review={review} mail={mail} account={account} />
       )}
       {current === "skills" && <SkillsSection install={install} connected={connected} skill={skill} agent={agent} />}
-      {current === "storage" && <StorageSection />}
+      {current === "storage" && (
+        <>
+          <StorageSection />
+          <CleanWorkspaceSection />
+        </>
+      )}
       {current === "devices" && (device ? <DevicePage path={device} /> : <DevicesSection start={connect} />)}
       {current === "usage" && (
         <>
@@ -1139,6 +1146,7 @@ function UsageSection() {
       )}
       <KeysSection />
       {usesApi && <ApiCard />}
+      <CostPerSuccessCard />
       {allowed && (
         <Card aria-labelledby="sec-usage">
           <CardHeader id="sec-usage" icon="chart" title={t("settings.usageTitle")} />

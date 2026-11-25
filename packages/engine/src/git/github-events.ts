@@ -10,6 +10,7 @@ import { eligibleChannelAgents } from "../dispatch";
 import { isAgentOnlyDm, openPersonAgentDm } from "../dms";
 import { ConflictError, NotFoundError } from "../errors";
 import { cutText } from "../format";
+import { mergeEvidenceOf, recordMergeEvidence } from "../founder-status";
 import { getMessage } from "../messages";
 import type { Notice } from "../notices";
 import { getMembership } from "../organizations";
@@ -221,12 +222,18 @@ export async function queueGitHubAppEvent(
   input: { event: string | null; delivery: string | null; payload: Record<string, unknown>; slug?: string },
 ): Promise<boolean> {
   const event = githubAppEventOf(input.event, input.payload, input.slug);
-  if (!event) return false;
+  const merge = mergeEvidenceOf(input.event, input.payload);
+  const installationId = event?.installationId ?? (merge ? obj(input.payload.installation).id : undefined);
+  if (typeof installationId !== "number") return false;
   const [bound] = await db
     .select({ orgId: githubAppInstallations.orgId })
     .from(githubAppInstallations)
-    .where(eq(githubAppInstallations.installationId, event.installationId));
+    .where(eq(githubAppInstallations.installationId, installationId));
   if (!bound) return false;
+  // A merge's commit is ground truth for a task's status (ADR 0204), whoever merged: the app's own bot included,
+  // whose event agents never hear.
+  if (merge) await recordMergeEvidence(db, bound.orgId, merge);
+  if (!event) return false;
   const delivery = input.delivery?.trim().slice(0, 100);
   await enqueue(db, {
     orgId: bound.orgId,

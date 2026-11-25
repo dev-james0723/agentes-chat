@@ -3124,6 +3124,8 @@
     "atOnceHelp": "Wie viele Aufgaben, um die niemand gebeten hat, er gleichzeitig erledigt. Die anderen warten, bis sie dran sind.",
     "prs": "Pull Requests pro Stunde",
     "prsHelp": "Höchstens so viele öffnet seine eigene Arbeit in einer Stunde.",
+    "shots": "Screenshots pro Aufgabe",
+    "shotsHelp": "So viele darf eine seiner Arbeiten höchstens machen. Erhöhe den Wert für einen Agenten, der prüft, wie Seiten aussehen. Neue Screenshots pausieren außerdem, wenn die Festplatte seines Computers fast voll ist.",
     "call": "Agenten, die er rufen darf",
     "callHelp": "Wen er erwähnen oder wem er Arbeit übergeben darf.",
     "callAll": "Alle",
@@ -7521,6 +7523,14 @@
     "notFound": "Diese Aufgabe gibt es nicht, oder du hast keinen Zugriff.",
     "createdBy": "#{{number}} · erstellt von {{name}}",
     "createdByShort": "Erstellt von {{name}}",
+    "founder": {
+      "title": "Lieferstatus",
+      "available": "In der laufenden App",
+      "notAvailable": "Nicht in der laufenden App",
+      "verified": "Geprüft",
+      "notVerified": "Nicht geprüft",
+      "needsYou": "Braucht dich"
+    },
     "fromMessage": "aus <0>einer Nachricht in #{{channel}}</0>",
     "fromAgent": "aus einer Anfrage an einen Agent",
     "subIssues_one": "Unteraufgaben · {{count}}",
@@ -11622,6 +11632,44 @@
   },
   "storage": {
     "title": "Speicher",
+    "clean": {
+      "title": "Arbeitsbereich aufräumen",
+      "intro": "Was beendete Aufgaben auf den Computern der Agenten hinterlassen haben. Ergebnisse, Nachweise und alles Ungeklärte bleiben. Du entscheidest, welche temporären Dateien entfernt werden.",
+      "computers": "Festplatten der Computer",
+      "level": {
+        "ok": "{{free}} GB frei",
+        "low": "Wenig Platz: {{free}} GB frei",
+        "critical": "Fast voll: {{free}} GB frei. Neue Screenshots und Aufnahmen sind pausiert.",
+        "unknown": "Noch nicht gemessen"
+      },
+      "none": "Seit die Agenten ihre Dateien erfassen, ist keine Aufgabe zu Ende gegangen.",
+      "task": "Aufgabe",
+      "mission": "Mission",
+      "ended": {
+        "done": "Erledigt",
+        "canceled": "Abgebrochen"
+      },
+      "kept_one": "{{count}} behalten",
+      "kept_other": "{{count}} behalten",
+      "candidates_one": "{{count}} temporäre Datei, {{size}}",
+      "candidates_other": "{{count}} temporäre Dateien, {{size}}",
+      "duplicates_one": "{{count}} exakte Kopie",
+      "duplicates_other": "{{count}} exakte Kopien",
+      "restorable": "Nachweise: {{restorable}} aus dem Drive wiederherstellbar, {{manifestOnly}} nur aufgelistet",
+      "approve": "Temporäre Dateien entfernen",
+      "approved_one": "{{count}} Datei freigegeben: Sie wird auf ihrem Computer erneut geprüft, bevor sie verschwindet.",
+      "approved_other": "{{count}} Dateien freigegeben: Jede wird auf ihrem Computer erneut geprüft, bevor sie verschwindet.",
+      "status": {
+        "approved": "Wartet auf den Computer",
+        "done": "Entfernt",
+        "skipped": "Schon weg",
+        "blocked": "Behalten: {{reason}}",
+        "unknown": "Noch unklar: wird später erneut geprüft"
+      },
+      "freed": "Freier Platz auf dem Computer: {{before}} vorher, {{after}} nachher",
+      "show": "Dateien anzeigen",
+      "hide": "Dateien ausblenden"
+    },
     "options": "Wo Dateien liegen",
     "agentes": "agentes.chat-Speicher",
     "agentesText": "Deine Dateien bleiben in unserem Speicher, pro Workspace getrennt.",
@@ -15636,6 +15684,14 @@
       "oldSub": "Verbrauch von vor der Erfassung des Kontos",
       "ofMonth": "{{percent}} des Monats",
       "shareLabel": "{{source}}: {{percent}} des Monats"
+    },
+    "costPerSuccess": {
+      "title": "Kosten pro bestätigtem Erfolg",
+      "intro": "Letzte 30 Tage. Ein Erfolg ist eine Aufgabe, deren Abnahmekriterien eine Person abgehakt hat und die seitdem niemand wieder geöffnet hat. Jeder Lauf zählt zu den Kosten.",
+      "perSuccess": "{{cost}} pro Erfolg",
+      "unknown": "Kosten unbekannt",
+      "noSuccess": "Noch kein bestätigter Erfolg",
+      "line": "{{runs}} Läufe · {{successes}} bestätigt · {{failed}} fehlgeschlagen · {{retries}} Wiederholungen"
     }
   },
   "budget": {

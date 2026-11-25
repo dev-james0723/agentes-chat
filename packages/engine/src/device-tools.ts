@@ -36,9 +36,11 @@ import { type MachineCaller, MachineRequestError } from "./machine-hub";
 import { formatDuration } from "./machine-task-text";
 import { MachineDroppedError, MachineOfflineError, pausedMessage } from "./machines";
 import { lineLocale } from "./requester";
+import { recordCapture } from "./run-files";
 import { runnerUpdateWay } from "./runner-update";
 import { replyThreadOf } from "./runs";
 import { SANDBOX_SCOPE, truncateOutput, withConnectedMachine } from "./sandbox";
+import { captureGate } from "./storage-pressure";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "./tools/types";
 import { untrustedBlock } from "./untrusted";
 import { shareSavedFile } from "./uploads";
@@ -367,10 +369,19 @@ export function createDeviceToolSource(deps: DeviceToolDeps): ToolSource {
       describe: (input) => ({ title: `Record ${str(input.phone)}'s screen` }),
       execute: phoneTool("Recording the screen", async (ctx, r, input, label) => {
         const seconds = Math.max(1, Math.min(MAX_RECORD_SECONDS, Math.round(Number(input.seconds) || 30)));
+        // A recording on a nearly full disk is refused before it starts (ADR 0200).
+        const gate = await captureGate(ctx.db, ctx, r.host.id, "recording");
+        if ("refused" in gate) return { content: gate.refused, isError: true };
         const reply = await phoneOp(ctx, r, "phone.record", { seconds }, label);
         if (isOutput(reply)) return reply;
+        await recordCapture(ctx.db, ctx, r.host.id, {
+          path: reply.path,
+          kind: "video",
+          tool: "phone_record",
+          size: reply.bytes,
+        }).catch(() => undefined);
         return share(ctx, r, reply.path, {
-          content: `Recorded ${r.phone.name}'s screen (${formatDuration(Math.round(reply.seconds))}, ${formatBytes(reply.bytes)}).`,
+          content: `Recorded ${r.phone.name}'s screen (${formatDuration(Math.round(reply.seconds))}, ${formatBytes(reply.bytes)}).${gate.warning ? ` ${gate.warning}` : ""}`,
           data: { phoneId: r.phone.id },
         });
       }),

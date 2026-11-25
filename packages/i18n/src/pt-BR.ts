@@ -3260,6 +3260,9 @@ export const ptBR = {
     atOnceHelp: "Quantos trabalhos que ninguém pediu ele faz ao mesmo tempo. Os outros esperam a vez.",
     prs: "Pull requests por hora",
     prsHelp: "O máximo que o próprio trabalho dele abre em uma hora.",
+    shots: "Capturas de tela por tarefa",
+    shotsHelp:
+      "O máximo que um trabalho dele pode tirar. Aumente para um agente que confere a aparência de páginas. Novas capturas também pausam quando o disco do computador está quase cheio.",
     call: "Agentes que pode chamar",
     callHelp: "Quem ele pode mencionar ou para quem pode passar trabalho.",
     callAll: "Todos",
@@ -7825,6 +7828,15 @@ export const ptBR = {
     notFound: "Esta tarefa não existe ou você não tem acesso.",
     createdBy: "#{{number}} · criada por {{name}}",
     createdByShort: "Criada por {{name}}",
+    /** A task's status from stored evidence (ADR 0204); its lines come from the server in Hong Kong Chinese. */
+    founder: {
+      title: "Situação da entrega",
+      available: "No app em uso",
+      notAvailable: "Fora do app em uso",
+      verified: "Verificada",
+      notVerified: "Não verificada",
+      needsYou: "Precisa de você",
+    },
     fromMessage: "a partir de <0>uma mensagem no #{{channel}}</0>",
     fromAgent: "a partir de um pedido a um agente",
     subIssues_one: "Subtarefas · {{count}}",
@@ -11883,6 +11895,45 @@ export const ptBR = {
   },
   storage: {
     title: "Armazenamento",
+    clean: {
+      title: "Limpar o workspace",
+      intro:
+        "O que as tarefas encerradas deixaram nos computadores dos agentes. Entregas, evidências e o que não tem explicação ficam. Você escolhe quais arquivos temporários limpar.",
+      computers: "Discos dos computadores",
+      level: {
+        ok: "{{free}}\u00a0GB livres",
+        low: "Pouco espaço: {{free}}\u00a0GB livres",
+        critical: "Quase cheio: {{free}}\u00a0GB livres. Novas capturas de tela e gravações estão pausadas.",
+        unknown: "Ainda não medido",
+      },
+      none: "Nenhuma tarefa terminou desde que os agentes começaram a registrar seus arquivos.",
+      task: "Tarefa",
+      mission: "Missão",
+      ended: {
+        done: "Concluída",
+        canceled: "Cancelada",
+      },
+      kept_one: "{{count}} mantido",
+      kept_other: "{{count}} mantidos",
+      candidates_one: "{{count}} arquivo temporário, {{size}}",
+      candidates_other: "{{count}} arquivos temporários, {{size}}",
+      duplicates_one: "{{count}} cópia exata",
+      duplicates_other: "{{count}} cópias exatas",
+      restorable: "Evidências: {{restorable}} restauráveis do Drive, {{manifestOnly}} só listadas",
+      approve: "Limpar arquivos temporários",
+      approved_one: "{{count}} arquivo aprovado: é verificado de novo no computador antes de sair.",
+      approved_other: "{{count}} arquivos aprovados: cada um é verificado de novo no computador antes de sair.",
+      status: {
+        approved: "Esperando o computador",
+        done: "Removido",
+        skipped: "Já não existia",
+        blocked: "Mantido: {{reason}}",
+        unknown: "Ainda incerto: verificado de novo depois",
+      },
+      freed: "Espaço livre no computador: {{before}} antes, {{after}} depois",
+      show: "Mostrar arquivos",
+      hide: "Ocultar arquivos",
+    },
     options: "Onde guardar os arquivos",
     agentes: "Armazenamento do agentes.chat",
     agentesText: "Seus arquivos ficam no nosso armazenamento, separados por workspace.",
@@ -15653,6 +15704,16 @@ export const ptBR = {
     actions: { raise: "Aumentar para {{amount}} este mês", refuse: "Recusar", see: "Ver o uso" },
   },
   usageViews: {
+    /** Cost per verified successful task (ADR 0207); its sentence comes from the server in Hong Kong Chinese. */
+    costPerSuccess: {
+      title: "Custo por sucesso verificado",
+      intro:
+        "Últimos 30 dias. Um sucesso é uma tarefa cujos critérios de aceite uma pessoa marcou e que ninguém reabriu desde então. Toda execução conta no custo.",
+      perSuccess: "{{cost}} por sucesso",
+      unknown: "Custo desconhecido",
+      noSuccess: "Nenhum sucesso verificado ainda",
+      line: "{{runs}} execuções · {{successes}} verificadas · {{failed}} com falha · {{retries}} novas tentativas",
+    },
     signedOut: "Saiu da conta",
     whose: "de {{name}}",
     /** Who uses a plan (ADR 0059 §3): its row's status, and the choice in its details for whoever connected it. */

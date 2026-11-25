@@ -7,6 +7,7 @@ import {
   deleteIssue,
   deleteIssueColumn,
   deleteIssueProject,
+  founderStatus,
   getIssueDetail,
   type IssueDeps,
   issueFromMessage,
@@ -19,6 +20,7 @@ import {
   ROLE_COLORS,
   setCriterion,
   setIssueAudience,
+  traceability,
   updateIssue,
   updateIssueColumn,
   updateIssueProject,
@@ -173,6 +175,126 @@ const Activity = z
   .openapi("IssueActivity");
 
 const IssueParams = OrgParams.extend({ issueId: z.uuid() });
+
+const FounderOwner = z.object({
+  type: z.enum(["you", "person", "agent"]),
+  id: z.string(),
+  name: z.string().nullable(),
+});
+const RunningSource = z.object({ digest: z.string(), files: z.number() });
+const TraceChange = z.object({
+  subject: z.string(),
+  url: z.string(),
+  mergeCommit: z.string().nullable(),
+  delivery: z.string(),
+});
+const Traceability = z
+  .object({
+    requirements: z.array(
+      z.object({
+        id: z.uuid(),
+        number: z.number(),
+        title: z.string(),
+        status: z.string(),
+        state: z.enum(["no_tasks", "in_progress", "done_undelivered", "delivered", "canceled"]),
+        delivered: z.boolean(),
+        tasks: z.array(
+          z.object({
+            id: z.uuid(),
+            number: z.number(),
+            title: z.string(),
+            status: z.string(),
+            changes: z.array(TraceChange),
+          }),
+        ),
+      }),
+    ),
+    flags: z.array(
+      z.union([
+        z.object({ kind: z.literal("unlinked_merge"), subject: z.string(), mergeCommit: z.string().nullable() }),
+        z.object({ kind: z.literal("done_without_delivery"), requirementId: z.uuid(), number: z.number() }),
+        z.object({ kind: z.literal("duplicate_requirement"), numbers: z.array(z.number()) }),
+      ]),
+    ),
+  })
+  .openapi("Traceability");
+
+const FounderStatus = z
+  .object({
+    issueId: z.uuid(),
+    number: z.number(),
+    observedAt: z.string(),
+    changed: z.object({
+      title: z.string(),
+      pullRequests: z.array(z.object({ number: z.number(), url: z.string() })),
+      why: z.string().nullable().openapi({ description: "A person's own description; null when none wrote one." }),
+      text: z.string(),
+    }),
+    delivery: z.object({
+      state: z.enum([
+        "not_merged",
+        "reverted",
+        "merge_commit_unknown",
+        "merged_not_deployed",
+        "rolled_back",
+        "deployed_not_running",
+        "runtime_unknown",
+        "available",
+      ]),
+      available: z.boolean().openapi({
+        description: "True only when this server runs the deploy that holds the merge commit, checked against itself.",
+      }),
+      merge: z.object({ subject: z.string(), commit: z.string().nullable(), at: z.string() }).nullable(),
+      deploy: z.object({ commit: z.string(), digest: z.string(), at: z.string() }).nullable(),
+      running: RunningSource.nullable(),
+      text: z.string(),
+    }),
+    verification: z.object({
+      state: z.enum(["verified", "done_unverified", "unverified", "no_criteria"]),
+      verified: z.boolean().openapi({
+        description: "A `criteria_met` outcome with every criterion checked by a person, not reopened since.",
+      }),
+      criteria: z.object({ total: z.number(), checkedByPerson: z.number() }),
+      checks: z.array(z.object({ kind: z.string(), positive: z.boolean(), at: z.string() })),
+      text: z.string(),
+    }),
+    blockers: z.array(z.object({ reason: z.string(), since: z.string(), text: z.string() })),
+    next: z.object({
+      action: z.enum([
+        "decide",
+        "unblock",
+        "check_effect",
+        "implement",
+        "merge_pr",
+        "record_merge",
+        "deploy",
+        "check_runtime",
+        "verify",
+        "none",
+      ]),
+      owner: FounderOwner.nullable(),
+      text: z.string(),
+    }),
+    needsMe: z.object({
+      needed: z.boolean(),
+      decisions: z.array(
+        z.object({
+          approvalId: z.uuid(),
+          title: z.string(),
+          channelId: z.uuid(),
+          threadId: z.uuid().nullable(),
+          messageId: z.uuid().nullable(),
+          expiresAt: z.string(),
+        }),
+      ),
+      text: z.string(),
+    }),
+    summary: z.string(),
+  })
+  .openapi("FounderStatus", {
+    description:
+      "Every field is derived from stored evidence (the task, outcomes, pending approvals, the server's own source identity); the words are Hong Kong Traditional Chinese (ADR 0204).",
+  });
 
 const Column = z
   .object({
@@ -596,6 +718,43 @@ export function issueRoutes(deps: AppDeps) {
       const { orgId, issueId } = c.req.valid("param");
       const audience = c.req.valid("json");
       return c.json(await setIssueAudience(issues, person(c.get("user").id), orgId, issueId, audience), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/traceability",
+      tags,
+      security,
+      summary:
+        "Requirements (tasks labelled `requirement`) with their tasks, merge commits and whether this server runs them (ADR 0206), plus merged PRs no task links, requirements done but not delivered, and duplicate requirements",
+      request: { params: OrgParams },
+      responses: { 200: json(Traceability), ...errors },
+    }),
+    async (c) => {
+      const { orgId } = c.req.valid("param");
+      const running = deps.sourceIdentity ? await deps.sourceIdentity().catch(() => null) : null;
+      return c.json(await traceability(db, c.get("user").id, orgId, running), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/issues/{issueId}/founder-status",
+      tags,
+      security,
+      summary:
+        "The task's status from stored evidence only (ADR 0204): what changed, whether this server runs it, what is verified, blockers, the next step and whether the reader must decide",
+      request: { params: IssueParams },
+      responses: { 200: json(FounderStatus), ...errors },
+    }),
+    async (c) => {
+      const { orgId, issueId } = c.req.valid("param");
+      // The server's own identity: a failed scan is no identity, so nothing reads as available.
+      const running = deps.sourceIdentity ? await deps.sourceIdentity().catch(() => null) : null;
+      return c.json(await founderStatus(db, c.get("user").id, orgId, issueId, running), 200);
     },
   );
 

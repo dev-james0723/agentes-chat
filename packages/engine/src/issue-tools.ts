@@ -6,7 +6,7 @@ import { type ArtifactDeps, fileRefOf, shareArtifact } from "./artifacts";
 import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
-import { refusalData } from "./errors";
+import { ConflictError, refusalData } from "./errors";
 import { issueKey } from "./issue-key";
 import { projectByName } from "./issue-projects";
 import {
@@ -28,6 +28,7 @@ import {
 } from "./issues";
 import { fileIdsOf, getMessage } from "./messages";
 import { can, getMembership, listMembers } from "./organizations";
+import { OWNER_EPOCH_STALE } from "./owner-epoch";
 import { chosenAudience, personBehindCall, visibleToField } from "./requester";
 import { isRightHand, rightHandAway, rightHandReader } from "./right-hand";
 import { replyThreadOf } from "./runs";
@@ -61,7 +62,11 @@ const actorOf = (ctx: ToolContext): IssueActor => ({
 const failed = (error: unknown): ToolOutput => ({
   content: `Failed: ${error instanceof Error ? error.message : String(error)}`,
   isError: true,
-  ...refusalData(error),
+  // A stale writer refused at the write (ADR 0202) keeps the gateway's typed code.
+  ...refusalData(
+    error,
+    error instanceof ConflictError && error.code === OWNER_EPOCH_STALE ? { code: OWNER_EPOCH_STALE } : {},
+  ),
 });
 /** The right hand's tasks are its person's, in their DM (ADR 0137 §13): in a channel, others read the reply. */
 const ONLY_IN_DM: ToolOutput = { content: "Tasks only in your private conversation with a person.", isError: true };

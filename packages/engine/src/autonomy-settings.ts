@@ -20,6 +20,8 @@ export interface AutonomySettings {
   maxUnrequested: number;
   /** PRs its unrequested work may open in an hour. */
   maxPrsPerHour: number;
+  /** Screenshots one run may take (ADR 0200): more for an agent whose work is visual checks. */
+  maxScreenshotsPerRun: number;
   /** Which agents it may wake or hand work to. */
   callAgents: "all" | "some" | "none";
   callAgentIds: string[];
@@ -39,6 +41,7 @@ export const AUTONOMY_DEFAULTS: AutonomySettings = {
   never: [],
   maxUnrequested: 2,
   maxPrsPerHour: 3,
+  maxScreenshotsPerRun: 60,
   callAgents: "all",
   callAgentIds: [],
   project: "",
@@ -60,6 +63,7 @@ export function autonomySettings(raw: unknown): AutonomySettings {
     never: kinds(r.never),
     maxUnrequested: count(r.maxUnrequested, 1, 20, d.maxUnrequested),
     maxPrsPerHour: count(r.maxPrsPerHour, 0, 50, d.maxPrsPerHour),
+    maxScreenshotsPerRun: count(r.maxScreenshotsPerRun, 1, 1000, d.maxScreenshotsPerRun),
     callAgents: r.callAgents === "some" || r.callAgents === "none" ? r.callAgents : "all",
     callAgentIds: Array.isArray(r.callAgentIds)
       ? [...new Set(r.callAgentIds.filter((id): id is string => typeof id === "string"))].slice(0, 200)

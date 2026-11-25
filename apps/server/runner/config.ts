@@ -37,11 +37,13 @@ export interface RunnerConfig {
   /** This runner must not discover or access phones. Applied at startup. */
   phonesDisabled?: true;
   /**
-   * Brain turns' CLIs read only the agent's folders and the folders allowed it (`access.folders`), where the CLI
-   * itself can enforce that: Claude Code (`blockReadsOutsideWorkingDirectories`), Codex (a permission profile),
-   * Grok Build (`--sandbox strict`). Applied at startup. Absent: off.
+   * Brain turns' CLIs read and write only the agent's folders and the folders allowed it (`access.folders`), enforced
+   * by each CLI itself: Claude Code (`blockReadsOutsideWorkingDirectories`, `blockWritesOutsideWorkingDirectories`,
+   * and our prompt tool for its shell), Codex (a permission profile), Grok Build (`--sandbox strict`); a CLI that
+   * can't enforce it runs no work turn (ADR 0205). Applied at startup. Opt-in: only the owner's `true` turns it on
+   * (`foldersEnforced`); absent or `false`, agents are not limited to their folders and nobody is asked for one.
    */
-  readsOnlyInFolders?: true;
+  readsOnlyInFolders?: boolean;
   /** Background tasks at once on this computer (default 3). */
   maxConcurrentTasks?: number;
   /** A background task is stopped after this many seconds (default 4 h). */
@@ -233,7 +235,7 @@ export function normalizeStored(raw: Record<string, unknown>): StoredConfig {
     ...(typeof raw.exec === "boolean" ? { exec: raw.exec } : {}),
     ...(hostMcp ? { hostMcp: hostMcp as HostMcpConfig } : {}),
     ...(raw.phonesDisabled === true ? { phonesDisabled: true as const } : {}),
-    ...(raw.readsOnlyInFolders === true ? { readsOnlyInFolders: true as const } : {}),
+    ...(typeof raw.readsOnlyInFolders === "boolean" ? { readsOnlyInFolders: raw.readsOnlyInFolders } : {}),
     ...(positive(raw.maxConcurrentTasks) ? { maxConcurrentTasks: positive(raw.maxConcurrentTasks) } : {}),
     ...(positive(raw.taskMaxSeconds) ? { taskMaxSeconds: positive(raw.taskMaxSeconds) } : {}),
     ...(positive(raw.brainIdleMinutes) ? { brainIdleMinutes: positive(raw.brainIdleMinutes) } : {}),
@@ -451,3 +453,6 @@ export function watchConfig(
     watcher?.close();
   };
 }
+
+/** Whether the machine's folder allow-list binds brain turns' CLIs (ADR 0205): only when the owner set `true`. */
+export const foldersEnforced = (config: { readsOnlyInFolders?: boolean }) => config.readsOnlyInFolders === true;

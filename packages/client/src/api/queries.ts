@@ -2946,6 +2946,12 @@ export const usePlanUsage = (orgId: string) => {
   return useQuery({ queryKey: keys.planUsage(orgId), queryFn: () => api.orgs.planUsage(orgId) });
 };
 
+/** Cost per verified successful task (ADR 0207); only for those who may see usage. */
+export const useCostPerSuccess = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.costPerSuccess(orgId), queryFn: () => api.orgs.costPerSuccess(orgId), enabled });
+};
+
 /** Uso › Pessoas (ADR 0141): each person's use; "Agora" stays live while the page is open. */
 export const usePeopleUsage = (orgId: string, period: { since?: string; until?: string } = {}, enabled = true) => {
   const api = useApi();
@@ -3796,6 +3802,21 @@ export const useWorkspaceLimits = (orgId: string, enabled = true) => {
   return useQuery({ queryKey: keys.limits(orgId), queryFn: () => api.orgs.limits(orgId), enabled });
 };
 
+export const useCleanWorkspace = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.cleanWorkspace(orgId), queryFn: () => api.cleanWorkspace.get(orgId), enabled });
+};
+
+export function useApproveCleanup(orgId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reportId: string; paths?: string[] }) =>
+      api.cleanWorkspace.approve(orgId, input.reportId, input.paths),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.cleanWorkspace(orgId) }),
+  });
+}
+
 export const useStorage = (orgId: string, enabled = true) => {
   const api = useApi();
   return useQuery({ queryKey: keys.storage(orgId), queryFn: () => api.storage.get(orgId), enabled });
@@ -4176,6 +4197,18 @@ export const useIssueActivity = (orgId: string, id: string | undefined) => {
     queryKey: keys.issueActivity(orgId, id ?? ""),
     queryFn: () => api.issues.activity(orgId, id ?? ""),
     enabled: Boolean(id),
+  });
+};
+
+/**
+ * A task's status from stored evidence (ADR 0204). Under `issues`, so whatever refreshes the task refreshes it; its
+ * `updatedAt` in the key reads it again when the task itself changed.
+ */
+export const useIssueFounderStatus = (orgId: string, id: string, updatedAt: string) => {
+  const api = useApi();
+  return useQuery({
+    queryKey: [...keys.issueFounderStatus(orgId, id), updatedAt],
+    queryFn: () => api.issues.founderStatus(orgId, id),
   });
 };
 

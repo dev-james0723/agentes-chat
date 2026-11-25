@@ -771,6 +771,8 @@ export interface AgentBrakes {
   never: CostKind[];
   maxUnrequested: number;
   maxPrsPerHour: number;
+  /** Screenshots one run may take (ADR 0200). */
+  maxScreenshotsPerRun: number;
   callAgents: "all" | "some" | "none";
   callAgentIds: string[];
   project: string;
@@ -784,6 +786,7 @@ export const BRAKES_DEFAULTS: AgentBrakes = {
   never: [],
   maxUnrequested: 2,
   maxPrsPerHour: 3,
+  maxScreenshotsPerRun: 60,
   callAgents: "all",
   callAgentIds: [],
   project: "",
@@ -3706,6 +3709,59 @@ export interface IssueConversation extends IssueConversationRef {
   /** The first ones to write, oldest first (at most 5). */
   participants: Actor[];
   working: boolean;
+}
+
+/**
+ * A task's status from stored evidence only (ADR 0204), in Hong Kong Traditional Chinese: what changed, whether this
+ * server runs it, what is verified, blockers, the next step and its owner, and whether the reader must decide.
+ */
+export interface FounderStatus {
+  issueId: string;
+  number: number;
+  observedAt: string;
+  changed: { title: string; pullRequests: { number: number; url: string }[]; why: string | null; text: string };
+  delivery: {
+    state:
+      | "not_merged"
+      | "reverted"
+      | "merge_commit_unknown"
+      | "merged_not_deployed"
+      | "rolled_back"
+      | "deployed_not_running"
+      | "runtime_unknown"
+      | "available";
+    available: boolean;
+    merge: { subject: string; commit: string | null; at: string } | null;
+    deploy: { commit: string; digest: string; at: string } | null;
+    running: { digest: string; files: number } | null;
+    text: string;
+  };
+  verification: {
+    state: "verified" | "done_unverified" | "unverified" | "no_criteria";
+    verified: boolean;
+    criteria: { total: number; checkedByPerson: number };
+    checks: { kind: string; positive: boolean; at: string }[];
+    text: string;
+  };
+  blockers: { reason: string; since: string; text: string }[];
+  next: {
+    action: string;
+    owner: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    text: string;
+  };
+  needsMe: {
+    needed: boolean;
+    decisions: {
+      approvalId: string;
+      title: string;
+      channelId: string;
+      threadId: string | null;
+      messageId: string | null;
+      expiresAt: string;
+    }[];
+    text: string;
+  };
+  summary: string;
 }
 
 export interface IssueActivity {
@@ -7464,6 +7520,29 @@ export interface PlanAccountUsage extends PlanAccountInfo {
   monthTokens: number;
   /** `view_usage` only: what the month's tokens would cost through the API (null: no price). */
   equivalentUsd?: number | null;
+}
+
+/** One row of `GET …/usage/cost-per-success` (ADR 0207). Null money is unknown, never 0. */
+export interface CostPerSuccessRow {
+  runs: number;
+  failedRuns: number;
+  retries: number;
+  verifiedSuccesses: number;
+  tokens: number;
+  costUsd: number | null;
+  unknownCostRuns: number;
+  costPerSuccessUsd: number | null;
+  missing: "no_success" | "unknown_cost" | null;
+  /** The number in plain Hong Kong Chinese, from the server. */
+  text: string;
+}
+
+/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0207). */
+export interface CostPerSuccessReport {
+  from: string;
+  to: string;
+  groups: (CostPerSuccessRow & { agentId: string; agentName: string; brain: string; model: string | null })[];
+  total: CostPerSuccessRow;
 }
 
 /** `GET …/usage/plans`: every plan account by computer, and the API per agent this month. */

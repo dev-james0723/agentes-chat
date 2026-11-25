@@ -3016,6 +3016,8 @@
     "atOnceHelp": "誰も頼んでいない作業を同時にいくつ行うか。ほかは順番を待ちます。",
     "prs": "1時間あたりのプルリクエスト",
     "prsHelp": "自分の作業が1時間に開ける最大数。",
+    "shots": "タスクあたりのスクリーンショット",
+    "shotsHelp": "1 つの作業で撮れる上限です。ページの見た目を確認するエージェントには高くしてください。コンピュータのディスクがほぼ満杯のときも、新しいスクリーンショットは一時停止します。",
     "call": "呼び出せるエージェント",
     "callHelp": "メンションしたり作業を渡したりできる相手。",
     "callAll": "すべて",
@@ -7268,6 +7270,14 @@
     "notFound": "このタスクは存在しないか、アクセス権がありません。",
     "createdBy": "#{{number}} · 作成者: {{name}}",
     "createdByShort": "作成者: {{name}}",
+    "founder": {
+      "title": "納品状況",
+      "available": "使用中のアプリに反映済み",
+      "notAvailable": "使用中のアプリに未反映",
+      "verified": "確認済み",
+      "notVerified": "未確認",
+      "needsYou": "あなたの判断が必要"
+    },
     "fromMessage": "<0>#{{channel}}のメッセージ</0>から",
     "fromAgent": "エージェントへの依頼から",
     "subIssues_other": "サブタスク · {{count}}",
@@ -11163,6 +11173,40 @@
   },
   "storage": {
     "title": "ストレージ",
+    "clean": {
+      "title": "ワークスペースの整理",
+      "intro": "終了したタスクがエージェントのコンピュータに残したものです。成果物、証拠、目的のわからないファイルは残ります。整理する一時ファイルはあなたが選びます。",
+      "computers": "コンピュータのディスク",
+      "level": {
+        "ok": "空き {{free}} GB",
+        "low": "空きが少なくなっています: {{free}} GB",
+        "critical": "ほぼ満杯です: 空き {{free}} GB。新しいスクリーンショットと録画は一時停止中です。",
+        "unknown": "まだ測定されていません"
+      },
+      "none": "エージェントがファイルを登録し始めてから、終了したタスクはありません。",
+      "task": "タスク",
+      "mission": "ミッション",
+      "ended": {
+        "done": "完了",
+        "canceled": "キャンセル"
+      },
+      "kept_other": "{{count}} 件を保持",
+      "candidates_other": "一時ファイル {{count}} 件、{{size}}",
+      "duplicates_other": "完全な重複 {{count}} 件",
+      "restorable": "証拠: Drive から復元できるもの {{restorable}} 件、一覧のみ {{manifestOnly}} 件",
+      "approve": "一時ファイルを整理",
+      "approved_other": "{{count}} 件を承認しました。削除する前にそれぞれのコンピュータで再確認します。",
+      "status": {
+        "approved": "コンピュータを待っています",
+        "done": "削除済み",
+        "skipped": "すでにありません",
+        "blocked": "保持: {{reason}}",
+        "unknown": "まだ不明: 後で再確認します"
+      },
+      "freed": "コンピュータの空き容量: 前 {{before}}、後 {{after}}",
+      "show": "ファイルを表示",
+      "hide": "ファイルを隠す"
+    },
     "options": "ファイルの保存先",
     "agentes": "agentes.chatストレージ",
     "agentesText": "ファイルは当社のストレージに、ワークスペースごとに分けて保存されます。",
@@ -15107,6 +15151,14 @@
       "oldSub": "アカウントが記録される前の使用量",
       "ofMonth": "月の{{percent}}",
       "shareLabel": "{{source}}: 月の{{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "検証済み成功あたりのコスト",
+      "intro": "過去30日間。成功とは、受け入れ条件を人がチェックし、その後誰も再オープンしていないタスクです。すべての実行がコストに含まれます。",
+      "perSuccess": "成功あたり{{cost}}",
+      "unknown": "コスト不明",
+      "noSuccess": "検証済みの成功はまだありません",
+      "line": "実行{{runs}}回 · 検証済み{{successes}} · 失敗{{failed}} · 再試行{{retries}}"
     }
   },
   "budget": {

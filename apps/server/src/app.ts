@@ -31,6 +31,7 @@ import { browserProfileRoutes } from "./routes/app/browser-profiles";
 import { calendarRoutes } from "./routes/app/calendar";
 import { channelRoutes } from "./routes/app/channels";
 import { chatRoutes } from "./routes/app/chat";
+import { cleanWorkspaceRoutes } from "./routes/app/clean-workspace";
 import { connectorRoutes } from "./routes/app/connectors";
 import { customConnectorRoutes } from "./routes/app/connectors-custom";
 import { type AppDeps, agentDetailsGate, readOnlyWhileDeleting } from "./routes/app/context";
@@ -176,7 +177,7 @@ export function createApp(options: AppOptions) {
       }
       return res;
     });
-    const deps: AppDeps = { log, ...options.services };
+    const deps: AppDeps = { log, sourceIdentity: options.sourceIdentity, ...options.services };
     // Separate server-to-runtime capability, not a session route. No CORS,
     // redirects, model-selected URL or general command execution exists here.
     if (config.FOUNDRY_CONTROL_TOKEN && deps.extras?.foundry) {
@@ -222,6 +223,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", inviteRoutes(deps));
     api.route("/app", roleRoutes(deps));
     api.route("/app", storageRoutes(deps));
+    api.route("/app", cleanWorkspaceRoutes(deps));
     api.route("/app", billingRoutes(deps));
     api.route("/app", artifactRoutes(deps));
     api.route("/app", issueRoutes(deps));
