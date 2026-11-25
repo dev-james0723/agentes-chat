@@ -1829,3 +1829,10 @@ addresses are refused, so nobody can turn the server against its own network. Re
 through a connected computer instead.
 
 </details>
+
+## Google Colab remote compute
+
+Agents can run Python and GPU jobs through the official Google Colab remote MCP endpoint.
+Configure a Google OAuth application, connect the intended Google account, and grant the agents
+access as described in the [Colab connector guide](docs/colab-remote-mcp.md). The integration
+uses the account's eligible Colab runtimes; it does not add a permanent GPU service or a CU meter.

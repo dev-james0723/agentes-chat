@@ -131,6 +131,25 @@ test("executor commands: Claude Code with stream-json and its session; prompts n
   );
 });
 
+test("task model enforcement is an explicit executor capability, never inferred from a protocol number", () => {
+  for (const type of ["hello", "executors.changed"]) {
+    const frame = (taskModels: unknown) =>
+      parseRunnerFrame(
+        JSON.stringify({
+          type,
+          token: "agm_x",
+          version: "0.4.0",
+          protocol: 4,
+          executors: { claude: { version: "2.1.300" }, taskModels },
+        }),
+      );
+    expect(frame(true)).toMatchObject({ executors: { taskModels: true } });
+    for (const value of [undefined, false, "true", 1, {}]) {
+      expect((frame(value) as { executors: Record<string, unknown> }).executors).not.toHaveProperty("taskModels");
+    }
+  }
+});
+
 test("Claude Code's stream-json becomes a human line, edited files and the final result", () => {
   const cwd = "/w/dev";
   const tool = (name: string, input: Record<string, unknown>) =>
@@ -634,6 +653,89 @@ const filesUnder = (dir: string) =>
   readdirSync(dir, { recursive: true, encoding: "utf8" })
     .map((rel) => path.join(dir, rel))
     .filter((file) => statSync(file).isFile());
+
+test.skipIf(!posix)(
+  "native Claude tasks enforce the requested model on fresh and resumed subscription sessions",
+  async () => {
+    const { make, home, ws, send, done } = setup();
+    const cli = fakeClis(home);
+    const tasks = make(cli.options);
+    await tasks.init();
+    tasks.attach(send);
+    const session = id(900);
+    await tasks.start(AGENT, {
+      taskId: id(70),
+      executor: "claude",
+      prompt: "Start",
+      account: FOLDER_ACCOUNT,
+      session,
+      model: "opus",
+    });
+    await waitFor(() => Boolean(done(id(70))), 8000);
+    expect(done(id(70))).toMatchObject({ exitCode: 0 });
+    expect(cli.claudeRuns()[0]?.args).toEqual(expect.arrayContaining(["--model", "opus", "--session-id", session]));
+    const nativeSession = claudeSessionFile(
+      cli.folder("claude_code", FOLDER_ACCOUNT),
+      await agentWorkspace(ws, AGENT),
+      session,
+    );
+    mkdirSync(path.dirname(nativeSession), { recursive: true });
+    writeFileSync(nativeSession, "{}\n");
+    await tasks.start(AGENT, {
+      taskId: id(71),
+      executor: "claude",
+      prompt: "Continue",
+      account: FOLDER_ACCOUNT,
+      session,
+      resume: true,
+      model: "sonnet",
+    });
+    await waitFor(() => Boolean(done(id(71))), 8000);
+    expect(done(id(71))).toMatchObject({ exitCode: 0 });
+    expect(cli.claudeRuns()[1]?.args).toEqual(expect.arrayContaining(["--model", "sonnet", "--resume", session]));
+  },
+  20_000,
+);
+
+test.skipIf(!posix)(
+  "native Codex tasks enforce the requested model before a resumed thread",
+  async () => {
+    const { make, home, send, done } = setup();
+    const cli = fakeClis(home);
+    const tasks = make(cli.options);
+    await tasks.init();
+    tasks.attach(send);
+    const session = id(901);
+    await tasks.start(AGENT, {
+      taskId: id(72),
+      executor: "codex",
+      prompt: "Start",
+      account: FOLDER_ACCOUNT,
+      session,
+      model: "gpt-6.1-sol",
+    });
+    await waitFor(() => Boolean(done(id(72))), 8000);
+    expect(done(id(72))).toMatchObject({ exitCode: 0 });
+    expect(cli.codexRuns()[0]?.args).toEqual(expect.arrayContaining(["--model", "gpt-6.1-sol"]));
+    await tasks.start(AGENT, {
+      taskId: id(73),
+      executor: "codex",
+      prompt: "Continue",
+      account: FOLDER_ACCOUNT,
+      session,
+      resume: true,
+      model: "gpt-6.2-sol",
+    });
+    await waitFor(() => Boolean(done(id(73))), 8000);
+    expect(done(id(73))).toMatchObject({ exitCode: 0 });
+    const resumed = cli.codexRuns()[1]?.args as string[];
+    expect(resumed).toEqual(
+      expect.arrayContaining(["--model", "gpt-6.2-sol", "resume", "01a17ab8-bb80-7d22-b98e-b2ad4ec03ce8"]),
+    );
+    expect(resumed.indexOf("--model")).toBeLessThan(resumed.indexOf("resume"));
+  },
+  20_000,
+);
 
 test.skipIf(!posix)(
   "protocol 31: a Claude Code task signs in with its agent's account, as its turns: the account's folder, or what root keeps, on a descriptor and in no file",

@@ -64,7 +64,7 @@ import {
   Switch,
   Textarea,
 } from "@agenteschat/ui";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -90,6 +90,7 @@ import {
   useMissionPanel,
 } from "./MissionBits";
 import { BlockedCommands } from "./MissionCommandCard";
+import { useMissionRepositoryFolder } from "./MissionRepositoryFolder";
 import { SessionRows } from "./MissionSessions";
 
 /**
@@ -137,7 +138,18 @@ const sameAsTitle = (title: string, goal: string) => {
 
 const PLAN_SHOWN = 5;
 
-export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
+export function MissionPlanCard({
+  plan: meta,
+  threadId,
+  channelId,
+  onNavigate,
+}: {
+  plan: MissionPlanMeta;
+  threadId: string | null;
+  channelId: string;
+  /** A surrounding dialog closes before an action moves to the composer or the mission files. */
+  onNavigate?: (navigate: () => void) => void;
+}) {
   const { t } = useTranslation();
   const { org } = useOrg();
   const dir = useDirectory(org.id);
@@ -146,17 +158,32 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
   const actions = useChannelActions();
   const mission = useMission(org.id, meta.missionId);
   const plan = useMissionPlan(org.id, meta.missionId);
-  const control = useMissionControl(org.id);
+  const control = useMissionControl(org.id, meta.missionId);
   const switchExecutor = useSetMissionExecutor(org.id);
   const stamp = useStamp();
-  const m = mission.data;
+  const fetched = mission.data;
+  const m =
+    fetched?.id === meta.missionId && fetched.threadId === threadId && fetched.channelId === channelId
+      ? fetched
+      : undefined;
+  // A timeline card may outlive its original task binding. Watch the thread's existing cache.
+  const threadMission = useThreadMission(org.id, threadId, false);
+  const qc = useQueryClient();
+  const matchesBinding = (current: Mission | null | undefined) =>
+    current === undefined ||
+    (current?.id === meta.missionId && current.threadId === threadId && current.channelId === channelId);
+  const isCurrentBinding = () => matchesBinding(qc.getQueryData(keys.threadMission(org.id, threadId ?? "")));
+  const bound = matchesBinding(threadMission.data);
+  const ownsPlan = bound && m?.role === "owner";
+  const mayAdjust = bound && m?.canAct;
+  const folder = useMissionRepositoryFolder(meta.missionId, bound ? m : undefined, isCurrentBinding);
   const agentName = dir.agentById.get(m?.agentId ?? "")?.name ?? "";
   const current = m?.executor ?? meta.executor;
   const executor = executorName(current, agentName);
   // "do Claude Code", "da Ada": its words in Portuguese.
   const xg = agentGrammar(executor);
   // Before Start the owner may switch who programs, among those the computer can run.
-  const choices = m?.role === "owner" && m.status === "proposed" ? (m.machine?.executors ?? []) : [];
+  const choices = ownsPlan && m?.status === "proposed" ? (m.machine?.executors ?? []) : [];
   const items = (plan.data?.current?.items ?? []).filter((i) => i.status !== "dropped");
   const computer = m?.machine?.name ?? meta.computer;
   // The computer by its name only where the workspace has more than one; else its state only when it's offline.
@@ -167,7 +194,8 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
     Object.values(st.runs).some((r) => r.agentId === m?.agentId && r.threadId === m?.threadId),
   );
   const waitPlan = drafting && items.length === 0;
-  const seePlan = () => panel?.openFiles(meta.missionId, "mission.md");
+  const navigate = (action: () => void) => (onNavigate ? onNavigate(action) : action());
+  const seePlan = () => navigate(() => panel?.openFiles(meta.missionId, "mission.md"));
   if (m && m.status !== "proposed") {
     return (
       <div className="mi-created">
@@ -190,7 +218,8 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
       </div>
     );
   }
-  const start = () =>
+  const start = () => {
+    if (!isCurrentBinding() || waitPlan || control.isPending || folder.blocksStart()) return;
     control.mutate(
       { missionId: meta.missionId, action: "start" },
       {
@@ -205,13 +234,14 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
         onError: (error) => toast.show(errorText(t, error), "error"),
       },
     );
+  };
   const owner = m?.ownerId ? dir.memberById.get(m.ownerId)?.name : undefined;
   // Proposed already investigated (ADR 0037 round 2): what it read, the numbers, the one decision left.
   const findings = m?.findings ?? [];
   const investigated = findings.length > 0;
   const adjust =
-    m?.canAct && actions?.replyToMission
-      ? () => actions.replyToMission?.(meta.missionId, t("missions.plan.label"))
+    mayAdjust && actions?.replyToMission
+      ? () => navigate(() => actions.replyToMission?.(meta.missionId, t("missions.plan.label")))
       : null;
   return (
     <div className={investigated ? "mi-card mi-plan mi-plan--investigated" : "mi-card mi-plan"}>
@@ -313,7 +343,7 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
             />
           </div>
         )}
-        {m?.canAct && (
+        {m && mayAdjust && (
           <div className="mi-plan__meta">
             <span className="mi-plan__label">
               <Icon name="shield" size={14} />
@@ -322,19 +352,20 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
             <PlanApprovalSelect mission={m} />
           </div>
         )}
+        {folder.editor}
       </div>
       <Locked when={control.isPending}>
         {investigated ? (
           <>
             {/* Start first, then Adjust: the plan's own card (below) and every request card lead with the main action. */}
             <div className="mi-plan__foot mi-findings__foot">
-              {m?.role === "owner" && (
+              {ownsPlan && (
                 <Button
                   variant="primary"
                   size="sm"
                   icon="check"
                   loading={control.isPending}
-                  disabled={waitPlan}
+                  disabled={waitPlan || folder.startBlocked}
                   onClick={start}
                 >
                   {t("missions.findings.start")}
@@ -353,28 +384,24 @@ export function MissionPlanCard({ plan: meta }: { plan: MissionPlanMeta }) {
           </>
         ) : (
           <div className="mi-plan__foot">
-            {m?.role === "owner" && (
+            {ownsPlan && (
               <Button
                 variant="primary"
                 size="sm"
                 icon="check"
                 loading={control.isPending}
-                disabled={waitPlan}
+                disabled={waitPlan || folder.startBlocked}
                 onClick={start}
               >
                 {t("missions.plan.start")}
               </Button>
             )}
-            {m?.canAct && actions?.replyToMission && (
-              <Button
-                size="sm"
-                icon="edit"
-                onClick={() => actions.replyToMission?.(meta.missionId, t("missions.plan.label"))}
-              >
+            {mayAdjust && actions?.replyToMission && (
+              <Button size="sm" icon="edit" onClick={adjust ?? undefined}>
                 {t("missions.plan.change")}
               </Button>
             )}
-            {m?.role === "owner" && waitPlan && <span className="mi-hint">{t("missions.plan.waitPlan")}</span>}
+            {ownsPlan && waitPlan && <span className="mi-hint">{t("missions.plan.waitPlan")}</span>}
             {m && m.role !== "owner" && owner && (
               <span className="mi-hint">{t("missions.plan.ownerStarts", { name: owner })}</span>
             )}

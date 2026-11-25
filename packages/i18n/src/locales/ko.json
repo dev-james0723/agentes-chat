@@ -8134,6 +8134,8 @@
       "draftingNoComputer": "{{executor}}이(가) 폴더를 읽고 계획을 작성하는 중",
       "empty": "아직 항목이 없어요. 그대로 시작하거나 “변경 요청”으로 계획을 요청할 수 있어요.",
       "waitPlan": "계획이 도착하면 열려요",
+      "repositoryFolder": "저장소 폴더",
+      "repositoryFolderRelative": "에이전트 작업 폴더의 상대 경로입니다. 예: repos/project",
       "adjusts": "{{executor}}이(가) 진행하면서 목록을 계속 조정해요",
       "switched": "이제 {{executor}}이(가) 프로그래밍해요. 계획을 처음부터 다시 세워요.",
       "more_other": "+{{count}}개 항목",
@@ -11408,6 +11410,8 @@
     "more": "더 많은 서비스",
     "tileConnected": "{{name}}, 연결됨",
     "tileSoon": "{{name}}, 곧 출시",
+    "tileSetupRequired": "{{name}}, 설정 필요",
+    "setupRequired": "설정 필요",
     "otherTitle": "다른 서비스",
     "otherDetail": "에이전트용 연결을 제공하는 서비스라면 주소(https://로 시작)로 연결할 수 있어요.",
     "otherSteps": {
@@ -11431,6 +11435,7 @@
     "how": {
       "oneClick": "클릭 한 번: 서비스 페이지에서 승인해요",
       "oauthOrKey": "서비스 페이지에서 승인하거나 API 키를 사용해요",
+      "oauthSetup": "이 서버에서 로그인을 설정해야 합니다.",
       "key": "API 키가 필요해요",
       "appPassword": "앱 비밀번호가 필요해요",
       "addressPassword": "데이터베이스 주소와 비밀번호가 필요해요",

@@ -8178,6 +8178,8 @@
       "draftingNoComputer_female": "{{executor}} sedang membaca folder dan menyusun rencana",
       "empty": "Belum ada item. Kamu tetap bisa mulai atau minta rencana lewat “Ubah sesuatu”.",
       "waitPlan": "Terbuka saat rencana tiba",
+      "repositoryFolder": "Folder repositori",
+      "repositoryFolderRelative": "Jalur relatif terhadap folder kerja agen, misalnya repos/proyek.",
       "adjusts": "{{executor}} terus menyesuaikan daftar sambil berjalan",
       "adjusts_female": "{{executor}} terus menyesuaikan daftar sambil berjalan",
       "switched": "Sekarang {{executor}} yang menulis kode. Rencana dimulai dari awal.",
@@ -11468,6 +11470,8 @@
     "more": "Layanan lainnya",
     "tileConnected": "{{name}}, terhubung",
     "tileSoon": "{{name}}, segera",
+    "tileSetupRequired": "{{name}}, perlu penyiapan",
+    "setupRequired": "Perlu penyiapan",
     "otherTitle": "Layanan lain",
     "otherDetail": "Layanan apa pun yang menyediakan koneksi untuk agen, lewat alamatnya (diawali https://).",
     "otherSteps": {
@@ -11491,6 +11495,7 @@
     "how": {
       "oneClick": "Sekali klik: kamu memberi izin di halaman layanan",
       "oauthOrKey": "Kamu memberi izin di halaman layanan, atau pakai kunci API",
+      "oauthSetup": "Login perlu disiapkan di server ini.",
       "key": "Butuh kunci API",
       "appPassword": "Butuh kata sandi aplikasi",
       "addressPassword": "Butuh alamat database dan kata sandi",

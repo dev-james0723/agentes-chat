@@ -33,7 +33,9 @@ function renderEnvExample(): string {
       const required = isRequired(def);
       lines.push(`# ${def.description.replaceAll("**", "").replaceAll("`", "")}`);
       if (def.example) lines.push(`# Example: ${def.example}`);
-      lines.push(required ? "# Required." : fallback === undefined ? "# Optional." : `# Default: ${fallback}`);
+      lines.push(
+        required ? "# Required." : fallback === undefined ? "# Optional." : `# Default: ${fallback}`.trimEnd(),
+      );
       lines.push(`${required ? "" : "# "}${name}=${required ? "" : (fallback ?? "")}`, "");
     }
   }

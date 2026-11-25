@@ -67,7 +67,7 @@ import {
 } from "@agenteschat/providers/plans";
 import { PLAN_PAUSE, planCheckedAt, planState, planWindows } from "@agenteschat/ui/plan-state";
 import { recordAudit } from "./audit";
-import { liveModelLimits } from "./brains/select";
+import { durableGrokRefusal, liveModelLimits } from "./brains/select";
 import { BRAIN_PLAN_NAMES } from "./brains/types";
 import { caches } from "./cache";
 import { claudeAuthMethodFor, claudeAuthPolicy } from "./claude-auth-policy";
@@ -272,6 +272,25 @@ function usageOlder(prev: PlanUsage | null | undefined, next: PlanUsage): boolea
   const at = Date.parse(next.at);
   const before = Date.parse(prev?.at ?? "");
   return Number.isFinite(before) && (!Number.isFinite(at) || at < before);
+}
+
+/** An inconclusive probe cannot undo an actual Grok refusal or move its expiry forward. */
+function keepGrokRefusal(kind: string, prev: PlanUsage | null | undefined, next: PlanUsage, now: number): boolean {
+  if (kind !== "grok" || !durableGrokRefusal(prev, now)) return false;
+  const at = Date.parse(next.at);
+  const measured =
+    Array.isArray(next.windows) &&
+    next.windows.length > 0 &&
+    next.windows.every(
+      (window) => Number.isFinite(window.usedPercent) && window.usedPercent >= 0 && window.usedPercent <= 100,
+    );
+  return (
+    !usageNewer(prev, next) ||
+    !Number.isFinite(at) ||
+    at > now ||
+    (next.source !== "probe" && next.source !== "turn") ||
+    (!measured && !durableGrokRefusal(next, now))
+  );
 }
 
 /** People would see a difference: a window moved a point or more, its reset moved, one came or went, or the limit. */
@@ -634,7 +653,9 @@ async function settleAccount(
     return { row: gone ?? row, duplicate, released, changed: !signingIn };
   }
   // The runner says it when it knows it; one that just started doesn't yet (the last stays).
-  const usage = info.usage ? { usage: accountReading(row.provider, row.usage, info.usage) } : {};
+  const usage = info.usage
+    ? { usage: accountReading(row.kind, row.provider, row.usage, info.usage, now.getTime()) }
+    : {};
   if (signingIn) {
     // A login of an account its owner already has here (one per agent) takes that account's name.
     const label =
@@ -695,8 +716,14 @@ async function settleAccount(
  * engine keeps them, `noteModelLimit`), and on a plan whose models have their own limits a refusal with no window
  * full is a model's (`refusalScope`), not the account's.
  */
-function accountReading(provider: string | null, prev: PlanUsage | null | undefined, next: PlanUsage): PlanUsage {
-  if (prev && usageOlder(prev, next)) return prev;
+function accountReading(
+  kind: string,
+  provider: string | null,
+  prev: PlanUsage | null | undefined,
+  next: PlanUsage,
+  now: number,
+): PlanUsage {
+  if (prev && (usageOlder(prev, next) || keepGrokRefusal(kind, prev, next, now))) return prev;
   const { limited, models: _, answered: __, ...rest } = next;
   const models = liveModelLimits(prev);
   const perModel = planOf(provider)?.limitsPerModel === true;
@@ -887,7 +914,13 @@ export async function syncMachineAccounts(
                 keyHint: a.keyHint ?? elsewhere.keyHint,
                 ...reportedState(a, elsewhere),
                 shared: a.shared === true,
-                ...(a.usage ? { usage: a.usage } : {}),
+                ...(a.usage
+                  ? {
+                      usage: keepGrokRefusal(a.kind, elsewhere.usage, a.usage, now.getTime())
+                        ? elsewhere.usage
+                        : a.usage,
+                    }
+                  : {}),
                 updatedAt: now,
               },
         )
@@ -932,7 +965,9 @@ export async function storeOwnUsage(deps: MachineAccountDeps, orgId: string, mac
     const next = { ...prev };
     for (const kind of ACCOUNT_KINDS) {
       const usage = own[kind];
-      if (usage && !usageOlder(prev[kind], usage)) next[kind] = usage;
+      if (usage && !usageOlder(prev[kind], usage) && !keepGrokRefusal(kind, prev[kind], usage, Date.now())) {
+        next[kind] = usage;
+      }
     }
     // Accept only the snapshot compared above. A concurrent report (including another brain's)
     // retries against its new numbers; unrelated executor metadata is merged at the write itself.

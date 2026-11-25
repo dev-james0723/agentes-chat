@@ -8727,6 +8727,8 @@ export const ptBR = {
       draftingNoComputer_female: "A {{executor}} está lendo a pasta e montando o plano",
       empty: "Ainda sem itens. Dá para começar assim mesmo ou pedir um plano em “Mudar algo”.",
       waitPlan: "Libera quando o plano chegar",
+      repositoryFolder: "Pasta do repositório",
+      repositoryFolderRelative: "Caminho relativo à pasta do agente, por exemplo, repos/projeto.",
       adjusts: "o {{executor}} vai ajustando a lista conforme avança",
       adjusts_female: "a {{executor}} vai ajustando a lista conforme avança",
       switched: "Agora quem programa é {{executor}}. O plano recomeça.",
@@ -12177,6 +12179,8 @@ export const ptBR = {
     more: "Mais serviços",
     tileConnected: "{{name}}, conectado",
     tileSoon: "{{name}}, em breve",
+    tileSetupRequired: "{{name}}, falta configurar",
+    setupRequired: "Falta configurar",
     otherTitle: "Outro serviço",
     otherDetail: "Qualquer serviço que ofereça conexão para agentes, pelo endereço dele (começa com https://).",
     otherSteps: {
@@ -12200,6 +12204,7 @@ export const ptBR = {
     how: {
       oneClick: "Um clique: você autoriza na página do serviço",
       oauthOrKey: "Você autoriza na página do serviço, ou usa uma chave de API",
+      oauthSetup: "O login precisa ser configurado neste servidor.",
       key: "Precisa de uma chave de API",
       appPassword: "Precisa de uma senha de app",
       addressPassword: "Precisa do endereço do banco e de uma senha",

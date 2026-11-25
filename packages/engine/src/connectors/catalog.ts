@@ -1,4 +1,5 @@
 import type { OutcomeKind } from "../context/outcomes";
+import { COLAB_MCP_URL, COLAB_SCOPE } from "./colab";
 
 /**
  * Connector catalog: which MCP servers agentes.chat knows, and how each of
@@ -66,6 +67,40 @@ export interface ConnectorDefinition {
 const s = (label: string, description: string): ConnectorScope => ({ label, description });
 
 export const CONNECTOR_CATALOG: Record<string, ConnectorDefinition> = {
+  colab: {
+    id: "colab",
+    category: "data",
+    label: "Google Colab",
+    description: "Run Python and GPU jobs in Google Colab runtimes.",
+    serverUrl: COLAB_MCP_URL,
+    auth: ["oauth"],
+    oauth: {
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: [COLAB_SCOPE],
+    },
+    scopes: {
+      read: s("Read Colab", "Read the subscription tier, eligible runtime specs and session names."),
+      run: s(
+        "Run Colab jobs",
+        "Access runtime credentials, create runtimes and sessions, execute Python and close task-owned sessions. Uses Colab compute units.",
+      ),
+      delete: s("Delete Colab runtimes", "Permanently delete a runtime and all its files and sessions."),
+    },
+    tools: {
+      get_subscription: { scope: "read" },
+      list_runtime_specs: { scope: "read" },
+      // Runtime reads return a proxy token that also permits writes to the runtime.
+      list_runtimes: { scope: "run" },
+      get_runtime: { scope: "run" },
+      list_sessions: { scope: "read" },
+      create_runtime: { scope: "run" },
+      create_session: { scope: "run" },
+      execute_code: { scope: "run" },
+      delete_session: { scope: "run" },
+      delete_runtime: { scope: "delete", sensitive: true },
+    },
+  },
   github: {
     id: "github",
     category: "dev",

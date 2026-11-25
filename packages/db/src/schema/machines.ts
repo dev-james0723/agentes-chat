@@ -44,6 +44,8 @@ export interface MachinePlanUsage {
  * its desktops and its terminal (protocol 18), and the agents' use of their desktops (protocol 21).
  */
 export interface MachineExecutors {
+  /** The runner enforces an explicit model for native Claude/Codex tasks, including resumes. */
+  taskModels?: true;
   /** `loggedIn`/`authMethod`/`plan`: from `claude auth status` (protocol 8; absent = unknown). */
   claude?: { version: string; loggedIn?: boolean; authMethod?: string; plan?: string; claudeOrgId?: string };
   codex?: { version: string };

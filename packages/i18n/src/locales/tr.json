@@ -8375,6 +8375,8 @@
       "draftingNoComputer": "{{executor}} klasörü okuyor ve planı hazırlıyor",
       "empty": "Henüz öğe yok. Yine de başlatabilir ya da “Bir şeyi değiştir” ile plan isteyebilirsiniz.",
       "waitPlan": "Plan gelince açılır",
+      "repositoryFolder": "Depo klasörü",
+      "repositoryFolderRelative": "Ajanın çalışma klasörüne göre göreli yol, ör. repos/project.",
       "adjusts": "{{executor}} listeyi yol boyunca güncellemeye devam eder",
       "switched": "Artık {{executor}} programlıyor. Plan baştan başlıyor.",
       "more_one": "+{{count}} öğe",
@@ -11812,6 +11814,8 @@
     "more": "Diğer hizmetler",
     "tileConnected": "{{name}}, bağlı",
     "tileSoon": "{{name}}, yakında",
+    "tileSetupRequired": "{{name}}, kurulum gerekli",
+    "setupRequired": "Kurulum gerekli",
     "otherTitle": "Başka bir hizmet",
     "otherDetail": "Ajanlar için bağlantı sunan herhangi bir hizmet, adresiyle (https:// ile başlar).",
     "otherSteps": {
@@ -11835,6 +11839,7 @@
     "how": {
       "oneClick": "Tek tık: hizmetin sayfasında yetki verirsiniz",
       "oauthOrKey": "Hizmetin sayfasında yetki verirsiniz ya da bir API anahtarı kullanırsınız",
+      "oauthSetup": "Bu sunucuda oturum açmanın yapılandırılması gerekiyor.",
       "key": "API anahtarı gerekir",
       "appPassword": "Uygulama şifresi gerekir",
       "addressPassword": "Veritabanı adresi ve şifre gerekir",

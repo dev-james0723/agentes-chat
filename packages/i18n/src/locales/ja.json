@@ -8138,6 +8138,8 @@
       "draftingNoComputer": "{{executor}}がフォルダを読み、計画を作成しています",
       "empty": "まだ項目がありません。このまま開始するか、「変更を依頼」で計画を頼めます。",
       "waitPlan": "計画が届くと開きます",
+      "repositoryFolder": "リポジトリのフォルダー",
+      "repositoryFolderRelative": "エージェントの作業フォルダーからの相対パス（例: repos/project）。",
       "adjusts": "{{executor}}が進めながらリストを調整していきます",
       "switched": "これからは{{executor}}がプログラムを書きます。計画は最初からやり直しです。",
       "more_other": "+{{count}}項目",
@@ -11414,6 +11416,8 @@
     "more": "その他のサービス",
     "tileConnected": "{{name}}、接続済み",
     "tileSoon": "{{name}}、近日公開",
+    "tileSetupRequired": "{{name}}、設定が必要",
+    "setupRequired": "設定が必要",
     "otherTitle": "別のサービス",
     "otherDetail": "エージェント向けの接続を提供しているサービスなら、アドレス（https://で始まるもの）で接続できます。",
     "otherSteps": {
@@ -11437,6 +11441,7 @@
     "how": {
       "oneClick": "ワンクリック: サービスのページで承認します",
       "oauthOrKey": "サービスのページで承認するか、APIキーを使います",
+      "oauthSetup": "このサーバーでログインを設定する必要があります。",
       "key": "APIキーが必要です",
       "appPassword": "アプリパスワードが必要です",
       "addressPassword": "データベースのアドレスとパスワードが必要です",

@@ -7,6 +7,7 @@ import { canTalkTo, speakerFor } from "./audience";
 import { UUID } from "./authority";
 import { callableAgents, notCallableText } from "./brakes";
 import { refusalData } from "./errors";
+import { applyIssueDelivery, ISSUE_DELIVERY_FIELD, issueDeliveryBrief } from "./issue-delivery";
 import { issueKey } from "./issue-key";
 import { projectByName } from "./issue-projects";
 import {
@@ -134,6 +135,7 @@ async function describeIssue(deps: IssueDeps, ctx: ToolContext, i: IssueView) {
     criteria ? `Acceptance criteria:\n${criteria}` : "",
     i.pullRequests.length ? `PRs: ${i.pullRequests.map((p) => p.url).join(", ")}` : "",
     i.githubUrl ? `GitHub: ${i.githubUrl}` : "",
+    await issueDeliveryBrief(deps.db, ctx.orgId, i.id),
   ]
     .filter(Boolean)
     .join("\n");
@@ -579,7 +581,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
     {
       name: UPDATE_ISSUE_TOOL,
       description:
-        "Change an issue's status, priority, title, description, assignee, labels, project or due date, check acceptance criteria you met, attach files or link a pull request to it. Linking a PR moves the issue to review on its own. No permission needed: the person sees the change with Undo.",
+        "Change an issue's status, priority, title, description, assignee, labels, project or due date, check acceptance criteria you verified, attach files or link a pull request. Linking a PR moves it to review. Use delivery for the existing-task implementation → independent QA → manager/owner review workflow; it does not authorize release. Ordinary field changes have Undo; delivery handoffs are recorded receipts and must not be repeated as duplicate tasks.",
       scope: "issues:write",
       inputSchema: {
         type: "object",
@@ -613,6 +615,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
             description: "Acceptance criteria now met, by their number (1, 2…) as list_issues shows them.",
           },
           files: filesField("File ids to attach."),
+          delivery: ISSUE_DELIVERY_FIELD,
         },
         required: ["issue"],
         additionalProperties: false,
@@ -622,6 +625,22 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
           // The right hand changes a task for the person in their DM, one they see, as they could (ADR 0137 §13).
           if (await rightHandAway(ctx)) return ONLY_IN_DM;
           const reader = await rightHandReader(ctx);
+          if (input.delivery !== undefined) {
+            if (!input.delivery || typeof input.delivery !== "object" || Array.isArray(input.delivery))
+              throw new Error("Delivery must be an object.");
+            if (Object.keys(input).some((key) => !["issue", "delivery", "done_criteria"].includes(key)))
+              throw new Error("Submit delivery separately from other task edits; done_criteria may accompany it.");
+            const current = await find(deps, ctx, str(input.issue));
+            if (reader) await getIssue(deps.db, { type: "person", userId: reader }, ctx.orgId, { id: current.id });
+            const content = await applyIssueDelivery(
+              deps,
+              ctx,
+              current.id,
+              input.delivery as Record<string, unknown>,
+              Array.isArray(input.done_criteria) ? input.done_criteria.map(Number) : [],
+            );
+            return { content, data: { issue: { id: current.id, number: current.number } } };
+          }
           const url = str(input.pull_request_url);
           const number = typeof input.pull_request_number === "number" ? input.pull_request_number : undefined;
           const fromUrl = Number(/\/pull\/(\d+)/.exec(url)?.[1] ?? Number.NaN);
@@ -647,6 +666,12 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
               const d = { ...deps, db };
               const current = await find(d, ctx, str(input.issue));
               before = issueSnapshot(current);
+              // Check criteria before a requested Done transition, in this same undo transaction.
+              const done = Array.isArray(input.done_criteria) ? input.done_criteria.map(Number) : [];
+              for (const n of [...new Set(done)]) {
+                const c = current.criteria[n - 1];
+                if (c && !c.done) await setCriterion(d, actorOf(ctx), ctx.orgId, current.id, c.id, true);
+              }
               const i = await updateIssue(d, actorOf(ctx), ctx.orgId, current.id, {
                 ...(files.brought.length ? { addFiles: files.brought } : {}),
                 status: (input.status as IssueStatus | undefined) ?? undefined,
@@ -660,13 +685,7 @@ export function createIssueToolSource(deps: ArtifactDeps): ToolSource {
                 ...(typeof input.github_url === "string" ? { githubUrl: input.github_url } : {}),
                 ...(url && prNumber ? { addPullRequest: { number: prNumber, url } } : {}),
               });
-              const done = Array.isArray(input.done_criteria) ? input.done_criteria.map(Number) : [];
-              let last = i;
-              for (const n of [...new Set(done)]) {
-                const c = last.criteria[n - 1];
-                if (c && !c.done) last = await setCriterion(d, actorOf(ctx), ctx.orgId, i.id, c.id, true);
-              }
-              return last;
+              return i;
             },
             (i, db) => issueChange({ ...deps, db }, ctx, before, i),
           );

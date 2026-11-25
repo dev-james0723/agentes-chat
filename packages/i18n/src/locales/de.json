@@ -8421,6 +8421,8 @@
       "draftingNoComputer_female": "{{executor}} liest den Ordner und entwirft den Plan",
       "empty": "Noch keine Punkte. Du kannst trotzdem starten oder mit „Etwas ändern“ um einen Plan bitten.",
       "waitPlan": "Öffnet sich, wenn der Plan da ist",
+      "repositoryFolder": "Repository-Ordner",
+      "repositoryFolderRelative": "Pfad relativ zum Arbeitsordner des Agenten, z. B. repos/projekt.",
       "adjusts": "{{executor}} passt die Liste unterwegs weiter an",
       "adjusts_female": "{{executor}} passt die Liste unterwegs weiter an",
       "switched": "{{executor}} programmiert jetzt. Der Plan beginnt von vorn.",
@@ -11877,6 +11879,8 @@
     "more": "Weitere Dienste",
     "tileConnected": "{{name}}, verbunden",
     "tileSoon": "{{name}}, bald",
+    "tileSetupRequired": "{{name}}, Einrichtung nötig",
+    "setupRequired": "Einrichtung nötig",
     "otherTitle": "Anderer Dienst",
     "otherDetail": "Jeder Dienst, der eine Verbindung für Agenten anbietet, über seine Adresse (sie beginnt mit https://).",
     "otherSteps": {
@@ -11900,6 +11904,7 @@
     "how": {
       "oneClick": "Ein Klick: Du autorisierst auf der Seite des Dienstes",
       "oauthOrKey": "Du autorisierst auf der Seite des Dienstes oder nutzt einen API-Schlüssel",
+      "oauthSetup": "Die Anmeldung muss auf diesem Server eingerichtet werden.",
       "key": "Braucht einen API-Schlüssel",
       "appPassword": "Braucht ein App-Passwort",
       "addressPassword": "Braucht die Adresse der Datenbank und ein Passwort",

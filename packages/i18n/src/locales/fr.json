@@ -8697,6 +8697,8 @@
       "draftingNoComputer": "{{executor}} lit le dossier et rédige le plan",
       "empty": "Pas encore d'éléments. Vous pouvez démarrer quand même ou demander un plan avec « Changer quelque chose ».",
       "waitPlan": "S'ouvre quand le plan arrive",
+      "repositoryFolder": "Dossier du dépôt",
+      "repositoryFolderRelative": "Chemin relatif au dossier de travail de l’agent, par exemple repos/projet.",
       "adjusts": "{{executor}} continue d'ajuster la liste en cours de route",
       "switched": "{{executor}} programme désormais. Le plan repart de zéro.",
       "more_one": "+{{count}} élément",
@@ -12305,6 +12307,8 @@
     "more": "Plus de services",
     "tileConnected": "{{name}}, connecté",
     "tileSoon": "{{name}}, bientôt",
+    "tileSetupRequired": "{{name}}, configuration requise",
+    "setupRequired": "Configuration requise",
     "otherTitle": "Un autre service",
     "otherDetail": "Tout service qui propose une connexion pour les agents, via son adresse (elle commence par https://).",
     "otherSteps": {
@@ -12328,6 +12332,7 @@
     "how": {
       "oneClick": "Un clic : vous autorisez l'accès sur la page du service",
       "oauthOrKey": "Vous autorisez l'accès sur la page du service, ou utilisez une clé API",
+      "oauthSetup": "La connexion doit être configurée sur ce serveur.",
       "key": "Nécessite une clé API",
       "appPassword": "Nécessite un mot de passe d'application",
       "addressPassword": "Nécessite l'adresse de la base de données et un mot de passe",

@@ -20353,6 +20353,12 @@
   "missions.plan.waitPlan": {
     "value": "Opens when the plan arrives"
   },
+  "missions.plan.repositoryFolder": {
+    "value": "Repository folder"
+  },
+  "missions.plan.repositoryFolderRelative": {
+    "value": "Path relative to the agent’s workspace, e.g. repos/project."
+  },
   "missions.plan.adjusts": {
     "value": "{{executor}} keeps adjusting the list along the way"
   },
@@ -29007,6 +29013,12 @@
   "connectors.tileSoon": {
     "value": "{{name}}, soon"
   },
+  "connectors.tileSetupRequired": {
+    "value": "{{name}}, setup required"
+  },
+  "connectors.setupRequired": {
+    "value": "Setup required"
+  },
   "connectors.otherTitle": {
     "value": "Another service"
   },
@@ -29060,6 +29072,9 @@
   },
   "connectors.how.oauthOrKey": {
     "value": "You authorize on the service's page, or use an API key"
+  },
+  "connectors.how.oauthSetup": {
+    "value": "Sign-in needs to be configured on this server."
   },
   "connectors.how.key": {
     "value": "Needs an API key"

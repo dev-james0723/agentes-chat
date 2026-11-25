@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { eq, schema } from "@agenteschat/db";
+import { and, eq, schema } from "@agenteschat/db";
+import { ProviderError } from "@agenteschat/providers";
 import type { FakeReply } from "@agenteschat/providers/testing";
 import {
   activeRunsIn,
@@ -596,5 +597,238 @@ describe("server restarts", () => {
     expect((await f.db.select().from(schema.approvals))[0]?.status).toBe("canceled");
     await drainOutbox(f.db, f.handlers);
     expect(f.provider.calls).toHaveLength(1);
+  });
+});
+
+const jobsFor = async (runId: string) =>
+  (await f.db.select().from(schema.outbox)).filter((j) => j.kind === "agent_run.execute" && j.payload.runId === runId);
+
+/** A real provider outage after a saved successful tool call; its wake job was lost after parking. */
+async function lostOutageWake() {
+  let healed = false;
+  const { run, ran } = await interruptedRun({
+    next: () => {
+      if (!healed) throw new ProviderError("connection refused", true);
+      return { chunks: ["Pronto."] };
+    },
+  });
+  for (let n = 0; n < 8 && !(await runRow(run.id))?.transcript?.outage; n++) {
+    await f.db
+      .update(schema.outbox)
+      .set({ nextAttemptAt: new Date(Date.now() - 1000) })
+      .where(and(eq(schema.outbox.kind, "agent_run.execute"), eq(schema.outbox.status, "pending")));
+    await drainOutbox(f.db, f.handlers);
+  }
+  const parked = await runRow(run.id);
+  expect(parked?.status).toBe("waiting_input");
+  const transcript = parked?.transcript ?? {};
+  const outage = transcript.outage as { at: number; waitId: string };
+  expect(outage?.waitId).toBeString();
+  const wake = (await jobsFor(run.id)).find((j) => j.status === "pending" && j.payload.wait === outage.waitId);
+  if (!wake) throw new Error("no outage wake");
+  await f.db.update(schema.outbox).set({ status: "failed" }).where(eq(schema.outbox.id, wake.id));
+  return {
+    run,
+    ran,
+    transcript,
+    outage,
+    wake,
+    now: new Date(outage.at + RUN_STALE_MS + 1000),
+    heal: () => {
+      healed = true;
+    },
+  };
+}
+
+describe("provider outage recovery", () => {
+  test("a lost wake resumes the same run with its saved tool result, and a failed repair is repaired again", async () => {
+    const { run, ran, transcript, now, heal } = await lostOutageWake();
+    const first = await recoverStaleRuns({ db: f.db }, { now });
+    expect(first.requeued).toEqual([run.id]);
+    expect(await runRow(run.id)).toMatchObject({ status: "waiting_input", transcript });
+    const repair = (await jobsFor(run.id)).find((j) => j.status === "pending");
+    expect(repair?.payload).toEqual({ runId: run.id, wait: (transcript.outage as { waitId: string }).waitId });
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+
+    await f.db
+      .update(schema.outbox)
+      .set({ status: "failed" })
+      .where(eq(schema.outbox.id, repair?.id ?? ""));
+    expect((await recoverStaleRuns({ db: f.db }, { now: new Date(now.getTime() + 60_000) })).requeued).toEqual([
+      run.id,
+    ]);
+    heal();
+    await drainOutbox(f.db, f.handlers);
+    expect((await f.db.select().from(schema.agentRuns)).map((r) => [r.id, r.status])).toEqual([[run.id, "done"]]);
+    expect(ran.long_task).toBe(1);
+    expect(resultsSent(f.provider.calls.length)).toContainEqual(expect.objectContaining({ content: "task ok" }));
+    expect((await runRow(run.id))?.transcript?.outage).toBeUndefined();
+  });
+
+  test("two sweeps repair one outage generation once even with different clocks", async () => {
+    const { run, now } = await lostOutageWake();
+    const swept = await Promise.all([
+      recoverStaleRuns({ db: f.db }, { now }),
+      recoverStaleRuns({ db: f.db }, { now: new Date(now.getTime() + 1) }),
+    ]);
+    expect(swept.flatMap((s) => s.requeued)).toEqual([run.id]);
+    expect((await jobsFor(run.id)).filter((j) => j.status === "pending")).toHaveLength(1);
+  });
+
+  test("future waits and live jobs keep ownership; expired leases and stale pending generations do not", async () => {
+    const { run, outage, wake, now } = await lostOutageWake();
+    expect((await recoverStaleRuns({ db: f.db }, { now: new Date(outage.at - 1), staleMs: 0 })).requeued).toEqual([]);
+
+    await f.db.update(schema.outbox).set({ status: "pending" }).where(eq(schema.outbox.id, wake.id));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.outbox)
+      .set({ status: "processing", lockedUntil: new Date(now.getTime() + 60_000), lockedBy: "still-running" })
+      .where(eq(schema.outbox.id, wake.id));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.outbox)
+      .set({ lockedUntil: new Date(now.getTime() - 1) })
+      .where(eq(schema.outbox.id, wake.id));
+    await enqueue(f.db, {
+      orgId: run.orgId,
+      kind: "agent_run.execute",
+      payload: { runId: run.id, wait: "older-generation" },
+      runAt: new Date(now.getTime() + 3_600_000),
+    });
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([run.id]);
+    expect(
+      (await jobsFor(run.id)).filter((j) => j.status === "pending" && j.payload.wait === outage.waitId),
+    ).toHaveLength(1);
+  });
+
+  test("recovery preserves continuity, unknown effects, approvals, bridge epochs and computer waits", async () => {
+    const { run, transcript, now } = await lostOutageWake();
+    for (const hold of [
+      { effectUncertain: { runId: run.id, turn: 1, tools: ["long_task"] } },
+      { continuityCheckpoint: { dispatch: "hold" } },
+      { waitingForBrain: { code: "busy", waitId: "newer-brain-wait" } },
+    ]) {
+      await f.db
+        .update(schema.agentRuns)
+        .set({ transcript: { ...transcript, ...hold } })
+        .where(eq(schema.agentRuns.id, run.id));
+      expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    }
+    await f.db.update(schema.agentRuns).set({ transcript }).where(eq(schema.agentRuns.id, run.id));
+    const [approval] = await f.db
+      .insert(schema.approvals)
+      .values({
+        orgId: f.org.id,
+        runId: run.id,
+        agentId: f.agent.id,
+        channelId: run.channelId,
+        threadRootId: run.threadRootId,
+        toolUseId: "held-deploy",
+        tool: "deploy_app",
+        scope: "",
+        params: { env: "prod" },
+        actionHash: "test",
+        title: "Deploy",
+        expiresAt: new Date(now.getTime() + 3_600_000),
+      })
+      .returning();
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.approvals)
+      .set({
+        status: "approved",
+        executedAt: now,
+        result: { isError: true },
+      })
+      .where(eq(schema.approvals.id, approval?.id ?? ""));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.approvals)
+      .set({ result: { isError: false } })
+      .where(eq(schema.approvals.id, approval?.id ?? ""));
+
+    const [machine] = await f.db
+      .insert(schema.machines)
+      .values({
+        orgId: f.org.id,
+        name: "Fixture computer",
+        pairedByUserId: f.owner.id,
+      })
+      .returning();
+    if (!machine) throw new Error("no fixture machine");
+    const [epoch] = await f.db
+      .insert(schema.runToolTokens)
+      .values({
+        orgId: f.org.id,
+        agentId: f.agent.id,
+        runId: run.id,
+        machineId: machine.id,
+        tokenHash: crypto.randomUUID(),
+        effectEpochState: "open",
+        expiresAt: new Date(now.getTime() + 3_600_000),
+      })
+      .returning();
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.runToolTokens)
+      .set({ effectEpochState: "closed_unknown" })
+      .where(eq(schema.runToolTokens.id, epoch?.id ?? ""));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db.delete(schema.runToolTokens).where(eq(schema.runToolTokens.id, epoch?.id ?? ""));
+    await f.db.update(schema.agentRuns).set({ waitingMachineId: machine.id }).where(eq(schema.agentRuns.id, run.id));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        waitingMachineId: null,
+        transcript: { ...transcript, effectUncertain: null, waitingForBrain: null },
+      })
+      .where(eq(schema.agentRuns.id, run.id));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([run.id]);
+  });
+
+  test("malformed outage metadata and terminal runs are skipped without poisoning the sweep", async () => {
+    const { run, transcript, outage, now } = await lostOutageWake();
+    for (const invalid of [
+      ...[undefined, null, "not-a-time", {}, -1, 0].map((at) => ({ ...outage, at })),
+      ...[undefined, null, 42, ""].map((waitId) => ({ ...outage, waitId })),
+    ]) {
+      await f.db
+        .update(schema.agentRuns)
+        .set({ transcript: { ...transcript, outage: invalid } })
+        .where(eq(schema.agentRuns.id, run.id));
+      expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    }
+    for (const status of ["done", "failed", "canceled"] as const) {
+      await f.db.update(schema.agentRuns).set({ status, transcript }).where(eq(schema.agentRuns.id, run.id));
+      expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([]);
+    }
+    await f.db.update(schema.agentRuns).set({ status: "waiting_input" }).where(eq(schema.agentRuns.id, run.id));
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([run.id]);
+  });
+
+  test("a repaired old timer cannot resume a newer outage generation", async () => {
+    const { run, transcript, outage, now, heal } = await lostOutageWake();
+    expect((await recoverStaleRuns({ db: f.db }, { now })).requeued).toEqual([run.id]);
+    const calls = f.provider.calls.length;
+    const nextWait = "newer-outage-wait";
+    await f.db
+      .update(schema.agentRuns)
+      .set({
+        transcript: { ...transcript, outage: { ...outage, waitId: nextWait } },
+      })
+      .where(eq(schema.agentRuns.id, run.id));
+    heal();
+    await drainOutbox(f.db, f.handlers);
+    expect(f.provider.calls).toHaveLength(calls);
+    expect(await runRow(run.id)).toMatchObject({
+      status: "waiting_input",
+      transcript: { outage: { waitId: nextWait } },
+    });
+    expect((await recoverStaleRuns({ db: f.db }, { now: new Date(now.getTime() + 1000) })).requeued).toEqual([run.id]);
+    await drainOutbox(f.db, f.handlers);
+    expect((await runRow(run.id))?.status).toBe("done");
+    expect(f.provider.calls).toHaveLength(calls + 1);
   });
 });

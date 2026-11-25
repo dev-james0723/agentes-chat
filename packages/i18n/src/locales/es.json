@@ -8645,6 +8645,8 @@
       "draftingNoComputer": "{{executor}} está leyendo la carpeta y armando el plan",
       "empty": "Aún no hay elementos. Puedes empezar igual o pedir un plan con “Cambiar algo”.",
       "waitPlan": "Se abre cuando llega el plan",
+      "repositoryFolder": "Carpeta del repositorio",
+      "repositoryFolderRelative": "Ruta relativa a la carpeta de trabajo del agente, por ejemplo, repos/proyecto.",
       "adjusts": "{{executor}} va ajustando la lista sobre la marcha",
       "switched": "Ahora programa {{executor}}. El plan empieza de nuevo.",
       "more_one": "+{{count}} elemento",
@@ -12234,6 +12236,8 @@
     "more": "Más servicios",
     "tileConnected": "{{name}}, conectado",
     "tileSoon": "{{name}}, pronto",
+    "tileSetupRequired": "{{name}}, requiere configuración",
+    "setupRequired": "Configuración necesaria",
     "otherTitle": "Otro servicio",
     "otherDetail": "Cualquier servicio que ofrezca una conexión para agentes, por su dirección (empieza con https://).",
     "otherSteps": {
@@ -12257,6 +12261,7 @@
     "how": {
       "oneClick": "Un clic: autorizas en la página del servicio",
       "oauthOrKey": "Autorizas en la página del servicio o usas una clave de API",
+      "oauthSetup": "Hay que configurar el inicio de sesión en este servidor.",
       "key": "Necesita una clave de API",
       "appPassword": "Necesita una contraseña de app",
       "addressPassword": "Necesita la dirección de la base de datos y una contraseña",

@@ -75,6 +75,7 @@ function taskTurn(req: TaskRequest, host: HostedTask): BrainTurnRequest {
     mcp: { token: typeof mission?.mcpToken === "string" ? mission.mcpToken : "" },
     keepAlive: false,
     account: String(req.account),
+    ...(typeof req.model === "string" && req.model ? { model: req.model } : {}),
     permissions: {
       mode: mission?.mode === "plan" ? "plan" : "work",
       ...(mission ? { branchPrefix: missionBranchPrefix(String(mission.id), mission.branchPrefix), allow } : {}),

@@ -8941,6 +8941,8 @@
       "draftingNoComputer": "{{executor}} czyta folder i przygotowuje plan",
       "empty": "Na razie brak punktów. Możesz mimo to zacząć albo poprosić o plan przez „Zmień coś”.",
       "waitPlan": "Otworzy się, gdy przyjdzie plan",
+      "repositoryFolder": "Folder repozytorium",
+      "repositoryFolderRelative": "Ścieżka względem folderu roboczego agenta, np. repos/projekt.",
       "adjusts": "{{executor}} dopasowuje listę na bieżąco",
       "switched": "Teraz programuje {{executor}}. Plan zaczyna się od nowa.",
       "more_one": "+{{count}} punkt",
@@ -12738,6 +12740,8 @@
     "more": "Więcej usług",
     "tileConnected": "{{name}}, połączono",
     "tileSoon": "{{name}}, wkrótce",
+    "tileSetupRequired": "{{name}}, wymagana konfiguracja",
+    "setupRequired": "Wymagana konfiguracja",
     "otherTitle": "Inna usługa",
     "otherDetail": "Dowolna usługa, która oferuje połączenie dla agentów, po jej adresie (zaczyna się od https://).",
     "otherSteps": {
@@ -12761,6 +12765,7 @@
     "how": {
       "oneClick": "Jedno kliknięcie: autoryzujesz na stronie usługi",
       "oauthOrKey": "Autoryzujesz na stronie usługi albo używasz klucza API",
+      "oauthSetup": "Logowanie wymaga konfiguracji na tym serwerze.",
       "key": "Wymaga klucza API",
       "appPassword": "Wymaga hasła do aplikacji",
       "addressPassword": "Wymaga adresu bazy danych i hasła",

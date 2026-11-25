@@ -8467,6 +8467,8 @@
       "draftingNoComputer_female": "{{executor}} leest de map en stelt het plan op",
       "empty": "Nog geen items. Je kunt toch starten of om een plan vragen met „Iets wijzigen”.",
       "waitPlan": "Opent zodra het plan er is",
+      "repositoryFolder": "Repositorymap",
+      "repositoryFolderRelative": "Pad relatief aan de werkmap van de agent, bijvoorbeeld repos/project.",
       "adjusts": "{{executor}} past de lijst onderweg steeds aan",
       "adjusts_female": "{{executor}} past de lijst onderweg steeds aan",
       "switched": "{{executor}} programmeert nu. Het plan begint opnieuw.",
@@ -11939,6 +11941,8 @@
     "more": "Meer diensten",
     "tileConnected": "{{name}}, gekoppeld",
     "tileSoon": "{{name}}, binnenkort",
+    "tileSetupRequired": "{{name}}, instellen vereist",
+    "setupRequired": "Instellen vereist",
     "otherTitle": "Een andere dienst",
     "otherDetail": "Elke dienst die een koppeling voor agents biedt, via zijn adres (dat begint met https://).",
     "otherSteps": {
@@ -11962,6 +11966,7 @@
     "how": {
       "oneClick": "Eén klik: je geeft toestemming op de pagina van de dienst",
       "oauthOrKey": "Je geeft toestemming op de pagina van de dienst, of gebruikt een API-sleutel",
+      "oauthSetup": "Inloggen moet op deze server worden ingesteld.",
       "key": "Heeft een API-sleutel nodig",
       "appPassword": "Heeft een app-wachtwoord nodig",
       "addressPassword": "Heeft het adres van de database en een wachtwoord nodig",

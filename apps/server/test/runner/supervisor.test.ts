@@ -4523,7 +4523,9 @@ test.if(posix)("a route or a task on a shared CLI login that can't run says why,
 test.if(posix)(
   "a task on a shared CLI login: its worker prepares it, root runs the CLI, the lines go back",
   async () => {
-    const s = await startHostedTask(hostedTask({ prompt: "@/etc/shadow fix it" }), { where: "Your branch: a/b." });
+    const s = await startHostedTask(hostedTask({ prompt: "@/etc/shadow fix it", model: "opus" }), {
+      where: "Your branch: a/b.",
+    });
     expect(s.q.grant).toEqual({ kind: "hosted" });
     // Root's word to the worker, never the server's.
     expect(s.reply.host).toBeUndefined();
@@ -4537,6 +4539,7 @@ test.if(posix)(
     expect(start.args[start.args.indexOf("--tools") + 1]).toBe("ToolSearch");
     expect(start.args).toContain("--strict-mcp-config");
     expect(start.args).toContain(HOSTED_SESSION);
+    expect(start.args).toEqual(expect.arrayContaining(["--model", "opus"]));
     // The turn's id is the task's, for the server's tools; outside a mission only the prompt tool is there.
     expect(s.ana.of("bridge.token")[0]).toMatchObject({ task: "local", profile: "work", session: HOSTED_SESSION });
     expect(s.ana.of("bridge.token")[1]).toMatchObject({ runId: HOSTED_TASK });

@@ -8704,6 +8704,8 @@
       "draftingNoComputer_female": "{{executor}} sta leggendo la cartella e preparando il piano",
       "empty": "Ancora nessun punto. Puoi avviare comunque o chiedere un piano con “Cambia qualcosa”.",
       "waitPlan": "Si apre quando arriva il piano",
+      "repositoryFolder": "Cartella del repository",
+      "repositoryFolderRelative": "Percorso relativo alla cartella di lavoro dell’agente, ad esempio repos/progetto.",
       "adjusts": "{{executor}} continua ad aggiustare l'elenco strada facendo",
       "adjusts_female": "{{executor}} continua ad aggiustare l'elenco strada facendo",
       "switched": "Ora programma {{executor}}. Il piano ricomincia da capo.",
@@ -12315,6 +12317,8 @@
     "more": "Altri servizi",
     "tileConnected": "{{name}}, collegato",
     "tileSoon": "{{name}}, in arrivo",
+    "tileSetupRequired": "{{name}}, configurazione necessaria",
+    "setupRequired": "Configurazione necessaria",
     "otherTitle": "Un altro servizio",
     "otherDetail": "Qualsiasi servizio che offra un collegamento per agenti, tramite il suo indirizzo (inizia con https://).",
     "otherSteps": {
@@ -12338,6 +12342,7 @@
     "how": {
       "oneClick": "Un clic: autorizzi nella pagina del servizio",
       "oauthOrKey": "Autorizzi nella pagina del servizio, oppure usi una chiave API",
+      "oauthSetup": "L'accesso deve essere configurato su questo server.",
       "key": "Richiede una chiave API",
       "appPassword": "Richiede una password per app",
       "addressPassword": "Richiede l'indirizzo del database e una password",

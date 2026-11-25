@@ -8715,6 +8715,8 @@ export const en = {
       draftingNoComputer: "{{executor}} is reading the folder and drafting the plan",
       empty: "No items yet. You can start anyway or ask for a plan with “Change something”.",
       waitPlan: "Opens when the plan arrives",
+      repositoryFolder: "Repository folder",
+      repositoryFolderRelative: "Path relative to the agent’s workspace, e.g. repos/project.",
       adjusts: "{{executor}} keeps adjusting the list along the way",
       switched: "{{executor}} programs now. The plan starts over.",
       more_one: "+{{count}} item",
@@ -12129,6 +12131,8 @@ export const en = {
     more: "More services",
     tileConnected: "{{name}}, connected",
     tileSoon: "{{name}}, soon",
+    tileSetupRequired: "{{name}}, setup required",
+    setupRequired: "Setup required",
     otherTitle: "Another service",
     otherDetail: "Any service that offers a connection for agents, by its address (it starts with https://).",
     otherSteps: {
@@ -12152,6 +12156,7 @@ export const en = {
     how: {
       oneClick: "One click: you authorize on the service's page",
       oauthOrKey: "You authorize on the service's page, or use an API key",
+      oauthSetup: "Sign-in needs to be configured on this server.",
       key: "Needs an API key",
       appPassword: "Needs an app password",
       addressPassword: "Needs the database address and a password",
