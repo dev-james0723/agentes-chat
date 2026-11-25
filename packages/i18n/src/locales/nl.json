@@ -3127,6 +3127,8 @@
     "atOnceHelp": "Hoeveel klussen waar niemand om vroeg hij tegelijk doet. De rest wacht op zijn beurt.",
     "prs": "Pull requests per uur",
     "prsHelp": "Het hoogste aantal dat zijn eigen werk in een uur opent.",
+    "shots": "Schermafbeeldingen per taak",
+    "shotsHelp": "Het maximum dat één stuk werk mag maken. Verhoog het voor een agent die controleert hoe pagina’s eruitzien. Nieuwe schermafbeeldingen pauzeren ook als de schijf van zijn computer bijna vol is.",
     "call": "Agents die hij mag roepen",
     "callHelp": "Wie hij mag noemen of aan wie hij werk mag doorgeven.",
     "callAll": "Alle",
@@ -11698,6 +11700,44 @@
   },
   "storage": {
     "title": "Opslag",
+    "clean": {
+      "title": "Werkruimte opruimen",
+      "intro": "Wat afgeronde taken op de computers van agents hebben achtergelaten. Opleveringen, bewijs en alles zonder uitleg blijven. Jij kiest welke tijdelijke bestanden worden opgeruimd.",
+      "computers": "Schijven van de computers",
+      "level": {
+        "ok": "{{free}} GB vrij",
+        "low": "Weinig ruimte: {{free}} GB vrij",
+        "critical": "Bijna vol: {{free}} GB vrij. Nieuwe schermafbeeldingen en opnames staan stil.",
+        "unknown": "Nog niet gemeten"
+      },
+      "none": "Er is geen taak afgerond sinds agents hun bestanden registreren.",
+      "task": "Taak",
+      "mission": "Missie",
+      "ended": {
+        "done": "Klaar",
+        "canceled": "Geannuleerd"
+      },
+      "kept_one": "{{count}} bewaard",
+      "kept_other": "{{count}} bewaard",
+      "candidates_one": "{{count}} tijdelijk bestand, {{size}}",
+      "candidates_other": "{{count}} tijdelijke bestanden, {{size}}",
+      "duplicates_one": "{{count}} exacte kopie",
+      "duplicates_other": "{{count}} exacte kopieën",
+      "restorable": "Bewijs: {{restorable}} terug te zetten uit de Drive, {{manifestOnly}} alleen vermeld",
+      "approve": "Tijdelijke bestanden opruimen",
+      "approved_one": "{{count}} bestand goedgekeurd: het wordt op zijn computer opnieuw gecontroleerd voordat het verdwijnt.",
+      "approved_other": "{{count}} bestanden goedgekeurd: elk wordt op zijn computer opnieuw gecontroleerd voordat het verdwijnt.",
+      "status": {
+        "approved": "Wacht op de computer",
+        "done": "Verwijderd",
+        "skipped": "Was al weg",
+        "blocked": "Bewaard: {{reason}}",
+        "unknown": "Nog onzeker: later opnieuw gecontroleerd"
+      },
+      "freed": "Vrije ruimte op de computer: {{before}} ervoor, {{after}} erna",
+      "show": "Bestanden tonen",
+      "hide": "Bestanden verbergen"
+    },
     "options": "Waar bestanden te bewaren",
     "agentes": "agentes.chat-opslag",
     "agentesText": "Je bestanden blijven in onze opslag, gescheiden per werkruimte.",

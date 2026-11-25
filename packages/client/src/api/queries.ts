@@ -3802,6 +3802,21 @@ export const useWorkspaceLimits = (orgId: string, enabled = true) => {
   return useQuery({ queryKey: keys.limits(orgId), queryFn: () => api.orgs.limits(orgId), enabled });
 };
 
+export const useCleanWorkspace = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.cleanWorkspace(orgId), queryFn: () => api.cleanWorkspace.get(orgId), enabled });
+};
+
+export function useApproveCleanup(orgId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { reportId: string; paths?: string[] }) =>
+      api.cleanWorkspace.approve(orgId, input.reportId, input.paths),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.cleanWorkspace(orgId) }),
+  });
+}
+
 export const useStorage = (orgId: string, enabled = true) => {
   const api = useApi();
   return useQuery({ queryKey: keys.storage(orgId), queryFn: () => api.storage.get(orgId), enabled });

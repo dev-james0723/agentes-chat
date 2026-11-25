@@ -3228,6 +3228,8 @@
     "atOnceHelp": "Quanti lavori che nessuno ha chiesto svolge allo stesso tempo. Gli altri aspettano il loro turno.",
     "prs": "Pull request all'ora",
     "prsHelp": "Il massimo che il suo lavoro apre in un'ora.",
+    "shots": "Screenshot per attività",
+    "shotsHelp": "Il massimo che un suo lavoro può fare. Aumentalo per un agente che controlla l’aspetto delle pagine. I nuovi screenshot si fermano anche quando il disco del suo computer è quasi pieno.",
     "call": "Agenti che può chiamare",
     "callHelp": "Chi può menzionare o a chi può passare lavoro.",
     "callAll": "Tutti",
@@ -12070,6 +12072,48 @@
   },
   "storage": {
     "title": "Archiviazione",
+    "clean": {
+      "title": "Pulisci lo spazio di lavoro",
+      "intro": "Ciò che le attività concluse hanno lasciato sui computer degli agenti. Consegne, prove e tutto ciò che non ha spiegazione restano. Scegli tu quali file temporanei pulire.",
+      "computers": "Dischi dei computer",
+      "level": {
+        "ok": "{{free}} GB liberi",
+        "low": "Poco spazio: {{free}} GB liberi",
+        "critical": "Quasi pieno: {{free}} GB liberi. Nuovi screenshot e registrazioni sono in pausa.",
+        "unknown": "Non ancora misurato"
+      },
+      "none": "Nessuna attività è terminata da quando gli agenti registrano i loro file.",
+      "task": "Attività",
+      "mission": "Missione",
+      "ended": {
+        "done": "Completata",
+        "canceled": "Annullata"
+      },
+      "kept_one": "{{count}} conservato",
+      "kept_many": "{{count}} conservati",
+      "kept_other": "{{count}} conservati",
+      "candidates_one": "{{count}} file temporaneo, {{size}}",
+      "candidates_many": "{{count}} file temporanei, {{size}}",
+      "candidates_other": "{{count}} file temporanei, {{size}}",
+      "duplicates_one": "{{count}} copia esatta",
+      "duplicates_many": "{{count}} copie esatte",
+      "duplicates_other": "{{count}} copie esatte",
+      "restorable": "Prove: {{restorable}} ripristinabili dal Drive, {{manifestOnly}} solo elencate",
+      "approve": "Pulisci i file temporanei",
+      "approved_one": "{{count}} file approvato: viene ricontrollato sul suo computer prima di essere rimosso.",
+      "approved_many": "{{count}} file approvati: ognuno viene ricontrollato sul suo computer prima di essere rimosso.",
+      "approved_other": "{{count}} file approvati: ognuno viene ricontrollato sul suo computer prima di essere rimosso.",
+      "status": {
+        "approved": "In attesa del suo computer",
+        "done": "Rimosso",
+        "skipped": "Già assente",
+        "blocked": "Conservato: {{reason}}",
+        "unknown": "Non ancora certo: ricontrollato più tardi"
+      },
+      "freed": "Spazio libero sul computer: {{before}} prima, {{after}} dopo",
+      "show": "Mostra i file",
+      "hide": "Nascondi i file"
+    },
     "options": "Dove conservare i file",
     "agentes": "Archiviazione agentes.chat",
     "agentesText": "I tuoi file restano nel nostro archivio, separati per spazio di lavoro.",

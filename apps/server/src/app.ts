@@ -31,6 +31,7 @@ import { browserProfileRoutes } from "./routes/app/browser-profiles";
 import { calendarRoutes } from "./routes/app/calendar";
 import { channelRoutes } from "./routes/app/channels";
 import { chatRoutes } from "./routes/app/chat";
+import { cleanWorkspaceRoutes } from "./routes/app/clean-workspace";
 import { connectorRoutes } from "./routes/app/connectors";
 import { customConnectorRoutes } from "./routes/app/connectors-custom";
 import { type AppDeps, agentDetailsGate, readOnlyWhileDeleting } from "./routes/app/context";
@@ -223,6 +224,7 @@ export function createApp(options: AppOptions) {
     api.route("/app", inviteRoutes(deps));
     api.route("/app", roleRoutes(deps));
     api.route("/app", storageRoutes(deps));
+    api.route("/app", cleanWorkspaceRoutes(deps));
     api.route("/app", billingRoutes(deps));
     api.route("/app", artifactRoutes(deps));
     api.route("/app", issueRoutes(deps));

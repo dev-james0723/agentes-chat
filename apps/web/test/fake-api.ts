@@ -26,6 +26,7 @@ import type {
   ChannelCategory,
   ChannelMember,
   ChannelOverride,
+  CleanWorkspace,
   ComposioUsage,
   Connection,
   ConnectorCatalog,
@@ -318,6 +319,8 @@ export interface FakeState {
     openedAt?: string;
   }[];
   calls: { method: string; args: unknown[] }[];
+  /** What the Clean workspace card reads (ADR 0201); unset = no computers and no reports. */
+  cleanWorkspace?: CleanWorkspace;
   context?: string;
   defaultCredentialId?: string | null;
   /** The workspace default agent budget (US$); 50 when unset. */
@@ -1333,6 +1336,13 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
     return budget > 0 ? Math.round((spent / budget) * 1000) / 10 : 0;
   };
   return {
+    cleanWorkspace: {
+      get: async () => state.cleanWorkspace ?? { computers: [], pending: 0, reports: [] },
+      approve: async (orgId, reportId) => {
+        log("cleanWorkspace.approve", orgId, reportId);
+        return { approved: 0, notOnAComputer: 0 };
+      },
+    },
     system: {
       health: async () => ({ status: "ok", version: "test", edition: state.edition ?? "cloud" }),
       instance: async () => ({

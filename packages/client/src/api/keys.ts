@@ -125,6 +125,7 @@ export const keys = {
   dms: (orgId: string) => ["org", orgId, "dms"] as const,
   dmReads: (orgId: string, channelId: string) => ["org", orgId, "dmReads", channelId] as const,
   storage: (orgId: string) => ["org", orgId, "storage"] as const,
+  cleanWorkspace: (orgId: string) => ["org", orgId, "clean-workspace"] as const,
   artifacts: (orgId: string) => ["org", orgId, "artifacts"] as const,
   sandbox: (orgId: string) => ["org", orgId, "sandbox"] as const,
   sandboxSettings: (orgId: string) => ["org", orgId, "sandbox", "settings"] as const,

@@ -771,6 +771,8 @@ export interface AgentBrakes {
   never: CostKind[];
   maxUnrequested: number;
   maxPrsPerHour: number;
+  /** Screenshots one run may take (ADR 0201). */
+  maxScreenshotsPerRun: number;
   callAgents: "all" | "some" | "none";
   callAgentIds: string[];
   project: string;
@@ -784,6 +786,7 @@ export const BRAKES_DEFAULTS: AgentBrakes = {
   never: [],
   maxUnrequested: 2,
   maxPrsPerHour: 3,
+  maxScreenshotsPerRun: 60,
   callAgents: "all",
   callAgentIds: [],
   project: "",

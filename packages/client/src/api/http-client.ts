@@ -14,7 +14,7 @@ import type {
   VaultKeysImportResult,
   VaultOverview,
 } from "../vault/types";
-import type { HttpApi, OpenedWorkspace } from "./client";
+import type { CleanWorkspace, HttpApi, OpenedWorkspace } from "./client";
 import { ApiError, createFileRequester, createRequester, enc, type TransportOptions } from "./http";
 import type {
   AccountDeletionPlan,
@@ -1427,6 +1427,16 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       mine: async (orgId) =>
         (await request<{ suggestions: MySuggestion[] }>(`${org(orgId)}/join-requests/mine`)).suggestions,
       cancel: (orgId, id) => request<void>(`${org(orgId)}/join-requests/${enc(id)}`, { method: "DELETE" }),
+    },
+    cleanWorkspace: {
+      get: (orgId) => request<CleanWorkspace>(`${org(orgId)}/clean-workspace`),
+      approve: (orgId, reportId, paths) =>
+        request<{ approved: number; notOnAComputer: number }>(
+          `${org(orgId)}/clean-workspace/${enc(reportId)}/approve`,
+          {
+            json: paths ? { paths } : {},
+          },
+        ),
     },
     storage: {
       get: (orgId) => request<StorageConfig>(`${org(orgId)}/storage`),

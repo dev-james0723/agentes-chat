@@ -68,6 +68,7 @@ import {
   relayQueuedFeedback,
   sendQueuedFeedback,
 } from "./feedback";
+import { FILE_CLEANUP_JOB, runFileCleanup } from "./file-cleanup";
 import { FOLLOW_UP_JOB, wakeFollowUp } from "./follow-through";
 import { cutText } from "./format";
 import { FOUNDRY_EVALUATE_JOB } from "./foundry/evaluation";
@@ -964,6 +965,11 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
       if ((subjectType !== "issue" && subjectType !== "mission") || typeof subjectId !== "string")
         throw new PermanentJobError("bad retention report payload");
       await writeRetentionReport(deps.db, orgOf(job), { type: subjectType, id: subjectId });
+    },
+    // Files a person approved for cleanup, checked again and removed on the agent's computer (ADR 0201).
+    [FILE_CLEANUP_JOB]: async (job) => {
+      if (typeof job.payload.reportId !== "string") throw new PermanentJobError("bad file cleanup payload");
+      await runFileCleanup({ db: deps.db, hub: deps.sandbox?.machines?.hub ?? null }, orgOf(job), job.payload.reportId);
     },
     "routine.run": async (job) => {
       await executeRoutineRun(
