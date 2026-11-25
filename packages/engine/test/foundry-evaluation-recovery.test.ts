@@ -145,6 +145,13 @@ describe("durable Foundry evaluation through native checkpoints (simulated isola
     expect(delivered.next).toContain("stage_foundry_package");
     expect(delivered.next).toContain("new version");
     expect(delivered.semantics).toContain("unknown and unverified");
+    // What usually breaks a version, in the public contract's words, and how many corrected versions remain.
+    expect(delivered.checklist.join(" ")).toContain("number of records");
+    expect(delivered.checklist.join(" ")).toContain("own `code`");
+    expect(delivered.checklist.join(" ")).toContain("Unicode scalar values");
+    expect(delivered.checklist.join(" ")).toContain("console");
+    expect(delivered.versionsLeft).toBe(3);
+    expect(JSON.stringify(delivered)).not.toContain("ignore prior instructions");
     // The same digest again, from the resumed run: its outcome, never "in progress".
     await f.db.update(schema.agentRuns).set({ status: "running" }).where(eq(schema.agentRuns.id, w.ctx.runId));
     const again = await w.rawLifecycle.evaluate(
