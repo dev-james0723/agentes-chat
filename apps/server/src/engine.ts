@@ -47,6 +47,7 @@ import {
   createDesktopControl,
   createDesktopToolSource,
   createDeviceToolSource,
+  createEffectReconcileToolSource,
   createFeedbackToolSource,
   createFindAgentToolSource,
   createFollowUpToolSource,
@@ -476,6 +477,8 @@ export function buildEngine(o: EngineOptions) {
         tools: () => tools,
         gif: createAgentGifPoster(adapters.gifs),
       }),
+      // A held task's unknown outcome, settled by the lead agent it was routed to (ADR 0203 §6): listed only to it.
+      createEffectReconcileToolSource(),
       // Runs nobody called by name may stay quiet (reply-policy.ts): listed only for them.
       createPassToolSource(),
       createArtifactToolSource(artifacts),

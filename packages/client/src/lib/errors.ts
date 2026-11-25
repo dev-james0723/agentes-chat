@@ -31,6 +31,12 @@ const KNOWN = {
   "paperclip.target_changed": "errors.said.changed",
   "paperclip.workspace_changed": "errors.said.changed",
   "skill.version_conflict": "errors.said.changed",
+  // Settling a held run's unknown outcome (ADR 0203): the run ended, a turn still works, the outcome was settled
+  // already, or the approval behind it no longer stands.
+  "run.effect_run_ended": "errors.said.alreadyDone",
+  "run.effect_turn_open": "errors.said.conflict",
+  "run.effect_unknown_id": "errors.said.gone",
+  "run.effect_grant_revoked": "errors.said.changed",
   // Native memory: an edit raced by another, an event replayed, or a write that isn't well formed.
   "memory.version_conflict": "errors.said.changed",
   "memory.event_applied": "errors.said.gone",
