@@ -249,9 +249,13 @@ describe("task outcomes", () => {
       assignee: { type: "agent", id: f.agent.id },
     });
     await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "done" });
-    expect(await issueOutcomes(issue.number)).toEqual([]);
-    await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "in_progress" });
+    // Moving it to done is a claim (ADR 0211), recorded against who made it; never a verification.
     expect(await issueOutcomes(issue.number)).toMatchObject([
+      { kind: "issue_closed", details: { issueId: issue.id, by: { type: "person", id: f.owner.id }, claim: true } },
+    ]);
+    const notClaims = async () => (await issueOutcomes(issue.number)).filter((o) => o.kind !== "issue_closed");
+    await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "in_progress" });
+    expect(await notClaims()).toMatchObject([
       {
         kind: "issue_reopened",
         polarity: "negative",
@@ -263,7 +267,7 @@ describe("task outcomes", () => {
     // Canceling a done task is not a reopen.
     await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "done" });
     await updateIssue(deps(), owner(), f.org.id, issue.id, { status: "canceled" });
-    expect((await issueOutcomes(issue.number)).length).toBe(1);
+    expect((await notClaims()).length).toBe(1);
   });
 });
 

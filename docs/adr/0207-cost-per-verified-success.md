@@ -27,3 +27,7 @@ A read-only report, per agent × brain × model and per time window (runs create
 - Teams on plans see "Cost unknown" until per-turn prices exist for plan turns; that is the honest answer.
 - Work not tracked as a task with criteria never shows a success; its cost still shows.
 - The report loads the window's runs in memory; the 92-day cap bounds it.
+
+## Addendum 2026-11-25
+
+A success is now a task an independent verifier confirmed against its completion contract (`task_verified`, ADR 0211), not a person-vouched `criteria_met`; the report also returns the false-pass counts (`claims`).

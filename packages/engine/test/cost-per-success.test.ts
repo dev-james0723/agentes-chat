@@ -1,12 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { schema } from "@agenteschat/db";
-import { costPerSuccess } from "../src";
+import { contractHash, contractOf, costPerSuccess, OUTCOME_KINDS, type OutcomeKind } from "../src";
 import { addMember, type Fixture, setup } from "./fixtures";
 
 /**
- * Cost per independently verified successful task (ADR 0207), measurement only: a success is a task whose
- * acceptance criteria people checked (`criteria_met`, every criterion `doneBy` a person) and that nobody
- * reopened since. Every finished run counts toward cost; unknown cost stays unknown, never 0.
+ * Cost per independently verified successful task (ADR 0207), measurement only: a success is a task an independent
+ * verifier confirmed against its completion contract (`task_verified`, ADR 0211) and that nobody reopened or rejected
+ * since. Every finished run counts toward cost; unknown cost stays unknown, never 0.
  */
 
 let f: Fixture;
@@ -62,14 +62,28 @@ async function usage(runId: string, opts: { usd?: number; billedTo?: string; mod
   });
 }
 
-async function outcome(kind: "criteria_met" | "issue_reopened", issueId: string, at: Date, by = "person") {
+/** A task with no row and no contract: the default contract over no criteria, as `costPerSuccess` reads it. */
+const DEFAULT_HASH = contractHash(contractOf(null), []);
+
+async function outcome(
+  kind: Extract<OutcomeKind, "task_verified" | "task_rejected" | "criteria_met" | "issue_reopened" | "issue_closed">,
+  issueId: string,
+  at: Date,
+  extra: Record<string, unknown> = {},
+) {
   await f.db.insert(schema.outcomes).values({
     orgId: f.org.id,
     agentId: f.agent.id,
     kind,
-    polarity: kind === "criteria_met" ? "positive" : "negative",
+    polarity: OUTCOME_KINDS[kind],
     subject: "issue#1",
-    details: kind === "criteria_met" ? { issueId, checkedBy: [{ type: by, id: "x" }] } : { issueId },
+    details: {
+      issueId,
+      by: { type: "person", id: "verifier" },
+      contractHash: DEFAULT_HASH,
+      checkedBy: [{ type: "person", id: "x" }],
+      ...extra,
+    },
     source: "issue",
     createdAt: at,
   });
@@ -89,7 +103,7 @@ test("a person-verified task is a success; its cost is every finished run on it,
   await usage(first, { usd: 0.4 });
   const second = await run({ issueId: task, at: minutesAgo(40) });
   await usage(second, { usd: 0.6, tokens: 300 });
-  await outcome("criteria_met", task, minutesAgo(10));
+  await outcome("task_verified", task, minutesAgo(10));
 
   const g = await only();
   expect(g).toMatchObject({
@@ -109,14 +123,15 @@ test("a person-verified task is a success; its cost is every finished run on it,
   expect(g.text).toContain("US$1.00");
 });
 
-test("negative control: a task marked done with no person verification is no success", async () => {
+test("negative control: a task marked done, or ticked by people, with no independent verifier is no success", async () => {
   f = await setup();
   const task = crypto.randomUUID();
   await usage(await run({ issueId: task }), { usd: 0.5 });
-  // An agent ticking its own criteria is not independent verification either.
+  await outcome("issue_closed", task, minutesAgo(6), { by: { type: "agent", id: f.agent.id }, claim: true });
+  // People ticking every criterion is evidence, not the verifier's verdict (ADR 0211).
   const other = crypto.randomUUID();
   await usage(await run({ issueId: other }), { usd: 0.5 });
-  await outcome("criteria_met", other, minutesAgo(5), "agent");
+  await outcome("criteria_met", other, minutesAgo(5));
 
   const g = await only();
   expect(g.verifiedSuccesses).toBe(0);
@@ -129,11 +144,11 @@ test("negative control: a reopened task loses its success; verified again, it co
   f = await setup();
   const task = crypto.randomUUID();
   await usage(await run({ issueId: task, at: minutesAgo(60) }), { usd: 0.3 });
-  await outcome("criteria_met", task, minutesAgo(20));
+  await outcome("task_verified", task, minutesAgo(20));
   await outcome("issue_reopened", task, minutesAgo(15));
   expect((await only()).verifiedSuccesses).toBe(0);
 
-  await outcome("criteria_met", task, minutesAgo(1));
+  await outcome("task_verified", task, minutesAgo(1));
   expect((await only()).verifiedSuccesses).toBe(1);
 });
 
@@ -143,7 +158,7 @@ test("negative control: unknown cost stays unknown, never 0", async () => {
   // A plan turn records no price; a finished run with no usage row has no known cost either.
   await usage(await run({ issueId: task, brain: "claude_code" }), { billedTo: "plan", usd: 0 });
   await run({ issueId: task, brain: "claude_code" });
-  await outcome("criteria_met", task, minutesAgo(1));
+  await outcome("task_verified", task, minutesAgo(1));
 
   const r = await report();
   expect(r.groups).toHaveLength(2);
@@ -190,4 +205,43 @@ test("money is for those who may see usage", async () => {
   f = await setup();
   const member = await addMember(f.db, f.org.id, "member", "Bia");
   await expect(costPerSuccess(f.db, member.id, f.org.id, {})).rejects.toThrow();
+});
+
+test("negative control: a verdict against another contract, or rejected after it, is no success", async () => {
+  f = await setup();
+  const stale = crypto.randomUUID();
+  await usage(await run({ issueId: stale }), { usd: 0.1 });
+  await outcome("task_verified", stale, minutesAgo(5), { contractHash: "sha256:other" });
+  const rejected = crypto.randomUUID();
+  await usage(await run({ issueId: rejected }), { usd: 0.1 });
+  await outcome("task_verified", rejected, minutesAgo(5));
+  await outcome("task_rejected", rejected, minutesAgo(2), { reasons: ["Save does nothing"] });
+  expect((await only()).verifiedSuccesses).toBe(0);
+});
+
+test("false-pass counts: claimed done, verified, rejected after a claim (ADR 0211)", async () => {
+  f = await setup();
+  const agentClaim = { by: { type: "agent", id: f.agent.id }, claim: true };
+  const ok = crypto.randomUUID();
+  await outcome("issue_closed", ok, minutesAgo(30), agentClaim);
+  await outcome("task_verified", ok, minutesAgo(20));
+  const bad = crypto.randomUUID();
+  await outcome("issue_closed", bad, minutesAgo(30), agentClaim);
+  await outcome("task_rejected", bad, minutesAgo(20), { reasons: ["Old build still serving"] });
+  const open = crypto.randomUUID();
+  await outcome("issue_closed", open, minutesAgo(30), agentClaim);
+  // A rejection with no claim before it isn't a false pass.
+  const early = crypto.randomUUID();
+  await outcome("task_rejected", early, minutesAgo(30), { reasons: ["Not done"] });
+  await outcome("issue_closed", early, minutesAgo(10), agentClaim);
+
+  const { claims } = await report();
+  expect(claims).toMatchObject({
+    claimedDone: 4,
+    verified: 1,
+    rejectedAfterClaim: 1,
+    unverified: 2,
+    falseClaimRate: 0.25,
+  });
+  expect(claims.text).toContain("4");
 });

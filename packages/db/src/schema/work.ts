@@ -125,6 +125,16 @@ export const issues = pgTable(
       .$type<{ id: string; text: string; done: boolean; doneBy?: { type: "person" | "agent"; id: string } | null }[]>()
       .notNull()
       .default([]),
+    /**
+     * Its completion contract (ADR 0211): the evidence kinds an independent verifier's "verified" needs, and the test
+     * suite's pinned digest. Null: the default contract (every acceptance criterion checked). Set only by people.
+     */
+    completionContract: jsonb().$type<{
+      evidence: string[];
+      tests?: { suite: string; digest: string } | null;
+      setBy: { type: "person" | "agent"; id: string };
+      setAt: string;
+    }>(),
     /** `{ type: "manual" | "message" | "agent" | "webhook", … }`. */
     source: jsonb().$type<Record<string, unknown>>().notNull().default({ type: "manual" }),
     channelId: uuid(),

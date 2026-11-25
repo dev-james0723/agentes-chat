@@ -1982,6 +1982,7 @@ export function createFakeHttpApi(state: FakeState): Omit<HttpApi, FakedParts> {
           from: new Date().toISOString(),
           to: new Date().toISOString(),
           groups: [],
+          claims: { claimedDone: 0, verified: 0, rejectedAfterClaim: 0, unverified: 0, falseClaimRate: null, text: "" },
           total: {
             runs: 0,
             failedRuns: 0,

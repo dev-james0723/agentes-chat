@@ -31,6 +31,7 @@ test("each agent's cost per success; unknown cost and no success say so instead 
   state.costPerSuccess = {
     from: now,
     to: now,
+    claims: { claimedDone: 0, verified: 0, rejectedAfterClaim: 0, unverified: 0, falseClaimRate: null, text: "" },
     groups: [
       { agentId: ATLAS_ID, agentName: "Atlas", brain: "api", model: "claude-sonnet-5-5", ...row({}) },
       {

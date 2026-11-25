@@ -1378,6 +1378,14 @@ export async function updateIssue(
         kind: "issue_reopened",
         details: { issueId: updated.id, from: current.status, to: updated.status, by: author },
       });
+    // A claim of done, whoever made it: what an independent verifier confirms or rejects (ADR 0211), and what the
+    // false-pass counts start from. A claim is never verification.
+    if (current.status !== "done" && updated.status === "done")
+      await recordOutcome(tx, {
+        ...taskOutcome(updated, actor),
+        kind: "issue_closed",
+        details: { issueId: updated.id, by: author, claim: true },
+      });
     await enqueueIndex(tx, { orgId, kind: "issue", sourceId: updated.id });
     // Ended: a dry-run report of its files, committed with the change (ADR 0197).
     if (updated.status !== current.status)
@@ -2174,6 +2182,18 @@ export async function setWorkIssueState(
     if (!updated) return null;
     if (status !== current.status) {
       await queueRetentionReport(tx, work.orgId, { type: "issue", id: updated.id }, status, now);
+      // The agent's work ending closed the task: a claim of done, not verification (ADR 0211).
+      if (status === "done")
+        await recordOutcome(tx, {
+          orgId: work.orgId,
+          kind: "issue_closed",
+          agentId: work.agentId,
+          subject: `issue#${updated.number}`,
+          summary: updated.restricted ? "" : updated.title,
+          details: { issueId: updated.id, by: author, claim: true, auto: true },
+          source: "issue",
+          channelId: updated.channelId,
+        });
       await addActivity(tx, updated, {
         kind: "event",
         author,

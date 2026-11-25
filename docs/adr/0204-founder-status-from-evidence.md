@@ -47,3 +47,7 @@ The status is read on the task page, under the agent's work, as one more section
 - **A model summary over the same data.** Fluent text over stale or partial evidence makes a wrong "done" more convincing. Templates are fixed and tested.
 - **Comparing the running digest with the merge commit's own digest.** Any later merge changes the digest, so a delivered task would read unknown after the next deploy. A deploy record with the commits it holds keeps the answer.
 - **A separate founder dashboard and its own notifications.** A second place to look and a second notice per decision. The task page and the approval card already exist.
+
+## Addendum 2026-11-25
+
+"Verified" now needs an independent verifier's verdict over the task's completion contract (ADR 0211); a person-vouched `criteria_met` alone is evidence for that verifier, no longer verification.

@@ -7,6 +7,7 @@ import {
   deleteIssue,
   deleteIssueColumn,
   deleteIssueProject,
+  EVIDENCE_KINDS,
   founderStatus,
   getIssueDetail,
   type IssueDeps,
@@ -15,17 +16,21 @@ import {
   listIssueColumns,
   listIssueProjects,
   listIssues,
+  MISSING_REASONS,
   openTaskConversation,
   PROJECT_NAME_MAX,
   ROLE_COLORS,
+  setCompletionContract,
   setCriterion,
   setIssueAudience,
   traceability,
   updateIssue,
   updateIssueColumn,
   updateIssueProject,
+  verifyTask,
 } from "@agenteschat/engine";
 import { createRoute, z } from "@hono/zod-openapi";
+
 import {
   type AppDeps,
   body,
@@ -219,6 +224,40 @@ const Traceability = z
   })
   .openapi("Traceability");
 
+const ContractInput = z.object({
+  evidence: z.array(z.enum(EVIDENCE_KINDS)).min(1).max(EVIDENCE_KINDS.length),
+  tests: z
+    .object({
+      suite: z.string().min(1).max(200),
+      digest: z
+        .string()
+        .regex(/^sha256:[0-9a-f]{64}$/)
+        .openapi({ description: "Digest of the suite's test files now; a receipt must carry the same." }),
+    })
+    .nullable()
+    .optional(),
+});
+const ContractView = z
+  .object({
+    evidence: z.array(z.string()),
+    tests: z.object({ suite: z.string(), digest: z.string() }).nullable().optional(),
+    setBy: z.object({ type: z.enum(["person", "agent"]), id: z.string() }),
+    setAt: z.string(),
+  })
+  .openapi("CompletionContract");
+const VerifyInput = z.object({
+  verdict: z.enum(["verified", "rejected"]),
+  reasons: z.array(z.string().max(500)).max(10).optional(),
+});
+const VerifyView = z
+  .object({
+    id: z.uuid(),
+    verdict: z.enum(["verified", "rejected"]),
+    missing: z.array(z.enum(MISSING_REASONS)),
+    recordedAt: z.string(),
+  })
+  .openapi("TaskVerdict");
+
 const FounderStatus = z
   .object({
     issueId: z.uuid(),
@@ -250,12 +289,21 @@ const FounderStatus = z
       text: z.string(),
     }),
     verification: z.object({
-      state: z.enum(["verified", "done_unverified", "unverified", "no_criteria"]),
+      state: z.enum(["verified", "stale", "rejected", "done_unverified", "unverified", "no_criteria"]),
       verified: z.boolean().openapi({
-        description: "A `criteria_met` outcome with every criterion checked by a person, not reopened since.",
+        description:
+          "An independent verifier (not an implementer) confirmed it against its completion contract, and the stored evidence still meets the contract now (ADR 0211).",
       }),
       criteria: z.object({ total: z.number(), checkedByPerson: z.number() }),
       checks: z.array(z.object({ kind: z.string(), positive: z.boolean(), at: z.string() })),
+      contract: z.object({
+        evidence: z.array(z.enum(EVIDENCE_KINDS)),
+        tests: z.object({ suite: z.string(), digest: z.string() }).nullable(),
+        isDefault: z.boolean(),
+      }),
+      verifier: FounderOwner.nullable(),
+      missing: z.array(z.enum(MISSING_REASONS)),
+      rejectedReasons: z.array(z.string()),
       text: z.string(),
     }),
     blockers: z.array(z.object({ reason: z.string(), since: z.string(), text: z.string() })),
@@ -755,6 +803,60 @@ export function issueRoutes(deps: AppDeps) {
       // The server's own identity: a failed scan is no identity, so nothing reads as available.
       const running = deps.sourceIdentity ? await deps.sourceIdentity().catch(() => null) : null;
       return c.json(await founderStatus(db, c.get("user").id, orgId, issueId, running), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "put",
+      path: "/organizations/{orgId}/issues/{issueId}/completion-contract",
+      tags,
+      security,
+      summary:
+        "Set the task's completion contract (ADR 0211): the evidence an independent verifier's verdict needs, and the test files' pinned digest",
+      description:
+        "People only, and never one of the task's implementers (its assignee, an agent that ran on it, whoever claimed it done): 403 `self_verification`. A verdict given under another contract becomes stale.",
+      request: { params: IssueParams, body: body(ContractInput) },
+      responses: { 200: json(ContractView), ...errors },
+    }),
+    async (c) => {
+      const { orgId, issueId } = c.req.valid("param");
+      return c.json(await setCompletionContract(db, c.get("user").id, orgId, issueId, c.req.valid("json")), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/organizations/{orgId}/issues/{issueId}/verification",
+      tags,
+      security,
+      summary: "Record an independent verifier's verdict on the task (ADR 0211), audited",
+      description:
+        "403 `self_verification` for any of the task's implementers. `verified` is refused with 409 `evidence_missing` unless the stored evidence meets the task's completion contract now (this server's own source identity included); `rejected` needs reasons.",
+      request: { params: IssueParams, body: body(VerifyInput) },
+      responses: { 200: json(VerifyView), ...errors },
+    }),
+    async (c) => {
+      const { orgId, issueId } = c.req.valid("param");
+      const running = deps.sourceIdentity ? await deps.sourceIdentity().catch(() => null) : null;
+      const { outcome, assessment } = await verifyTask(
+        db,
+        person(c.get("user").id),
+        orgId,
+        issueId,
+        c.req.valid("json"),
+        running,
+      );
+      return c.json(
+        {
+          id: outcome.id,
+          verdict: outcome.kind === "task_verified" ? ("verified" as const) : ("rejected" as const),
+          missing: assessment.missing,
+          recordedAt: outcome.createdAt.toISOString(),
+        },
+        200,
+      );
     },
   );
 

@@ -101,9 +101,10 @@ const CostPerSuccessRow = z.object({
   runs: z.number(),
   failedRuns: z.number().openapi({ description: "Finished runs that failed or were stopped." }),
   retries: z.number().openapi({ description: "Runs on a task after its first in the window." }),
-  verifiedSuccesses: z
-    .number()
-    .openapi({ description: "Tasks people checked every criterion of (`criteria_met`) and nobody reopened since." }),
+  verifiedSuccesses: z.number().openapi({
+    description:
+      "Tasks an independent verifier confirmed against their completion contract (`task_verified`, ADR 0211), not reopened, claimed again or rejected since.",
+  }),
   tokens: z.number(),
   costUsd: z
     .number()
@@ -128,6 +129,16 @@ const CostPerSuccessReport = z
       }),
     ),
     total: CostPerSuccessRow,
+    claims: z
+      .object({
+        claimedDone: z.number().openapi({ description: "Tasks claimed done (`issue_closed`) in the window." }),
+        verified: z.number().openapi({ description: "Of those, confirmed by an independent verifier now." }),
+        rejectedAfterClaim: z.number().openapi({ description: "Of those, rejected by a verifier after the claim." }),
+        unverified: z.number(),
+        falseClaimRate: z.number().nullable().openapi({ description: "`rejectedAfterClaim / claimedDone`." }),
+        text: z.string(),
+      })
+      .openapi({ description: "False-pass counts (ADR 0211): read only." }),
   })
   .openapi("CostPerSuccessReport");
 

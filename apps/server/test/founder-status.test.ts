@@ -118,3 +118,45 @@ test("traceability (ADR 0206): a requirement is delivered only once its merge ru
   );
   expect((await read()).requirements[0]).toMatchObject({ state: "delivered", delivered: true });
 });
+
+test("independent verification (ADR 0211): contract, refused self-verification, missing evidence, then verified", async () => {
+  const { orgId, issueId, status, api } = await world(async () => ({ digest: DIGEST, files: 10 }));
+  const code = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+  const contract = await api(`/issues/${issueId}/completion-contract`, {
+    method: "PUT",
+    json: { evidence: ["pr_merged", "deploy_running"] },
+  });
+  expect(contract.status).toBe(200);
+  // The agent's work closed it: a claim, not verification.
+  await t.db.update(schema.issues).set({ status: "done" }).where(eq(schema.issues.id, issueId));
+  expect((await status()).verification).toMatchObject({ state: "done_unverified", verified: false });
+
+  const verify = () => api(`/issues/${issueId}/verification`, { method: "POST", json: { verdict: "verified" } });
+  const missing = await verify();
+  expect(missing.status).toBe(409);
+  expect(await code(missing)).toBe("evidence_missing");
+
+  await recordDeploy(
+    t.db,
+    { orgId, repo: "acme/app", commit: MERGE, sourceDigest: DIGEST },
+    { digest: DIGEST, files: 10 },
+  );
+  const [user] = await t.db.select({ id: schema.users.id }).from(schema.users);
+  // Assigned to the reader: they implemented it, so they can't verify it.
+  await t.db
+    .update(schema.issues)
+    .set({ assigneeType: "person", assigneeId: user?.id ?? "" })
+    .where(eq(schema.issues.id, issueId));
+  const self = await verify();
+  expect(self.status).toBe(403);
+  expect(await code(self)).toBe("self_verification");
+
+  await t.db.update(schema.issues).set({ assigneeType: null, assigneeId: null }).where(eq(schema.issues.id, issueId));
+  const ok = await verify();
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toMatchObject({ verdict: "verified", missing: [] });
+  expect((await status()).verification).toMatchObject({ state: "verified", verified: true });
+
+  const usage = (await (await api("/usage/cost-per-success")).json()) as { claims: { claimedDone: number } };
+  expect(usage.claims).toBeDefined();
+});
