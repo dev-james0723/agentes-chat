@@ -7828,6 +7828,15 @@ export const ptBR = {
     notFound: "Esta tarefa não existe ou você não tem acesso.",
     createdBy: "#{{number}} · criada por {{name}}",
     createdByShort: "Criada por {{name}}",
+    /** A task's status from stored evidence (ADR 0204); its lines come from the server in Hong Kong Chinese. */
+    founder: {
+      title: "Situação da entrega",
+      available: "No app em uso",
+      notAvailable: "Fora do app em uso",
+      verified: "Verificada",
+      notVerified: "Não verificada",
+      needsYou: "Precisa de você",
+    },
     fromMessage: "a partir de <0>uma mensagem no #{{channel}}</0>",
     fromAgent: "a partir de um pedido a um agente",
     subIssues_one: "Subtarefas · {{count}}",

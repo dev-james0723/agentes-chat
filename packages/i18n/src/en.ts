@@ -7824,6 +7824,15 @@ export const en = {
     notFound: "This task doesn't exist or you don't have access.",
     createdBy: "#{{number}} · created by {{name}}",
     createdByShort: "Created by {{name}}",
+    /** A task's status from stored evidence (ADR 0204); its lines come from the server in Hong Kong Chinese. */
+    founder: {
+      title: "Delivery status",
+      available: "In the running app",
+      notAvailable: "Not in the running app",
+      verified: "Verified",
+      notVerified: "Not verified",
+      needsYou: "Needs you",
+    },
     fromMessage: "from <0>a message in #{{channel}}</0>",
     fromAgent: "from a request to an agent",
     subIssues_one: "Subtasks · {{count}}",

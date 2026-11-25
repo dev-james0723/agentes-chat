@@ -7772,6 +7772,14 @@
     "notFound": "Cette tâche n'existe pas ou vous n'y avez pas accès.",
     "createdBy": "#{{number}} · créée par {{name}}",
     "createdByShort": "Créée par {{name}}",
+    "founder": {
+      "title": "État de la livraison",
+      "available": "Dans l'app utilisée",
+      "notAvailable": "Hors de l'app utilisée",
+      "verified": "Vérifiée",
+      "notVerified": "Non vérifiée",
+      "needsYou": "Vous attend"
+    },
     "fromMessage": "depuis <0>un message dans #{{channel}}</0>",
     "fromAgent": "depuis une demande à un agent",
     "subIssues_one": "Sous-tâches · {{count}}",

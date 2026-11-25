@@ -7720,6 +7720,14 @@
     "notFound": "Esta tarea no existe o no tienes acceso.",
     "createdBy": "#{{number}} · creada por {{name}}",
     "createdByShort": "Creada por {{name}}",
+    "founder": {
+      "title": "Estado de la entrega",
+      "available": "En la app en uso",
+      "notAvailable": "Fuera de la app en uso",
+      "verified": "Verificada",
+      "notVerified": "No verificada",
+      "needsYou": "Te necesita"
+    },
     "fromMessage": "desde <0>un mensaje en #{{channel}}</0>",
     "fromAgent": "desde un pedido a un agente",
     "subIssues_one": "Subtareas · {{count}}",
