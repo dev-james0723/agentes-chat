@@ -64,3 +64,7 @@ The server validates evidence structure and authority. It does not inspect pixel
 or prove an agent's QA statement true. Reviewers must inspect actual artifacts and run the relevant checks;
 unavailable or untested evidence cannot become a pass. Runtime tests establish the mechanism, while an actual
 product delivery must separately demonstrate the end-to-end behavior.
+
+## Addendum 2026-11-25
+
+The submission and the QA verdict are also ADR 0211's claim of done and independent verdict on the implementation task: a submission records an `issue_closed` claim, `changes_requested` a `task_rejected`, and `passed` a `task_verified` only when the implementation's completion contract is met.

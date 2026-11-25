@@ -1,4 +1,4 @@
-import { and, type Database, desc, eq, gt, inArray, isNull, or, schema, sql } from "@agenteschat/db";
+import { and, type Database, desc, type Executor, eq, gt, inArray, isNull, or, schema, sql } from "@agenteschat/db";
 import { listApprovals } from "./approvals";
 import {
   assessCompletion,
@@ -482,9 +482,9 @@ export function deriveFounderStatus(e: FounderEvidence): FounderStatus {
  * records and test receipts. The caller has already checked the task is visible.
  */
 export async function taskEvidenceRows(
-  db: Database,
+  db: Executor,
   orgId: string,
-  issue: Pick<IssueView, "id" | "pullRequests">,
+  issue: { id: string; pullRequests: { url: string }[] },
 ): Promise<EvidenceOutcome[]> {
   const subjects = issue.pullRequests.flatMap((p) => prSubjectOf(p.url) ?? []);
   const repos = [...new Set(subjects.map((s) => s.split("#")[0]))].flatMap((r) => [`deploy:${r}`, `tests:${r}`]);
@@ -513,7 +513,7 @@ export async function taskEvidenceRows(
 }
 
 /** A task's stored completion contract (ADR 0211), null when it has none. */
-export async function taskContract(db: Database, orgId: string, issueId: string): Promise<StoredContract | null> {
+export async function taskContract(db: Executor, orgId: string, issueId: string): Promise<StoredContract | null> {
   const [row] = await db
     .select({ contract: schema.issues.completionContract })
     .from(schema.issues)
