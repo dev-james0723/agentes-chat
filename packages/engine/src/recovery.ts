@@ -5,6 +5,7 @@ import { announceAgentStatus } from "./agent-status";
 import { publishApproval } from "./approvals";
 import { executesHere, RUN_STALE_MS } from "./cancel";
 import { onConsultedRunFinished } from "./consultations";
+import { reconcileHeldRuns } from "./effect-reconcile";
 import { ValidationError } from "./errors";
 import { publishChannelEvent, publishMessageCreated } from "./events";
 import type { Transcript } from "./executor";
@@ -71,6 +72,9 @@ export async function recoverStaleRuns(
   const cutoff = new Date(now.getTime() - (options.staleMs ?? RUN_STALE_MS));
   const at: SweepTime = { now, cutoff };
   const out = { resumed: [] as string[], failed: [] as string[], requeued: [] as string[] };
+  // Held on an unknown effect (ADR 0203): a dead worker's open epoch is fenced and what can be read back is, so a run
+  // with nothing unknown left is taken by the rules below. One that fails is tried again by the next sweep.
+  await reconcileHeldRuns(deps, at).catch((error) => options.onError?.("", error));
   const liveJob = sql`exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
       and o.payload->>'runId' = ${agentRuns.id}::text
       and (o.status = 'pending' or (o.status = 'processing' and o.locked_until > ${now.toISOString()}::timestamptz)))`;
@@ -85,7 +89,7 @@ export async function recoverStaleRuns(
       and(
         eq(agentRuns.status, "running"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${cutoff.toISOString()}::timestamptz`,
         sql`not exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
@@ -128,7 +132,7 @@ export async function recoverStaleRuns(
       and(
         eq(agentRuns.status, "queued"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${agentRuns.createdAt} < ${cutoff.toISOString()}::timestamptz`,
         sql`not ${liveJob}`,
@@ -275,7 +279,7 @@ async function claimStale(tx: Executor, runId: string, at: SweepTime) {
         eq(agentRuns.id, runId),
         eq(agentRuns.status, "running"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
       ),

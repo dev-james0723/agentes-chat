@@ -1486,7 +1486,7 @@ async function executeRunInner(
     .select({
       transcript: agentRuns.transcript,
       unsettledBridgeEpoch: sql<boolean>`exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
-      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
     })
     .from(agentRuns)
     .where(eq(agentRuns.id, runId));
@@ -3024,7 +3024,9 @@ async function executeRunInner(
           result = { content: output.content, isError: output.isError === true };
           // The approvals screen shows it ran (and what came back).
           const [ran] = await db.select().from(approvals).where(eq(approvals.id, approval.id));
-          if (!ran || (ran.executedAt && (ran.result as { isError?: unknown } | null)?.isError !== false)) {
+          // A result a person reconciled (ADR 0203) is settled either way: it never holds the run again.
+          const outcome = ran?.result as { isError?: unknown; reconciled?: unknown } | null;
+          if (!ran || (ran.executedAt && outcome?.isError !== false && !outcome?.reconciled)) {
             transcript.effectUncertain = { runId: run.id, turn: run.turns, tools: [approval.tool] };
             const note = await db.transaction(async (tx) => {
               await addRunStep(tx, run, "error", {
