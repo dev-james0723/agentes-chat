@@ -1368,7 +1368,7 @@ export async function updateIssue(
     // Check the proposed row, including simultaneous criteria/assignee edits; a rejection rolls the transaction back.
     if (actor.type === "agent" && set.status === "done" && !(await deliveryAllowsDone(tx, orgId, current.id)))
       throw new ValidationError(
-        "This delivery still needs independent QA or the owner's final acceptance. Use its delivery workflow; a status change cannot approve it.",
+        "This delivery still needs independent QA or the owner's final acceptance. Use its delivery workflow. A status change cannot approve it.",
       );
     for (const e of events) await addActivity(tx, updated, { kind: "event", author, ...e });
     // Done work taken back to the board: against the agent it was assigned to (a cancel is not a reopen).

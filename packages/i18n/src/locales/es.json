@@ -7297,6 +7297,18 @@
       "label": "Tareas",
       "description": "Crear y actualizar tareas."
     },
+    "colab_read": {
+      "label": "Leer Colab",
+      "description": "Leer el nivel de suscripción, los tipos de runtime que puede usar y los nombres de las sesiones."
+    },
+    "colab_run": {
+      "label": "Ejecutar trabajos en Colab",
+      "description": "Crear runtimes y sesiones, ejecutar Python y cerrar las sesiones que abrió. Usa unidades de cómputo de Colab."
+    },
+    "colab_delete": {
+      "label": "Eliminar runtimes de Colab",
+      "description": "Eliminar un runtime para siempre, con todos sus archivos y sesiones."
+    },
     "github_repo_read": {
       "label": "Leer código",
       "description": "Leer archivos y commits y buscar en el código."
@@ -12305,7 +12317,7 @@
     "how": {
       "oneClick": "Un clic: autorizas en la página del servicio",
       "oauthOrKey": "Autorizas en la página del servicio o usas una clave de API",
-      "oauthSetup": "Hay que configurar el inicio de sesión en este servidor.",
+      "oauthSetup": "El inicio de sesión de esta app aún no está configurado.",
       "key": "Necesita una clave de API",
       "appPassword": "Necesita una contraseña de app",
       "addressPassword": "Necesita la dirección de la base de datos y una contraseña",
@@ -16526,6 +16538,7 @@
         "updatingThread": "Actualizó un hilo",
         "addingAgent": "Agregó un agente a un canal",
         "readingConversation": "Leyó la conversación",
+        "checkingPlanUsage": "Revisó el uso del plan del equipo",
         "usingTool": "Usó la herramienta {{tool}}",
         "thinking": "Pensó",
         "typing": "Escribió",
@@ -16643,6 +16656,7 @@
       "updatingThread": "actualizando un hilo",
       "addingAgent": "agregando un agente a un canal",
       "readingConversation": "leyendo la conversación",
+      "checkingPlanUsage": "revisando el uso del plan del equipo",
       "usingTool": "usando una herramienta"
     },
     "tokens": "{{value}} tokens",

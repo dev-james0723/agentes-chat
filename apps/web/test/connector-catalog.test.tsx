@@ -415,7 +415,7 @@ describe("Adicionar conector: one catalog", () => {
     expect(tile.querySelector(".connector-icon__mark")?.getAttribute("style")).toContain("/connectors/plug.svg");
     await click(tile);
     const detail = service("Google Colab");
-    expect(detail.textContent).toContain("O login precisa ser configurado neste servidor.");
+    expect(detail.textContent).toContain("O login deste app ainda não foi configurado.");
     expect(within(detail).getByRole("button", { name: "Falta configurar" }).hasAttribute("disabled")).toBe(true);
     expect(within(detail).queryByRole("button", { name: "Conectar Google Colab" })).toBeNull();
     expect(detail.textContent).not.toMatch(/chave de API|Em breve/);

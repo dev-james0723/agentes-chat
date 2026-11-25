@@ -98,7 +98,7 @@ export const CONNECTOR_CATALOG: Record<string, ConnectorDefinition> = {
       create_session: { scope: "run" },
       execute_code: { scope: "run" },
       delete_session: { scope: "run" },
-      delete_runtime: { scope: "delete", sensitive: true },
+      delete_runtime: { scope: "delete", sensitive: true, title: "Delete a Colab runtime and all its files" },
     },
   },
   github: {

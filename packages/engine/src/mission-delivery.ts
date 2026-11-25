@@ -166,7 +166,7 @@ async function createDelivery(
           JSON.stringify((input.deliveryReceipts ?? []).map(key).sort())
       )
         throw new ConflictError(
-          "The engineering delivery changed before its review card was created; read the current evidence and deliver again.",
+          "The engineering delivery changed before its review card was created. Read the current evidence and deliver again.",
         );
     }
     await tx
@@ -263,7 +263,7 @@ export async function completeMission(
   if (readiness && !readiness.ready) throw new ValidationError(readiness.summary, "mission.delivery_evidence_required");
   if (readiness && readiness.summary.length >= DELIVERY_LIMITS.summary - 200)
     throw new ValidationError(
-      "The delivery packet is too large; deliver the existing engineering work packages separately.",
+      "The delivery packet is too large. Deliver the existing engineering work packages separately.",
       "mission.invalid_delivery",
     );
   return createDelivery(deps, mission, {

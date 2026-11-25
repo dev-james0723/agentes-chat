@@ -6906,6 +6906,18 @@
       "label": "任务",
       "description": "创建和更新任务。"
     },
+    "colab_read": {
+      "label": "读取 Colab",
+      "description": "读取订阅等级、可用的运行时类型和会话名称。"
+    },
+    "colab_run": {
+      "label": "运行 Colab 任务",
+      "description": "创建运行时和会话，运行 Python，并关闭自己打开的会话。会消耗 Colab 计算单元。"
+    },
+    "colab_delete": {
+      "label": "删除 Colab 运行时",
+      "description": "永久删除一个运行时及其所有文件和会话。"
+    },
     "github_repo_read": {
       "label": "读取代码",
       "description": "读取文件、提交记录和搜索代码。"
@@ -11539,7 +11551,7 @@
     "how": {
       "oneClick": "一键完成：在服务的页面上授权",
       "oauthOrKey": "在服务的页面上授权，或使用 API 密钥",
-      "oauthSetup": "需要先在此服务器上配置登录。",
+      "oauthSetup": "此应用的登录尚未设置。",
       "key": "需要 API 密钥",
       "appPassword": "需要应用专用密码",
       "addressPassword": "需要数据库地址和密码",
@@ -15615,6 +15627,7 @@
         "updatingThread": "更新了一个话题",
         "addingAgent": "把智能体添加到频道",
         "readingConversation": "读了对话",
+        "checkingPlanUsage": "查看了团队的套餐用量",
         "usingTool": "使用了 {{tool}} 工具",
         "thinking": "思考了",
         "typing": "撰写了",
@@ -15732,6 +15745,7 @@
       "updatingThread": "更新话题",
       "addingAgent": "把智能体添加到频道",
       "readingConversation": "阅读对话",
+      "checkingPlanUsage": "查看团队的套餐用量",
       "usingTool": "使用工具"
     },
     "tokens": "{{value}} 个 token",

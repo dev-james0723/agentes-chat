@@ -7073,6 +7073,18 @@
       "label": "Görevler",
       "description": "Görev oluşturma ve güncelleme."
     },
+    "colab_read": {
+      "label": "Colab'i okuma",
+      "description": "Abonelik düzeyini, kullanılabilen runtime türlerini ve oturum adlarını okur."
+    },
+    "colab_run": {
+      "label": "Colab işleri çalıştırma",
+      "description": "Runtime ve oturum oluşturur, Python çalıştırır ve kendi açtığı oturumları kapatır. Colab işlem birimi kullanır."
+    },
+    "colab_delete": {
+      "label": "Colab runtime'larını silme",
+      "description": "Bir runtime'ı tüm dosyaları ve oturumlarıyla birlikte kalıcı olarak siler."
+    },
     "github_repo_read": {
       "label": "Kod okuma",
       "description": "Dosyaları ve commit'leri okuma, kodda arama."
@@ -11879,7 +11891,7 @@
     "how": {
       "oneClick": "Tek tık: hizmetin sayfasında yetki verirsiniz",
       "oauthOrKey": "Hizmetin sayfasında yetki verirsiniz ya da bir API anahtarı kullanırsınız",
-      "oauthSetup": "Bu sunucuda oturum açmanın yapılandırılması gerekiyor.",
+      "oauthSetup": "Bu uygulama için oturum açma henüz ayarlanmadı.",
       "key": "API anahtarı gerekir",
       "appPassword": "Uygulama şifresi gerekir",
       "addressPassword": "Veritabanı adresi ve şifre gerekir",
@@ -16019,6 +16031,7 @@
         "updatingThread": "Bir ileti dizisini güncelledi",
         "addingAgent": "Bir kanala ajan ekledi",
         "readingConversation": "Sohbeti okudu",
+        "checkingPlanUsage": "Ekibin plan kullanımını kontrol etti",
         "usingTool": "{{tool}} aracını kullandı",
         "thinking": "Düşündü",
         "typing": "Yazdı",
@@ -16136,6 +16149,7 @@
       "updatingThread": "bir ileti dizisini güncelliyor",
       "addingAgent": "bir kanala ajan ekliyor",
       "readingConversation": "sohbeti okuyor",
+      "checkingPlanUsage": "ekibin plan kullanımını kontrol ediyor",
       "usingTool": "bir araç kullanıyor"
     },
     "tokens": "{{value}} token",

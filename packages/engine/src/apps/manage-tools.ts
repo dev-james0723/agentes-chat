@@ -151,7 +151,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const mode = by ?? (uuid.test(ref) ? "id" : "name");
     if (mode === "id") {
-      if (!uuid.test(ref)) throw new ValidationError("A skill ID must be a UUID; use by: name for names.");
+      if (!uuid.test(ref)) throw new ValidationError("A skill ID must be a UUID. Use by: name for names.");
       const [idMatch] = await deps.db
         .select(columns)
         .from(schema.skills)

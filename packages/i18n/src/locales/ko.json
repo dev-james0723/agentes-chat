@@ -6864,6 +6864,18 @@
       "label": "작업",
       "description": "작업을 만들고 업데이트해요."
     },
+    "colab_read": {
+      "label": "Colab 읽기",
+      "description": "구독 등급, 쓸 수 있는 런타임 종류와 세션 이름을 읽어요."
+    },
+    "colab_run": {
+      "label": "Colab 작업 실행",
+      "description": "런타임과 세션을 만들고 Python을 실행하며 직접 연 세션을 닫아요. Colab 컴퓨팅 단위를 사용해요."
+    },
+    "colab_delete": {
+      "label": "Colab 런타임 삭제",
+      "description": "런타임을 모든 파일과 세션까지 영구히 삭제해요."
+    },
     "github_repo_read": {
       "label": "코드 읽기",
       "description": "파일과 커밋을 읽고 코드를 검색해요."
@@ -11471,7 +11483,7 @@
     "how": {
       "oneClick": "클릭 한 번: 서비스 페이지에서 승인해요",
       "oauthOrKey": "서비스 페이지에서 승인하거나 API 키를 사용해요",
-      "oauthSetup": "이 서버에서 로그인을 설정해야 합니다.",
+      "oauthSetup": "이 앱의 로그인이 아직 설정되지 않았어요.",
       "key": "API 키가 필요해요",
       "appPassword": "앱 비밀번호가 필요해요",
       "addressPassword": "데이터베이스 주소와 비밀번호가 필요해요",
@@ -15540,6 +15552,7 @@
         "updatingThread": "스레드를 업데이트했어요",
         "addingAgent": "에이전트를 채널에 추가했어요",
         "readingConversation": "대화를 읽었어요",
+        "checkingPlanUsage": "팀의 요금제 사용량을 확인했어요",
         "usingTool": "{{tool}} 도구를 사용했어요",
         "thinking": "생각했어요",
         "typing": "작성했어요",
@@ -15657,6 +15670,7 @@
       "updatingThread": "스레드를 업데이트하는 중",
       "addingAgent": "에이전트를 채널에 추가하는 중",
       "readingConversation": "대화를 읽는 중",
+      "checkingPlanUsage": "팀의 요금제 사용량을 확인하는 중",
       "usingTool": "도구를 사용하는 중"
     },
     "tokens": "토큰 {{value}}개",

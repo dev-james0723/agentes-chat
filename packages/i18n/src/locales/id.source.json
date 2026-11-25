@@ -17340,6 +17340,24 @@
   "scopes.issues_write.description": {
     "value": "Create and update tasks."
   },
+  "scopes.colab_read.label": {
+    "value": "Read Colab"
+  },
+  "scopes.colab_read.description": {
+    "value": "Read the subscription tier, the runtime types it can use and session names."
+  },
+  "scopes.colab_run.label": {
+    "value": "Run Colab jobs"
+  },
+  "scopes.colab_run.description": {
+    "value": "Create runtimes and sessions, run Python and close the sessions it opened. Uses Colab compute units."
+  },
+  "scopes.colab_delete.label": {
+    "value": "Delete Colab runtimes"
+  },
+  "scopes.colab_delete.description": {
+    "value": "Delete a runtime for good, with all its files and sessions."
+  },
   "scopes.github_repo_read.label": {
     "value": "Read code"
   },
@@ -29170,7 +29188,7 @@
     "value": "You authorize on the service's page, or use an API key"
   },
   "connectors.how.oauthSetup": {
-    "value": "Sign-in needs to be configured on this server."
+    "value": "Sign-in for this app isn't set up yet."
   },
   "connectors.how.key": {
     "value": "Needs an API key"
@@ -39218,6 +39236,9 @@
   "chat.work.step.readingConversation": {
     "value": "Read the conversation"
   },
+  "chat.work.step.checkingPlanUsage": {
+    "value": "Checked the team's plan usage"
+  },
   "chat.work.step.usingTool": {
     "value": "Used the {{tool}} tool"
   },
@@ -39559,6 +39580,9 @@
   },
   "chat.activity.readingConversation": {
     "value": "reading the conversation"
+  },
+  "chat.activity.checkingPlanUsage": {
+    "value": "checking the team's plan usage"
   },
   "chat.activity.usingTool": {
     "value": "using a tool"

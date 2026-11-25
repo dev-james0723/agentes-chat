@@ -142,7 +142,7 @@ function sharesAudience(tasks: Task[]) {
 
 function sameAudience(tasks: Task[]) {
   if (!sharesAudience(tasks))
-    throw new ValidationError("Delivery tasks must share the same audience; this handoff cannot widen access.");
+    throw new ValidationError("Delivery tasks must share the same audience. This handoff cannot widen access.");
 }
 
 async function missionEvidenceNameable(
@@ -303,7 +303,7 @@ export async function applyIssueDelivery(
     .from(agentRuns)
     .where(and(eq(agentRuns.id, ctx.runId), eq(agentRuns.orgId, ctx.orgId), eq(agentRuns.agentId, ctx.agentId)));
   if (!person || !run)
-    throw new ForbiddenError("Delivery handoffs need the real person's delegated run; no authority was inferred.");
+    throw new ForbiddenError("Delivery handoffs need the real person's delegated run. No authority was inferred.");
   const selected = await getIssue(deps.db, actor, ctx.orgId, { id: taskId });
   const action = input.action;
   if (!["configure", "submit", "review"].includes(String(action)))
@@ -350,7 +350,7 @@ export async function applyIssueDelivery(
         : [];
     if (existing?.missionId && hereMission && existing.missionId !== hereMission.id)
       throw new ConflictError(
-        "Keep the existing canonical Mission binding; do not redirect this delivery to another thread.",
+        "Keep the existing canonical Mission binding. Do not redirect this delivery to another thread.",
       );
     const boundId = existing?.missionId ?? hereMission?.id;
     // Mission binding set first, then sorted task rows: configure, handoffs and acceptance use this lock order.
@@ -369,7 +369,7 @@ export async function applyIssueDelivery(
         .limit(1);
       if (!boundMission || !["active", "paused", "awaiting_close"].includes(boundMission.status) || accepted)
         throw new ConflictError(
-          "The canonical Mission is not open for another delivery; reconcile the existing Mission first.",
+          "The canonical Mission is not open for another delivery. Reconcile the existing Mission first.",
         );
     }
     const rows = await tx
@@ -403,11 +403,11 @@ export async function applyIssueDelivery(
         const old = await latest<Contract>(tx, ctx.orgId, task.id, CONTRACT);
         if (old && (old.parentId !== parent.id || old.implementationId !== impl.id || old.reviewId !== reviewTask.id))
           throw new ConflictError(
-            "Reuse the tasks already bound by this delivery contract; do not create a competing workflow.",
+            "Reuse the tasks already bound by this delivery contract. Do not create a competing workflow.",
           );
       }
       if (latestContract?.missionId && latestContract.missionId !== boundMission?.id)
-        throw new ConflictError("The canonical Mission binding changed; read the task again.");
+        throw new ConflictError("The canonical Mission binding changed. Read the task again.");
       const contract: Contract = {
         id: Bun.randomUUIDv7(),
         parentId: parent.id,
@@ -444,12 +444,12 @@ export async function applyIssueDelivery(
       };
     }
     if (!latestContract || latestContract.id !== existing?.id)
-      throw new ConflictError("The delivery contract changed; read the task again.");
+      throw new ConflictError("The delivery contract changed. Read the task again.");
     const contract = latestContract;
     assigned(parent, contract.managerId);
     if (parent.status === "done")
       throw new ConflictError(
-        "The owner already accepted this delivery; reopen the existing parent explicitly before starting another delivery.",
+        "The owner already accepted this delivery. Reopen the existing parent explicitly before starting another delivery.",
       );
     assigned(impl, contract.implementerId);
     assigned(reviewTask, contract.reviewerId);
@@ -509,7 +509,7 @@ export async function applyIssueDelivery(
           submission.retryReason === prior.submission.retryReason
         )
           throw new ConflictError(
-            "This revision already has a submission receipt. Use a new content revision for content changes; after changes_requested or changed acceptance criteria an unchanged snapshot needs a specific new retry_reason.",
+            "This revision already has a submission receipt. Use a new content revision for content changes. After changes_requested or changed acceptance criteria an unchanged snapshot needs a specific new retry_reason.",
           );
       }
       await event(
@@ -542,11 +542,11 @@ export async function applyIssueDelivery(
     }
     if (!prior.submission || prior.submission.revision !== rev || prior.submission.id !== input.submission_id)
       throw new ConflictError(
-        "QA must name the latest exact submission_id and content revision; this result is missing or stale.",
+        "QA must name the latest exact submission_id and content revision. This result is missing or stale.",
       );
     if (criteriaKey(impl) !== prior.submission.implementationCriteria)
       throw new ConflictError(
-        "Implementation acceptance criteria changed after submission; submit the current snapshot and criteria again before reviewing it.",
+        "Implementation acceptance criteria changed after submission. Submit the current snapshot and criteria again before reviewing it.",
       );
     if (input.verdict !== "passed" && input.verdict !== "changes_requested")
       throw new ValidationError("QA verdict must be passed or changes_requested.");
@@ -642,7 +642,7 @@ export async function applyIssueDelivery(
         );
       if (!mission || !["active", "paused", "awaiting_close"].includes(mission.status))
         throw new ConflictError(
-          "The bound Mission is no longer open for this delivery; the manager must reconcile its existing Mission first.",
+          "The bound Mission is no longer open for this delivery. The manager must reconcile its existing Mission first.",
         );
       // Wake/steer the existing canonical main session; never create a competing manager conversation.
       const sent = await tellSession(d, mission, { sessionId: mission.mainSessionId }, instruction, {

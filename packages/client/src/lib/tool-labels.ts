@@ -558,6 +558,18 @@ const LABELS: Record<string, readonly [en: string, ptBR: string]> = {
   list_styles: ["List styles", "Listar estilos"],
   get_credits: ["See the credits", "Ver os créditos"],
 
+  // Google Colab: runtimes, sessions and Python
+  get_subscription: ["See the subscription", "Ver a assinatura"],
+  list_runtime_specs: ["List runtime types", "Listar os tipos de runtime"],
+  list_runtimes: ["List runtimes", "Listar runtimes"],
+  get_runtime: ["See runtime", "Ver runtime"],
+  list_sessions: ["List sessions", "Listar sessões"],
+  create_runtime: ["Create runtime", "Criar runtime"],
+  create_session: ["Create session", "Criar sessão"],
+  execute_code: ["Run code", "Rodar código"],
+  delete_session: ["Close session", "Fechar sessão"],
+  delete_runtime: ["Delete runtime", "Apagar runtime"],
+
   // Databases (Supabase, Neon, Postgres)
   execute_sql: ["Run SQL", "Rodar SQL"],
   run_sql: ["Run SQL", "Rodar SQL"],

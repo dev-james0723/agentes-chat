@@ -7349,6 +7349,18 @@
       "label": "Tâches",
       "description": "Créer et mettre à jour des tâches."
     },
+    "colab_read": {
+      "label": "Lire Colab",
+      "description": "Lire le niveau d'abonnement, les types de runtime utilisables et les noms des sessions."
+    },
+    "colab_run": {
+      "label": "Lancer des tâches Colab",
+      "description": "Créer des runtimes et des sessions, exécuter du Python et fermer les sessions qu'il a ouvertes. Utilise des unités de calcul Colab."
+    },
+    "colab_delete": {
+      "label": "Supprimer des runtimes Colab",
+      "description": "Supprimer définitivement un runtime, avec tous ses fichiers et sessions."
+    },
     "github_repo_read": {
       "label": "Lire le code",
       "description": "Lire des fichiers, des commits et chercher dans le code."
@@ -12376,7 +12388,7 @@
     "how": {
       "oneClick": "Un clic : vous autorisez l'accès sur la page du service",
       "oauthOrKey": "Vous autorisez l'accès sur la page du service, ou utilisez une clé API",
-      "oauthSetup": "La connexion doit être configurée sur ce serveur.",
+      "oauthSetup": "La connexion pour cette app n'est pas encore configurée.",
       "key": "Nécessite une clé API",
       "appPassword": "Nécessite un mot de passe d'application",
       "addressPassword": "Nécessite l'adresse de la base de données et un mot de passe",
@@ -16608,6 +16620,7 @@
         "updatingThread": "A mis à jour un fil",
         "addingAgent": "A ajouté un agent à un canal",
         "readingConversation": "A lu la conversation",
+        "checkingPlanUsage": "A vérifié l'utilisation du forfait de l'équipe",
         "usingTool": "A utilisé l'outil {{tool}}",
         "thinking": "A réfléchi",
         "typing": "A écrit",
@@ -16725,6 +16738,7 @@
       "updatingThread": "mise à jour d'un fil",
       "addingAgent": "ajout d'un agent à un canal",
       "readingConversation": "lecture de la conversation",
+      "checkingPlanUsage": "vérification de l'utilisation du forfait de l'équipe",
       "usingTool": "utilisation d'un outil"
     },
     "tokens": "{{value}} jetons",

@@ -120,6 +120,7 @@ export type ActivityKind =
   | "updatingThread"
   | "addingAgent"
   | "readingConversation"
+  | "checkingPlanUsage"
   | "usingTool";
 
 /** The computer's own permission check before a command (`PERMISSION_TOOL` in `@agenteschat/adapters`). */
@@ -252,6 +253,8 @@ const BUILTIN: Record<string, ActivityKind> = {
   web_search: "searchingWeb",
   web_fetch: "readingWeb",
   read_conversation: "readingConversation",
+  // The Model Inspector's stored look at the team's plan usage and routing.
+  get_model_inspector_status: "checkingPlanUsage",
   // A card of ours in the conversation: the card itself says what it holds.
   show_block: "preparingCard",
   offer_approvals: "preparingCard",

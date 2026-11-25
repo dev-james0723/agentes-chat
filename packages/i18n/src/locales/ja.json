@@ -6867,6 +6867,18 @@
       "label": "タスク",
       "description": "タスクを作成・更新します。"
     },
+    "colab_read": {
+      "label": "Colab を読む",
+      "description": "サブスクリプションのプラン、使えるランタイムの種類、セッション名を読みます。"
+    },
+    "colab_run": {
+      "label": "Colab でジョブを実行",
+      "description": "ランタイムとセッションを作成し、Python を実行し、自分が開いたセッションを閉じます。Colab のコンピューティング ユニットを使います。"
+    },
+    "colab_delete": {
+      "label": "Colab のランタイムを削除",
+      "description": "ランタイムを、すべてのファイルとセッションごと完全に削除します。"
+    },
     "github_repo_read": {
       "label": "コードを読む",
       "description": "ファイルやコミットを読み、コードを検索します。"
@@ -11477,7 +11489,7 @@
     "how": {
       "oneClick": "ワンクリック: サービスのページで承認します",
       "oauthOrKey": "サービスのページで承認するか、APIキーを使います",
-      "oauthSetup": "このサーバーでログインを設定する必要があります。",
+      "oauthSetup": "このアプリのログインはまだ設定されていません。",
       "key": "APIキーが必要です",
       "appPassword": "アプリパスワードが必要です",
       "addressPassword": "データベースのアドレスとパスワードが必要です",
@@ -15548,6 +15560,7 @@
         "updatingThread": "スレッドを更新しました",
         "addingAgent": "エージェントをチャンネルに追加しました",
         "readingConversation": "会話を読みました",
+        "checkingPlanUsage": "チームのプラン使用量を確認しました",
         "usingTool": "ツール{{tool}}を使いました",
         "thinking": "考えました",
         "typing": "書きました",
@@ -15665,6 +15678,7 @@
       "updatingThread": "スレッドを更新中",
       "addingAgent": "エージェントをチャンネルに追加中",
       "readingConversation": "会話を読み中",
+      "checkingPlanUsage": "チームのプラン使用量を確認中",
       "usingTool": "ツールを使用中"
     },
     "tokens": "{{value}}トークン",

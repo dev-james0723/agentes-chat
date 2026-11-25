@@ -7444,6 +7444,19 @@ export const ptBR = {
     drive_read: { label: "Ler arquivos", description: "Ler arquivos do Drive." },
     drive_write: { label: "Criar arquivos", description: "Criar relatórios, tabelas, organogramas e diffs no Drive." },
     issues_write: { label: "Tarefas", description: "Criar e atualizar tarefas." },
+    colab_read: {
+      label: "Ler o Colab",
+      description: "Ler o nível da assinatura, os tipos de runtime que pode usar e os nomes das sessões.",
+    },
+    colab_run: {
+      label: "Rodar tarefas no Colab",
+      description:
+        "Criar runtimes e sessões, rodar Python e fechar as sessões que abriu. Usa unidades de computação do Colab.",
+    },
+    colab_delete: {
+      label: "Apagar runtimes do Colab",
+      description: "Apagar um runtime de vez, com todos os arquivos e sessões.",
+    },
     github_repo_read: { label: "Ler código", description: "Ler arquivos, commits e buscar no código." },
     github_repo_write: {
       label: "Escrever código",
@@ -12246,7 +12259,7 @@ export const ptBR = {
     how: {
       oneClick: "Um clique: você autoriza na página do serviço",
       oauthOrKey: "Você autoriza na página do serviço, ou usa uma chave de API",
-      oauthSetup: "O login precisa ser configurado neste servidor.",
+      oauthSetup: "O login deste app ainda não foi configurado.",
       key: "Precisa de uma chave de API",
       appPassword: "Precisa de uma senha de app",
       addressPassword: "Precisa do endereço do banco e de uma senha",
@@ -16255,6 +16268,7 @@ export const ptBR = {
         updatingThread: "Atualizou uma thread",
         addingAgent: "Adicionou um agente a um canal",
         readingConversation: "Leu a conversa",
+        checkingPlanUsage: "Conferiu o uso do plano da equipe",
         usingTool: "Usou a ferramenta {{tool}}",
         thinking: "Pensou",
         typing: "Escreveu",
@@ -16372,6 +16386,7 @@ export const ptBR = {
       updatingThread: "atualizando uma thread",
       addingAgent: "adicionando um agente a um canal",
       readingConversation: "lendo a conversa",
+      checkingPlanUsage: "conferindo o uso do plano da equipe",
       usingTool: "usando uma ferramenta",
     },
     tokens: "{{value}} tokens",

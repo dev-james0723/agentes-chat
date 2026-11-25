@@ -6895,6 +6895,18 @@
       "label": "Tugas",
       "description": "Buat dan perbarui tugas."
     },
+    "colab_read": {
+      "label": "Membaca Colab",
+      "description": "Membaca tingkat langganan, jenis runtime yang bisa dipakai, dan nama sesi."
+    },
+    "colab_run": {
+      "label": "Menjalankan tugas Colab",
+      "description": "Membuat runtime dan sesi, menjalankan Python, dan menutup sesi yang dibukanya. Memakai unit komputasi Colab."
+    },
+    "colab_delete": {
+      "label": "Menghapus runtime Colab",
+      "description": "Menghapus runtime secara permanen, beserta semua file dan sesinya."
+    },
     "github_repo_read": {
       "label": "Baca kode",
       "description": "Baca file, commit, dan cari kode."
@@ -11531,7 +11543,7 @@
     "how": {
       "oneClick": "Sekali klik: kamu memberi izin di halaman layanan",
       "oauthOrKey": "Kamu memberi izin di halaman layanan, atau pakai kunci API",
-      "oauthSetup": "Login perlu disiapkan di server ini.",
+      "oauthSetup": "Login untuk aplikasi ini belum disiapkan.",
       "key": "Butuh kunci API",
       "appPassword": "Butuh kata sandi aplikasi",
       "addressPassword": "Butuh alamat database dan kata sandi",
@@ -15602,6 +15614,7 @@
         "updatingThread": "Memperbarui utas",
         "addingAgent": "Menambahkan agen ke kanal",
         "readingConversation": "Membaca percakapan",
+        "checkingPlanUsage": "Memeriksa pemakaian paket tim",
         "usingTool": "Memakai alat {{tool}}",
         "thinking": "Berpikir",
         "typing": "Menulis",
@@ -15719,6 +15732,7 @@
       "updatingThread": "memperbarui utas",
       "addingAgent": "menambahkan agen ke kanal",
       "readingConversation": "membaca percakapan",
+      "checkingPlanUsage": "memeriksa pemakaian paket tim",
       "usingTool": "memakai alat"
     },
     "tokens": "{{value}} token",

@@ -7569,6 +7569,18 @@
       "label": "Zadania",
       "description": "Tworzenie i aktualizowanie zadań."
     },
+    "colab_read": {
+      "label": "Odczyt Colab",
+      "description": "Odczyt poziomu subskrypcji, dostępnych typów środowisk uruchomieniowych i nazw sesji."
+    },
+    "colab_run": {
+      "label": "Uruchamianie zadań w Colab",
+      "description": "Tworzenie środowisk i sesji, uruchamianie Pythona i zamykanie otwartych przez siebie sesji. Zużywa jednostki obliczeniowe Colab."
+    },
+    "colab_delete": {
+      "label": "Usuwanie środowisk Colab",
+      "description": "Trwałe usunięcie środowiska uruchomieniowego wraz ze wszystkimi plikami i sesjami."
+    },
     "github_repo_read": {
       "label": "Czytanie kodu",
       "description": "Czytanie plików i commitów oraz przeszukiwanie kodu."
@@ -12813,7 +12825,7 @@
     "how": {
       "oneClick": "Jedno kliknięcie: autoryzujesz na stronie usługi",
       "oauthOrKey": "Autoryzujesz na stronie usługi albo używasz klucza API",
-      "oauthSetup": "Logowanie wymaga konfiguracji na tym serwerze.",
+      "oauthSetup": "Logowanie do tej aplikacji nie jest jeszcze skonfigurowane.",
       "key": "Wymaga klucza API",
       "appPassword": "Wymaga hasła do aplikacji",
       "addressPassword": "Wymaga adresu bazy danych i hasła",
@@ -17115,6 +17127,7 @@
         "updatingThread": "Zaktualizowano wątek",
         "addingAgent": "Dodano agenta do kanału",
         "readingConversation": "Przeczytano rozmowę",
+        "checkingPlanUsage": "Sprawdzono użycie planu zespołu",
         "usingTool": "Użyto narzędzia {{tool}}",
         "thinking": "Myślenie",
         "typing": "Pisanie",
@@ -17232,6 +17245,7 @@
       "updatingThread": "aktualizowanie wątku",
       "addingAgent": "dodawanie agenta do kanału",
       "readingConversation": "czytanie rozmowy",
+      "checkingPlanUsage": "sprawdzanie użycia planu zespołu",
       "usingTool": "korzystanie z narzędzia"
     },
     "tokens": "{{value}} tokenów",

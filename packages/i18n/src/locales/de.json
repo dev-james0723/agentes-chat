@@ -7113,6 +7113,18 @@
       "label": "Aufgaben",
       "description": "Aufgaben erstellen und aktualisieren."
     },
+    "colab_read": {
+      "label": "Colab lesen",
+      "description": "Abostufe, nutzbare Runtime-Typen und Sitzungsnamen lesen."
+    },
+    "colab_run": {
+      "label": "Colab-Jobs ausführen",
+      "description": "Runtimes und Sitzungen erstellen, Python ausführen und selbst geöffnete Sitzungen schließen. Verbraucht Colab-Recheneinheiten."
+    },
+    "colab_delete": {
+      "label": "Colab-Runtimes löschen",
+      "description": "Eine Runtime endgültig löschen, mit allen Dateien und Sitzungen."
+    },
     "github_repo_read": {
       "label": "Code lesen",
       "description": "Dateien und Commits lesen und Code durchsuchen."
@@ -11944,7 +11956,7 @@
     "how": {
       "oneClick": "Ein Klick: Du autorisierst auf der Seite des Dienstes",
       "oauthOrKey": "Du autorisierst auf der Seite des Dienstes oder nutzt einen API-Schlüssel",
-      "oauthSetup": "Die Anmeldung muss auf diesem Server eingerichtet werden.",
+      "oauthSetup": "Die Anmeldung für diese App ist noch nicht eingerichtet.",
       "key": "Braucht einen API-Schlüssel",
       "appPassword": "Braucht ein App-Passwort",
       "addressPassword": "Braucht die Adresse der Datenbank und ein Passwort",
@@ -16090,6 +16102,7 @@
         "updatingThread": "Einen Thread aktualisiert",
         "addingAgent": "Einen Agenten zu einem Kanal hinzugefügt",
         "readingConversation": "Die Unterhaltung gelesen",
+        "checkingPlanUsage": "Die Plannutzung des Teams geprüft",
         "usingTool": "Das Tool {{tool}} genutzt",
         "thinking": "Nachgedacht",
         "typing": "Geschrieben",
@@ -16207,6 +16220,7 @@
       "updatingThread": "Aktualisieren eines Threads",
       "addingAgent": "Hinzufügen eines Agenten zu einem Kanal",
       "readingConversation": "Lesen der Unterhaltung",
+      "checkingPlanUsage": "Prüfen der Plannutzung des Teams",
       "usingTool": "Nutzen eines Tools"
     },
     "tokens": "{{value}} Token",

@@ -7446,6 +7446,19 @@ export const en = {
     drive_read: { label: "Read files", description: "Read files in the Drive." },
     drive_write: { label: "Write files", description: "Create reports, tables, org charts and diffs in the Drive." },
     issues_write: { label: "Tasks", description: "Create and update tasks." },
+    colab_read: {
+      label: "Read Colab",
+      description: "Read the subscription tier, the runtime types it can use and session names.",
+    },
+    colab_run: {
+      label: "Run Colab jobs",
+      description:
+        "Create runtimes and sessions, run Python and close the sessions it opened. Uses Colab compute units.",
+    },
+    colab_delete: {
+      label: "Delete Colab runtimes",
+      description: "Delete a runtime for good, with all its files and sessions.",
+    },
     github_repo_read: { label: "Read code", description: "Read files, commits and search code." },
     github_repo_write: {
       label: "Write code",
@@ -12198,7 +12211,7 @@ export const en = {
     how: {
       oneClick: "One click: you authorize on the service's page",
       oauthOrKey: "You authorize on the service's page, or use an API key",
-      oauthSetup: "Sign-in needs to be configured on this server.",
+      oauthSetup: "Sign-in for this app isn't set up yet.",
       key: "Needs an API key",
       appPassword: "Needs an app password",
       addressPassword: "Needs the database address and a password",
@@ -16268,6 +16281,7 @@ export const en = {
         updatingThread: "Updated a thread",
         addingAgent: "Added an agent to a channel",
         readingConversation: "Read the conversation",
+        checkingPlanUsage: "Checked the team's plan usage",
         usingTool: "Used the {{tool}} tool",
         thinking: "Thought",
         typing: "Wrote",
@@ -16385,6 +16399,7 @@ export const en = {
       updatingThread: "updating a thread",
       addingAgent: "adding an agent to a channel",
       readingConversation: "reading the conversation",
+      checkingPlanUsage: "checking the team's plan usage",
       usingTool: "using a tool",
     },
     tokens: "{{value}} tokens",

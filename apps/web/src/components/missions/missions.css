@@ -437,6 +437,11 @@ a.mi-ref:hover code {
   width: 32px;
   height: 32px;
 }
+/* The words keep a line's room beside the mark: where they and "Ver plano" don't fit on one line, the button goes
+   under them (a basis of 0 squeezed "3 itens · no MacBook" into a narrow column at 320px). */
+.mi-created .mi-decided__t {
+  flex: 1 1 12rem;
+}
 
 /* ── The mission header (a mission's thread: the thread header is the mission's) ─
    One grid: the lead (back, the agent), then an action line of the text column
