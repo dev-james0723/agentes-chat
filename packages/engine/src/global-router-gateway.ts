@@ -41,30 +41,6 @@ export interface GlobalRouterRouteRecord {
 
 const periodOf = (at: Date) => at.toISOString().slice(0, 7);
 
-/** Dedicated Global Router keys are reserved and cannot be used by ordinary unbudgeted calls. */
-export async function globalRouterKeyReserved(
-  db: Executor,
-  orgId: string,
-  credentialId: string | null,
-  fingerprint: string,
-): Promise<boolean> {
-  const [byFp] = await db
-    .select({ id: schema.globalRouterAccounts.id })
-    .from(schema.globalRouterAccounts)
-    .where(eq(schema.globalRouterAccounts.credentialFingerprint, fingerprint))
-    .limit(1);
-  if (byFp) return true;
-  if (!credentialId) return false;
-  const [byId] = await db
-    .select({ id: schema.globalRouterAccounts.id })
-    .from(schema.globalRouterAccounts)
-    .where(
-      and(eq(schema.globalRouterAccounts.orgId, orgId), eq(schema.globalRouterAccounts.credentialId, credentialId)),
-    )
-    .limit(1);
-  return Boolean(byId);
-}
-
 async function loadRouterContext(db: Executor, orgId: string, at: Date) {
   const period = periodOf(at);
   const [policy] = await db

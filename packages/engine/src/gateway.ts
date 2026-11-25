@@ -61,11 +61,7 @@ import { sha256 } from "./crypto";
 import { loadEndpointModels } from "./endpoints";
 import { BudgetExceededError, MissingCredentialError, NotFoundError, ValidationError } from "./errors";
 import { publishUserEvent } from "./events";
-import {
-  executeGlobalRouterGatewayStream,
-  type GlobalRouterRouteRecord,
-  globalRouterKeyReserved,
-} from "./global-router-gateway";
+import { executeGlobalRouterGatewayStream, type GlobalRouterRouteRecord } from "./global-router-gateway";
 import { GlobalRouterRefusal } from "./global-router-ledger";
 import {
   OpenRouterFallbackRefusal,
@@ -471,12 +467,12 @@ export function createModelGateway(deps: ModelGatewayDeps) {
     if (!credit) {
       if (providerId === "openrouter" && (await openRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey))))
         throw new OpenRouterFallbackRefusal("reserved_credential");
-      if (await globalRouterKeyReserved(db, orgId, key.credentialId, sha256(key.apiKey)))
-        throw new GlobalRouterRefusal("reserved_credential");
       // Credential selection may use its existing cache, but a protection verdict never does. A pool or retained
       // fingerprint committed after that cache was warmed must block the very next ordinary call. One fresh
-      // statement covers provider, row and cross-workspace secret aliases without three database round trips.
-      const [protection] = rowsOf<{ blocked: boolean }>(
+      // statement covers provider, row and cross-workspace secret aliases, and a Global Router key's reservation
+      // (by fingerprint anywhere, or by this workspace's credential row), without extra database round trips.
+      const fingerprint = sha256(key.apiKey);
+      const [protection] = rowsOf<{ blocked: boolean; router_reserved: boolean }>(
         await db.execute(sql`select
           exists (select 1 from ${schema.creditPools}
             where ${schema.creditPools.orgId} = ${orgId}
@@ -484,9 +480,15 @@ export function createModelGateway(deps: ModelGatewayDeps) {
           or exists (select 1 from ${schema.creditRoutes}
             where (${schema.creditRoutes.orgId} = ${orgId}
                 and ${schema.creditRoutes.credentialId} = ${key.credentialId})
-              or ${schema.creditRoutes.credentialFingerprint} = ${sha256(key.apiKey)})
-          as blocked`),
+              or ${schema.creditRoutes.credentialFingerprint} = ${fingerprint})
+          as blocked,
+          exists (select 1 from ${schema.globalRouterAccounts}
+            where ${schema.globalRouterAccounts.credentialFingerprint} = ${fingerprint}
+              or (${schema.globalRouterAccounts.orgId} = ${orgId}
+                and ${schema.globalRouterAccounts.credentialId} = ${key.credentialId}))
+          as router_reserved`),
       );
+      if (protection?.router_reserved) throw new GlobalRouterRefusal("reserved_credential");
       if (!protection || protection.blocked) throw new CreditRouteRefusal("reserved_credential");
       return;
     }
