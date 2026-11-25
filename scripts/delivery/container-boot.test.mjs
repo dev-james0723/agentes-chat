@@ -15,7 +15,7 @@ const s3Endpoint = `http://${s3Container}:8080`;
 const probeCommands = String.raw`#!/bin/sh
 set -eu
 
-command_name=$(basename "$0")
+command_name=${"$"}{0##*/}
 
 trace() { printf '%s\n' "$*" >> "$BOOT_TRACE"; }
 invalid() { trace "invalid $command_name invocation"; exit 97; }
@@ -39,7 +39,14 @@ case "$command_name" in
       && [ "$RCLONE_S3_ACCESS_KEY_ID" = ci-key ] \
       && [ "$RCLONE_S3_SECRET_ACCESS_KEY" = ci-secret ] \
       && [ "$RCLONE_S3_NO_CHECK_BUCKET" = true ] || invalid
-    attempt=$(grep -c '^probe ' "$BOOT_TRACE" || true)
+    attempt=0
+    if [ -f "$BOOT_TRACE" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          "probe "*) attempt=$((attempt + 1)) ;;
+        esac
+      done < "$BOOT_TRACE"
+    fi
     IFS=,
     set -- $S3_RESPONSES
     if [ "$attempt" -ge "$#" ]; then attempt=$(($# - 1)); fi
