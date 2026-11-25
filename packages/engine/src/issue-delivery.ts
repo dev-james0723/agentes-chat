@@ -13,6 +13,7 @@ import {
 import { tellSession } from "./missions";
 import { personBehindCall } from "./requester";
 import type { ToolContext } from "./tools/types";
+import { recordDeliveryClaim, recordDeliveryVerdict } from "./verification";
 
 const { issues, issueActivity, agentRuns, missions, missionEvents, missionDeliveries } = schema;
 type Task = typeof issues.$inferSelect;
@@ -519,6 +520,8 @@ export async function applyIssueDelivery(
         `Submitted ${rev} for independent QA; this is not accepted or released.\n${summary}\nPreview: ${submission.preview}\nArtifacts: ${submission.paths.join("; ")}\nObserved checks: ${submission.checks.join("; ")}`,
         submission,
       );
+      // The submission is the implementer's claim of done; independent QA's verdict confirms or rejects it (ADR 0211).
+      await recordDeliveryClaim(tx, impl, ctx.agentId, submission.id, ctx.runId);
       // New content invalidates old QA checks; the reviewer must inspect this snapshot again.
       await tx
         .update(issues)
@@ -573,6 +576,18 @@ export async function applyIssueDelivery(
         `Independent QA ${review.verdict} for ${rev}.\n${summary}\nEvidence: ${review.evidence.join("; ")}`,
         review,
       );
+    // Independent QA is the implementation's verifier (ADR 0211 §6): its pass is a verdict only over a met contract.
+    await recordDeliveryVerdict(tx, {
+      impl,
+      reviewerId: ctx.agentId,
+      implementerId: contract.implementerId,
+      verdict: review.verdict,
+      summary,
+      submissionId: prior.submission.id,
+      revision: rev,
+      runId: ctx.runId,
+      channelId: ctx.channelId,
+    });
     if (review.verdict === "changes_requested") {
       await status(
         tx,

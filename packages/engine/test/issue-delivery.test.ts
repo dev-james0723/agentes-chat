@@ -3,13 +3,16 @@ import { and, type Database, desc, eq, schema, sql } from "@agenteschat/db";
 import {
   addChannelMember,
   askAgentToImplement,
+  costPerSuccess,
   createAgent,
   createIssue,
+  founderStatus,
   getIssue,
   grantScopes,
   NEW_AGENT_DEFAULTS,
   postPersonMessage,
   setAgentAudience,
+  setCompletionContract,
   setCriterion,
   setIssueAudience,
   updateIssue,
@@ -737,3 +740,87 @@ for (const first of ["configure", "accept"] as const) {
     },
   );
 }
+
+// ADR 0211: the delivery's independent QA is the task's verifier. Its pass is the verdict the founder status and cost
+// per success read, only while the implementation's completion contract is met; the submission is the claim of done.
+const verdictsOf = (issueId: string) =>
+  f.db
+    .select()
+    .from(schema.outcomes)
+    .where(
+      and(
+        eq(schema.outcomes.orgId, f.org.id),
+        sql`${schema.outcomes.details}->>'issueId' = ${issueId}`,
+        sql`${schema.outcomes.kind} in ('task_verified', 'task_rejected', 'issue_closed')`,
+      ),
+    )
+    .orderBy(schema.outcomes.createdAt);
+const window = () => ({ from: new Date(Date.now() - 3_600_000), to: new Date(Date.now() + 60_000) });
+
+test("ADR 0211: the submission is the claim; the QA pass is the independent verdict", async () => {
+  const p = await prepare();
+  await p.submit();
+  expect(await verdictsOf(p.implementation.id)).toMatchObject([
+    { kind: "issue_closed", details: { by: { type: "agent", id: p.implAgent.id }, claim: true, via: "delivery" } },
+  ]);
+  expect((await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null)).verification.verified).toBe(
+    false,
+  );
+  await p.review();
+  const [, verdict] = await verdictsOf(p.implementation.id);
+  expect(verdict).toMatchObject({
+    kind: "task_verified",
+    details: { by: { type: "agent", id: p.qaAgent.id }, via: "delivery", revision: revisionA },
+  });
+  const s = await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null);
+  expect(s.verification).toMatchObject({ state: "verified", verifier: { type: "agent", id: p.qaAgent.id } });
+  expect((await costPerSuccess(f.db, f.owner.id, f.org.id, window())).claims).toMatchObject({
+    claimedDone: 1,
+    verified: 1,
+  });
+  // The same verdict again records nothing more.
+  await p.review();
+  expect(await verdictsOf(p.implementation.id)).toHaveLength(2);
+});
+
+test("ADR 0211: changes requested is a rejection after the claim; a resubmission needs a new verdict", async () => {
+  const p = await prepare();
+  await p.submit();
+  await p.review("changes_requested");
+  const s = await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null);
+  expect(s.verification).toMatchObject({
+    state: "rejected",
+    rejectedReasons: ["The restricted-access action is broken."],
+  });
+  expect((await costPerSuccess(f.db, f.owner.id, f.org.id, window())).claims).toMatchObject({
+    claimedDone: 1,
+    rejectedAfterClaim: 1,
+  });
+  await p.submit(revisionA, { retry_reason: "Preview access restored; recheck the identical snapshot." });
+  expect((await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null)).verification.verified).toBe(
+    false,
+  );
+});
+
+test("negative control (ADR 0211): a QA pass never verifies past the implementation's completion contract", async () => {
+  const p = await prepare();
+  await setCompletionContract(f.db, f.owner.id, f.org.id, p.implementation.id, { evidence: ["criteria", "pr_merged"] });
+  await p.submit();
+  await p.review();
+  // ADR 0209's delivery still passes; verification waits for the merge evidence.
+  expect(await row(p.implementation.id)).toMatchObject({ status: "done" });
+  expect((await verdictsOf(p.implementation.id)).map((o) => o.kind)).toEqual(["issue_closed"]);
+  const s = await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null);
+  expect(s.verification.verified).toBe(false);
+  expect(s.verification.missing).toContain("not_merged");
+});
+
+test("negative control (ADR 0211): changed criteria after the QA pass make its verdict stale", async () => {
+  const p = await prepare();
+  await p.submit();
+  await p.review();
+  await updateIssue(deps(), owner(), f.org.id, p.implementation.id, { criteria: [{ text: "New requirement" }] });
+  expect((await founderStatus(f.db, f.owner.id, f.org.id, p.implementation.id, null)).verification.verified).toBe(
+    false,
+  );
+});

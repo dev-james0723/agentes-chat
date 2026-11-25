@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-11-25
 - Builds on: ADR 0017 (outcomes), ADR 0056 (operator API), ADR 0186 (unchecked criteria stop auto-done), ADR 0202 (owner epoch), ADR 0209 (evidence-bearing task delivery), ADR 0204 (founder status from evidence), ADR 0206 (traceability), ADR 0207 (cost per verified success)
-- Code: `packages/engine/src/completion-contract.ts` (`contractOf`, `contractHash`, `assessCompletion`, `verdictOf`, pure), `packages/engine/src/verification.ts` (`setCompletionContract`, `verifyTask`, `implementersOf`, `writesImplementation`, `recordTestReceipt`), `founder-status.ts` (`verification`, `taskEvidenceRows`, `taskContract`), `cost-per-success.ts` (successes and `claims`), `issues.ts` (the `issue_closed` claim), migration `packages/db/migrations/0285_issue_completion_contract.sql`; routes `PUT …/issues/{issueId}/completion-contract`, `POST …/issues/{issueId}/verification` (`apps/server/src/routes/app/issues.ts`), operator `POST /orgs/{orgId}/test-receipts` (`apps/server/src/operator/deploys.ts`); tests `packages/engine/test/verification.test.ts`, `founder-status.test.ts`, `cost-per-success.test.ts`, `apps/server/test/founder-status.test.ts`, `apps/server/test/operator.test.ts`
+- Code: `packages/engine/src/completion-contract.ts` (`contractOf`, `contractHash`, `assessCompletion`, `verdictOf`, pure), `packages/engine/src/verification.ts` (`setCompletionContract`, `verifyTask`, `implementersOf`, `writesImplementation`, `recordTestReceipt`), `founder-status.ts` (`verification`, `taskEvidenceRows`, `taskContract`), `cost-per-success.ts` (successes and `claims`), `issues.ts` (the `issue_closed` claim), `issue-delivery.ts` (ADR 0209's submission and QA verdict), migration `packages/db/migrations/0285_issue_completion_contract.sql`; routes `PUT …/issues/{issueId}/completion-contract`, `POST …/issues/{issueId}/verification` (`apps/server/src/routes/app/issues.ts`), operator `POST /orgs/{orgId}/test-receipts` (`apps/server/src/operator/deploys.ts`); tests `packages/engine/test/verification.test.ts`, `issue-delivery.test.ts`, `founder-status.test.ts`, `cost-per-success.test.ts`, `apps/server/test/founder-status.test.ts`, `apps/server/test/operator.test.ts`
 
 ## Context
 
@@ -43,16 +43,23 @@ The operator API gains `POST /orgs/{orgId}/test-receipts` (`{ repo, commit, suit
 
 No dashboard, no notification kind, no new approval. The verdict is an outcome and an audit row; the founder status line and the usage report read it. Outcomes already feed learning (ADR 0017): a person's verdict counts as an outcome a person stands behind, an agent's does not.
 
-### 6. Beside ADR 0209's delivery contract
+### 6. ADR 0209's independent QA is the verifier of a delivery
 
-ADR 0209 is an opt-in workflow across three tasks (a parent, its implementation and an independently owned QA task) that ends in a person accepting the parent. This decision is per task and applies to every task: whatever closes a task, its "verified" is a verdict over stored evidence. The two don't conflict: a QA pass under ADR 0209 is a claim about a submission, and the QA agent may then be the task's verifier here if it is independent by §2; making a QA pass also record `task_verified` is a later change.
+ADR 0209 already runs an independent review for configured deliveries: a QA task owned by an agent other than the implementer, a submission naming an immutable revision, and a verdict naming the exact receipt it inspected. That is the agent path into this decision, not a second system:
+
+- The implementer's submission records the claim of done on the implementation task (`issue_closed`, `via: "delivery"`, its submission id), so the false-pass counts see it.
+- QA's `changes_requested` records `task_rejected` with QA's summary as the reason.
+- QA's `passed` records `task_verified` by the QA agent (with the submission and revision) only when the implementation task's completion contract is met by the stored evidence; otherwise ADR 0209's delivery still passes, no verdict is written, and the founder status names what is missing. There is no source identity inside a tool call, so a contract that needs `deploy_running` waits for a verifier through the route.
+- ADR 0209's own independence rule (a distinct current owner, a pinned revision) stands in for §2's scope check on this path: the reviewed snapshot can't change under the verdict, and a new submission is a new claim that clears it.
+
+`recordDeliveryClaim` and `recordDeliveryVerdict` (`verification.ts`) are called from `applyIssueDelivery` (`issue-delivery.ts`) in its own transaction, under its task locks; a repeated submission or verdict returns before them, so nothing is recorded twice.
 
 ## Consequences
 
 - A task closed by an agent reads "done, not verified" until someone independent confirms it, including tasks that people ticked: that is the honest answer, and the next step names the verifier.
 - `deploy_running` and `tests_passed` stay unmet until the deployer posts deploy records (ADR 0204) and CI posts test receipts. Contracts that require them make that the visible blocker.
 - The test files' digest is computed by the caller (CI) and pinned by the person who sets the contract; the server compares, it does not compute either. A changed suite is a new contract, set by a person.
-- Agents can be verifiers in the engine; exposing that as an agent tool is a later, separate change.
+- Agents verify through ADR 0209's QA review. `verifyTask` (the route) is for people, and for agents only through the engine; a separate agent tool outside a delivery contract is not added.
 
 ## Rejected
 

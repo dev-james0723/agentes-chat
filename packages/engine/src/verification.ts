@@ -1,4 +1,4 @@
-import { and, type Database, eq, inArray, schema, sql } from "@agenteschat/db";
+import { and, type Database, type Executor, eq, inArray, schema, sql } from "@agenteschat/db";
 import { recordAudit } from "./audit";
 import {
   assessCompletion,
@@ -199,40 +199,171 @@ export async function verifyTask(
       missing: assessment.missing.join(", "),
     });
   const verified = input.verdict === "verified";
-  const details = {
-    issueId: issue.id,
-    by: who,
-    contractHash: contractHash(contract, issue.criteria),
-    evidence: assessment.met,
-    missing: assessment.missing,
-    reasons,
-    implementers,
-    runningDigest: running?.digest ?? null,
-  };
-  const outcome = await db.transaction(async (tx) => {
-    const row = await recordOutcome(tx, {
+  const outcome = await db.transaction((tx) =>
+    writeVerdict(tx, {
       orgId,
-      kind: verified ? "task_verified" : "task_rejected",
-      agentId: who.type === "agent" ? who.id : null,
-      runId: actor.type === "agent" ? (actor.runId ?? null) : null,
-      subject: `issue#${issue.number}`,
-      summary: verified ? "" : reasons.join("; "),
-      details,
-      source: "issue",
-      channelId: issue.channelId,
-    });
-    await recordAudit(tx, {
-      orgId,
-      actor: who,
-      action: verified ? "task.verified" : "task.rejected",
-      target: { type: "issue", id: issue.id },
-      details: { outcomeId: row.id, evidence: assessment.met, missing: assessment.missing, reasons },
+      issue,
+      who,
+      verified,
+      reasons,
+      contract: contractHash(contract, issue.criteria),
+      assessment,
+      implementers,
       runId: actor.type === "agent" ? (actor.runId ?? null) : null,
       channelId: actor.type === "agent" ? actor.channelId : null,
-    });
-    return row;
-  });
+      extra: { runningDigest: running?.digest ?? null },
+    }),
+  );
   return { outcome, assessment };
+}
+
+/** One verdict: a `task_verified` / `task_rejected` outcome and its audit row, in the caller's transaction. */
+async function writeVerdict(
+  tx: Executor,
+  v: {
+    orgId: string;
+    issue: { id: string; number: number; channelId: string | null };
+    who: Actor;
+    verified: boolean;
+    reasons: string[];
+    contract: string;
+    assessment: CompletionAssessment;
+    implementers: Actor[];
+    runId: string | null;
+    channelId: string | null;
+    extra: Record<string, unknown>;
+  },
+): Promise<Outcome> {
+  const row = await recordOutcome(tx, {
+    orgId: v.orgId,
+    kind: v.verified ? "task_verified" : "task_rejected",
+    agentId: v.who.type === "agent" ? v.who.id : null,
+    runId: v.runId,
+    subject: `issue#${v.issue.number}`,
+    summary: v.verified ? "" : v.reasons.join("; "),
+    details: {
+      issueId: v.issue.id,
+      by: v.who,
+      contractHash: v.contract,
+      evidence: v.assessment.met,
+      missing: v.assessment.missing,
+      reasons: v.reasons,
+      implementers: v.implementers,
+      ...v.extra,
+    },
+    source: "issue",
+    channelId: v.issue.channelId,
+  });
+  await recordAudit(tx, {
+    orgId: v.orgId,
+    actor: v.who,
+    action: v.verified ? "task.verified" : "task.rejected",
+    target: { type: "issue", id: v.issue.id },
+    details: {
+      outcomeId: row.id,
+      evidence: v.assessment.met,
+      missing: v.assessment.missing,
+      reasons: v.reasons,
+      ...v.extra,
+    },
+    runId: v.runId,
+    channelId: v.channelId,
+  });
+  return row;
+}
+
+type DeliveryTask = {
+  id: string;
+  orgId: string;
+  number: number;
+  status: string;
+  channelId: string | null;
+  criteria: { id: string; text: string; done: boolean; doneBy?: Actor | null }[];
+  pullRequests: Record<string, unknown>[];
+};
+
+/**
+ * The implementer's submission under an ADR 0209 delivery contract is its claim of done (an `issue_closed` claim on
+ * the implementation task, by the submitting agent), recorded once per submission receipt.
+ */
+export async function recordDeliveryClaim(
+  tx: Executor,
+  impl: DeliveryTask,
+  implementerId: string,
+  submissionId: string,
+  runId: string | null,
+): Promise<void> {
+  await recordOutcome(tx, {
+    orgId: impl.orgId,
+    kind: "issue_closed",
+    agentId: implementerId,
+    runId,
+    subject: `issue#${impl.number}`,
+    details: { issueId: impl.id, by: { type: "agent", id: implementerId }, claim: true, via: "delivery", submissionId },
+    source: "issue",
+    channelId: impl.channelId,
+  });
+}
+
+/**
+ * ADR 0209's independent QA verdict is this ADR's verdict on the implementation task (ADR 0211 §6): ADR 0209 already
+ * requires a reviewer other than the implementer and pins the exact revision it inspected. "Changes requested" is a
+ * rejection with the QA summary as its reason. A pass is recorded as `task_verified` only when the implementation's
+ * completion contract is met by the stored evidence (its status taken as done, which the pass sets); otherwise
+ * nothing is recorded and the founder status names what is missing. Returns the assessment of a pass.
+ */
+export async function recordDeliveryVerdict(
+  tx: Executor,
+  v: {
+    impl: DeliveryTask;
+    reviewerId: string;
+    implementerId: string;
+    verdict: "passed" | "changes_requested";
+    summary: string;
+    submissionId: string;
+    revision: string;
+    runId: string | null;
+    channelId: string | null;
+  },
+): Promise<CompletionAssessment | null> {
+  const { impl } = v;
+  const pullRequests = impl.pullRequests.flatMap((p) =>
+    typeof p.url === "string" ? [{ number: Number(p.number), url: p.url }] : [],
+  );
+  const rows = await taskEvidenceRows(tx, impl.orgId, { id: impl.id, pullRequests });
+  const contract = contractOf(await taskContract(tx, impl.orgId, impl.id));
+  const prSubjects = new Set(pullRequests.flatMap((p) => prSubjectOf(p.url) ?? []));
+  // No source identity inside a tool call: a contract that needs `deploy_running` waits for a later verifier.
+  const delivery = deliveryOf(
+    rows.filter(
+      (r) =>
+        prSubjects.has(r.subject.toLowerCase()) || r.kind === "deploy_succeeded" || r.kind === "deploy_rolled_back",
+    ),
+    null,
+  );
+  const verified = v.verdict === "passed";
+  const assessment = assessCompletion({
+    status: verified ? "done" : impl.status,
+    criteria: impl.criteria,
+    contract,
+    rows,
+    delivery: { state: delivery.state, merge: delivery.merge },
+  });
+  if (verified && !assessment.ok) return assessment;
+  await writeVerdict(tx, {
+    orgId: impl.orgId,
+    issue: impl,
+    who: { type: "agent", id: v.reviewerId },
+    verified,
+    reasons: verified ? [] : [v.summary.slice(0, 500)],
+    contract: contractHash(contract, impl.criteria),
+    assessment,
+    implementers: [{ type: "agent", id: v.implementerId }],
+    runId: v.runId,
+    channelId: v.channelId,
+    extra: { via: "delivery", submissionId: v.submissionId, revision: v.revision },
+  });
+  return verified ? assessment : null;
 }
 
 export interface TestReceiptInput {
