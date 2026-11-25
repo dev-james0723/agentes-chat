@@ -40,8 +40,8 @@ export interface RunnerConfig {
    * Brain turns' CLIs read and write only the agent's folders and the folders allowed it (`access.folders`), enforced
    * by each CLI itself: Claude Code (`blockReadsOutsideWorkingDirectories`, `blockWritesOutsideWorkingDirectories`,
    * and our prompt tool for its shell), Codex (a permission profile), Grok Build (`--sandbox strict`); a CLI that
-   * can't enforce it runs no work turn (ADR 0205). Applied at startup. Absent: on; only the owner's `false` turns it
-   * off (`foldersEnforced`).
+   * can't enforce it runs no work turn (ADR 0205). Applied at startup. Opt-in: only the owner's `true` turns it on
+   * (`foldersEnforced`); absent or `false`, agents are not limited to their folders and nobody is asked for one.
    */
   readsOnlyInFolders?: boolean;
   /** Background tasks at once on this computer (default 3). */
@@ -454,5 +454,5 @@ export function watchConfig(
   };
 }
 
-/** Whether the machine's folder allow-list binds brain turns' CLIs (ADR 0205): on unless the owner set `false`. */
-export const foldersEnforced = (config: { readsOnlyInFolders?: boolean }) => config.readsOnlyInFolders !== false;
+/** Whether the machine's folder allow-list binds brain turns' CLIs (ADR 0205): only when the owner set `true`. */
+export const foldersEnforced = (config: { readsOnlyInFolders?: boolean }) => config.readsOnlyInFolders === true;

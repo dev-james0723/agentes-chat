@@ -1,5 +1,14 @@
-import { and, type Database, desc, eq, gt, inArray, isNull, or, schema, sql } from "@agenteschat/db";
+import { and, type Database, desc, type Executor, eq, gt, inArray, isNull, or, schema, sql } from "@agenteschat/db";
 import { listApprovals } from "./approvals";
+import {
+  assessCompletion,
+  type CompletionContract,
+  contractHash,
+  contractOf,
+  type MissingReason,
+  type StoredContract,
+  verdictOf,
+} from "./completion-contract";
 import { type Outcome, recordOutcome } from "./context/outcomes";
 import { ConflictError, ValidationError } from "./errors";
 import { getIssue, type IssueView } from "./issues";
@@ -25,6 +34,8 @@ export interface EvidenceOutcome {
   subject: string;
   details: Record<string, unknown>;
   createdAt: Date;
+  /** Who recorded it (`outcomes.source`): a test receipt counts only from the operator API (ADR 0211). */
+  source?: string;
 }
 
 /** A pending approval the reader may decide, on one of the task's runs. */
@@ -48,6 +59,8 @@ export interface FounderEvidence {
     pullRequests: { number: number; url: string }[];
   };
   outcomes: EvidenceOutcome[];
+  /** The task's completion contract (ADR 0211); null or absent: the default. */
+  contract?: StoredContract | null;
   decisions: PendingDecision[];
   running: RunningSource | null;
   /** Display names by person or agent id, for the next action's owner. */
@@ -65,7 +78,11 @@ export type DeliveryState =
   | "runtime_unknown"
   | "available";
 
-export type VerificationState = "verified" | "done_unverified" | "unverified" | "no_criteria";
+/**
+ * `verified`: an independent verifier confirmed it and the evidence still meets the contract (ADR 0211). `stale`: it
+ * was verified, but the evidence or the contract changed since. `rejected`: the verifier sent it back.
+ */
+export type VerificationState = "verified" | "stale" | "rejected" | "done_unverified" | "unverified" | "no_criteria";
 
 export type NextAction =
   | "decide"
@@ -110,6 +127,14 @@ export interface FounderStatus {
     criteria: { total: number; checkedByPerson: number };
     /** The newest CI and test outcomes of the task's pull requests: supporting checks, never verification. */
     checks: { kind: string; positive: boolean; at: string }[];
+    /** The completion contract in force (ADR 0211). */
+    contract: Pick<CompletionContract, "evidence" | "tests" | "isDefault">;
+    /** The independent verifier of the verdict in force, if any. */
+    verifier: FounderOwner | null;
+    /** What the stored evidence lacks for the contract now. */
+    missing: MissingReason[];
+    /** A rejection's reasons, in the verifier's words. */
+    rejectedReasons: string[];
     text: string;
   };
   blockers: { reason: string; since: string; text: string }[];
@@ -224,30 +249,107 @@ function delivery(e: FounderEvidence, rows: EvidenceOutcome[]): FounderStatus["d
   };
 }
 
-function verification(e: FounderEvidence, rows: EvidenceOutcome[]): FounderStatus["verification"] {
+/**
+ * The delivery state of one change from its stored rows alone (its `pr_merged`/`pr_reverted` rows and its repo's
+ * deploy rows), the same rule the founder status uses; requirement traceability (ADR 0206) reads it per pull request.
+ */
+export function deliveryOf(rows: EvidenceOutcome[], running: RunningSource | null): FounderStatus["delivery"] {
+  return delivery({ running } as FounderEvidence, rows);
+}
+
+const MISSING_WORDS: Record<MissingReason, string> = {
+  not_claimed: "未標完成",
+  no_criteria: "未定驗收條件",
+  criteria_unchecked: "有驗收條件未剔",
+  not_person_vouched: "未有人逐項剔過",
+  not_merged: "未合併",
+  merge_reverted: "合併已還原",
+  merge_commit_unknown: "冇合併 commit 紀錄",
+  not_deployed: "未部署",
+  deploy_stale: "伺服器運行緊嘅唔係嗰次部署",
+  deploy_rolled_back: "部署已回退",
+  runtime_unknown: "伺服器講唔到運行緊乜",
+  tests_not_pinned: "合約未釘測試",
+  tests_receipt_missing: "冇測試收據",
+  tests_receipt_untrusted: "測試收據唔係可信來源",
+  tests_wrong_commit: "測試收據唔係呢個 commit",
+  tests_changed: "測試檔案改過",
+  tests_failed: "測試失敗",
+};
+
+const EVIDENCE_WORDS: Record<string, string> = {
+  criteria: "驗收條件全剔",
+  person_vouched: "人逐項剔過",
+  pr_merged: "已合併",
+  deploy_running: "現用版本運行緊",
+  tests_passed: "可信測試收據",
+};
+
+/**
+ * Verified only when an independent verifier confirmed it against its completion contract (ADR 0211) and the stored
+ * evidence still meets that contract now; a claim of done, an agent's own ticks or CI alone never are.
+ */
+function verification(
+  e: FounderEvidence,
+  rows: EvidenceOutcome[],
+  d: FounderStatus["delivery"],
+): FounderStatus["verification"] {
   const total = e.issue.criteria.length;
   const checkedByPerson = e.issue.criteria.filter((c) => c.done && c.doneBy?.type === "person").length;
   const checks = CHECK_KINDS.flatMap((kind) => {
     const row = newest(rows.filter((r) => r.kind === kind));
     return row ? [{ kind, positive: kind.endsWith("_passed"), at: row.createdAt.toISOString() }] : [];
   });
-  const base = { criteria: { total, checkedByPerson }, checks, verified: false };
-  if (total === 0)
+  const contract = contractOf(e.contract);
+  const assessment = assessCompletion({
+    status: e.issue.status,
+    criteria: e.issue.criteria,
+    contract,
+    rows,
+    delivery: { state: d.state, merge: d.merge },
+  });
+  const implementers = [e.issue.assignee, e.issue.createdBy.type === "agent" ? e.issue.createdBy : null].filter(
+    (a): a is Actor => !!a,
+  );
+  const verdict = verdictOf(rows, contractHash(contract, e.issue.criteria), implementers);
+  const verifier = verdict.by ? ownerOf(e, verdict.by) : null;
+  const base = {
+    criteria: { total, checkedByPerson },
+    checks,
+    contract: { evidence: contract.evidence, tests: contract.tests, isDefault: contract.isDefault },
+    verifier,
+    missing: assessment.missing,
+    rejectedReasons: verdict.state === "rejected" ? verdict.reasons : [],
+    verified: false,
+  };
+  const lacking = assessment.missing.map((m) => MISSING_WORDS[m]).join("、");
+  const who = verifier?.name ?? (verifier?.type === "agent" ? "一個 agent" : "一位同事");
+  if (verdict.state === "verified" && assessment.ok)
+    return {
+      ...base,
+      verified: true,
+      state: "verified",
+      text: `驗收：已由獨立核實者（${who}）按完成合約核實（${contract.evidence.map((k) => EVIDENCE_WORDS[k]).join("、")}）。`,
+    };
+  if (verdict.state === "verified" || verdict.state === "stale")
+    return {
+      ...base,
+      state: "stale",
+      text: `驗收：之前核實過，但${verdict.state === "stale" ? "完成合約或驗收條件之後改過" : `而家證據唔再成立（${lacking}）`}，唔算核實。`,
+    };
+  if (verdict.state === "rejected")
+    return {
+      ...base,
+      state: "rejected",
+      text: `驗收：獨立核實者（${who}）退回：${verdict.reasons.join("；") || "冇寫原因"}。`,
+    };
+  if (total === 0 && contract.evidence.includes("criteria"))
     return { ...base, state: "no_criteria", text: "驗收：未定驗收條件，冇嘢可以核實，只可以當「已實作」。" };
-  const met = newest(rows.filter((r) => r.kind === "criteria_met"));
-  const reopened = met
-    ? after(
-        rows.filter((r) => r.kind === "issue_reopened"),
-        met.createdAt,
-      )
-    : false;
-  if (met && !reopened && checkedByPerson === total)
-    return { ...base, verified: true, state: "verified", text: `驗收：已核實，${total} 項驗收條件全部由人逐項剔過。` };
   if (e.issue.status === "done")
     return {
       ...base,
       state: "done_unverified",
-      text: `驗收：標咗完成，但冇人逐項驗收嘅紀錄（${checkedByPerson}／${total} 項由人剔過），只算「已實作」。`,
+      text: `驗收：標咗完成，但未有獨立核實者確認${lacking ? `（仲欠：${lacking}）` : ""}，只算「已實作」。`,
     };
   return {
     ...base,
@@ -313,9 +415,15 @@ function nextAction(
     return { action: "deploy", owner: null, text: "下一步：部署到現用版本（負責人：未有紀錄）。" };
   if (d.state !== "available")
     return { action: "check_runtime", owner: null, text: "下一步：核對現用版本運行緊邊份源碼（負責人：未有紀錄）。" };
+  if (v.state === "rejected")
+    return { action: "implement", owner: assignee, text: `下一步：${who(assignee)}按核實者退回嘅原因修正。` };
   if (!v.verified) {
     const creator = e.issue.createdBy.type === "person" ? ownerOf(e, e.issue.createdBy) : null;
-    return { action: "verify", owner: creator, text: `下一步：${who(creator)}按驗收條件試用並逐項剔。` };
+    return {
+      action: "verify",
+      owner: creator,
+      text: `下一步：${who(creator)}或者另一位唔係實作者嘅核實者，按完成合約核實。`,
+    };
   }
   return { action: "none", owner: null, text: "下一步：已交付同核實，冇嘢要做。" };
 }
@@ -329,7 +437,8 @@ export function deriveFounderStatus(e: FounderEvidence): FounderStatus {
       r.details.issueId === e.issue.id ||
       prSubjects.has(r.subject.toLowerCase()) ||
       r.kind === "deploy_succeeded" ||
-      r.kind === "deploy_rolled_back",
+      r.kind === "deploy_rolled_back" ||
+      ((r.kind === "tests_passed" || r.kind === "tests_failed") && r.subject.startsWith("tests:")),
   );
   const description = e.issue.description.trim();
   const why =
@@ -344,7 +453,7 @@ export function deriveFounderStatus(e: FounderEvidence): FounderStatus {
     ].join("\n"),
   };
   const d = delivery(e, rows);
-  const v = verification(e, rows);
+  const v = verification(e, rows, d);
   const b = blockers(e, rows);
   const decisions = e.decisions.filter((x) => x.expiresAt > e.now);
   const next = nextAction(e, d, v, b, decisions);
@@ -369,27 +478,24 @@ export function deriveFounderStatus(e: FounderEvidence): FounderStatus {
 }
 
 /**
- * The status of a task the reader can see (else a 404, as `getIssue`): its row, the outcomes about it or its pull
- * requests, deploy records, and the pending approvals on its runs that the reader may decide.
+ * The stored evidence about a task (ADR 0204, 0211): outcomes about it or its pull requests, its repositories' deploy
+ * records and test receipts. The caller has already checked the task is visible.
  */
-export async function founderStatus(
-  db: Database,
-  viewerId: string,
+export async function taskEvidenceRows(
+  db: Executor,
   orgId: string,
-  issueId: string,
-  running: RunningSource | null,
-  now = new Date(),
-): Promise<FounderStatus> {
-  const issue = await getIssue(db, { type: "person", userId: viewerId }, orgId, { id: issueId });
+  issue: { id: string; pullRequests: { url: string }[] },
+): Promise<EvidenceOutcome[]> {
   const subjects = issue.pullRequests.flatMap((p) => prSubjectOf(p.url) ?? []);
-  const repos = [...new Set(subjects.map((s) => `deploy:${s.split("#")[0]}`))];
-  const rows = await db
+  const repos = [...new Set(subjects.map((s) => s.split("#")[0]))].flatMap((r) => [`deploy:${r}`, `tests:${r}`]);
+  return db
     .select({
       id: outcomes.id,
       kind: outcomes.kind,
       subject: outcomes.subject,
       details: outcomes.details,
       createdAt: outcomes.createdAt,
+      source: outcomes.source,
     })
     .from(outcomes)
     .where(
@@ -404,6 +510,32 @@ export async function founderStatus(
     )
     .orderBy(desc(outcomes.createdAt))
     .limit(500);
+}
+
+/** A task's stored completion contract (ADR 0211), null when it has none. */
+export async function taskContract(db: Executor, orgId: string, issueId: string): Promise<StoredContract | null> {
+  const [row] = await db
+    .select({ contract: schema.issues.completionContract })
+    .from(schema.issues)
+    .where(and(eq(schema.issues.orgId, orgId), eq(schema.issues.id, issueId)));
+  return (row?.contract as StoredContract | null | undefined) ?? null;
+}
+
+/**
+ * The status of a task the reader can see (else a 404, as `getIssue`): its row, the outcomes about it or its pull
+ * requests, deploy records, and the pending approvals on its runs that the reader may decide.
+ */
+export async function founderStatus(
+  db: Database,
+  viewerId: string,
+  orgId: string,
+  issueId: string,
+  running: RunningSource | null,
+  now = new Date(),
+): Promise<FounderStatus> {
+  const issue = await getIssue(db, { type: "person", userId: viewerId }, orgId, { id: issueId });
+  const rows = await taskEvidenceRows(db, orgId, issue);
+  const contract = await taskContract(db, orgId, issue.id);
   const pending = (await listApprovals(db, viewerId, orgId, { status: "pending", limit: 500 })).filter(
     (a) => a.canDecide && a.issue?.id === issue.id && new Date(a.expiresAt) > now,
   );
@@ -445,7 +577,10 @@ export async function founderStatus(
       messageId: a.messageId,
       expiresAt: new Date(a.expiresAt),
     }));
-  const people = [issue.createdBy, issue.assignee].filter((a): a is Actor => !!a);
+  const verifiers = rows.flatMap((r) =>
+    (r.kind === "task_verified" || r.kind === "task_rejected") && r.details.by ? [r.details.by as Actor] : [],
+  );
+  const people = [issue.createdBy, issue.assignee, ...verifiers].filter((a): a is Actor => !!a);
   const personIds = people.filter((a) => a.type === "person").map((a) => a.id);
   const agentIds = people.filter((a) => a.type === "agent").map((a) => a.id);
   const names: Record<string, string> = {};
@@ -464,6 +599,7 @@ export async function founderStatus(
       criteria: issue.criteria.map((c) => ({ ...c, doneBy: c.doneBy ?? null })),
     },
     outcomes: rows,
+    contract,
     decisions,
     running,
     names,

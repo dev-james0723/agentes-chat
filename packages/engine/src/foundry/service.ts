@@ -13,6 +13,8 @@ const { foundryCandidates: candidates, foundryVersions: versions } = schema;
 export type FoundryCandidate = typeof candidates.$inferSelect;
 export type FoundryVersion = typeof versions.$inferSelect;
 export const FOUNDRY_CONTRACT = "receipt-normalizer/v1";
+/** Versions one candidate may stage, the first included: repairs are bounded, never a loop (docs/adr/native-capability-foundry.md). */
+export const FOUNDRY_MAX_VERSIONS = 4;
 
 /** Reviewed semantics, shared by the native inventory query and an eligible Foundry ToolDefinition. */
 export const FOUNDRY_NATIVE_CONTRACT: Readonly<NativeToolContract> = Object.freeze({
@@ -343,7 +345,7 @@ export function createFoundryService(deps: FoundryDependencies) {
         const same = previous.find((v) => v.digest === input.bundle.digest);
         if (same) return { version: same, fresh: false };
         if (fresh.candidate.revision !== input.revision) throw new FoundryError("STALE_VERSION");
-        if (previous.length >= 4) throw new FoundryError("REPAIR_LIMIT");
+        if (previous.length >= FOUNDRY_MAX_VERSIONS) throw new FoundryError("REPAIR_LIMIT");
         const [version] = await tx
           .insert(versions)
           .values({

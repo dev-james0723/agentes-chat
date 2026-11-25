@@ -527,9 +527,76 @@ export const envVars = {
     description: "Claude Code model a quota handoff runs on.",
     section: "Agents",
   },
+  OPENROUTER_FALLBACK_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "Permit owner-configured OpenRouter fallback after verified subscription exhaustion. Disabled by default.",
+    section: "Agents",
+  },
+  GLOBAL_MODEL_ROUTER_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "Permit owner-configured multi-lane Global Model Router fallback after verified subscription exhaustion. Disabled by default.",
+    section: "Agents",
+  },
+  CREDIT_FALLBACK_ENABLED: {
+    schema: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    description:
+      "After compatible subscription routes are exhausted, permits verified OpenAI Pro or Claude Ultra API grant fallback with transactional per-cycle budgets. Off by default; registered grant keys and liabilities stay protected when off.",
+    section: "Agents",
+  },
   QUOTA_RESERVE_MAX_AGE_MS: {
     schema: z.coerce.number().int().min(1000).max(86400000).default(900000),
     description: "Maximum age of a shared plan usage observation used for low-capacity routing; older is unknown.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_ORG_IDS: {
+    schema: z
+      .string()
+      .default("")
+      .transform((value) => [
+        ...new Set(
+          value
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ])
+      .pipe(z.array(z.uuid()).max(100)),
+    description:
+      "Workspace IDs whose Model Inspector checks plan availability every minute and prepares task-aware switches. Comma-separated UUIDs; empty disables it. Other workspaces keep their existing model policy.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_THRESHOLD_PERCENT: {
+    schema: z.coerce.number().int().min(1).max(100).default(95),
+    description:
+      "Fresh plan usage at which the Model Inspector prepares a switch to a qualified available model. This threshold signals low capacity, not an exhausted subscription.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_MAX_AGE_MS: {
+    schema: z.coerce.number().int().min(1000).max(3600000).default(300000),
+    description:
+      "Oldest plan observation the Model Inspector may use to choose a route. Missing or older observations stay unknown and are refreshed through the connected computer.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_COOLDOWN_MS: {
+    schema: z.coerce.number().int().min(0).max(86400000).default(900000),
+    description: "Minimum time between Model Inspector switches for one agent, to prevent repeated model changes.",
+    section: "Agents",
+  },
+  MODEL_INSPECTOR_MAX_SWITCHES: {
+    schema: z.coerce.number().int().min(1).max(50).default(4),
+    description:
+      "Maximum idle-agent model changes in one inspection, so a shared quota does not move the team at once.",
     section: "Agents",
   },
   AGENT_MAX_HOPS: {
@@ -761,6 +828,18 @@ export const envVars = {
     schema: z.coerce.number().int().min(0).default(300),
     description: "agentes.chat's own servers: the least a workspace's limit above may be, however few its members.",
     section: "Chat",
+  },
+  CONNECTOR_COLAB_CLIENT_ID: {
+    schema: z.string().optional(),
+    description:
+      "Client id of a Google OAuth web application for the Colab connector. Set with CONNECTOR_COLAB_CLIENT_SECRET. Register {PUBLIC_URL}/api/app/connectors/oauth/callback and enable the Colab API. The connector requests the colaboratory scope with offline access; Google does not support dynamic client registration.",
+    section: "Connectors",
+  },
+  CONNECTOR_COLAB_CLIENT_SECRET: {
+    schema: z.string().optional(),
+    description: "Client secret of the Google OAuth application for Colab; stored only on the server.",
+    section: "Connectors",
+    secret: true,
   },
   CONNECTOR_GITHUB_CLIENT_ID: {
     schema: z.string().optional(),

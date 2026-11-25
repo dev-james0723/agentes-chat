@@ -5,6 +5,7 @@ import { announceAgentStatus } from "./agent-status";
 import { publishApproval } from "./approvals";
 import { executesHere, RUN_STALE_MS } from "./cancel";
 import { onConsultedRunFinished } from "./consultations";
+import { reconcileHeldRuns } from "./effect-reconcile";
 import { ValidationError } from "./errors";
 import { publishChannelEvent, publishMessageCreated } from "./events";
 import type { Transcript } from "./executor";
@@ -71,6 +72,9 @@ export async function recoverStaleRuns(
   const cutoff = new Date(now.getTime() - (options.staleMs ?? RUN_STALE_MS));
   const at: SweepTime = { now, cutoff };
   const out = { resumed: [] as string[], failed: [] as string[], requeued: [] as string[] };
+  // Held on an unknown effect (ADR 0203): a dead worker's open epoch is fenced and what can be read back is, so a run
+  // with nothing unknown left is taken by the rules below. One that fails is tried again by the next sweep.
+  await reconcileHeldRuns(deps, at).catch((error) => options.onError?.("", error));
   const liveJob = sql`exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
       and o.payload->>'runId' = ${agentRuns.id}::text
       and (o.status = 'pending' or (o.status = 'processing' and o.locked_until > ${now.toISOString()}::timestamptz)))`;
@@ -85,7 +89,7 @@ export async function recoverStaleRuns(
       and(
         eq(agentRuns.status, "running"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${cutoff.toISOString()}::timestamptz`,
         sql`not exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
@@ -128,7 +132,7 @@ export async function recoverStaleRuns(
       and(
         eq(agentRuns.status, "queued"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${agentRuns.createdAt} < ${cutoff.toISOString()}::timestamptz`,
         sql`not ${liveJob}`,
@@ -175,7 +179,76 @@ export async function recoverStaleRuns(
     });
     out.requeued.push(run.id);
   }
+  out.requeued.push(...(await recoverOutageWaits(db, at, options.onError)));
   return out;
+}
+
+/**
+ * A provider outage has its own wait generation and timer. Repair a lost/failed timer without starting a new
+ * run or touching its transcript. Lock, then re-read: concurrent sweeps must see the job the first one queued.
+ */
+async function recoverOutageWaits(
+  db: Database,
+  at: SweepTime,
+  onError?: (runId: string, error: unknown) => void,
+): Promise<string[]> {
+  const waitId = sql<string>`${agentRuns.transcript}->'outage'->>'waitId'`;
+  const eligible = and(
+    eq(agentRuns.status, "waiting_input"),
+    sql`${agentRuns.waitingMachineId} is null`,
+    sql`nullif(${agentRuns.transcript}->'waitingForBrain', 'null'::jsonb) is null`,
+    sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+    sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+    sql`jsonb_typeof(${agentRuns.transcript}->'outage'->'waitId') = 'string' and length(${waitId}) > 0`,
+    // Old/malformed metadata must not abort the whole sweep. The executor writes milliseconds as a JSON number.
+    sql`case when jsonb_typeof(${agentRuns.transcript}->'outage'->'at') = 'number'
+      then (${agentRuns.transcript}->'outage'->>'at')::numeric > 0
+        and (${agentRuns.transcript}->'outage'->>'at')::numeric < ${at.cutoff.getTime()}
+      else false end`,
+    sql`not exists (select 1 from ${approvals} where ${approvals.runId} = ${agentRuns.id}
+      and (${approvals.status} = 'pending' or (${approvals.executedAt} is not null
+        and coalesce(${approvals.result}->>'isError', 'true') <> 'false')))`,
+    sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${agentRuns.id}
+      and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
+    // An earlier generation's pending timer cannot resume this wait. Any live lease still owns its worker.
+    sql`not exists (select 1 from ${outbox} o where o.kind = 'agent_run.execute'
+      and o.payload->>'runId' = ${agentRuns.id}::text
+      and ((o.status = 'pending' and (o.payload->>'wait' is null or o.payload->>'wait' = ${waitId}))
+        or (o.status = 'processing' and o.locked_until > ${at.now.toISOString()}::timestamptz)))`,
+  );
+  const candidates = await db.select({ id: agentRuns.id }).from(agentRuns).where(eligible).limit(100);
+  const repaired: string[] = [];
+  for (const candidate of candidates) {
+    if (executesHere(candidate.id)) continue;
+    try {
+      const queued = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ id: agentRuns.id })
+          .from(agentRuns)
+          .where(eq(agentRuns.id, candidate.id))
+          .for("update", { skipLocked: true });
+        if (!locked) return false;
+        const [run] = await tx
+          .select({ id: agentRuns.id, orgId: agentRuns.orgId, waitId })
+          .from(agentRuns)
+          .where(and(eq(agentRuns.id, candidate.id), eligible));
+        if (!run) return false;
+        await enqueue(tx, {
+          orgId: run.orgId,
+          kind: "agent_run.execute",
+          payload: { runId: run.id, wait: run.waitId },
+          // A later sweep can repair again if this repair's job fails too.
+          dedupeKey: `agent_run.execute:${run.id}:outage-repair:${run.waitId}:${at.now.getTime()}`,
+          maxAttempts: 4,
+        });
+        return true;
+      });
+      if (queued) repaired.push(candidate.id);
+    } catch (error) {
+      onError?.(candidate.id, error);
+    }
+  }
+  return repaired;
 }
 
 /** A computer brain's run (Claude Code, Codex): its turns hold bridge tokens. Older rows tell by their session. */
@@ -206,7 +279,7 @@ async function claimStale(tx: Executor, runId: string, at: SweepTime) {
         eq(agentRuns.id, runId),
         eq(agentRuns.status, "running"),
         sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
-        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+        sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${agentRuns.id} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
         sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
         sql`${lastBeat} < ${at.cutoff.toISOString()}::timestamptz`,
       ),

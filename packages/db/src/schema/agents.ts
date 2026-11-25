@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -58,6 +59,8 @@ export const providerCredentials = pgTable(
     label: text().notNull(),
     /** `v1.<iv>.<ciphertext>.<tag>` of the API key, under the data key. */
     secretCiphertext: text().notNull(),
+    /** Internal SHA-256 identity of a high-entropy API key; never returned through credential APIs. */
+    secretFingerprint: text(),
     /** The data key, wrapped by the key-encryption key. */
     wrappedDataKey: text().notNull(),
     /** Which key-encryption key wrapped the data key, e.g. `local:v1`. Enables rotation. */
@@ -81,7 +84,13 @@ export const providerCredentials = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp({ withTimezone: true }),
   },
-  (t) => [index().on(t.orgId)],
+  (t) => [
+    index().on(t.orgId),
+    check(
+      "provider_credential_fingerprint",
+      sql`${t.secretFingerprint} is null or ${t.secretFingerprint} ~ '^[a-f0-9]{64}$'`,
+    ),
+  ],
 );
 
 /**
@@ -428,7 +437,7 @@ export interface AgentSetup {
 /**
  * Each person's own AI for the team's right hand (ADR 0137 §11): the plan their DM with it thinks with, theirs or one
  * shared with them. No row: their DM thinks with the workspace's (the right hand's own `agents` row). It goes with the
- * person's membership and with the account.
+ * person's membership and with its named account or explicitly selected computer's own sign-in.
  */
 export const rightHandBrains = pgTable(
   "right_hand_brains",
@@ -440,7 +449,10 @@ export const rightHandBrains = pgTable(
     /** A computer brain (`claude_code`, `codex`…): an API key is the workspace's, never a person's. */
     brain: text().notNull(),
     brainModel: text(),
-    brainAccountId: uuid().notNull(),
+    /** A named account, or null for the explicitly selected computer's own sign-in. */
+    brainAccountId: uuid(),
+    /** The computer for an own sign-in; named-account routes already carry their computer on the account. */
+    machineId: uuid(),
     /** Someone else's plan, given with `use_others_plans`: who gave it (themselves); its owner may take it back. */
     brainAccountLentBy: text().references(() => users.id, { onDelete: "set null" }),
     brainEffort: text(),
@@ -456,6 +468,12 @@ export const rightHandBrains = pgTable(
       columns: [t.orgId, t.brainAccountId],
       foreignColumns: [machineAccounts.orgId, machineAccounts.id],
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.orgId, t.machineId],
+      foreignColumns: [machines.orgId, machines.id],
+    }).onDelete("cascade"),
+    check("right_hand_brains_route_check", sql`${t.brainAccountId} is not null or ${t.machineId} is not null`),
     index().on(t.orgId, t.brainAccountId),
+    index().on(t.orgId, t.machineId),
   ],
 );

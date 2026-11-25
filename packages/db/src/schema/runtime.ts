@@ -127,6 +127,11 @@ export const agentRuns = pgTable(
      */
     issueId: uuid(),
     /**
+     * The issue's owner epoch when this run was tied to it (ADR 0202): its writes to that issue are refused once the
+     * issue's epoch has moved on. Null: tied before epochs existed, or not tied, and never fenced.
+     */
+    issueEpoch: integer(),
+    /**
      * The browser this run is in (ADR 0110), set by `browser_profile`: a profile, or null for the agent's default.
      * `browserProfileTurnAt`: when it last took that profile's turn; a run that held a turn another took since
      * doesn't run its next command (the page may have changed under it).

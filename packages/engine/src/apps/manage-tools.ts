@@ -1,4 +1,4 @@
-import { and, eq, gte, schema, sql } from "@agenteschat/db";
+import { and, eq, gte, isNull, schema, sql } from "@agenteschat/db";
 import { z } from "zod";
 import {
   type Agent,
@@ -17,6 +17,7 @@ import { ConflictError, TooManyError, ValidationError } from "../errors";
 import { handleFromName } from "../imports";
 import { publishMachineAgentsChanged } from "../machines";
 import { notifyAppCreated } from "../notification-producers";
+import { requirePermission } from "../organizations";
 import { createRoutine, listRoutines } from "../routines";
 import {
   listSkills,
@@ -47,6 +48,8 @@ export const APP_MANAGE_TOOL_NAMES = [
   "list_skills",
   "create_skill",
   "update_skill",
+  "get_skill_default_for_new_agents",
+  "set_skill_default_for_new_agents",
   "create_routine",
   "add_memory",
   "create_channel",
@@ -133,6 +136,35 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
     if (!agent)
       throw new ValidationError(`No agent "${ref}" in this workspace. import_summary lists the agents and their ids.`);
     return agent;
+  };
+
+  /** Bounded per-workspace lookup: never treat a stale ID as somebody else's name. */
+  const resolveSkillDefault = async (ref: string, by?: "id" | "name") => {
+    await requirePermission(deps.db, p.userId, p.orgId, "read");
+    const columns = {
+      id: schema.skills.id,
+      name: schema.skills.name,
+      version: schema.skills.version,
+      defaultForNewAgents: schema.skills.defaultForNewAgents,
+    };
+    const scope = and(eq(schema.skills.orgId, p.orgId), isNull(schema.skills.deletedAt));
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const mode = by ?? (uuid.test(ref) ? "id" : "name");
+    if (mode === "id") {
+      if (!uuid.test(ref)) throw new ValidationError("A skill ID must be a UUID. Use by: name for names.");
+      const [idMatch] = await deps.db
+        .select(columns)
+        .from(schema.skills)
+        .where(and(scope, eq(schema.skills.id, ref)));
+      if (!idMatch) throw new ValidationError(`No skill ID "${ref}" in this workspace. Refresh list_skills.`);
+      return idMatch;
+    }
+    const [named] = await deps.db
+      .select(columns)
+      .from(schema.skills)
+      .where(and(scope, eq(schema.skills.name, ref.trim().toLowerCase())));
+    if (!named) throw new ValidationError(`No skill name "${ref}" in this workspace. Refresh list_skills.`);
+    return named;
   };
 
   tool(
@@ -347,6 +379,7 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         name: s.name,
         description: fenced(s.description, 1024),
         agents_count: s.agentsCount,
+        default_for_new_agents: s.defaultForNewAgents,
       })),
     }),
   );
@@ -458,6 +491,109 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
         },
       });
       return { id: found.id, name: skill.name, version: skill.version, url: `${base}/settings/skills` };
+    },
+  );
+
+  // The same default as the web editor, exposed with the OAuth grant's workspace scope.
+  tool(
+    "get_skill_default_for_new_agents",
+    {
+      scope: "manage",
+      title: "Check whether new agents inherit a skill",
+      description:
+        "Checks if new agents in this authorized workspace inherit an installed skill. Does not modify any skill or agent.",
+      input: z
+        .object({
+          skill: z.string().min(1).max(64).describe("Skill ID (UUID) or name; UUID values are treated as IDs."),
+          by: z.enum(["id", "name"]).optional().describe("Disambiguate a UUID-shaped skill name with by: name."),
+        })
+        .strict(),
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => {
+      const found = await resolveSkillDefault(args.skill, args.by);
+      return {
+        id: found.id,
+        name: found.name,
+        default_for_new_agents: found.defaultForNewAgents,
+        version: found.version,
+        url: `${base}/settings/skills`,
+      };
+    },
+  );
+
+  tool(
+    "set_skill_default_for_new_agents",
+    {
+      scope: "manage",
+      title: "Set whether new agents inherit a skill",
+      description:
+        "Set the default-on assignment for FUTURE agents in this authorized workspace. Does not change existing agents, skill body or version, or other workspaces. Requires manage_agents permission and is audited.",
+      input: z
+        .object({
+          skill: z.string().min(1).max(64).describe("Skill ID (UUID) or name; UUID values are treated as IDs."),
+          by: z.enum(["id", "name"]).optional().describe("Disambiguate a UUID-shaped skill name with by: name."),
+          enabled: z.boolean().describe("True: new agents start with this skill on; false: off by default."),
+        })
+        .strict(),
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => {
+      const found = await resolveSkillDefault(args.skill, args.by);
+      // Authorize before touching data; exact skill resolution is restricted to this OAuth workspace.
+      await requirePermission(deps.db, p.userId, p.orgId, "manage_agents");
+      // Lock and reread the row in one transaction. Concurrent requests cannot double-audit
+      // a single transition, and any failed audit rolls back the setting change.
+      return deps.db.transaction(async (tx) => {
+        const [current] = await tx
+          .select({
+            id: schema.skills.id,
+            name: schema.skills.name,
+            version: schema.skills.version,
+            defaultForNewAgents: schema.skills.defaultForNewAgents,
+          })
+          .from(schema.skills)
+          .where(and(eq(schema.skills.orgId, p.orgId), eq(schema.skills.id, found.id), isNull(schema.skills.deletedAt)))
+          .for("update");
+        if (!current) throw new ValidationError("The skill is no longer installed in this workspace.");
+        const changed = current.defaultForNewAgents !== args.enabled;
+        if (changed) {
+          // Rate-limit from the locked value: a true mutation is always charged,
+          // and a concurrent no-op does not burn the per-workspace quota.
+          await allow();
+          await tx
+            .update(schema.skills)
+            .set({ defaultForNewAgents: args.enabled, updatedAt: new Date() })
+            .where(and(eq(schema.skills.orgId, p.orgId), eq(schema.skills.id, current.id)));
+          await recordAudit(tx, {
+            orgId: p.orgId,
+            actor: { type: "person", id: p.userId },
+            action: "apps.updated",
+            target: { type: "skill", id: current.id },
+            details: {
+              grantId: p.grantId,
+              client: p.app.name,
+              changed: ["defaultForNewAgents"],
+              before: current.defaultForNewAgents,
+              after: args.enabled,
+            },
+          });
+        }
+        return {
+          id: current.id,
+          name: current.name,
+          default_for_new_agents: changed ? args.enabled : current.defaultForNewAgents,
+          version: current.version,
+          changed,
+          url: `${base}/settings/skills`,
+        };
+      });
     },
   );
 

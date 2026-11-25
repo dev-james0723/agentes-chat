@@ -2002,7 +2002,7 @@ export class RunnerDaemon implements RequestObserver {
   /** The coding CLIs for `hello`: the ones installed (whether each may run is `access.tools`). */
   private helloExecutors(): RunnerInfo["executors"] {
     // Asked first: asking is what starts a look, and a runner with no app has no other first one.
-    const found = this.executors();
+    const found = { ...this.executors(), taskModels: true as const };
     if (!this.executorsKnown()) return undefined;
     // Claude Code installed or logged in since the last look: the app shows it.
     const visible =
@@ -2026,7 +2026,7 @@ export class RunnerDaemon implements RequestObserver {
   private executorsChanged() {
     this.queueStatus();
     if (!this.executorsKnown()) return;
-    const found = this.executors();
+    const found = { ...this.executors(), taskModels: true as const };
     const executors =
       this.hostAcpOptIn() && found.antigravity
         ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }

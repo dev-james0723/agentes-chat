@@ -113,6 +113,8 @@ The trusted runner must verify package and input identity at dispatch, enforce l
 
 Evaluation is a separate protected dependency. Its evidence binds the exact candidate/version and runtime/profile to an independent evaluator, protected artifacts, expiry and trusted canary expectation. Author-supplied tests, a different evaluator label, or a self-reported PASS do not establish that separation.
 
+Because the builder never reads the protected scorer, the public contract it is given (`foundry/guidance.ts`) must state everything the scorer checks: the meaning of each output field (`total` is the number of records), that a malformed input is refused by an Error whose own `code` is `SCHEMA_INVALID`, that note limits count Unicode scalar values, and that nothing is written to stdout. `packages/adapters/test/foundry-receipt-conformance.test.ts` runs the unchanged scorer against an implementation written from that contract, and against each of those mistakes. A failed evaluation is final for its digest and is not run again; its result carries the way forward, a checklist in the contract's words and how many corrected versions remain (four per candidate, the first included), never a holdout, expected output or verdict detail. Repair is therefore bounded, not a loop.
+
 A draft JavaScript module with a proposed JSON-string-to-JSON-string export is still a draft. The current profile does not define an ESM loader, entrypoint ABI, stdio/RPC framing or bootstrap. Those must be reviewed and implemented inside the qualified runtime. No host loader, shell command or existing unrestricted application container is a fallback.
 
 ## Durable invocation, revocation and recovery

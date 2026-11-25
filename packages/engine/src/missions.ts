@@ -36,6 +36,7 @@ import {
   liveTaskWhere,
   type MachineTaskMode,
   type MachineTaskRow,
+  missionChildStartRoute,
   publishTaskEvent,
   RECENT_LINES,
   startMachineTask,
@@ -1040,15 +1041,15 @@ export interface ProposeInput {
 }
 
 const cleanRepoDir = (dir: string | null | undefined) => {
-  const d = (dir ?? "")
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.?\/+/, "")
-    .replace(/\/+$/, "");
+  const d = (dir ?? "").trim().replace(/\\/g, "/");
+  // Check the input before normalizing "./": stripping "/" would turn a host path into a different local folder.
   if (d.startsWith("/") || /^[a-zA-Z]:/.test(d) || d.split("/").includes("..")) {
     throw new ValidationError("The folder must be inside the agent's folder", "mission.bad_folder");
   }
-  return d.slice(0, MISSION_LIMITS.repoDir);
+  return d
+    .replace(/^\.\/+/, "")
+    .replace(/\/+$/, "")
+    .slice(0, MISSION_LIMITS.repoDir);
 };
 
 /**
@@ -1333,7 +1334,7 @@ export async function startSessionTask(
       runId: input.runId ?? null,
       requestedByUserId: input.requestedBy ?? mission.ownerId,
       title: input.title,
-      executor: mission.executor === "codex" ? "codex" : "claude",
+      ...(await missionChildStartRoute(deps.db, mission, input)),
       prompt: input.prompt,
       sessionId: input.sessionId,
       resume: input.resume,

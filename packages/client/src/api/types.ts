@@ -771,6 +771,8 @@ export interface AgentBrakes {
   never: CostKind[];
   maxUnrequested: number;
   maxPrsPerHour: number;
+  /** Screenshots one run may take (ADR 0201). */
+  maxScreenshotsPerRun: number;
   callAgents: "all" | "some" | "none";
   callAgentIds: string[];
   project: string;
@@ -784,6 +786,7 @@ export const BRAKES_DEFAULTS: AgentBrakes = {
   never: [],
   maxUnrequested: 2,
   maxPrsPerHour: 3,
+  maxScreenshotsPerRun: 60,
   callAgents: "all",
   callAgentIds: [],
   project: "",
@@ -3734,10 +3737,37 @@ export interface FounderStatus {
     text: string;
   };
   verification: {
-    state: "verified" | "done_unverified" | "unverified" | "no_criteria";
+    state: "verified" | "stale" | "rejected" | "done_unverified" | "unverified" | "no_criteria";
+    /** An independent verifier confirmed it and the evidence still meets its completion contract (ADR 0211). */
     verified: boolean;
     criteria: { total: number; checkedByPerson: number };
     checks: { kind: string; positive: boolean; at: string }[];
+    contract: {
+      evidence: ("criteria" | "person_vouched" | "pr_merged" | "deploy_running" | "tests_passed")[];
+      tests: { suite: string; digest: string } | null;
+      isDefault: boolean;
+    };
+    verifier: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    missing: (
+      | "not_claimed"
+      | "no_criteria"
+      | "criteria_unchecked"
+      | "not_person_vouched"
+      | "not_merged"
+      | "merge_reverted"
+      | "merge_commit_unknown"
+      | "not_deployed"
+      | "deploy_stale"
+      | "deploy_rolled_back"
+      | "runtime_unknown"
+      | "tests_not_pinned"
+      | "tests_receipt_missing"
+      | "tests_receipt_untrusted"
+      | "tests_wrong_commit"
+      | "tests_changed"
+      | "tests_failed"
+    )[];
+    rejectedReasons: string[];
     text: string;
   };
   blockers: { reason: string; since: string; text: string }[];
@@ -6389,6 +6419,7 @@ export type NotificationKind =
   /** A routine's run waits for its agent's plan to reset (once per outage). Opens it in Rotinas. */
   | "routine_waiting_plan"
   | "plan_reset_unknown"
+  | "credit_continuity"
   /** ADR 0136: an agent back from its plan or budget skipped catch-ups that looked handled (its owner; `count`). */
   | "catch_up_closed"
   /** ADR 0136: who asked, when their catch-up was skipped crediting someone else (`latest.title` who, `latest.reason`). */
@@ -6594,6 +6625,9 @@ export interface NotificationActor {
 
 /** Where it lives: only the relevant ids are set. */
 export interface NotificationSource {
+  creditPoolId?: string;
+  creditCycleId?: string;
+  creditProvider?: "openai" | "anthropic";
   channelId?: string;
   threadId?: string;
   messageId?: string;
@@ -7517,6 +7551,38 @@ export interface PlanAccountUsage extends PlanAccountInfo {
   monthTokens: number;
   /** `view_usage` only: what the month's tokens would cost through the API (null: no price). */
   equivalentUsd?: number | null;
+}
+
+/** One row of `GET …/usage/cost-per-success` (ADR 0207). Null money is unknown, never 0. */
+export interface CostPerSuccessRow {
+  runs: number;
+  failedRuns: number;
+  retries: number;
+  verifiedSuccesses: number;
+  tokens: number;
+  costUsd: number | null;
+  unknownCostRuns: number;
+  costPerSuccessUsd: number | null;
+  missing: "no_success" | "unknown_cost" | null;
+  /** The number in plain Hong Kong Chinese, from the server. */
+  text: string;
+}
+
+/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0207). */
+export interface CostPerSuccessReport {
+  from: string;
+  to: string;
+  groups: (CostPerSuccessRow & { agentId: string; agentName: string; brain: string; model: string | null })[];
+  total: CostPerSuccessRow;
+  /** False-pass counts (ADR 0211): tasks claimed done in the window, verified, rejected after the claim. */
+  claims: {
+    claimedDone: number;
+    verified: number;
+    rejectedAfterClaim: number;
+    unverified: number;
+    falseClaimRate: number | null;
+    text: string;
+  };
 }
 
 /** `GET …/usage/plans`: every plan account by computer, and the API per agent this month. */

@@ -13,6 +13,9 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { launch } from "./browser";
+
+export { launch } from "./browser";
 
 const HERE = import.meta.dir;
 const ROOT = join(HERE, "../..");
@@ -178,59 +181,79 @@ export function writeFrame(out: string, css: string, reverse: string) {
   return { url: `file://${join(out, "frame.html")}`, reverse: `file://${join(out, "frame-rev.html")}` };
 }
 
-export async function launch(bin: string, profile: string) {
-  const chrome = Bun.spawn(
-    [
-      bin,
-      "--headless=new",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${profile}`,
-      "--allow-file-access-from-files",
-      // Text advances as on every machine, not hinted to this one's pixels.
-      "--font-render-hinting=none",
-      "--hide-scrollbars",
-      "--no-first-run",
-      "--no-sandbox",
-      "about:blank",
-    ],
-    { stderr: "pipe", stdout: "ignore" },
-  );
-  let log = "";
-  const reader = chrome.stderr.getReader();
-  const decoder = new TextDecoder();
-  let url: string | undefined;
-  while (!url) {
-    const { value, done } = await reader.read();
-    if (done) throw new Error(`Chrome exited: ${log.slice(-500)}`);
-    log += decoder.decode(value);
-    url = log.match(/ws:\/\/\S+/)?.[0];
-  }
-  // Kept draining: a full stderr pipe would block Chrome mid-run (Linux runners log to it freely).
-  void (async () => {
-    while (!(await reader.read()).done);
-  })();
-  const ws = new WebSocket(url);
-  await new Promise((ok, fail) => {
-    ws.onopen = ok;
-    ws.onerror = fail;
-  });
+/** Bound each DevTools command and reject pending requests on transport loss. */
+export function cdpTransport(
+  ws: WebSocket,
+  timeoutMs = Math.max(1000, Number(process.env.GEOMETRY_CDP_TIMEOUT_MS) || 30000),
+) {
   let id = 0;
-  const waiting = new Map<number, { ok: (v: never) => void; fail: (e: Error) => void }>();
+  const waiting = new Map<
+    number,
+    {
+      method: string;
+      sessionId?: string;
+      started: number;
+      timer: ReturnType<typeof setTimeout>;
+      ok: (v: never) => void;
+      fail: (e: Error) => void;
+    }
+  >();
+  const rejectPending = (reason: string) => {
+    for (const [requestId, call] of waiting) {
+      clearTimeout(call.timer);
+      waiting.delete(requestId);
+      call.fail(
+        new Error(
+          `CDP ${reason}: request=${requestId} method=${call.method} session=${call.sessionId ?? "browser"} elapsed=${Date.now() - call.started}ms pending=${waiting.size}`,
+        ),
+      );
+    }
+  };
   ws.onmessage = (e) => {
     const m = JSON.parse(String(e.data));
     const call = waiting.get(m.id);
     if (!call) return;
+    clearTimeout(call.timer);
     waiting.delete(m.id);
-    if (m.error) call.fail(new Error(m.error.message));
+    if (m.error)
+      call.fail(
+        new Error(
+          `CDP request=${m.id} method=${call.method} session=${call.sessionId ?? "browser"}: ${m.error.message}`,
+        ),
+      );
     else call.ok(m.result as never);
   };
+  ws.onclose = () => rejectPending("WebSocket closed");
+  ws.onerror = () => rejectPending("WebSocket error");
   const send = <T = Record<string, never>>(method: string, params: object = {}, sessionId?: string) =>
     new Promise<T>((ok, fail) => {
-      id += 1;
-      waiting.set(id, { ok: ok as (v: never) => void, fail });
-      ws.send(JSON.stringify({ id, method, params, sessionId }));
+      if (ws.readyState !== WebSocket.OPEN) {
+        fail(new Error(`CDP socket is not open: method=${method}`));
+        return;
+      }
+      const requestId = ++id;
+      const started = Date.now();
+      const timer = setTimeout(() => {
+        const pending = [...waiting.entries()]
+          .map(([key, call]) => `${key}:${call.method}:${Date.now() - call.started}ms`)
+          .join(", ");
+        waiting.delete(requestId);
+        fail(
+          new Error(
+            `CDP timeout after ${timeoutMs}ms: request=${requestId} method=${method} session=${sessionId ?? "browser"} pending=[${pending}]`,
+          ),
+        );
+      }, timeoutMs);
+      waiting.set(requestId, { method, sessionId, started, timer, ok: ok as (v: never) => void, fail });
+      try {
+        ws.send(JSON.stringify({ id: requestId, method, params, sessionId }));
+      } catch (error) {
+        clearTimeout(timer);
+        waiting.delete(requestId);
+        fail(error);
+      }
     });
-  return { send, close: () => chrome.kill() };
+  return send;
 }
 
 type Send = Awaited<ReturnType<typeof launch>>["send"];
@@ -240,23 +263,36 @@ export async function openTab(send: Send, url: string) {
   const { sessionId } = await send<{ sessionId: string }>("Target.attachToTarget", { targetId, flatten: true });
   await send("Page.navigate", { url }, sessionId);
   const run = async <T>(expression: string): Promise<T> => {
-    const r = await send<{ result: { value: T }; exceptionDetails?: { exception?: { description?: string } } }>(
-      "Runtime.evaluate",
-      { expression, awaitPromise: true, returnByValue: true },
-      sessionId,
-    );
+    const operation = expression.match(/^geometry\.(\w+)\(/)?.[1] ?? "readiness or viewport";
+    let r: { result: { value: T }; exceptionDetails?: { exception?: { description?: string } } };
+    try {
+      r = await send<typeof r>("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId);
+    } catch (error) {
+      throw new Error(`Geometry evaluate (${operation}) failed`, { cause: error });
+    }
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "evaluate failed");
     return r.result.value;
   };
-  for (let i = 0; i < 200 && !(await run<boolean>("document.readyState === 'complete' && !!window.geometry")); i++) {
+  const readyBy = Date.now() + 15_000;
+  while (!(await run<boolean>("document.readyState === 'complete' && !!window.geometry"))) {
+    if (Date.now() >= readyBy) throw new Error("Geometry tab did not become ready within 15000ms");
     await Bun.sleep(50);
   }
+  const load = async (html: string) => {
+    // Keep the renderer's load synchronous and poll from the host, not a pending browser-side promise.
+    await run(`geometry.load(${JSON.stringify(html)})`);
+    const fontsBy = Date.now() + 15_000;
+    while (!(await run<boolean>("geometry.fontsReady()"))) {
+      if (Date.now() >= fontsBy) throw new Error("Geometry fonts did not become ready within 15000ms");
+      await Bun.sleep(50);
+    }
+  };
   const resize = async (width: number, height = HEIGHT) => {
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
     // Below the desktop width a screen is on a phone, whose touch sizes the kit grows controls to.
     await send("Emulation.setTouchEmulationEnabled", { enabled: width < 640, maxTouchPoints: 1 }, sessionId);
   };
-  return { run, resize, send: (method: string, params: object = {}) => send(method, params, sessionId) };
+  return { run, load, resize, send: (method: string, params: object = {}) => send(method, params, sessionId) };
 }
 
 /** What `rules.js` reports, each with a `bad-` offender and a `good-` twin in `fixture.html`. */
@@ -362,7 +398,7 @@ async function orderFindings(tab: Tab, reverse: Tab): Promise<Finding[]> {
  */
 async function selfTest(tab: Tab, reverse: Tab) {
   const fixture = readFileSync(join(HERE, "fixture.html"), "utf8");
-  for (const t of [tab, reverse]) await t.run(`geometry.load(${JSON.stringify(fixture)})`);
+  await Promise.all([tab.load(fixture), reverse.load(fixture)]);
   const twins = [...new Set(fixture.match(/\b(?:bad|good)-[a-z]+(?:--[a-z]+)?\b/g))];
   const wrong: string[] = [];
   // At every width the screens are checked at, a phone's touch sizes included.
@@ -441,7 +477,7 @@ function writeReport(file: string, hits: Hit[], states: number, fresh: string[])
   writeFileSync(file, lines.join("\n"));
 }
 
-async function main() {
+async function main(signal: AbortSignal) {
   const args = process.argv.slice(2);
   const flag = (name: string) => args.includes(name);
   const value = (name: string) => (flag(name) ? args[args.indexOf(name) + 1] : undefined);
@@ -450,16 +486,33 @@ async function main() {
   const textSizes = value("--text-size")?.split(",").filter(Boolean) ?? [];
 
   const out = mkdtempSync(join(tmpdir(), "geometry-"));
-  const browsers = await Promise.all(
-    Array.from({ length: BROWSERS }, (_, i) => launch(findChrome(), join(out, `profile-${i}`))),
-  );
+  const controller = new AbortController();
+  const combined = AbortSignal.any([signal, controller.signal]);
+  const browsers: Awaited<ReturnType<typeof launch>>[] = [];
   try {
+    const bin = findChrome();
+    console.log(`[geometry] launching ${BROWSERS} browsers`);
+    const launches = await Promise.allSettled(
+      Array.from({ length: BROWSERS }, async (_, i) => {
+        try {
+          browsers.push(await launch(bin, join(out, `profile-${i}`), { signal: combined }));
+        } catch (error) {
+          controller.abort(error);
+          throw error;
+        }
+      }),
+    );
+    const failure = launches.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    console.log(`[geometry] ${browsers.length} browsers connected`);
     const frames = writeFrame(out, await bundleCss(out), await bundleCss(out, "reverse"));
     // Each browser lays a screen out twice: in the app's CSS order and in the reverse one, for `cascadeorder`.
     const pairs = await Promise.all(
       browsers.map(async (b) => [await openTab(b.send, frames.url), await openTab(b.send, frames.reverse)] as const),
     );
+    console.log("[geometry] verifying browser layout fixtures");
     await selfTest(...(pairs[0] as (typeof pairs)[number]));
+    console.log("[geometry] layout fixtures passed");
 
     const captured = readdirSync(dir).filter((f) => f.endsWith(".html"));
     if (captured.length < MIN_STATES) throw new Error(`Only ${captured.length} screens captured: the capture broke`);
@@ -467,29 +520,43 @@ async function main() {
     const queue = coverage(captured, read);
     const measured = queue.length;
     const hits: Hit[] = [];
+    let completed = 0;
+    let progressAt = Date.now();
+    console.log(`[geometry] ${captured.length} captured screens, ${measured} selected by coverage`);
     await Promise.all(
-      pairs.map(async ([tab, reverse]) => {
+      pairs.map(async ([tab, reverse], worker) => {
         for (let name = queue.pop(); name; name = queue.pop()) {
-          const raw = read(name);
-          const cut = raw.indexOf("-->");
-          const { screen } = JSON.parse(raw.slice(4, cut)) as { screen: string };
-          const load = `geometry.load(${JSON.stringify(raw.slice(cut + 4))})`;
-          await Promise.all([tab.run(load), reverse.run(load)]);
-          for (const width of WIDTHS) {
-            for (const size of ["", ...(raw.includes("ac-msg") ? textSizes : [])]) {
-              await tab.run(
-                size
-                  ? `document.documentElement.dataset.textSize = ${JSON.stringify(size)}`
-                  : "delete document.documentElement.dataset.textSize",
-              );
-              // The two CSS orders at the default text size, both tabs at this width, before `findingsAt` may leave
-              // the tab taller than its twin.
-              if (!size) {
-                await Promise.all([tab.resize(width), reverse.resize(width)]);
-                for (const finding of await orderFindings(tab, reverse)) hits.push({ width, screen, finding });
+          combined.throwIfAborted();
+          try {
+            if (completed === 0) console.log(`[geometry] worker ${worker} starting ${name}`);
+            const raw = read(name);
+            const cut = raw.indexOf("-->");
+            const { screen } = JSON.parse(raw.slice(4, cut)) as { screen: string };
+            const html = raw.slice(cut + 4);
+            await Promise.all([tab.load(html), reverse.load(html)]);
+            for (const width of WIDTHS) {
+              for (const size of ["", ...(raw.includes("ac-msg") ? textSizes : [])]) {
+                await tab.run(
+                  size
+                    ? `document.documentElement.dataset.textSize = ${JSON.stringify(size)}`
+                    : "delete document.documentElement.dataset.textSize",
+                );
+                // The two CSS orders at the default text size, both tabs at this width, before `findingsAt` may leave
+                // the tab taller than its twin.
+                if (!size) {
+                  await Promise.all([tab.resize(width), reverse.resize(width)]);
+                  for (const finding of await orderFindings(tab, reverse)) hits.push({ width, screen, finding });
+                }
+                for (const finding of await findingsAt(tab, width)) hits.push({ width, screen, finding });
               }
-              for (const finding of await findingsAt(tab, width)) hits.push({ width, screen, finding });
             }
+            completed++;
+            if (completed === measured || completed % 25 === 0 || Date.now() - progressAt >= 10_000) {
+              console.log(`[geometry] measured ${completed}/${measured}`);
+              progressAt = Date.now();
+            }
+          } catch (error) {
+            throw new Error(`Geometry worker ${worker}, capture ${name}`, { cause: error });
           }
         }
       }),
@@ -514,9 +581,34 @@ async function main() {
     }
     process.exitCode = fresh.length ? 1 : 0;
   } finally {
-    for (const b of browsers) b.close();
-    rmSync(out, { recursive: true, force: true });
+    controller.abort(new Error("Geometry stage finished or failed"));
+    const closed = await Promise.allSettled(browsers.map((browser) => browser.close()));
+    const cleanupError = closed.find((result) => result.status === "rejected");
+    if (cleanupError?.status === "rejected") {
+      console.error("[geometry] browser shutdown failed; preserving diagnostic profiles", out);
+      console.error("[geometry] cleanup error:", cleanupError.reason);
+      process.exitCode = 1;
+    } else {
+      rmSync(out, { recursive: true, force: true });
+    }
   }
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) {
+  const controller = new AbortController();
+  const interrupt = () => controller.abort(new Error("Geometry interrupted"));
+  process.once("SIGTERM", interrupt);
+  process.once("SIGINT", interrupt);
+  try {
+    await main(controller.signal);
+  } catch (error) {
+    console.error("[geometry] FAILED:", error);
+    process.exitCode = 1;
+  } finally {
+    process.removeListener("SIGTERM", interrupt);
+    process.removeListener("SIGINT", interrupt);
+  }
+  // At this point all owned Chrome processes have been closed or a failure has been recorded.
+  // A pending WebSocket close handshake or stderr reader must not hold the CI process open.
+  process.exit(process.exitCode ?? 0);
+}

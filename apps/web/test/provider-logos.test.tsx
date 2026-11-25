@@ -60,6 +60,13 @@ describe("provider marks where a provider is named", () => {
       "Kimi",
       "Z.ai",
       "MiniMax",
+      "GroqCloud",
+      // No mark of its own yet: its initial stands in (AppMark), so the name follows the letter.
+      expect.stringContaining("Cloudflare Workers AI"),
+      "OpenCode",
+      "Tencent Hunyuan",
+      "Xiaomi MiMo",
+      expect.stringContaining("NVIDIA NIM"),
       // A workspace's own endpoint (ADR 0146), its line under its name.
       expect.stringContaining("Outro provedor"),
     ]);

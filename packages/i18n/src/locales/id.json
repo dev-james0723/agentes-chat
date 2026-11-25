@@ -1,4 +1,195 @@
 {
+  "openRouterFallback": {
+    "title": "Cadangan OpenRouter",
+    "intro": "Utamakan langganan. Agen dan rutinitas yang memenuhi syarat berbagi batas bulanan terpisah sebesar 50 USD.",
+    "disabled": "Dinonaktifkan",
+    "serverDisabled": "Dinonaktifkan oleh kebijakan server",
+    "configured": "Dikonfigurasi. Diperiksa sebelum pengiriman",
+    "blocked": "Diblokir. Perlu rekonsiliasi",
+    "spent": "Pengeluaran bulan ini",
+    "pending": "Dicadangkan / belum terselesaikan",
+    "cap": "Batas bulanan (USD)",
+    "key": "Kunci OpenRouter khusus",
+    "chooseKey": "Pilih kunci",
+    "keyHint": "Tambahkan kunci OpenRouter terpisah dengan batas bulanan tidak melebihi jumlah ini, termasuk BYOK. Jangan gunakan kembali untuk permintaan biasa.",
+    "models": "ID model tertentu yang diizinkan (satu per baris)",
+    "inputPrice": "Harga input maksimum dalam USD per juta token",
+    "outputPrice": "Harga output maksimum dalam USD per juta token",
+    "tier": "Tingkat biaya router",
+    "enable": "Simpan dan aktifkan",
+    "disable": "Nonaktifkan cadangan",
+    "refresh": "Segarkan",
+    "error": "Tidak dapat menyimpan pengaturan cadangan. Periksa kunci dan kebijakan.",
+    "routes": "Rekayasa: openrouter/auto-code · Umum: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Perute Model Global",
+    "intro": "Langganan utama dijalankan lebih dulu. Agen dan rutinitas yang memenuhi syarat beralih melalui OpenCode Go, API gratis terverifikasi, model hemat berbatas, dan penyedia API langsung yang disetujui.",
+    "cascade": "Urutan: Langganan · OpenCode Go · API gratis · Hemat berbayar · API langsung · Eskalasi terbatas",
+    "refresh": "Muat ulang",
+    "syncCatalog": "Sinkronkan katalog",
+    "syncing": "Menyinkronkan katalog",
+    "unknown": "Tidak diketahui",
+    "freeCap": "US$0 (gratis atau termasuk)",
+    "states": {
+      "loading": "Memuat status perute",
+      "disconnected": "Belum ada jalur API cadangan yang terhubung",
+      "serverDisabled": "Dinonaktifkan oleh kebijakan server",
+      "disabled": "Dinonaktifkan. Hanya langganan",
+      "authorization_needed": "Perlu otorisasi. Periksa kunci penyedia",
+      "stale_catalog": "Katalog kedaluwarsa. Sinkronkan katalog untuk memverifikasi penawaran",
+      "unverified": "Menunggu katalog dan kunci terverifikasi",
+      "eligible": "Siap. Dijaga sebelum pengiriman",
+      "quota_warning": "Mendekati batas kuota atau anggaran bulanan",
+      "rate_limited": "Batas laju tercapai. Menunggu jendela direset",
+      "provider_outage": "Penyedia tidak tersedia. Beralih ke jalur berikutnya",
+      "incompatible": "Dilewati karena alat atau modalitas tidak kompatibel",
+      "privacy_blocked": "Diblokir oleh kebijakan retensi data atau wilayah",
+      "budget_held": "Dijeda. Penahanan anggaran belum selesai atau batas tercapai",
+      "needs_owner": "Menunggu persetujuan pemilik ruang kerja",
+      "recovered": "Pulih ke langganan utama"
+    },
+    "lanes": {
+      "opencode_go": "Paket OpenCode Go",
+      "free_api": "Kumpulan API gratis",
+      "paid_low_cost": "Berbayar hemat",
+      "direct_api": "API vendor langsung",
+      "paid_dynamic": "Perute otomatis dinamis"
+    },
+    "entitlements": {
+      "subscription_go": "Langganan Go (tambahan $0)",
+      "free_only": "Hanya tingkat gratis (batas $0)",
+      "paid_capped": "Berbayar dengan batas bulanan"
+    },
+    "policy": {
+      "heading": "Kebijakan perutean ruang kerja",
+      "enable": "Simpan kebijakan",
+      "disable": "Nonaktifkan perute",
+      "enabledLabel": "Aktifkan cadangan Perute Model Global",
+      "killSwitchLabel": "Sakelar darurat (blokir semua pengiriman cadangan)",
+      "maxEscalations": "Maks eskalasi kualitas per giliran (0 hingga 2)",
+      "maxRetries": "Maks percobaan ulang transpor per rute (0 hingga 1)",
+      "optOutAgents": "ID agen yang dikecualikan (kosong mewarisi perute)",
+      "warnThresholds": "Kirim peringatan anggaran pada 50%, 80%, dan 95%"
+    },
+    "accounts": {
+      "caption": "Jalur penyedia terkonfigurasi dan jendela kuota",
+      "empty": "Belum ada jalur penyedia yang dikonfigurasi.",
+      "configureHeading": "Konfigurasikan jalur penyedia",
+      "provider": "Penyedia model",
+      "lane": "Jalur perutean",
+      "entitlement": "Mode penagihan",
+      "key": "Kunci khusus penyedia",
+      "chooseKey": "Pilih kunci khusus",
+      "cloudflareAccount": "ID Akun Cloudflare 32-heksadesimal",
+      "cap": "Batas bulanan (USD)",
+      "models": "ID model konkret yang diizinkan (satu per baris)",
+      "zdr": "Wajibkan tanpa retensi data (ZDR)",
+      "save": "Simpan jalur",
+      "columns": {
+        "provider": "Penyedia API",
+        "lane": "Jalur",
+        "state": "Status",
+        "budget": "Terpakai / batas",
+        "quota": "Kuota harian",
+        "reset": "Jendela / diamati"
+      }
+    },
+    "catalog": {
+      "summary": "Penawaran katalog: {{eligible}} memenuhi syarat · {{total}} tercatat",
+      "caption": "Penawaran model API yang memenuhi syarat",
+      "columns": {
+        "model": "ID model",
+        "provider": "Penyedia API",
+        "lane": "Jalur",
+        "status": "Kelayakan",
+        "context": "Jendela konteks"
+      }
+    },
+    "receipts": {
+      "caption": "Tanda terima perutean terbaru dan kualitas terverifikasi",
+      "empty": "Belum ada pengiriman cadangan pada periode ini.",
+      "reconcileNoSend": "Lepaskan penahanan",
+      "columns": {
+        "requested": "Model diminta",
+        "actual": "Model aktual",
+        "lane": "Jalur",
+        "cost": "Aktual / dicadangkan",
+        "quality": "Kualitas",
+        "state": "Status"
+      },
+      "verified": "Terverifikasi",
+      "unverified": "Gagal pemeriksaan"
+    },
+    "metrics": {
+      "caption": "Biaya per keberhasilan terverifikasi dan latensi",
+      "columns": {
+        "model": "ID model",
+        "successes": "Terverifikasi / percobaan",
+        "costPerSuccess": "Biaya per keberhasilan terverifikasi",
+        "latency": "Latensi p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Tolok ukur terbaru: {{tasks}} tugas · {{models}} model",
+    "error": "Tidak dapat memperbarui pengaturan Perute Model Global. Periksa kunci, batas, dan model."
+  },
+  "creditContinuity": {
+    "title": "Kelanjutan dengan kredit API",
+    "refresh": "Perbarui status",
+    "unavailable": "Status kredit tidak tersedia. Belum ada alokasi kredit pemberian yang diverifikasi di sini.",
+    "intro": "Langganan yang sesuai digunakan terlebih dahulu. Pengalihan ke API menggunakan kredit yang diberikan dan telah diverifikasi, dalam batas bersama untuk satu siklus.",
+    "status": {
+      "unavailable": "Status kredit tidak tersedia. Pengeluaran otomatis belum diverifikasi.",
+      "disabled": "Pengalihan otomatis ke API dinonaktifkan. Pengeluaran yang tercatat dan biaya tertunda tetap ditampilkan.",
+      "unverified": "Belum ada kredit API yang memenuhi syarat dan telah diverifikasi. Alokasi otomatis adalah $0.",
+      "blocked": "Pengalihan ke API menunggu bukti terkini, anggaran, atau rekonsiliasi.",
+      "available": "Pengalihan ke API tersedia dalam batas kredit pemberian yang tercatat."
+    },
+    "caption": "Kredit API yang diberikan dan anggaran siklus",
+    "columns": {
+      "provider": "Penyedia",
+      "state": "Status",
+      "automatic": "Otomatis tersedia / batas",
+      "costs": "Terpakai / tertunda",
+      "reserve": "Cadangan pemilik",
+      "buffer": "Penyangga keamanan",
+      "expires": "Kredit berakhir",
+      "forecast": "p95 historis"
+    },
+    "provider": {
+      "openai": "API untuk ChatGPT",
+      "anthropic": "API untuk Claude"
+    },
+    "unknown": "Tidak diketahui",
+    "state": {
+      "unavailable": "Tidak tersedia",
+      "unverified": "Belum diverifikasi",
+      "expired": "Kredit kedaluwarsa",
+      "stale": "Bukti perlu diperbarui",
+      "disabled": "Dinonaktifkan",
+      "paused": "Dijeda",
+      "pricingExpired": "Harga kedaluwarsa",
+      "pricingChanged": "Harga berubah",
+      "pricingUnverified": "Harga belum diverifikasi",
+      "noRoute": "Tidak ada jalur API yang memenuhi syarat",
+      "budgetUnavailable": "Anggaran tidak tersedia",
+      "ready": "Siap",
+      "reserveAvailable": "Cadangan pemilik tersedia",
+      "billingBlocked": "Penagihan diblokir",
+      "reconciliation": "Perlu rekonsiliasi",
+      "blocked": "Diblokir"
+    },
+    "evidence": "Bukti: {{date}}",
+    "approvedAvailable": "Tersedia dan disetujui: {{amount}}",
+    "approvals_other": "{{count}} persetujuan aktif dari pemilik",
+    "ownerApproval": "Persetujuan pemilik",
+    "historyHigh": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian tinggi.",
+    "historyMedium": "{{count}} unit telah diselesaikan pembiayaannya. Ketidakpastian sedang.",
+    "historyUnknown": "{{count}} unit telah diselesaikan pembiayaannya. Tingkat ketidakpastian tidak diketahui.",
+    "insufficientHistory": "Riwayat tidak cukup",
+    "obligations_other": "{{count}} panggilan API memiliki biaya yang dicadangkan atau belum diselesaikan. Cadangan darurat memerlukan persetujuan pemilik. Fitur ini tidak mengaktifkan isi ulang berbayar.",
+    "evidenceNote": "Kelayakan kredit pemberian menggunakan bukti penagihan penyedia yang dicatat oleh pemilik. Perkiraan berdasarkan riwayat tidak memberikan izin pengeluaran. Status diperiksa: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1283,7 +1474,13 @@
       "moonshot": "Kunci Kimi diawali sk-. Periksa lalu tempel lagi.",
       "zai": "Tempel seluruh kunci Z.ai, tanpa spasi. Periksa lalu tempel lagi.",
       "minimax": "Tempel seluruh kunci MiniMax, tanpa spasi. Kunci yang diawali sk-cp- milik paket dan tidak berfungsi di sini.",
-      "openrouter": "Kunci OpenRouter diawali sk-or-v1-. Periksa lalu tempel lagi."
+      "openrouter": "Kunci OpenRouter diawali sk-or-v1-. Periksa lalu tempel lagi.",
+      "groq": "Kunci Groq diawali dengan gsk_. Periksa lalu tempel lagi.",
+      "cloudflare": "Tempel seluruh token Cloudflare Workers AI tanpa spasi. Periksa lalu tempel lagi.",
+      "opencode": "Tempel seluruh kunci API OpenCode tanpa spasi. Periksa lalu tempel lagi.",
+      "tencent": "Tempel seluruh kunci API Tencent Hunyuan tanpa spasi. Periksa lalu tempel lagi.",
+      "xiaomi": "Tempel seluruh kunci API Xiaomi MiMo tanpa spasi. Periksa lalu tempel lagi.",
+      "nvidia": "Kunci NVIDIA NIM diawali dengan nvapi-. Periksa lalu tempel lagi."
     },
     "keyFromOther": "Dari penyedia lain?",
     "anthropicWorkspace": "ID ruang kerja Claude Console",
@@ -3026,6 +3223,8 @@
     "atOnceHelp": "Berapa banyak pekerjaan yang tidak diminta siapa pun yang dikerjakannya bersamaan. Sisanya menunggu giliran.",
     "prs": "Pull request per jam",
     "prsHelp": "Paling banyak yang dibuka pekerjaannya sendiri dalam satu jam.",
+    "shots": "Tangkapan layar per tugas",
+    "shotsHelp": "Jumlah terbanyak yang boleh diambil satu pekerjaannya. Naikkan untuk agen yang memeriksa tampilan halaman. Tangkapan layar baru juga dijeda saat disk komputernya hampir penuh.",
     "call": "Agen yang boleh dipanggil",
     "callHelp": "Siapa yang boleh disebut atau diberi pekerjaan.",
     "callAll": "Semua",
@@ -6893,6 +7092,18 @@
       "label": "Tugas",
       "description": "Buat dan perbarui tugas."
     },
+    "colab_read": {
+      "label": "Membaca Colab",
+      "description": "Membaca tingkat langganan, jenis runtime yang bisa dipakai, dan nama sesi."
+    },
+    "colab_run": {
+      "label": "Menjalankan tugas Colab",
+      "description": "Membuat runtime dan sesi, menjalankan Python, dan menutup sesi yang dibukanya. Memakai unit komputasi Colab."
+    },
+    "colab_delete": {
+      "label": "Menghapus runtime Colab",
+      "description": "Menghapus runtime secara permanen, beserta semua file dan sesinya."
+    },
     "github_repo_read": {
       "label": "Baca kode",
       "description": "Baca file, commit, dan cari kode."
@@ -8178,6 +8389,8 @@
       "draftingNoComputer_female": "{{executor}} sedang membaca folder dan menyusun rencana",
       "empty": "Belum ada item. Kamu tetap bisa mulai atau minta rencana lewat “Ubah sesuatu”.",
       "waitPlan": "Terbuka saat rencana tiba",
+      "repositoryFolder": "Folder repositori",
+      "repositoryFolderRelative": "Jalur relatif terhadap folder kerja agen, misalnya repos/proyek.",
       "adjusts": "{{executor}} terus menyesuaikan daftar sambil berjalan",
       "adjusts_female": "{{executor}} terus menyesuaikan daftar sambil berjalan",
       "switched": "Sekarang {{executor}} yang menulis kode. Rencana dimulai dari awal.",
@@ -11225,6 +11438,40 @@
   },
   "storage": {
     "title": "Penyimpanan",
+    "clean": {
+      "title": "Bersihkan ruang kerja",
+      "intro": "Yang ditinggalkan tugas yang sudah selesai di komputer agen. Hasil kerja, bukti, dan apa pun yang tidak jelas gunanya tetap disimpan. Kamu memilih file sementara mana yang dibersihkan.",
+      "computers": "Disk komputer",
+      "level": {
+        "ok": "{{free}} GB kosong",
+        "low": "Ruang hampir habis: {{free}} GB kosong",
+        "critical": "Hampir penuh: {{free}} GB kosong. Tangkapan layar dan rekaman baru dijeda.",
+        "unknown": "Belum diukur"
+      },
+      "none": "Belum ada tugas yang selesai sejak agen mulai mendaftarkan file mereka.",
+      "task": "Tugas",
+      "mission": "Misi",
+      "ended": {
+        "done": "Selesai",
+        "canceled": "Dibatalkan"
+      },
+      "kept_other": "{{count}} disimpan",
+      "candidates_other": "{{count}} file sementara, {{size}}",
+      "duplicates_other": "{{count}} salinan persis",
+      "restorable": "Bukti: {{restorable}} bisa dipulihkan dari Drive, {{manifestOnly}} hanya tercatat",
+      "approve": "Bersihkan file sementara",
+      "approved_other": "{{count}} file disetujui: masing-masing diperiksa lagi di komputernya sebelum dihapus.",
+      "status": {
+        "approved": "Menunggu komputernya",
+        "done": "Dihapus",
+        "skipped": "Sudah tidak ada",
+        "blocked": "Disimpan: {{reason}}",
+        "unknown": "Belum pasti: diperiksa lagi nanti"
+      },
+      "freed": "Ruang kosong di komputer: {{before}} sebelum, {{after}} sesudah",
+      "show": "Tampilkan file",
+      "hide": "Sembunyikan file"
+    },
     "options": "Tempat menyimpan file",
     "agentes": "Penyimpanan agentes.chat",
     "agentesText": "Filemu disimpan di penyimpanan kami, terpisah untuk tiap ruang kerja.",
@@ -11430,6 +11677,16 @@
       "list": "Server MCP yang terhubung",
       "none": "Server MCP yang kamu hubungkan lewat alamatnya muncul di sini."
     },
+    "hostMcp": {
+      "title": "Host MCP di komputer Anda",
+      "intro": "Gunakan profil Host MCP yang telah ditinjau di komputer tepercaya. Hanya agen yang dipilih mendapat akses baca.",
+      "connectRead": "Hubungkan dan beri akses baca",
+      "bindFailed": "Pengikatan belum dikonfirmasi. Hapus pilihan, muat ulang daftar profil, dan periksa komputer, versi profil, serta agen sebelum mencoba lagi.",
+      "grantUnconfirmed": "Profil telah diikat, tetapi akses baca belum dikonfirmasi. Coba lagi untuk agen ini atau hapus pilihan tanpa mengubah izin yang ada. Setelah memuat ulang, pilih versi profil dan agen yang sama.",
+      "retryRead": "Coba lagi akses baca",
+      "resetSelection": "Hapus pilihan",
+      "note": "Daftar izin komputer tetap berlaku. Verifikasi melalui pemanggilan alat nyata oleh agen."
+    },
     "addTitle": "Tambah konektor",
     "catalogText": "Hubungkan sekali untuk {{org}}. Lalu pilih apa yang bisa dipakai tiap agen.",
     "catalog": "Konektor yang tersedia",
@@ -11468,6 +11725,8 @@
     "more": "Layanan lainnya",
     "tileConnected": "{{name}}, terhubung",
     "tileSoon": "{{name}}, segera",
+    "tileSetupRequired": "{{name}}, perlu penyiapan",
+    "setupRequired": "Perlu penyiapan",
     "otherTitle": "Layanan lain",
     "otherDetail": "Layanan apa pun yang menyediakan koneksi untuk agen, lewat alamatnya (diawali https://).",
     "otherSteps": {
@@ -11491,6 +11750,7 @@
     "how": {
       "oneClick": "Sekali klik: kamu memberi izin di halaman layanan",
       "oauthOrKey": "Kamu memberi izin di halaman layanan, atau pakai kunci API",
+      "oauthSetup": "Login untuk aplikasi ini belum disiapkan.",
       "key": "Butuh kunci API",
       "appPassword": "Butuh kata sandi aplikasi",
       "addressPassword": "Butuh alamat database dan kata sandi",
@@ -12881,6 +13141,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Catatan kredit sudah ada. Muat ulang untuk memeriksa statusnya.",
+      "disabled": "Cadangan dengan kredit dinonaktifkan.",
+      "resumeRefused": "Proses ini belum bisa dilanjutkan. Periksa kredit yang ditahan dan tindakan yang tertunda."
+    },
     "passwordLink": {
       "email": "Server ini mengirim email: orang itu meminta tautannya sendiri di Lupa kata sandi.",
       "serverOwner": "Orang yang memasang server ini masuk dari komputer tempat server berjalan, tanpa tautan.",
@@ -15169,6 +15434,14 @@
       "oldSub": "Pemakaian dari sebelum akun dicatat",
       "ofMonth": "{{percent}} dari bulan ini",
       "shareLabel": "{{source}}: {{percent}} dari bulan ini"
+    },
+    "costPerSuccess": {
+      "title": "Biaya per keberhasilan terverifikasi",
+      "intro": "30 hari terakhir. Keberhasilan adalah tugas yang kriteria penerimaannya dicentang seseorang dan tidak dibuka kembali sejak itu. Setiap proses dihitung dalam biaya.",
+      "perSuccess": "{{cost}} per keberhasilan",
+      "unknown": "Biaya tidak diketahui",
+      "noSuccess": "Belum ada keberhasilan terverifikasi",
+      "line": "{{runs}} proses · {{successes}} terverifikasi · {{failed}} gagal · {{retries}} percobaan ulang"
     }
   },
   "budget": {
@@ -15553,6 +15826,7 @@
         "updatingThread": "Memperbarui utas",
         "addingAgent": "Menambahkan agen ke kanal",
         "readingConversation": "Membaca percakapan",
+        "checkingPlanUsage": "Memeriksa pemakaian paket tim",
         "usingTool": "Memakai alat {{tool}}",
         "thinking": "Berpikir",
         "typing": "Menulis",
@@ -15670,6 +15944,7 @@
       "updatingThread": "memperbarui utas",
       "addingAgent": "menambahkan agen ke kanal",
       "readingConversation": "membaca percakapan",
+      "checkingPlanUsage": "memeriksa pemakaian paket tim",
       "usingTool": "memakai alat"
     },
     "tokens": "{{value}} token",

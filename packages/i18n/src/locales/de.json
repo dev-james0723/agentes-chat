@@ -1,4 +1,197 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter-Ausweichoption",
+    "intro": "Abonnements haben Vorrang. Berechtigte Agenten und Routinen teilen sich ein separates Monatslimit von 50 USD.",
+    "disabled": "Deaktiviert",
+    "serverDisabled": "Durch die Serverrichtlinie deaktiviert",
+    "configured": "Konfiguriert. Prüfung vor dem Senden",
+    "blocked": "Gesperrt. Abgleich erforderlich",
+    "spent": "Ausgaben diesen Monat",
+    "pending": "Reserviert / ungeklärt",
+    "cap": "Monatslimit (USD)",
+    "key": "Dedizierter OpenRouter-Schlüssel",
+    "chooseKey": "Schlüssel auswählen",
+    "keyHint": "Füge einen separaten OpenRouter-Schlüssel mit einem Monatslimit bis zu diesem Betrag hinzu, einschließlich BYOK. Verwende ihn nicht für gewöhnliche Anfragen.",
+    "models": "Zulässige konkrete Modell-IDs (eine pro Zeile)",
+    "inputPrice": "Maximaler Eingabepreis in USD pro Million Tokens",
+    "outputPrice": "Maximaler Ausgabepreis in USD pro Million Tokens",
+    "tier": "Kostenstufe des Routers",
+    "enable": "Speichern und aktivieren",
+    "disable": "Ausweichoption deaktivieren",
+    "refresh": "Aktualisieren",
+    "error": "Die Einstellungen konnten nicht gespeichert werden. Prüfe Schlüssel und Richtlinie.",
+    "routes": "Entwicklung: openrouter/auto-code · Allgemein: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Globaler Modell-Router",
+    "intro": "Primäre Abos laufen zuerst. Berechtigte Agenten und Routinen wechseln bei Bedarf zu OpenCode Go, geprüften Gratis-APIs, günstigen Modellen mit Limit und freigegebenen API-Anbietern.",
+    "cascade": "Reihenfolge: Abos · OpenCode Go · Gratis-APIs · Günstig bezahlt · Direkte APIs · Begrenzte Eskalation",
+    "refresh": "Aktualisieren",
+    "syncCatalog": "Katalog synchronisieren",
+    "syncing": "Synchronisiere Katalog",
+    "unknown": "Unbekannt",
+    "freeCap": "0 US$ (gratis oder enthalten)",
+    "states": {
+      "loading": "Lade Router-Status",
+      "disconnected": "Keine Ersatz-API-Spuren verbunden",
+      "serverDisabled": "Durch Serverrichtlinie deaktiviert",
+      "disabled": "Deaktiviert. Nur Abos",
+      "authorization_needed": "Autorisierung nötig. Prüfe den Anbieterschlüssel",
+      "stale_catalog": "Katalog abgelaufen. Synchronisiere den Katalog zur Prüfung",
+      "unverified": "Warte auf geprüften Katalog und Schlüssel",
+      "eligible": "Bereit. Vor Versand geprüft",
+      "quota_warning": "Nahe am Kontingent oder Monatsbudget",
+      "rate_limited": "Ratenlimit erreicht. Warte auf neues Zeitfenster",
+      "provider_outage": "Anbieter nicht erreichbar. Wechsle zur nächsten Spur",
+      "incompatible": "Übersprungen wegen inkompatibler Werkzeuge oder Modalitäten",
+      "privacy_blocked": "Blockiert durch Datenschutz- oder Regionsrichtlinie",
+      "budget_held": "Pausiert. Offene Reservierung oder Monatslimit erreicht",
+      "needs_owner": "Warte auf Freigabe durch den Arbeitsbereichsinhaber",
+      "recovered": "Zurück auf primäres Abo gewechselt"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go-Abo",
+      "free_api": "Gratis-API-Pool",
+      "paid_low_cost": "Günstig bezahlt",
+      "direct_api": "Direkte Anbieter-API",
+      "paid_dynamic": "Dynamischer Auto-Router"
+    },
+    "entitlements": {
+      "subscription_go": "Go-Abo (0 $ Zusatzkosten)",
+      "free_only": "Nur Gratis-Stufe (0 $ Limit)",
+      "paid_capped": "Bezahlt mit Monatslimit"
+    },
+    "policy": {
+      "heading": "Routing-Richtlinie des Arbeitsbereichs",
+      "enable": "Richtlinie speichern",
+      "disable": "Router deaktivieren",
+      "enabledLabel": "Globalen Modell-Router als Ersatz aktivieren",
+      "killSwitchLabel": "Notschalter (alle Ersatzaufrufe sofort sperren)",
+      "maxEscalations": "Max. Qualitätseskalationen pro Zug (0 bis 2)",
+      "maxRetries": "Max. Transportwiederholungen pro Route (0 bis 1)",
+      "optOutAgents": "Ausgenommene Agenten-IDs (leer erbt den Router)",
+      "warnThresholds": "Budgetwarnungen bei 50 %, 80 % und 95 % senden"
+    },
+    "accounts": {
+      "caption": "Konfigurierte Anbieterspuren und Kontingentfenster",
+      "empty": "Noch keine Anbieterspuren konfiguriert.",
+      "configureHeading": "Anbieterspur konfigurieren",
+      "provider": "Modellanbieter",
+      "lane": "Routing-Spur",
+      "entitlement": "Abrechnungsmodus",
+      "key": "Eigener Anbieterschlüssel",
+      "chooseKey": "Eigenen Schlüssel wählen",
+      "cloudflareAccount": "Cloudflare Account-ID (32 Hex-Zeichen)",
+      "cap": "Monatslimit (USD)",
+      "models": "Erlaubte konkrete Modell-IDs (eine pro Zeile)",
+      "zdr": "Zero Data Retention (ZDR) verlangen",
+      "save": "Spur speichern",
+      "columns": {
+        "provider": "API-Anbieter",
+        "lane": "Spur",
+        "state": "Status",
+        "budget": "Ausgegeben / Limit",
+        "quota": "Tageskontingent",
+        "reset": "Fenster / gemessen"
+      }
+    },
+    "catalog": {
+      "summary": "Katalogangebote: {{eligible}} geeignet · {{total}} erfasst",
+      "caption": "Geprüfte API-Modellangebote",
+      "columns": {
+        "model": "Modell-ID",
+        "provider": "API-Anbieter",
+        "lane": "Spur",
+        "status": "Eignung",
+        "context": "Kontextfenster"
+      }
+    },
+    "receipts": {
+      "caption": "Letzte Routing-Belege und geprüfte Qualität",
+      "empty": "Keine Ersatzaufrufe in diesem Zeitraum erfasst.",
+      "reconcileNoSend": "Reservierung freigeben",
+      "columns": {
+        "requested": "Angefordertes Modell",
+        "actual": "Tatsächliches Modell",
+        "lane": "Spur",
+        "cost": "Ist / reserviert",
+        "quality": "Qualität",
+        "state": "Status"
+      },
+      "verified": "Geprüft",
+      "unverified": "Prüfung fehlgeschlagen"
+    },
+    "metrics": {
+      "caption": "Kosten pro geprüftem Erfolg und Latenz",
+      "columns": {
+        "model": "Modell-ID",
+        "successes": "Geprüft / Versuche",
+        "costPerSuccess": "Kosten pro geprüftem Erfolg",
+        "latency": "p50 / p95 Latenz"
+      }
+    },
+    "benchmarkSummary": "Letzter Benchmark: {{tasks}} Aufgaben · {{models}} Modelle",
+    "error": "Einstellungen des globalen Modell-Routers konnten nicht gespeichert werden. Prüfe Schlüssel, Limit und Modelle."
+  },
+  "creditContinuity": {
+    "title": "Weiterarbeiten mit API-Guthaben",
+    "refresh": "Status aktualisieren",
+    "unavailable": "Der Guthabenstatus ist nicht verfügbar. Hier wurde noch kein gewährtes Guthaben verifiziert.",
+    "intro": "Geeignete Abonnements werden zuerst genutzt. Der API-Ersatz nutzt verifiziertes, gewährtes Guthaben innerhalb der gemeinsamen Grenzen des Abrechnungszeitraums.",
+    "status": {
+      "unavailable": "Der Guthabenstatus ist nicht verfügbar. Automatische Ausgaben sind nicht verifiziert.",
+      "disabled": "Der automatische API-Ersatz ist deaktiviert. Erfasste Ausgaben und ausstehende Kosten bleiben sichtbar.",
+      "unverified": "Es wurde noch kein zulässiges API-Guthaben verifiziert. Automatisch verfügbar sind $0.",
+      "blocked": "Der API-Ersatz wartet auf aktuelle Nachweise, Budget oder einen Abgleich.",
+      "available": "Der API-Ersatz ist innerhalb der erfassten Guthabengrenzen verfügbar."
+    },
+    "caption": "Gewährtes API-Guthaben und Budgets je Abrechnungszeitraum",
+    "columns": {
+      "provider": "Anbieter",
+      "state": "Zustand",
+      "automatic": "Automatisch verfügbar / Grenze",
+      "costs": "Ausgegeben / ausstehend",
+      "reserve": "Reserve des Eigentümers",
+      "buffer": "Sicherheitspuffer",
+      "expires": "Guthaben verfällt",
+      "forecast": "Historischer p95"
+    },
+    "provider": {
+      "openai": "API von ChatGPT",
+      "anthropic": "API von Claude"
+    },
+    "unknown": "Unbekannt",
+    "state": {
+      "unavailable": "Nicht verfügbar",
+      "unverified": "Nicht verifiziert",
+      "expired": "Guthaben verfallen",
+      "stale": "Nachweise müssen aktualisiert werden",
+      "disabled": "Deaktiviert",
+      "paused": "Pausiert",
+      "pricingExpired": "Preise abgelaufen",
+      "pricingChanged": "Preise geändert",
+      "pricingUnverified": "Preise nicht verifiziert",
+      "noRoute": "Kein zulässiger API-Zugangsweg",
+      "budgetUnavailable": "Budget nicht verfügbar",
+      "ready": "Bereit",
+      "reserveAvailable": "Reserve des Eigentümers verfügbar",
+      "billingBlocked": "Abrechnung blockiert",
+      "reconciliation": "Abgleich erforderlich",
+      "blocked": "Blockiert"
+    },
+    "evidence": "Nachweise: {{date}}",
+    "approvedAvailable": "Genehmigt verfügbar: {{amount}}",
+    "approvals_one": "{{count}} aktive Genehmigung des Eigentümers",
+    "approvals_other": "{{count}} aktive Genehmigungen des Eigentümers",
+    "ownerApproval": "Genehmigung des Eigentümers",
+    "historyHigh": "{{count}} abgerechnete Einheiten. Hohe Unsicherheit.",
+    "historyMedium": "{{count}} abgerechnete Einheiten. Mittlere Unsicherheit.",
+    "historyUnknown": "{{count}} abgerechnete Einheiten. Unsicherheit unbekannt.",
+    "insufficientHistory": "Nicht genügend Verlaufsdaten",
+    "obligations_one": "{{count}} API-Aufruf hat reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "obligations_other": "{{count}} API-Aufrufe haben reservierte oder ungeklärte Kosten. Notfallreserven erfordern die Genehmigung des Eigentümers. Diese Funktion aktiviert keine kostenpflichtigen Aufladungen.",
+    "evidenceNote": "Die Zulässigkeit des gewährten Guthabens wird anhand der vom Eigentümer erfassten Abrechnungsnachweise des Anbieters geprüft. Historische Prognosen genehmigen keine Ausgaben. Status abgerufen: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1320,7 +1513,13 @@
       "moonshot": "Kimi-Schlüssel beginnen mit sk-. Prüfe ihn und füge ihn noch einmal ein.",
       "zai": "Füge den ganzen Z.ai-Schlüssel ohne Leerzeichen ein. Prüfe ihn und füge ihn noch einmal ein.",
       "minimax": "Füge den ganzen MiniMax-Schlüssel ohne Leerzeichen ein. Schlüssel, die mit sk-cp- beginnen, gehören zum Abo und funktionieren hier nicht.",
-      "openrouter": "OpenRouter-Schlüssel beginnen mit sk-or-v1-. Prüfe ihn und füge ihn noch einmal ein."
+      "openrouter": "OpenRouter-Schlüssel beginnen mit sk-or-v1-. Prüfe ihn und füge ihn noch einmal ein.",
+      "groq": "Groq-Schlüssel beginnen mit gsk_. Prüfe ihn und füge ihn erneut ein.",
+      "cloudflare": "Füge das vollständige Cloudflare Workers AI-Token ohne Leerzeichen ein. Prüfe es und versuche es erneut.",
+      "opencode": "Füge den vollständigen OpenCode-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "tencent": "Füge den vollständigen Tencent Hunyuan-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "xiaomi": "Füge den vollständigen Xiaomi MiMo-API-Schlüssel ohne Leerzeichen ein. Prüfe ihn und versuche es erneut.",
+      "nvidia": "NVIDIA NIM-Schlüssel beginnen mit nvapi-. Prüfe ihn und füge ihn erneut ein."
     },
     "keyFromOther": "Ist er von einem anderen Anbieter?",
     "anthropicWorkspace": "Workspace-ID der Claude Console",
@@ -3124,6 +3323,8 @@
     "atOnceHelp": "Wie viele Aufgaben, um die niemand gebeten hat, er gleichzeitig erledigt. Die anderen warten, bis sie dran sind.",
     "prs": "Pull Requests pro Stunde",
     "prsHelp": "Höchstens so viele öffnet seine eigene Arbeit in einer Stunde.",
+    "shots": "Screenshots pro Aufgabe",
+    "shotsHelp": "So viele darf eine seiner Arbeiten höchstens machen. Erhöhe den Wert für einen Agenten, der prüft, wie Seiten aussehen. Neue Screenshots pausieren außerdem, wenn die Festplatte seines Computers fast voll ist.",
     "call": "Agenten, die er rufen darf",
     "callHelp": "Wen er erwähnen oder wem er Arbeit übergeben darf.",
     "callAll": "Alle",
@@ -7111,6 +7312,18 @@
       "label": "Aufgaben",
       "description": "Aufgaben erstellen und aktualisieren."
     },
+    "colab_read": {
+      "label": "Colab lesen",
+      "description": "Abostufe, nutzbare Runtime-Typen und Sitzungsnamen lesen."
+    },
+    "colab_run": {
+      "label": "Colab-Jobs ausführen",
+      "description": "Runtimes und Sitzungen erstellen, Python ausführen und selbst geöffnete Sitzungen schließen. Verbraucht Colab-Recheneinheiten."
+    },
+    "colab_delete": {
+      "label": "Colab-Runtimes löschen",
+      "description": "Eine Runtime endgültig löschen, mit allen Dateien und Sitzungen."
+    },
     "github_repo_read": {
       "label": "Code lesen",
       "description": "Dateien und Commits lesen und Code durchsuchen."
@@ -8421,6 +8634,8 @@
       "draftingNoComputer_female": "{{executor}} liest den Ordner und entwirft den Plan",
       "empty": "Noch keine Punkte. Du kannst trotzdem starten oder mit „Etwas ändern“ um einen Plan bitten.",
       "waitPlan": "Öffnet sich, wenn der Plan da ist",
+      "repositoryFolder": "Repository-Ordner",
+      "repositoryFolderRelative": "Pfad relativ zum Arbeitsordner des Agenten, z. B. repos/projekt.",
       "adjusts": "{{executor}} passt die Liste unterwegs weiter an",
       "adjusts_female": "{{executor}} passt die Liste unterwegs weiter an",
       "switched": "{{executor}} programmiert jetzt. Der Plan beginnt von vorn.",
@@ -11630,6 +11845,44 @@
   },
   "storage": {
     "title": "Speicher",
+    "clean": {
+      "title": "Arbeitsbereich aufräumen",
+      "intro": "Was beendete Aufgaben auf den Computern der Agenten hinterlassen haben. Ergebnisse, Nachweise und alles Ungeklärte bleiben. Du entscheidest, welche temporären Dateien entfernt werden.",
+      "computers": "Festplatten der Computer",
+      "level": {
+        "ok": "{{free}} GB frei",
+        "low": "Wenig Platz: {{free}} GB frei",
+        "critical": "Fast voll: {{free}} GB frei. Neue Screenshots und Aufnahmen sind pausiert.",
+        "unknown": "Noch nicht gemessen"
+      },
+      "none": "Seit die Agenten ihre Dateien erfassen, ist keine Aufgabe zu Ende gegangen.",
+      "task": "Aufgabe",
+      "mission": "Mission",
+      "ended": {
+        "done": "Erledigt",
+        "canceled": "Abgebrochen"
+      },
+      "kept_one": "{{count}} behalten",
+      "kept_other": "{{count}} behalten",
+      "candidates_one": "{{count}} temporäre Datei, {{size}}",
+      "candidates_other": "{{count}} temporäre Dateien, {{size}}",
+      "duplicates_one": "{{count}} exakte Kopie",
+      "duplicates_other": "{{count}} exakte Kopien",
+      "restorable": "Nachweise: {{restorable}} aus dem Drive wiederherstellbar, {{manifestOnly}} nur aufgelistet",
+      "approve": "Temporäre Dateien entfernen",
+      "approved_one": "{{count}} Datei freigegeben: Sie wird auf ihrem Computer erneut geprüft, bevor sie verschwindet.",
+      "approved_other": "{{count}} Dateien freigegeben: Jede wird auf ihrem Computer erneut geprüft, bevor sie verschwindet.",
+      "status": {
+        "approved": "Wartet auf den Computer",
+        "done": "Entfernt",
+        "skipped": "Schon weg",
+        "blocked": "Behalten: {{reason}}",
+        "unknown": "Noch unklar: wird später erneut geprüft"
+      },
+      "freed": "Freier Platz auf dem Computer: {{before}} vorher, {{after}} nachher",
+      "show": "Dateien anzeigen",
+      "hide": "Dateien ausblenden"
+    },
     "options": "Wo Dateien liegen",
     "agentes": "agentes.chat-Speicher",
     "agentesText": "Deine Dateien bleiben in unserem Speicher, pro Workspace getrennt.",
@@ -11839,6 +12092,16 @@
       "list": "Verbundene MCP-Server",
       "none": "Hier erscheinen die MCP-Server, die du über ihre Adresse verbindest."
     },
+    "hostMcp": {
+      "title": "Host MCP auf deinem Computer",
+      "intro": "Nutze ein geprüftes Host-MCP-Profil auf einem vertrauenswürdigen Computer. Nur der gewählte Agent erhält Lesezugriff.",
+      "connectRead": "Verbinden und Lesezugriff gewähren",
+      "bindFailed": "Die Verknüpfung wurde nicht bestätigt. Lösche die Auswahl, lade die Profilliste neu und prüfe Computer, Profilversion und Agent vor einem erneuten Versuch.",
+      "grantUnconfirmed": "Das Profil ist verknüpft, der Lesezugriff ist aber nicht bestätigt. Versuche es für diesen Agenten erneut oder lösche die Auswahl, ohne bestehende Berechtigungen zu ändern. Wähle nach dem Neuladen dieselbe Profilversion und denselben Agenten.",
+      "retryRead": "Lesezugriff erneut versuchen",
+      "resetSelection": "Auswahl löschen",
+      "note": "Die Freigabeliste des Computers gilt weiterhin. Prüfe den Zugriff mit einem echten Tool-Aufruf des Agenten."
+    },
     "addTitle": "Konnektor hinzufügen",
     "catalogText": "Einmal für {{org}} verbinden. Dann wählst du, was jeder Agent nutzen darf.",
     "catalog": "Verfügbare Konnektoren",
@@ -11877,6 +12140,8 @@
     "more": "Weitere Dienste",
     "tileConnected": "{{name}}, verbunden",
     "tileSoon": "{{name}}, bald",
+    "tileSetupRequired": "{{name}}, Einrichtung nötig",
+    "setupRequired": "Einrichtung nötig",
     "otherTitle": "Anderer Dienst",
     "otherDetail": "Jeder Dienst, der eine Verbindung für Agenten anbietet, über seine Adresse (sie beginnt mit https://).",
     "otherSteps": {
@@ -11900,6 +12165,7 @@
     "how": {
       "oneClick": "Ein Klick: Du autorisierst auf der Seite des Dienstes",
       "oauthOrKey": "Du autorisierst auf der Seite des Dienstes oder nutzt einen API-Schlüssel",
+      "oauthSetup": "Die Anmeldung für diese App ist noch nicht eingerichtet.",
       "key": "Braucht einen API-Schlüssel",
       "appPassword": "Braucht ein App-Passwort",
       "addressPassword": "Braucht die Adresse der Datenbank und ein Passwort",
@@ -13327,6 +13593,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Ein Guthabeneintrag ist bereits vorhanden. Aktualisiere die Seite, um seinen Status zu prüfen.",
+      "disabled": "Die Ausweichnutzung von Guthaben ist ausgeschaltet.",
+      "resumeRefused": "Dieser Lauf kann noch nicht fortgesetzt werden. Prüfe das zurückgehaltene Guthaben und die ausstehenden Aktionen."
+    },
     "passwordLink": {
       "email": "Dieser Server verschickt E-Mails: Die Person fordert ihren eigenen Link unter Passwort vergessen an.",
       "serverOwner": "Wer diesen Server installiert hat, meldet sich auf dem Computer an, auf dem er läuft, ohne Link.",
@@ -15644,6 +15915,14 @@
       "oldSub": "Verbrauch von vor der Erfassung des Kontos",
       "ofMonth": "{{percent}} des Monats",
       "shareLabel": "{{source}}: {{percent}} des Monats"
+    },
+    "costPerSuccess": {
+      "title": "Kosten pro bestätigtem Erfolg",
+      "intro": "Letzte 30 Tage. Ein Erfolg ist eine Aufgabe, deren Abnahmekriterien eine Person abgehakt hat und die seitdem niemand wieder geöffnet hat. Jeder Lauf zählt zu den Kosten.",
+      "perSuccess": "{{cost}} pro Erfolg",
+      "unknown": "Kosten unbekannt",
+      "noSuccess": "Noch kein bestätigter Erfolg",
+      "line": "{{runs}} Läufe · {{successes}} bestätigt · {{failed}} fehlgeschlagen · {{retries}} Wiederholungen"
     }
   },
   "budget": {
@@ -16037,6 +16316,7 @@
         "updatingThread": "Einen Thread aktualisiert",
         "addingAgent": "Einen Agenten zu einem Kanal hinzugefügt",
         "readingConversation": "Die Unterhaltung gelesen",
+        "checkingPlanUsage": "Die Plannutzung des Teams geprüft",
         "usingTool": "Das Tool {{tool}} genutzt",
         "thinking": "Nachgedacht",
         "typing": "Geschrieben",
@@ -16154,6 +16434,7 @@
       "updatingThread": "Aktualisieren eines Threads",
       "addingAgent": "Hinzufügen eines Agenten zu einem Kanal",
       "readingConversation": "Lesen der Unterhaltung",
+      "checkingPlanUsage": "Prüfen der Plannutzung des Teams",
       "usingTool": "Nutzen eines Tools"
     },
     "tokens": "{{value}} Token",

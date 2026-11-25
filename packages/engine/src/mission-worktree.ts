@@ -14,6 +14,8 @@ import {
   liveTaskWhere,
   type MachineTaskMode,
   type MachineTaskRow,
+  type ModelInspectorChildRoute,
+  missionChildStartRoute,
   queueMachineTask,
 } from "./machine-tasks";
 import { MachineOfflineError, MachinePausedError } from "./machines";
@@ -422,6 +424,7 @@ async function writeAhead(deps: MissionDeps, missionId: string, exceptId: string
 interface ItemInput {
   title: string;
   executor: "claude" | "codex" | "shell";
+  modelInspectorRoute?: ModelInspectorChildRoute;
   prompt?: string;
   command?: string;
   sessionId?: string | null;
@@ -459,6 +462,7 @@ async function queueItem(deps: MissionDeps, mission: MissionRow, input: ItemInpu
       requestedByUserId: input.requestedBy ?? mission.ownerId,
       title,
       executor: input.executor,
+      ...(input.modelInspectorRoute ? { modelInspectorRoute: input.modelInspectorRoute } : {}),
       ...(input.prompt ? { prompt: input.prompt } : {}),
       ...(input.command ? { command: input.command } : {}),
       sessionId: input.sessionId ?? null,
@@ -525,7 +529,7 @@ export async function startMissionItem(
 ) {
   const row = await queueItem(deps, mission, {
     ...input,
-    executor: mission.executor === "codex" ? "codex" : "claude",
+    ...(await missionChildStartRoute(deps.db, mission, input)),
   });
   let waitsFor: "write" | "turn" | "slot" | null = null;
   if (row.status === "queued" && !row.endedAt) {

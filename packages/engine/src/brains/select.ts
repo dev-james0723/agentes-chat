@@ -28,7 +28,7 @@ import type { Agent } from "../agents";
 import type { MachineStatus } from "../machine-hub";
 import { pausedMessage } from "../machines";
 import { missionTurnFor } from "../missions-engine";
-import { isRightHand, rightHandPerson, rightHandPlanRefusal, thinkingAgent } from "../right-hand";
+import { isRightHand, personalOwnSignIn, rightHandPerson, rightHandPlanRefusal, thinkingAgent } from "../right-hand";
 import { runnerUpdateWay } from "../runner-update";
 import type { AgentRun } from "../runs";
 import { accountUnavailable, brainSessionId, claudeCodeAvailability, toolOff } from "./claude-code";
@@ -41,9 +41,12 @@ const kindOf = (v: unknown): BrainKind => (KINDS.includes(v as BrainKind) ? (v a
 /** A mission's choice for a run in its thread (`missionTurnFor`). */
 export interface MissionTurn {
   missionId: string;
+  ownerId?: string | null;
   brain: BrainKind;
   model?: string;
   session?: BrainSession;
+  accountId?: string | null;
+  effort?: BrainEffort;
 }
 
 /**
@@ -95,6 +98,16 @@ const limitKey = (machineId: string, kind: BrainKind, accountId?: string) =>
 
 /** How long a limit with no known reset holds after it was seen: then a turn asks the plan again. */
 export const UNKNOWN_LIMIT_MS = 30 * 60_000;
+
+/**
+ * Grok can explicitly refuse its account's balance without reporting any percentage or reset. That real turn
+ * receipt keeps the existing unknown-reset hold, independently of the five-minute freshness of numeric readings.
+ */
+export function durableGrokRefusal(usage: PlanUsage | null | undefined, now = Date.now()): boolean {
+  if (usage?.source !== "turn" || usage.limited !== true || usage.windows.length !== 0) return false;
+  const at = Date.parse(usage.at);
+  return Number.isFinite(at) && at <= now && now - at < UNKNOWN_LIMIT_MS;
+}
 
 /** A computer brain hit its plan limit (until `resetsAt`, or `UNKNOWN_LIMIT_MS` when unknown). */
 export function notePlanLimit(
@@ -335,6 +348,106 @@ export async function storedPlanUsage(
   return (row?.executors.ownUsage?.[kind] as PlanUsage | undefined) ?? null;
 }
 
+/** A real Grok plan-limit response, shared by this account's agents and retained across server restarts. */
+export async function recordGrokPlanRefusal(
+  db: Executor,
+  orgId: string,
+  machineId: string,
+  accountId: string | undefined,
+  observedAt = Date.now(),
+): Promise<boolean> {
+  const at = new Date(observedAt).toISOString();
+  const receipt: PlanUsage = { source: "turn", limited: true, windows: [], at };
+  const { machineAccounts, machines } = schema;
+  if (accountId) {
+    const rows = await db
+      .update(machineAccounts)
+      .set({ usage: receipt })
+      .where(
+        and(
+          eq(machineAccounts.orgId, orgId),
+          eq(machineAccounts.machineId, machineId),
+          eq(machineAccounts.id, accountId),
+          eq(machineAccounts.kind, "grok"),
+          sql`coalesce(${machineAccounts.usage}->>'at', '') <= ${at}`,
+        ),
+      )
+      .returning({ id: machineAccounts.id });
+    return rows.length > 0;
+  }
+  const rows = await db
+    .update(machines)
+    .set({
+      executors: sql`jsonb_set(
+    coalesce(${machines.executors}, '{}'::jsonb), '{ownUsage}',
+    coalesce(${machines.executors}->'ownUsage', '{}'::jsonb) || ${JSON.stringify({ grok: receipt })}::jsonb, true)`,
+    })
+    .where(
+      and(
+        eq(machines.orgId, orgId),
+        eq(machines.id, machineId),
+        sql`coalesce(${machines.executors}#>>'{ownUsage,grok,at}', '') <= ${at}`,
+      ),
+    )
+    .returning({ id: machines.id });
+  return rows.length > 0;
+}
+
+/**
+ * A later successful Grok turn disproves an older refusal. A concurrent refusal seen after this turn began wins;
+ * neither a successful turn nor a probe is allowed to manufacture remaining capacity from an empty reading.
+ */
+export async function clearGrokPlanRefusal(
+  db: Executor,
+  orgId: string,
+  machineId: string,
+  accountId: string | undefined,
+  turnStartedAt: number,
+  observedAt = Date.now(),
+): Promise<boolean> {
+  const before = new Date(turnStartedAt).toISOString();
+  const at = new Date(observedAt).toISOString();
+  const cleared: PlanUsage = { source: "turn", limited: false, windows: [], at };
+  const { machineAccounts, machines } = schema;
+  if (accountId) {
+    const rows = await db
+      .update(machineAccounts)
+      .set({ usage: cleared })
+      .where(
+        and(
+          eq(machineAccounts.orgId, orgId),
+          eq(machineAccounts.machineId, machineId),
+          eq(machineAccounts.id, accountId),
+          eq(machineAccounts.kind, "grok"),
+          sql`${machineAccounts.usage}->>'source' = 'turn'`,
+          sql`${machineAccounts.usage}->'limited' = 'true'::jsonb`,
+          sql`${machineAccounts.usage}->'windows' = '[]'::jsonb`,
+          sql`${machineAccounts.usage}->>'at' < ${before}`,
+        ),
+      )
+      .returning({ id: machineAccounts.id });
+    return rows.length > 0;
+  }
+  const rows = await db
+    .update(machines)
+    .set({
+      executors: sql`jsonb_set(
+    ${machines.executors}, '{ownUsage,grok}', ${JSON.stringify(cleared)}::jsonb, true)`,
+    })
+    .where(
+      and(
+        eq(machines.orgId, orgId),
+        eq(machines.id, machineId),
+        sql`${machines.executors}#>>'{ownUsage,grok,source}' = 'turn'`,
+        sql`${machines.executors}#>'{ownUsage,grok,limited}' = 'true'::jsonb`,
+        sql`${machines.executors}#>'{ownUsage,grok,windows}' = '[]'::jsonb`,
+        sql`${machines.executors}#>>'{ownUsage,grok,at}' < ${before}`,
+      ),
+    )
+    .returning({ id: machines.id });
+  return rows.length > 0;
+}
+
 export interface BrainUnavailability {
   code: string;
   message: string;
@@ -524,7 +637,7 @@ export interface QuotaReserve {
 export function quotaReserveOf(
   usage: PlanUsage | null | undefined,
   pool: QuotaReserve["pool"],
-  options: { now?: number; thresholdPercent?: number; maxAgeMs?: number } = {},
+  options: { now?: number; thresholdPercent?: number; maxAgeMs?: number; model?: string } = {},
 ): QuotaReserve {
   const thresholdPercent = options.thresholdPercent ?? 90;
   const maxAgeMs = options.maxAgeMs ?? 15 * 60_000;
@@ -548,9 +661,11 @@ export function quotaReserveOf(
   // pool held "low" by an old reading gets no turn, so the reading is never replaced: the pool stays shut until the
   // window resets. Unknown is tried; a plan that is really full refuses that turn and the task waits or moves on.
   if (now - at > maxAgeMs) return unknown;
-  const windows = usage.windows.filter(
+  const scoped = pool.kind === "claude_code" ? planUsageForModel(usage, options.model ?? "sonnet") : usage;
+  const windows = scoped.windows.filter(
     (w) =>
-      ["five_hour", "seven_day", "monthly"].includes(w.kind) &&
+      (["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "monthly"].includes(w.kind) ||
+        (w.kind === "other" && w.label && w.label !== "Extra usage" && w.label !== "OAuth apps")) &&
       Number.isFinite(w.usedPercent) &&
       w.usedPercent >= 0 &&
       w.usedPercent <= 100 &&
@@ -870,11 +985,138 @@ export async function resolveBrain(
     promptKey?: string;
     quotaReservePercent?: number;
     quotaReserveMaxAgeMs?: number;
+    /** Internal candidate admission only, bound to the unchanged source mission; it never persists a route. */
+    qualifiedQuotaHandoff?: { missionId: string; sourceSessionId: string; ownerId: string | null };
+    /** Internal subscription candidate/resume admission, bound to the actual person and stored run session. */
+    qualifiedPersonalQuotaHandoff?: { personId: string; machineId: string; sourceSessionId: string };
   } = {},
 ): Promise<BrainPlan> {
-  const mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
+  let mission: MissionTurn | null = await missionTurnFor(deps.db, run).catch(() => null);
+  const qualified = options.qualifiedQuotaHandoff;
+  if (
+    mission &&
+    qualified &&
+    mission.missionId === qualified.missionId &&
+    mission.session?.id === qualified.sourceSessionId &&
+    mission.ownerId === qualified.ownerId
+  ) {
+    mission = {
+      ...mission,
+      brain: kindOf(given.brain),
+      model: given.brainModel ?? undefined,
+      accountId: given.brainAccountId ?? null,
+      effort: brainEffortFor(given, kindOf(given.brain)),
+      session: { ...mission.session, resume: false },
+    };
+  }
   // The right hand: the AI of the person whose DM this is, else the workspace's; on a plan, its computer and owner.
-  const agent = await thinkingAgent(deps.db, given, await rightHandPerson(deps.db, given, run));
+  const person = await rightHandPerson(deps.db, given, run);
+  let thinker = await thinkingAgent(deps.db, given, person);
+  const personal = options.qualifiedPersonalQuotaHandoff;
+  if (
+    personal &&
+    person &&
+    personal.sourceSessionId &&
+    isRightHand(given) &&
+    person === personal.personId &&
+    thinker.ownerUserId === person &&
+    thinker.machineId === personal.machineId &&
+    run.orgId === given.orgId &&
+    run.agentId === given.id &&
+    run.brainSessionId === personal.sourceSessionId &&
+    ["claude_code", "codex", "grok"].includes(given.brain)
+  ) {
+    const [bound] = await deps.db
+      .select({ sessionId: schema.agentRuns.brainSessionId })
+      .from(schema.agentRuns)
+      .where(
+        and(
+          eq(schema.agentRuns.orgId, run.orgId),
+          eq(schema.agentRuns.id, run.id),
+          eq(schema.agentRuns.agentId, given.id),
+        ),
+      );
+    if (bound?.sessionId === personal.sourceSessionId) {
+      const target: Agent = {
+        ...thinker,
+        brain: given.brain,
+        brainModel: given.brainModel,
+        brainAccountId: given.brainAccountId,
+        brainAccountLentBy: null,
+        machineId: personal.machineId,
+        brainFallback: false,
+        brainExtraUsage: false,
+        planForOthers: false,
+      };
+      let subscription = false;
+      if (target.brainAccountId) {
+        const { machineAccounts: accounts, agents } = schema;
+        const [account] = await deps.db
+          .select({
+            owner: accounts.createdBy,
+            kind: accounts.kind,
+            status: accounts.status,
+            auth: accounts.authMethod,
+            provider: accounts.provider,
+            key: accounts.keyHint,
+          })
+          .from(accounts)
+          .where(
+            and(
+              eq(accounts.orgId, given.orgId),
+              eq(accounts.id, target.brainAccountId),
+              eq(accounts.machineId, personal.machineId),
+              sql`(${accounts.shared} or not exists
+              (select 1 from ${agents} held where held.org_id = ${given.orgId}::uuid
+                and held.brain_account_id = ${target.brainAccountId}::uuid
+                and held.id <> ${given.id}::uuid and held.archived_at is null))`,
+            ),
+          );
+        subscription =
+          !!account &&
+          account.owner === person &&
+          account.kind === target.brain &&
+          account.status === "active" &&
+          account.auth === "cli_login" &&
+          account.provider === null &&
+          account.key === null;
+      } else {
+        const [machine] = await deps.db
+          .select({
+            owner: schema.machines.pairedByUserId,
+            executors: schema.machines.executors,
+            deletedAt: schema.machines.deletedAt,
+          })
+          .from(schema.machines)
+          .where(and(eq(schema.machines.orgId, given.orgId), eq(schema.machines.id, personal.machineId)));
+        subscription =
+          !!machine &&
+          !machine.deletedAt &&
+          machine.owner === person &&
+          personalOwnSignIn(target.brain, machine.executors);
+      }
+      const account = subscription
+        ? await brainAccountFor(deps.db, target, kindOf(target.brain), personal.machineId)
+        : undefined;
+      if (
+        subscription &&
+        (!target.brainAccountId || (account?.status === "active" && !account.provider)) &&
+        (await planIsOwners(deps.db, target, personal.machineId, account))
+      )
+        thinker = target;
+    }
+  }
+  // A committed mission handoff keeps its account even when the agent's default brain is another provider.
+  const agent =
+    mission?.accountId !== undefined
+      ? {
+          ...thinker,
+          brain: mission.brain,
+          machineId: mission.session?.machineId ?? thinker.machineId,
+          brainAccountId: mission.accountId,
+          brainAccountLentBy: null,
+        }
+      : thinker;
   const kind = brainFor(agent, run, mission);
   const base = mission ? { missionId: mission.missionId } : {};
   if (kind === "model") return { kind, ...base };
@@ -892,7 +1134,7 @@ export async function resolveBrain(
   // provider for a model it doesn't have.
   const runs =
     kind === "claude_code" && model && !isAutoModel(model) ? claudeCodeModel(planOf(account?.provider), model) : model;
-  const effort = brainEffortFor(agent, kind);
+  const effort = mission?.effort ?? brainEffortFor(agent, kind);
   const unavailable =
     (isRightHand(agent) ? await rightHandPlanRefusal(deps.db, agent, run, status) : null) ??
     (machineId && !deps.machines
@@ -952,6 +1194,7 @@ export async function resolveBrain(
         now: options.now?.getTime(),
         thresholdPercent: options.quotaReservePercent,
         maxAgeMs: options.quotaReserveMaxAgeMs,
+        model: runs,
       },
     ),
     ...(settingsChanged ? { settingsChanged } : {}),

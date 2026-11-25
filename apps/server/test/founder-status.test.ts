@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { eq, schema } from "@agenteschat/db";
-import type { FounderStatus } from "@agenteschat/engine";
+import type { FounderStatus, Traceability } from "@agenteschat/engine";
 import { recordDeploy, recordMergeEvidence } from "@agenteschat/engine";
 import { browser, createTestServer, seedOrg, signUp, type TestServer } from "./harness";
 
@@ -26,7 +26,7 @@ async function world(identity: (() => Promise<{ digest: string; files: number }>
     .where(eq(schema.issues.id, issue.id));
   await recordMergeEvidence(t.db, orgId, { subject: "acme/app#42", mergeCommit: MERGE });
   const status = async () => (await api(`/issues/${issue.id}/founder-status`)).json() as Promise<FounderStatus>;
-  return { orgId, agentId, channelId, issueId: issue.id, status };
+  return { orgId, agentId, channelId, issueId: issue.id, status, api };
 }
 
 test("available only when this server runs the recorded deploy of the merge", async () => {
@@ -97,4 +97,66 @@ test("Needs you: a pending approval on the task's run, linked by its id and wher
   const s = await status();
   expect(s.needsMe).toMatchObject({ needed: true, decisions: [{ approvalId: approval?.id, channelId }] });
   expect(s.next).toMatchObject({ action: "decide", owner: { type: "you" } });
+});
+
+test("traceability (ADR 0206): a requirement is delivered only once its merge runs here; an unlinked merge is flagged", async () => {
+  const { orgId, issueId, api } = await world(async () => ({ digest: DIGEST, files: 10 }));
+  const req = (await (await api("/issues", { json: { title: "Score preview", labels: ["requirement"] } })).json()) as {
+    id: string;
+  };
+  await t.db.update(schema.issues).set({ parentIssueId: req.id, status: "done" }).where(eq(schema.issues.id, issueId));
+  const OTHER = "c".repeat(40);
+  await recordMergeEvidence(t.db, orgId, { subject: "acme/app#7", mergeCommit: OTHER });
+  const read = async () => (await api("/traceability")).json() as Promise<Traceability>;
+  const before = await read();
+  expect(before.requirements[0]).toMatchObject({ id: req.id, state: "done_undelivered", delivered: false });
+  expect(before.flags).toContainEqual({ kind: "unlinked_merge", subject: "acme/app#7", mergeCommit: OTHER });
+  await recordDeploy(
+    t.db,
+    { orgId, repo: "acme/app", commit: MERGE, sourceDigest: DIGEST },
+    { digest: DIGEST, files: 10 },
+  );
+  expect((await read()).requirements[0]).toMatchObject({ state: "delivered", delivered: true });
+});
+
+test("independent verification (ADR 0211): contract, refused self-verification, missing evidence, then verified", async () => {
+  const { orgId, issueId, status, api } = await world(async () => ({ digest: DIGEST, files: 10 }));
+  const code = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+  const contract = await api(`/issues/${issueId}/completion-contract`, {
+    method: "PUT",
+    json: { evidence: ["pr_merged", "deploy_running"] },
+  });
+  expect(contract.status).toBe(200);
+  // The agent's work closed it: a claim, not verification.
+  await t.db.update(schema.issues).set({ status: "done" }).where(eq(schema.issues.id, issueId));
+  expect((await status()).verification).toMatchObject({ state: "done_unverified", verified: false });
+
+  const verify = () => api(`/issues/${issueId}/verification`, { method: "POST", json: { verdict: "verified" } });
+  const missing = await verify();
+  expect(missing.status).toBe(409);
+  expect(await code(missing)).toBe("evidence_missing");
+
+  await recordDeploy(
+    t.db,
+    { orgId, repo: "acme/app", commit: MERGE, sourceDigest: DIGEST },
+    { digest: DIGEST, files: 10 },
+  );
+  const [user] = await t.db.select({ id: schema.users.id }).from(schema.users);
+  // Assigned to the reader: they implemented it, so they can't verify it.
+  await t.db
+    .update(schema.issues)
+    .set({ assigneeType: "person", assigneeId: user?.id ?? "" })
+    .where(eq(schema.issues.id, issueId));
+  const self = await verify();
+  expect(self.status).toBe(403);
+  expect(await code(self)).toBe("self_verification");
+
+  await t.db.update(schema.issues).set({ assigneeType: null, assigneeId: null }).where(eq(schema.issues.id, issueId));
+  const ok = await verify();
+  expect(ok.status).toBe(200);
+  expect(await ok.json()).toMatchObject({ verdict: "verified", missing: [] });
+  expect((await status()).verification).toMatchObject({ state: "verified", verified: true });
+
+  const usage = (await (await api("/usage/cost-per-success")).json()) as { claims: { claimedDone: number } };
+  expect(usage.claims).toBeDefined();
 });

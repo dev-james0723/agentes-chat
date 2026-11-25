@@ -127,7 +127,13 @@ describe("pricing", () => {
       ["kimi-k3.1-pro"],
       ["glm-5.3"],
       ["MiniMax-M3"],
-      // OpenRouter's come from its list.
+      ["groq/gpt-oss-120b"],
+      ["@cf/openai/gpt-oss-120b"],
+      // OpenCode Go and OpenRouter models come from their live dynamic lists.
+      [],
+      ["hunyuan-hy4"],
+      ["mimo-v2.6-pro"],
+      ["nvidia-nemotron-3-ultra-550b-a55b"],
       [],
     ]);
   });
@@ -157,6 +163,12 @@ describe("pricing", () => {
       "kimi-k3.1-pro",
       "glm-5.3-flash",
       "MiniMax-M3.1-Flash",
+      "groq/gpt-oss-20b",
+      "@cf/openai/gpt-oss-20b",
+      null,
+      "hunyuan-hy4-flash",
+      "mimo-v2.6-flash",
+      "nvidia-nemotron-3.5-lightning",
       null,
       null,
     ]);
@@ -177,12 +189,18 @@ describe("pricing", () => {
       null,
       "glm-5.3-flash",
       "MiniMax-M3",
+      "groq/gpt-oss-20b",
+      "@cf/openai/gpt-oss-20b",
+      null,
+      "hunyuan-hy4-flash",
+      "mimo-v2.6-flash",
+      "nvidia-nemotron-3.5-lightning",
       null,
       null,
     ]);
     for (const provider of PROVIDER_IDS) {
       const picks = Object.values(MODEL_CATALOG).filter((m) => m.provider === provider && m.router);
-      expect(picks).toHaveLength(["moonshot", "openrouter", "custom"].includes(provider) ? 0 : 1);
+      expect(picks).toHaveLength(["moonshot", "opencode", "openrouter", "custom"].includes(provider) ? 0 : 1);
     }
     // GLM-5.3 Flash can't stop thinking, Flash-Lite keeps a little, every other pick turns it off.
     expect(MODEL_CATALOG["glm-5.3-flash"]?.leastThinking).toBeUndefined();

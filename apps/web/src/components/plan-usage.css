@@ -476,3 +476,15 @@ html:not([data-pointer]) .plan-row__head:focus-visible {
 .plan-serves__label {
   font-weight: 500;
 }
+
+/* Cost per verified success (ADR 0207): avatar, name, value; no meter column. */
+.plan-api__row--cps {
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 240px);
+}
+/* A phone: like the API rows above, the face and the name on one line and the figures under them (a 240px column of
+   their own left "api · claude-sonnet-5-5" a word per line). Here, after the row's own columns, so it wins. */
+@media (max-width: 720px) {
+  .plan-api__row--cps {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+}

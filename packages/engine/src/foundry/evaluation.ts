@@ -11,8 +11,10 @@ import { resumeWaitingRunWithResult } from "../run-resume";
 import { freshGrantedKeys, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
 import type { FoundryExecutionPolicy } from "./execution-policy";
+import { foundryDraftGuidance } from "./guidance";
 import type { FrozenPackage } from "./packages";
 import {
+  FOUNDRY_MAX_VERSIONS,
   type FoundryCandidate,
   type FoundryDependencies,
   FoundryError,
@@ -20,6 +22,38 @@ import {
   loadFoundryBundle,
   ownedCandidate,
 } from "./service";
+
+/** What usually makes a version fail, each in the public contract's words. Never a holdout or the verdict's detail. */
+const REPAIR_CHECKLIST = [
+  "`total` is the number of records, not a token sum; `tokens` is the token sum; `counts` has all five statuses.",
+  'Malformed input throws an Error whose own `code` property is SCHEMA_INVALID (Object.assign(new Error(...), { code: "SCHEMA_INVALID" })), not a getter, prototype or subclass field.',
+  "Note length is counted in Unicode scalar values (for...of), not `.length`; a lone surrogate is malformed.",
+  "Nothing is written with console or to stdout/stderr; only the returned JSON string is read.",
+  "Valid input never throws: every one of the five statuses, empty records, 1000 records and large token totals.",
+] as const;
+
+/**
+ * What a builder can act on after its version failed: the way forward, the public contract's own words and how many
+ * corrected versions it may still stage. Never a hidden case, an expected output or the evaluator's verdict detail.
+ */
+async function repairHint(tx: Executor, orgId: string, candidateId: string) {
+  const staged = await tx
+    .select({ id: versions.id })
+    .from(versions)
+    .where(and(eq(versions.orgId, orgId), eq(versions.candidateId, candidateId)));
+  const versionsLeft = Math.max(0, FOUNDRY_MAX_VERSIONS - staged.length);
+  const guidance = foundryDraftGuidance();
+  return {
+    next:
+      versionsLeft > 0
+        ? "This version is final and is not evaluated again. Check tool.mjs against the checklist, output and semantics below, fix it, call stage_foundry_package with the candidate's current revision to make a new version, then evaluate_foundry_capability with the new digest."
+        : "This version is final and no corrected version can be staged for this candidate. Report the failure to the person; do not evaluate again.",
+    versionsLeft,
+    checklist: [...REPAIR_CHECKLIST],
+    output: guidance.output,
+    semantics: guidance.semantics,
+  };
+}
 
 export const FOUNDRY_EVALUATE_JOB = "foundry.evaluate";
 const { foundryVersions: versions, foundryCandidates: candidates, agentRuns } = schema;
@@ -129,6 +163,13 @@ export function createDurableFoundryEvaluation(deps: EvaluationDependencies) {
         existing.toolUseId === ctx.toolUseId
       )
         return pending(existing);
+      // A finished evaluation is final for its digest: say how it ended, never "in progress".
+      if (existing?.state === "TERMINAL" && existing.reasonCode)
+        return {
+          state: "BLOCKED",
+          code: existing.reasonCode,
+          ...(existing.reasonCode === "EVAL_FAILED" ? await repairHint(tx, ctx.orgId, input.candidateId) : {}),
+        };
       if (locked.state !== "DRAFT" || existing) return { state: "BLOCKED", code: "EVALUATION_IN_PROGRESS_OR_UNKNOWN" };
       const job: EvaluationJob = {
         waitId: `foundry-evaluation:${ctx.orgId}:${version.id}`,
@@ -244,7 +285,14 @@ export function createDurableFoundryEvaluation(deps: EvaluationDependencies) {
       }
       const outcome = authorized && eligibleVersion ? state : "BLOCKED";
       const reason = !eligibleVersion ? "STALE_VERSION" : authorized ? code : "AUTHORITY_CHANGED";
-      const content = JSON.stringify({ state: outcome, ...(reason ? { code: reason } : {}), digest: version.digest });
+      const content = JSON.stringify({
+        state: outcome,
+        ...(reason ? { code: reason } : {}),
+        digest: version.digest,
+        ...(outcome === "BLOCKED" && reason === "EVAL_FAILED"
+          ? await repairHint(tx, version.orgId, version.candidateId)
+          : {}),
+      });
       const delivered =
         authorized && eligibleVersion
           ? await resumeWaitingRunWithResult(tx, {

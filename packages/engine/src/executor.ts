@@ -22,6 +22,7 @@ import {
   ne,
   or,
   queryTrace,
+  type SQL,
   schema,
   sql,
 } from "@agenteschat/db";
@@ -31,6 +32,7 @@ import {
   isAutoModel,
   type ModelMessage,
   type ModelResult,
+  type ModelTier,
   PROVIDERS,
   ProviderError,
   parseCustomModel,
@@ -40,7 +42,7 @@ import {
   textOf,
 } from "@agenteschat/providers";
 import { autoPlanModel, droppedPlanModel, ownLimitsModel, planModel, planOf } from "@agenteschat/providers/plans";
-import { PLAN_NOTICE, PLAN_PAUSE } from "@agenteschat/ui/plan-state";
+import { PLAN_NOTICE, PLAN_PAUSE, planWindows } from "@agenteschat/ui/plan-state";
 import { pendingConnectors } from "./access";
 import { linkRunActions, publishMessageActions } from "./agent-actions";
 import { withTimeout } from "./agent-media";
@@ -57,6 +59,7 @@ import { type Agent, getAgentCached } from "./agents";
 import { agentsDmReads, readerOfRun } from "./agents-dm-reads";
 import { type AgentAi, agentAiState, noAiReasonOf, ownNotSignedIn } from "./ai-status";
 import { deciderName, publishApproval } from "./approvals";
+import { recordAudit } from "./audit";
 import { accountablePerson, fedByRoutine, personOfMessage, runAuthority } from "./authority";
 import {
   type AutoChoice,
@@ -85,6 +88,8 @@ import {
   type BrainUnavailability,
   bindingReset,
   brainSpeedFor,
+  clearGrokPlanRefusal,
+  computerBrainUnavailable,
   forgetModelLimit,
   forgetPlanLimit,
   type ModelScope,
@@ -96,10 +101,13 @@ import {
   offRefusal,
   planIsOwners,
   planLimitOf,
+  quotaReserveOf,
+  recordGrokPlanRefusal,
   recordRunBrain,
   refusalScope,
   regionRefusal,
   resolveBrain,
+  storedPlanLimit,
   storedPlanUsage,
   UNAVAILABLE_CODES,
 } from "./brains/select";
@@ -194,6 +202,30 @@ import {
   verdictRecord,
 } from "./continuation";
 import { modelInfoFor } from "./credentials";
+import { creditAdmissionBound } from "./credit-admission";
+import {
+  assertCreditClaim,
+  type CreditInFlight,
+  type CreditNativeClaim,
+  type CreditRunHold,
+  creditIncident,
+  creditWorkUnitKey,
+  holdCreditRun,
+  lockCreditClaim,
+  recoverCreditRun,
+} from "./credit-continuity";
+import { deriveCreditRequirements, isCreditEffort, isCreditMinimumTier } from "./credit-quality";
+import {
+  CREDIT_PROOF_MAX_MS,
+  type CreditProof,
+  type CreditQualification,
+  CreditRouteRefusal,
+  creditOutcomeOf,
+  creditRouteEndedNotice,
+  creditRouteNotice,
+  creditRouteUnknownNotice,
+  endsCreditRoute,
+} from "./credit-route";
 import { sha256 } from "./crypto";
 import { widgetRunWaitChanged } from "./dashboards/refresh-fire";
 import { WIDGET_FAILURES } from "./dashboards/types";
@@ -226,6 +258,8 @@ import type { FoundryExecutionPolicy } from "./foundry/execution-policy";
 import type { ModelGateway } from "./gateway";
 import { type CodeSetup, codeStart } from "./git/machine";
 import { agentRepositoryList, repositoriesPrompt } from "./git/repos";
+import { type GlobalRouterRouteRecord, qualifyGlobalRouterHandoff } from "./global-router-gateway";
+import { GlobalRouterRefusal } from "./global-router-ledger";
 import { askVerdict, handOffHolds, repeatedAsk, saysNeedsNothing } from "./hand-off";
 import { UPDATE_ISSUE_TOOL } from "./issue-tools";
 import { linkRunToIssue, mirrorReplyToIssue } from "./issues";
@@ -246,7 +280,13 @@ import {
   touchMachineAccount,
 } from "./machine-accounts";
 import { computerBackSoon, type MachineCaller } from "./machine-hub";
-import { TASK_OFFLINE_GRACE_MS } from "./machine-tasks";
+import {
+  hasLiveNativeMissionTasks,
+  lockMissionTaskQueue,
+  supportsMissionTaskModels,
+  TASK_OFFLINE_GRACE_MS,
+} from "./machine-tasks";
+import { machinePause } from "./machines";
 import { MEDIA_TOOLS } from "./media";
 import {
   getMessage,
@@ -257,7 +297,18 @@ import {
   unreachedNote,
   unreachedPeople,
 } from "./messages";
-import { missionAsksPerson, missionReportSince, scheduleKeepGoing } from "./missions-engine";
+import { getMissionRow, OPEN_MISSION_STATUSES } from "./missions";
+import {
+  missionAsksPerson,
+  missionReportSince,
+  persistMissionInspectorRoute,
+  scheduleKeepGoing,
+} from "./missions-engine";
+import {
+  chooseModelInspectorRoute,
+  type ModelInspectorCandidate,
+  type ModelInspectorRoute,
+} from "./model-inspector-routing";
 import { type NoAiCardReason, postNoAiCard } from "./no-ai";
 import {
   notifyCatchUpClosed,
@@ -267,7 +318,14 @@ import {
   resolveRunFailed,
 } from "./notification-producers";
 import { openRequestNudge, openRequestsOf, WITHDRAW_REQUEST_TOOL } from "./open-requests";
-import { enqueue, PermanentJobError } from "./outbox";
+import {
+  OpenRouterFallbackRefusal,
+  type OpenRouterFallbackRoute,
+  openRouterFallbackConfig,
+} from "./openrouter-fallback-ledger";
+import { decideOpenRouterFallback } from "./openrouter-fallback-policy";
+import { openRouterSubscriptionEvidence } from "./openrouter-subscription-evidence";
+import { enqueue, lockJobClaim, PermanentJobError } from "./outbox";
 import { type OutsideMemo, personWords, runReadOutside } from "./outside";
 import { paperclipProjectBrain } from "./paperclip-project-runtime";
 import { assertPersonUnderLimit } from "./person-usage";
@@ -281,7 +339,7 @@ import {
   quotaContinuityValue,
   readQuotaContinuity,
 } from "./quota-continuity";
-import { planAccountFor } from "./quota-qualifier";
+import { hasCredentialText, planAccountFor } from "./quota-qualifier";
 import {
   endsWithSentinel,
   isSentinelOnly,
@@ -295,10 +353,12 @@ import {
 import { routineCreatorOf, wikiPersonOf } from "./requester";
 import {
   isRightHand,
+  personalBrain,
   RIGHT_HAND_AUTO,
   rightHandNoAiReason,
   rightHandPerson,
   scrubRightHandReply,
+  thinkingAgent,
   withPersonalBrain,
 } from "./right-hand";
 import { routineBriefOf } from "./routine-brief";
@@ -346,7 +406,7 @@ import {
   replyThreadOf,
   runErrorDetail,
   STUCK_ERROR,
-  transitionRun,
+  transitionRun as transitionNativeRun,
 } from "./runs";
 import { truncateOutput } from "./sandbox";
 import { secretResult } from "./secrets";
@@ -512,6 +572,12 @@ export const QUOTA_HANDOFF_RESUME_PROMPT =
   "Check the working directory's current state, do not redo finished steps or repeat external actions already taken, " +
   "and continue with the remaining work.";
 
+const FALLBACK_RETURN_RESUME_PROMPT =
+  "The API fallback for this same task stopped responding. Your configured Codex subscription is available again, " +
+  "so you are continuing the remaining work in a new session. The portable conversation and work log above " +
+  "record the goal and completed tool actions. Verify the current working state; do not repeat completed steps " +
+  "or external actions. The previous native session has not been resumed or imported.";
+
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}… [${text.length - max} more]` : text;
 
@@ -669,8 +735,19 @@ export interface QuotaCliQualification {
 
 export interface EngineDeps {
   db: Database;
-  /** Trusted same-host, same-agent qualification; no production implementation is installed by this patch. */
+  openRouterFallbackEnabled?: boolean;
+  globalModelRouterEnabled?: boolean;
+  /** Proactive task-aware routing is enabled only for explicitly allowed organizations. */
+  modelInspector?: {
+    enabled(orgId: string): boolean;
+    thresholdPercent: number;
+    maxAgeMs: number;
+    cooldownMs: number;
+  };
+  /** Trusted same-host, same-agent subscription qualification. */
   quotaCliContinuation?: {
+    /** Absent preserves the existing global qualifier; false leaves this organization unchanged. */
+    enabled?(orgId: string): boolean;
     qualify(input: {
       orgId: string;
       runId: string;
@@ -686,6 +763,28 @@ export interface EngineDeps {
     }): Promise<QuotaCliQualification | null>;
     /** Routes to try, in preference order for ties (default Claude Code, Grok, Codex). */
     targets?: readonly QuotaHandoffKind[];
+  };
+  /**
+   * Verified API grants are considered only after compatible subscription routes. No admission without an
+   * explicit feature gate, fresh owner-verified grant evidence, capability proof and native outbox ownership.
+   */
+  creditRoute?: {
+    qualify(input: {
+      orgId: string;
+      runId: string;
+      agentId: string;
+      need: {
+        tools: boolean;
+        promptBytes: number;
+        capabilities?: string[];
+        amountNanoUsd?: number;
+        minimumTier?: ModelTier;
+        effort?: "low" | "medium" | "high";
+      };
+      provider?: "openai" | "anthropic";
+      /** The route a run already moved to: it is qualified again, never another. */
+      routeId?: string;
+    }): Promise<CreditQualification>;
   };
   paperclipCompatibilityEnabled?: boolean;
   /** Reads a live block's parts (`blockSpecAt`): the agent reads what its blocks show (ADR 0113). */
@@ -942,11 +1041,15 @@ export interface Transcript {
   quotaCliHandoff?: {
     schema: "quota-cli-handoff/1";
     disposition: "CONTINUE";
+    /** Provider outage returns keep the same run, with a completed model checkpoint and a new native session. */
+    reason?: "provider_outage";
+    outageReturn?: { waitId: string; throughSeq: number; contextSha256: string; contextBytes: number };
     runId: string;
     agentId: string;
     channelId: string;
     goalMessageId: string;
     sourceKind: BrainKind;
+    /** For an outage return this is the previous native association, used only as a CAS anchor, never replayed. */
     sourceSessionId: string;
     targetKind: QuotaHandoffKind;
     /** The machine account the target signs in with (absent: the computer's own sign-in, or an older record). */
@@ -964,7 +1067,59 @@ export interface Transcript {
     evidence: string;
     observedAt: number;
     validUntil: number;
+    /** Inspector choices are fresh even for agents with a fixed model; legacy handoffs omit this. */
+    selection?: Pick<ModelInspectorRoute, "tier" | "effort" | "reason" | "source">;
+    missionId?: string;
+    /** A personal route belongs only to this person and their unchanged explicit binding. */
+    personalUserId?: string;
+    personalBinding?: string;
+    /** Completed source turns: a resumed target can distinguish its own history from the source's. */
+    afterTurns?: number;
   };
+  /** Portable API continuation of this exact run; vendor native sessions are never transferred. */
+  creditRoute?: {
+    schema: "credit-route/1";
+    routeId: string;
+    poolId: string;
+    cycleId: string;
+    provider: "openai" | "anthropic";
+    product: "openai_pro_api" | "claude_ultra_api";
+    routeKind: "openai_responses" | "anthropic_messages" | "claude_agent_sdk";
+    credentialId: string;
+    credentialVersion: string;
+    model: string;
+    sourceKind: BrainKind;
+    /** Concrete source identity and task requirements survive a new native/API process. */
+    sourceModel?: string;
+    minimumTier?: ModelTier;
+    effort?: "low" | "medium" | "high";
+    capabilities?: string[];
+    sourceSessionId: string | null;
+    evidenceRef: string;
+    selectedAt: number;
+    bucket?: "automatic" | "emergency";
+    approvalId?: string;
+    ended?: string;
+  };
+  openRouterFallback?: OpenRouterFallbackRoute & {
+    sourceKind: BrainKind;
+    sourceMachineId: string;
+    sourceAccountId: string | null;
+    agentBinding: string;
+    ended?: string;
+  };
+  openRouterHold?: string;
+  globalRouterFallback?: GlobalRouterRouteRecord & {
+    sourceKind: BrainKind;
+    sourceMachineId: string;
+    sourceAccountId: string | null;
+    agentBinding: string;
+    routineRunId?: string | null;
+    ended?: string;
+  };
+  globalRouterHold?: string;
+  creditInFlight?: CreditInFlight;
+  creditHold?: CreditRunHold;
   /** The computer brain couldn't answer and the model brain did (ADR 0032 §5): the reply carries a quiet note. */
   fallback?: { from: BrainKind; code: string; message: string; resetsAt?: string };
   /** Fast was refused on a turn of this run, which went on at standard speed (`meta.speedFallback`). */
@@ -1360,6 +1515,7 @@ type RunJobOptions = {
   /** A parked wake's run: when the wake started waiting (`transcript.roomOrderSince`). */
   lineSince?: number;
   jobId?: string;
+  creditClaim?: CreditNativeClaim;
   owned?: () => Promise<boolean>;
   failed?: (error: unknown) => void;
 };
@@ -1428,16 +1584,101 @@ async function executeRunInner(
   steerGate: { close: () => void },
 ) {
   const { db } = deps;
+  let hasCreditContinuity = false;
+  let hasOpenRouterContinuity = false;
+  let hasGlobalRouterContinuity = false;
+  // Every native state transition after a credit handoff is fenced by the caller's existing outbox lease.
+  // Posting and a final transition in the same transaction both roll back if that worker lost ownership.
+  const transitionRun: typeof transitionNativeRun = async (source, id, from, to, patch = {}, waitClaim) => {
+    if (!hasCreditContinuity && !hasOpenRouterContinuity && !hasGlobalRouterContinuity)
+      return transitionNativeRun(source, id, from, to, patch, waitClaim);
+    const [hint] = await source
+      .select({ orgId: agentRuns.orgId, transcript: agentRuns.transcript })
+      .from(agentRuns)
+      .where(eq(agentRuns.id, id));
+    if (
+      !hint?.transcript?.creditRoute &&
+      !hint?.transcript?.openRouterFallback &&
+      !hint?.transcript?.globalRouterFallback
+    )
+      return transitionNativeRun(source, id, from, to, patch, waitClaim);
+    const apply = async (writer: Executor) => {
+      await lockCreditClaim(writer, hint.orgId, id, options.creditClaim);
+      let committed = patch;
+      if (to === "done" && hint.transcript?.globalRouterFallback) {
+        const [unsettledGlobal] = await writer
+          .select({ id: schema.globalRouterAttempts.id })
+          .from(schema.globalRouterAttempts)
+          .where(
+            and(
+              eq(schema.globalRouterAttempts.orgId, hint.orgId),
+              eq(schema.globalRouterAttempts.runId, id),
+              inArray(schema.globalRouterAttempts.state, ["held", "unknown"]),
+            ),
+          )
+          .limit(1);
+        if (unsettledGlobal) throw new GlobalRouterRefusal("reconciliation_required");
+      }
+      if (to === "done" && hint.transcript?.openRouterFallback) {
+        const [unsettled] = await writer
+          .select({ id: schema.openRouterFallbackAttempts.id })
+          .from(schema.openRouterFallbackAttempts)
+          .where(
+            and(
+              eq(schema.openRouterFallbackAttempts.orgId, hint.orgId),
+              eq(schema.openRouterFallbackAttempts.runId, id),
+              inArray(schema.openRouterFallbackAttempts.state, ["held", "unknown"]),
+            ),
+          )
+          .limit(1);
+        if (unsettled) throw new OpenRouterFallbackRefusal("reconciliation_required");
+      }
+      if (to === "done" && hint.transcript?.creditRoute) {
+        const [open] = await writer
+          .select({ id: schema.creditAttempts.id })
+          .from(schema.creditAttempts)
+          .where(
+            and(
+              eq(schema.creditAttempts.orgId, hint.orgId),
+              eq(schema.creditAttempts.runId, id),
+              inArray(schema.creditAttempts.state, ["held", "dispatching", "unknown"]),
+            ),
+          )
+          .limit(1);
+        if (open || (hint.transcript?.creditInFlight as CreditInFlight | undefined)?.phase === "request")
+          throw new CreditRouteRefusal("reconciliation_required");
+        const proposed = patch.transcript ?? hint.transcript;
+        const value =
+          typeof (proposed as { getSQL?: unknown }).getSQL === "function"
+            ? (proposed as SQL)
+            : sql`${JSON.stringify(proposed)}::jsonb`;
+        committed = { ...patch, transcript: sql`(${value}) - 'creditInFlight'` };
+      }
+      return transitionNativeRun(writer, id, from, to, committed, waitClaim);
+    };
+    return source === db ? db.transaction(apply) : apply(source);
+  };
   // An already-held run never consumes a decision or starts a model turn. The transition CAS below repeats this
   // check atomically for queued/waiting runs; this read covers recovery of a row still marked running.
   const [effectHold] = await db
     .select({
       transcript: agentRuns.transcript,
       unsettledBridgeEpoch: sql<boolean>`exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
-      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`,
+      unsettledApproval: sql<boolean>`exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`,
     })
     .from(agentRuns)
     .where(eq(agentRuns.id, runId));
+  const creditState = effectHold?.transcript as {
+    creditRoute?: unknown;
+    creditInFlight?: unknown;
+    creditHold?: unknown;
+  } | null;
+  hasCreditContinuity = Boolean(creditState?.creditRoute || creditState?.creditInFlight || creditState?.creditHold);
+  hasOpenRouterContinuity = Boolean(effectHold?.transcript?.openRouterFallback);
+  hasGlobalRouterContinuity = Boolean(effectHold?.transcript?.globalRouterFallback);
+  if (effectHold?.transcript?.openRouterHold || effectHold?.transcript?.globalRouterHold) return;
+  // The existing outbox recovery enters here; ordinary runs add no ledger or recovery queries.
+  if (hasCreditContinuity && (await recoverCreditRun(deps, runId, options.creditClaim))) return;
   if (
     effectHold?.unsettledBridgeEpoch ||
     effectHold?.unsettledApproval ||
@@ -2076,11 +2317,11 @@ async function executeRunInner(
   /** What the run's policy refused of the tools the agent's scopes grant: who is behind it held them back. */
   const heldBack: string[] = [];
   const stored = await getAgentCached(db, run.orgId, run.agentId);
+  const personalUserId = stored ? await rightHandPerson(db, stored, run) : null;
+  const personalBinding = personalUserId ? await personalBrain(db, run.orgId, personalUserId) : null;
+  const personalFingerprint = personalBinding ? sha256(JSON.stringify(personalBinding)) : null;
   // The right hand thinks with the AI of the person whose DM this is, when they chose their own (ADR 0137 §11).
-  const agent =
-    stored && isRightHand(stored)
-      ? (await withPersonalBrain(db, stored, await rightHandPerson(db, stored, run))).agent
-      : stored;
+  const agent = stored && isRightHand(stored) ? (await withPersonalBrain(db, stored, personalUserId)).agent : stored;
   // Claude Code defers our tools itself (its ToolSearch): a new run lists every tool the agent has, the same in every
   // run, instead of the groups a judge picks, so its cached prefix holds across runs and sessions (ADR 0043).
   if (needsContext && deps.toolsOnDemand && agent && brainOf(agent.brain) === "claude_code") {
@@ -2561,11 +2802,33 @@ async function executeRunInner(
     return read === "reply" ? words : read === "held" ? held : `${held}\n\n${words}`;
   };
 
-  const saveTranscript = (tx: Executor, t: Transcript) =>
-    tx
-      .update(agentRuns)
-      .set({ transcript: storedTranscript(t), updatedAt: new Date(), ...worked() })
-      .where(eq(agentRuns.id, run.id));
+  const saveTranscript = async (tx: Executor, t: Transcript) => {
+    const write = async (writer: Executor) => {
+      if (
+        t.creditRoute ||
+        t.creditInFlight ||
+        t.creditHold ||
+        t.openRouterFallback ||
+        t.globalRouterFallback ||
+        t.globalRouterHold
+      )
+        await lockCreditClaim(writer, run.orgId, run.id, options.creditClaim);
+      return writer
+        .update(agentRuns)
+        .set({ transcript: storedTranscript(t), updatedAt: new Date(), ...worked() })
+        .where(eq(agentRuns.id, run.id));
+    };
+    // The lease and transcript write share a transaction. A tool that outlives its worker cannot clear a successor's hold.
+    return tx === db &&
+      (t.creditRoute ||
+        t.creditInFlight ||
+        t.creditHold ||
+        t.openRouterFallback ||
+        t.globalRouterFallback ||
+        t.globalRouterHold)
+      ? db.transaction(write)
+      : write(tx);
+  };
 
   // What the bridge kept stays on the row until taken (`takeBridgeEffects`); this copy never carries it.
   if (transcript) delete (transcript as unknown as Record<string, unknown>).bridgeEffects;
@@ -2972,7 +3235,9 @@ async function executeRunInner(
           result = { content: output.content, isError: output.isError === true };
           // The approvals screen shows it ran (and what came back).
           const [ran] = await db.select().from(approvals).where(eq(approvals.id, approval.id));
-          if (!ran || (ran.executedAt && (ran.result as { isError?: unknown } | null)?.isError !== false)) {
+          // A result a person reconciled (ADR 0203) is settled either way: it never holds the run again.
+          const outcome = ran?.result as { isError?: unknown; reconciled?: unknown } | null;
+          if (!ran || (ran.executedAt && outcome?.isError !== false && !outcome?.reconciled)) {
             transcript.effectUncertain = { runId: run.id, turn: run.turns, tools: [approval.tool] };
             const note = await db.transaction(async (tx) => {
               await addRunStep(tx, run, "error", {
@@ -3253,13 +3518,25 @@ async function executeRunInner(
   // The brain that thinks for this run (ADR 0032). It only thinks: the loop below owns everything else.
   // Who (§5): the mission's brain in its thread, else the agent's; a computer brain that can't answer now
   // falls back to the model brain when a model credential exists, else the message waits for the computer.
-  const turnToken = { current: "" };
+  const turnToken: CreditTurnToken = { current: "", creditClaim: options.creditClaim, creditTurn: run.turns + 1 };
+  const quotaContinuation =
+    deps.quotaCliContinuation?.enabled?.(run.orgId) === false ? undefined : deps.quotaCliContinuation;
+  const inspectorPolicy = () => (deps.modelInspector?.enabled(run.orgId) ? deps.modelInspector : undefined);
+  const personalSource = personalBinding && personalUserId ? await thinkingAgent(db, agent, personalUserId) : null;
+  const personalQuotaAllowed = Boolean(
+    personalSource?.machineId &&
+      personalSource.ownerUserId === personalUserId &&
+      personalSource.brainFallback === false &&
+      personalSource.brainExtraUsage === false,
+  );
+  const mayInspectQuota = () => !isRightHand(agent) || Boolean(inspectorPolicy() && personalQuotaAllowed);
+  const inspectorAtStart = inspectorPolicy();
   brainPlan = await resolveBrain(deps, agent, run, replyThreadId ?? run.channelId, {
     // A routine's or any background run's work never continues a conversation's session, nor the other way.
     fresh: Boolean(viaRoutine) || run.background,
     promptKey: transcript.promptKey,
-    quotaReservePercent: deps.quotaReservePercent,
-    quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
+    quotaReservePercent: inspectorAtStart?.thresholdPercent ?? deps.quotaReservePercent,
+    quotaReserveMaxAgeMs: inspectorAtStart?.maxAgeMs ?? deps.quotaReserveMaxAgeMs,
   });
   if (deps.foundryPolicy) {
     const admission = await deps.foundryPolicy.beforeBrain(
@@ -3323,6 +3600,14 @@ async function executeRunInner(
     run.brainSessionId === transcript.quotaCliHandoff.targetSessionId
       ? await (async () => {
           const h = transcript.quotaCliHandoff as NonNullable<Transcript["quotaCliHandoff"]>;
+          if (
+            isRightHand(agent) &&
+            (!personalQuotaAllowed ||
+              h.personalUserId !== personalUserId ||
+              h.personalBinding !== personalFingerprint ||
+              h.machineId !== personalSource?.machineId)
+          )
+            return null;
           const accountId =
             h.targetAccountId !== undefined
               ? h.targetAccountId
@@ -3341,13 +3626,50 @@ async function executeRunInner(
             } as Agent,
             run,
             replyThreadId ?? run.channelId,
-            { quotaReservePercent: deps.quotaReservePercent, quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs },
+            {
+              quotaReservePercent: deps.quotaReservePercent,
+              quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
+              ...(isRightHand(agent) && personalUserId
+                ? {
+                    qualifiedPersonalQuotaHandoff: {
+                      personId: personalUserId,
+                      machineId: h.machineId,
+                      sourceSessionId: h.targetSessionId,
+                    },
+                  }
+                : {}),
+            },
           ).catch(() => null);
-          if (!resumed || resumed.kind !== h.targetKind || resumed.missionId) return null;
+          if (
+            !resumed ||
+            resumed.kind !== h.targetKind ||
+            (isRightHand(agent) &&
+              (resumed.session?.id !== h.targetSessionId ||
+                resumed.session?.machineId !== h.machineId ||
+                resumed.model !== h.model ||
+                (resumed.account?.id ?? null) !== accountId)) ||
+            (h.missionId
+              ? resumed.missionId !== h.missionId ||
+                resumed.session?.id !== h.targetSessionId ||
+                resumed.model !== h.model ||
+                (resumed.account?.id ?? null) !== accountId
+              : Boolean(resumed.missionId))
+          )
+            return null;
           // The effort it moved with (the judge's, for an agent on `auto`) stays for the rest of the run, unless the
           // agent's effort was set by hand meanwhile: the resolver above already read that one.
-          const effort = handoffEffort(agent, h.effort);
-          return effort ? { ...resumed, effort } : resumed;
+          const effort = h.selection
+            ? isAutoModel(agent.brainEffort) || !agent.brainEffort
+              ? h.effort
+              : resumed.effort
+            : handoffEffort(agent, h.effort);
+          return {
+            ...resumed,
+            ...(effort ? { effort } : {}),
+            ...(h.missionId && resumed.session
+              ? { session: { ...resumed.session, resume: resumed.session.resume || run.turns > (h.afterTurns ?? 0) } }
+              : {}),
+          };
         })()
       : null;
   if (resumedHandoff) brainPlan = resumedHandoff;
@@ -3389,6 +3711,252 @@ async function executeRunInner(
   if (brainPlan.kind !== "model" && run.brain === "model" && transcript.fallback) {
     brainPlan = { kind: "model", ...(brainPlan.missionId ? { missionId: brainPlan.missionId } : {}) };
   }
+  /**
+   * Credit routes (ADR 0212). A run that left its Claude subscription goes back to a new session of it with the whole
+   * conversation as portable context, never into the old session, which has not seen the turns the route made.
+   */
+  const returnToSource = async (source: BrainPlan, reason: string): Promise<BrainPlan> => {
+    const t = transcript as Transcript;
+    if (t.creditRoute) t.creditRoute.ended = reason;
+    delete t.creditInFlight;
+    const workLog = await runWorkDigest(db, run.id).catch(() => "");
+    const conversation = await conversationDigest(db, run).catch(() => "");
+    const content = portableMessages(t.messages, workLog, conversation);
+    // What the route's own turns wrote was never scanned: credential-like text stays out of the new session.
+    if (!hasCredentialText(JSON.stringify(content)))
+      t.system = [
+        ...t.system,
+        {
+          turn: true,
+          found: true,
+          text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+        } as ContextBlock,
+      ];
+    t.continued = { prompt: QUOTA_HANDOFF_RESUME_PROMPT };
+    const fresh = Bun.randomUUIDv7();
+    if (options.owned && !(await options.owned()))
+      throw new PermanentJobError("lost run ownership leaving credit route");
+    const moved = await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: source.kind, brainSessionId: fresh, transcript: storedTranscript(t), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            eq(agentRuns.brain, "model"),
+            sql`${agentRuns.transcript}->'creditRoute'->>'routeId' = ${t.creditRoute?.routeId ?? ""}`,
+            sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+            sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+            sql`not exists (select 1 from agent_run_steps c where c.run_id = ${run.id} and c.kind = 'tool_call'
+            and not exists (select 1 from agent_run_steps r where r.run_id = c.run_id and r.kind = 'tool_result'
+              and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')))`,
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+          ),
+        )
+        .returning();
+      return row;
+    });
+    if (!moved) throw new PermanentJobError("run changed while leaving credit route");
+    await addRunStep(db, moved, "context", { creditRoute: { state: "ended", reason } });
+    run = moved;
+    return { ...source, ...(source.session ? { session: { ...source.session, id: fresh, resume: false } } : {}) };
+  };
+  const openRouterAgentBinding = (a: Agent) =>
+    sha256(
+      JSON.stringify([
+        a.ownerUserId,
+        a.machineId,
+        a.brain,
+        a.brainModel,
+        a.brainAccountId,
+        a.brainAccountLentBy,
+        a.brainExtraUsage,
+        a.brainFallback,
+        a.instructions,
+        a.audienceMode,
+        a.audienceUserIds,
+        a.audienceRoleIds,
+      ]),
+    );
+  const holdOpenRouter = async (reason: string) => {
+    const t = transcript as Transcript;
+    t.openRouterHold = reason;
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await addRunStep(tx, run, "error", { reason: "openrouter_fallback_blocked", code: reason });
+      const held = await transitionRun(tx, run.id, "running", "waiting_input", { transcript: storedTranscript(t) });
+      if (!held) throw new PermanentJobError("run changed while holding OpenRouter fallback");
+    });
+    await publishChannelEvent(deps.pubsub, event("waiting_input"));
+    await finished("waiting_input");
+  };
+  const holdGlobalRouter = async (reason: string) => {
+    const t = transcript as Transcript;
+    t.globalRouterHold = reason;
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await addRunStep(tx, run, "error", { reason: "global_router_blocked", code: reason });
+      const held = await transitionRun(tx, run.id, "running", "waiting_input", { transcript: storedTranscript(t) });
+      if (!held) throw new PermanentJobError("run changed while holding Global Model Router");
+    });
+    await publishChannelEvent(deps.pubsub, event("waiting_input"));
+    await finished("waiting_input");
+  };
+  let globalRouterSource: BrainPlan | null = null;
+  const savedGlobalRouter = transcript.globalRouterFallback;
+  if (savedGlobalRouter && !savedGlobalRouter.ended) {
+    const [uncommittedGlobal] = await db
+      .select({ id: schema.globalRouterAttempts.id })
+      .from(schema.globalRouterAttempts)
+      .where(
+        and(
+          eq(schema.globalRouterAttempts.orgId, run.orgId),
+          eq(schema.globalRouterAttempts.runId, run.id),
+          or(
+            inArray(schema.globalRouterAttempts.state, ["held", "unknown"]),
+            sql`${schema.globalRouterAttempts.turn} > ${run.turns}`,
+          ),
+        ),
+      )
+      .limit(1);
+    if (
+      uncommittedGlobal ||
+      !options.creditClaim ||
+      savedGlobalRouter.agentBinding !== openRouterAgentBinding(agent) ||
+      brainPlan.missionId ||
+      brainPlan.kind !== savedGlobalRouter.sourceKind ||
+      (brainPlan.account?.id ?? null) !== savedGlobalRouter.sourceAccountId ||
+      brainPlan.session?.machineId !== savedGlobalRouter.sourceMachineId
+    ) {
+      return holdGlobalRouter("reconciliation_required");
+    }
+    globalRouterSource = brainPlan;
+    brainPlan = { kind: "model" };
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running")));
+    });
+    run = { ...run, brain: "model", brainSessionId: null };
+  }
+  let openRouterSource: BrainPlan | null = null;
+  const savedRouter = transcript.openRouterFallback;
+  if (savedRouter && !savedRouter.ended) {
+    const [uncommitted] = await db
+      .select({ id: schema.openRouterFallbackAttempts.id })
+      .from(schema.openRouterFallbackAttempts)
+      .where(
+        and(
+          eq(schema.openRouterFallbackAttempts.orgId, run.orgId),
+          eq(schema.openRouterFallbackAttempts.runId, run.id),
+          or(
+            inArray(schema.openRouterFallbackAttempts.state, ["held", "unknown"]),
+            sql`${schema.openRouterFallbackAttempts.turn} > ${run.turns}`,
+          ),
+        ),
+      )
+      .limit(1);
+    if (
+      uncommitted ||
+      !options.creditClaim ||
+      savedRouter.agentBinding !== openRouterAgentBinding(agent) ||
+      brainPlan.missionId ||
+      brainPlan.kind !== savedRouter.sourceKind ||
+      (brainPlan.account?.id ?? null) !== savedRouter.sourceAccountId ||
+      brainPlan.session?.machineId !== savedRouter.sourceMachineId
+    ) {
+      return holdOpenRouter("reconciliation_required");
+    }
+    openRouterSource = brainPlan;
+    brainPlan = { kind: "model" };
+    // Resolver may have allocated a native session while checking the source. It is not used on this route.
+    await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null })
+        .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running")));
+    });
+    run = { ...run, brain: "model", brainSessionId: null };
+  }
+  let creditSource: { plan: BrainPlan; thinker: Agent } | null = null;
+  let creditResumed: CreditProof | null = null;
+  const savedCredit = transcript.creditRoute;
+  if (savedCredit && !savedCredit.ended && run.brain === "model") {
+    if (isHandoffKind(brainPlan.kind) && !brainPlan.missionId && deps.creditRoute && !isRightHand(agent)) {
+      // A restart retains the original quality floor. New task/source requirements can only strengthen it.
+      // Legacy or malformed records do not infer permission from a cheaper route or an unavailable judge.
+      const savedRequirements =
+        savedCredit.sourceKind === brainPlan.kind &&
+        typeof savedCredit.sourceModel === "string" &&
+        isCreditMinimumTier(savedCredit.minimumTier) &&
+        isCreditEffort(savedCredit.effort) &&
+        Array.isArray(savedCredit.capabilities) &&
+        savedCredit.capabilities.includes("text") &&
+        savedCredit.capabilities.every((capability) => typeof capability === "string");
+      const requirements = savedRequirements
+        ? deriveCreditRequirements({
+            sourceKind: brainPlan.kind,
+            sourceModel: isAutoModel(brainPlan.model) ? savedCredit.sourceModel : brainPlan.model,
+            taskTiers: [
+              savedCredit.minimumTier,
+              transcript.autoModel?.tier,
+              transcript.quotaCliHandoff?.selection?.tier,
+            ],
+            efforts: [
+              savedCredit.effort,
+              brainPlan.effort,
+              agent.brainEffort === "auto" ? undefined : agent.brainEffort,
+              transcript.autoModel?.effort,
+              transcript.quotaCliHandoff?.effort,
+              transcript.quotaCliHandoff?.selection?.effort,
+            ],
+            tools: tools.length > 0,
+          })
+        : null;
+      const capabilities = [
+        ...new Set([
+          ...(Array.isArray(savedCredit.capabilities) ? savedCredit.capabilities : []),
+          "text",
+          ...(tools.length ? ["client_tools"] : []),
+        ]),
+      ].sort();
+      if (requirements) {
+        Object.assign(savedCredit, requirements, { capabilities });
+        // The ledger checks these durable requirements under the same native claim before admitting or sending.
+        await saveTranscript(db, transcript);
+      }
+      // Requalify only the exact route. A rotated key, expired grant or weaker model returns to a fresh native wait.
+      const again: CreditQualification = requirements
+        ? await deps.creditRoute
+            .qualify({
+              orgId: run.orgId,
+              runId: run.id,
+              agentId: agent.id,
+              need: { tools: tools.length > 0, promptBytes: 0, capabilities, ...requirements },
+              routeId: savedCredit.routeId,
+            })
+            .catch((): CreditQualification => ({ ok: false, reason: "disabled" }))
+        : { ok: false, reason: "unsupported_capability" };
+      if (
+        again.ok &&
+        again.proof.cycleId === savedCredit.cycleId &&
+        again.proof.credentialId === savedCredit.credentialId &&
+        again.proof.credentialVersion === savedCredit.credentialVersion &&
+        again.proof.model === savedCredit.model
+      ) {
+        creditResumed = again.proof;
+        creditSource = { plan: brainPlan, thinker: agent };
+        brainPlan = { kind: "model", effort: savedCredit.effort };
+      } else brainPlan = await returnToSource(brainPlan, again.ok ? "credential_changed" : again.reason);
+    } else if (isHandoffKind(brainPlan.kind)) brainPlan = await returnToSource(brainPlan, "disabled");
+    else savedCredit.ended = "agent_changed";
+  }
   if (brainPlan.kind !== "claude_code") onDemandForOtherBrain(transcript);
   // The run's effective brain (ADR 0053 §10): shared code reads it, never the agent's stored brain.
   if (run.brain !== brainPlan.kind) {
@@ -3409,7 +3977,7 @@ async function executeRunInner(
   let thinker: Agent = agent;
   /** The computer brain's model is "Automático": a model of its plan the key can't use gives way (`autoPlanModel`). */
   const autoBrain = brainPlan.kind !== "model" && isAutoModel(brainPlan.model);
-  if (needsAutoChoice(agent, brainPlan)) {
+  if (!openRouterSource && !globalRouterSource && needsAutoChoice(agent, brainPlan)) {
     const t = transcript;
     const kept = t.autoModel;
     const choice: AutoModelRecord =
@@ -3477,6 +4045,7 @@ async function executeRunInner(
       };
   }
   // The context budget reads the model's window: an OpenRouter model's comes with its list.
+  if (creditResumed) thinker = { ...thinker, model: creditResumed.model, credentialId: creditResumed.credentialId };
   await modelInfoFor(db, thinker.model, run.orgId);
   let plan: BrainPlan = brainPlan;
   // Evidence consumption only: the existing native wait/job/permission gates own the resume.
@@ -3600,6 +4169,7 @@ async function executeRunInner(
     const unfinished = code === "step_limit" ? "run.too_many_tool_calls" : code === "stuck" ? "run.stuck" : undefined;
     const held = t.held;
     const posted = await db.transaction(async (tx) => {
+      if (t.creditRoute) await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
       const lead = held ? await post(tx, workThread(), held, withFallback(t, takeMemoryUpdates(t))) : null;
       if (lead) {
         t.postedCount++;
@@ -3716,6 +4286,8 @@ async function executeRunInner(
     // Its question carries the reply it held back (`heldWords`).
     delete t.held;
     const pause = await db.transaction(async (tx) => {
+      if (t.creditRoute) await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      delete t.creditInFlight;
       const posted = await postPauseCards(tx, run, {
         approvals: [],
         questions: [{ id: questionId, toolUseId, text, choices: null }],
@@ -3740,12 +4312,16 @@ async function executeRunInner(
   const finishBackground = async (text: string) => {
     await deferred;
     const t = transcript as Transcript;
-    await closeRoutineRun({ db, pubsub: deps.pubsub }, run, { status: "done", text }).catch((error) =>
-      addRunStep(db, run, "error", { reason: "background_finish", message: String(error) }),
-    );
+    const closeRecord = () =>
+      closeRoutineRun({ db, pubsub: deps.pubsub }, run, { status: "done", text }).catch((error) =>
+        addRunStep(db, run, "error", { reason: "background_finish", message: String(error) }),
+      );
+    if (!t.creditRoute) await closeRecord();
     t.postedUpTo = t.messages.length;
     const done = await transitionRun(db, run.id, "running", "done", { error: null, transcript: storedTranscript(t) });
     if (!done) throw new PermanentJobError("run changed state while executing");
+    if (t.creditRoute) await closeRecord();
+
     await publishChannelEvent(deps.pubsub, event("done"));
     await finished("done");
     await redispatchPending("done");
@@ -3791,6 +4367,573 @@ async function executeRunInner(
       if (view) await publishMessageCreated(deps.pubsub, view);
     }
   };
+  /**
+   * Credit routes (ADR 0212): one line to the people, once for each thing that happens in a run, naming no balance.
+   */
+  const creditNote = async (body: string, kind: "selected" | "ended" | "unknown") => {
+    const [said] = await db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.orgId, run.orgId),
+          eq(messages.channelId, run.channelId),
+          sql`${messages.meta}->'creditRoute'->>'kind' = ${kind}`,
+          sql`${messages.meta}->'creditRoute'->>'runId' = ${run.id}`,
+        ),
+      )
+      .limit(1);
+    if (said) return;
+    const note = await db.transaction((tx) =>
+      post(tx, replyThreadId, body, { creditRoute: { kind, runId: run.id } }, undefined, true),
+    );
+    (transcript as Transcript).postedCount++;
+    if (note) {
+      const [view] = await withWikiLinks(db, run.orgId, [messageView(note)]);
+      if (view) await publishMessageCreated(deps.pubsub, view);
+    }
+  };
+  /**
+   * The subscription reached its limit (account-wide, not one model's, not a reserve warning) and a verified credit
+   * route may take the run, before any other model. Only at a turn boundary with no tool of unknown outcome: the
+   * same rules as a move to another subscription. False leaves everything as it was.
+   */
+  const moveToCreditRoute = async (): Promise<boolean> => {
+    const credit = deps.creditRoute;
+    const t = transcript as Transcript;
+    if (!credit) return false;
+    const skipped = async (reason: string) => {
+      await addRunStep(db, run, "context", { creditRoute: { state: "skipped", reason } }).catch(() => {});
+      return false;
+    };
+    const body = JSON.stringify({ system: t.system, messages: t.messages });
+    const promptBytes = new TextEncoder().encode(body).length;
+    const capabilities = ["text", ...(tools.length ? ["client_tools"] : [])].sort();
+    const requirements = deriveCreditRequirements({
+      sourceKind: plan.kind,
+      sourceModel: plan.model,
+      taskTiers: [t.autoModel?.tier, t.quotaCliHandoff?.selection?.tier],
+      efforts: [
+        plan.effort,
+        agent.brainEffort === "auto" ? undefined : agent.brainEffort,
+        t.autoModel?.effort,
+        t.quotaCliHandoff?.effort,
+        t.quotaCliHandoff?.selection?.effort,
+      ],
+      tools: tools.length > 0,
+    });
+    if (!requirements) return skipped("unsupported_capability");
+    const need = { tools: tools.length > 0, promptBytes, capabilities, ...requirements };
+    const preferred = plan.kind === "codex" ? "openai" : "anthropic";
+    let q = await credit
+      .qualify({ orgId: run.orgId, runId: run.id, agentId: agent.id, need, provider: preferred })
+      .catch((): CreditQualification => ({ ok: false, reason: "disabled" }));
+    if (!q.ok)
+      q = await credit
+        .qualify({ orgId: run.orgId, runId: run.id, agentId: agent.id, need })
+        .catch((): CreditQualification => ({ ok: false, reason: "disabled" }));
+    if (!q.ok) return q.reason === "disabled" ? false : skipped(q.reason);
+    try {
+      const bound = creditAdmissionBound(q.proof.provider, {
+        model: q.proof.model,
+        system: t.system.map((b) => b.text).join("\n\n"),
+        messages: portableMessages(t.messages),
+        maxTokens: deps.maxOutputTokens,
+        tools: tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })),
+        ...(q.proof.provider === "anthropic" ? { cacheTtl: "1h" as const } : {}),
+        noTransportRetries: true,
+      });
+      q = await credit.qualify({
+        orgId: run.orgId,
+        runId: run.id,
+        agentId: agent.id,
+        routeId: q.proof.routeId,
+        need: { ...need, amountNanoUsd: bound.amountNanoUsd },
+      });
+      if (!q.ok) return skipped(q.reason);
+    } catch {
+      return skipped("unsupported_capability");
+    }
+    if (promptBytes > PORTABLE_CONTEXT_MAX_BYTES) return skipped("context_too_large");
+    if (hasCredentialText(body)) return skipped("credential_in_context");
+    // The subscription's own refusal does not say whose limit it is: Claude's plans report a model's weekly cap the
+    // same way as the account's. Only a full account-wide window is exhaustion; anything else is not known to be.
+    const machineId = plan.session?.machineId ?? agent.machineId ?? null;
+    if (!machineId || agent.brainExtraUsage !== false) return skipped("source_subscription_unverified");
+    const [machine] = await db
+      .select({ executors: schema.machines.executors })
+      .from(schema.machines)
+      .where(and(eq(schema.machines.orgId, run.orgId), eq(schema.machines.id, machineId)));
+    if (!machine) return skipped("source_subscription_unverified");
+    if (plan.account?.id) {
+      const [account] = await db
+        .select()
+        .from(schema.machineAccounts)
+        .where(
+          and(
+            eq(schema.machineAccounts.orgId, run.orgId),
+            eq(schema.machineAccounts.machineId, machineId),
+            eq(schema.machineAccounts.id, plan.account.id),
+            eq(schema.machineAccounts.kind, plan.kind),
+          ),
+        );
+      if (
+        account?.status !== "active" ||
+        account.authMethod !== "cli_login" ||
+        account.keyHint !== null ||
+        account.provider !== null
+      )
+        return skipped("source_subscription_unverified");
+    } else if (plan.kind === "claude_code") {
+      if (machine.executors?.claude?.loggedIn !== true || machine.executors.claude.authMethod !== "claude.ai")
+        return skipped("source_subscription_unverified");
+    } else if (plan.kind !== "codex" || !machine.executors?.codex) return skipped("source_subscription_unverified");
+    const reading = machineId
+      ? await storedPlanUsage(db, run.orgId, machineId, plan.kind, plan.account?.id).catch(() => null)
+      : null;
+    const readingAt = reading?.at ? Date.parse(reading.at) : Number.NaN;
+    const fresh =
+      reading &&
+      ["probe", "turn"].includes(reading.source) &&
+      Number.isFinite(readingAt) &&
+      readingAt <= Date.now() &&
+      Date.now() - readingAt <=
+        (inspectorPolicy()?.maxAgeMs ?? Math.min(deps.quotaReserveMaxAgeMs ?? 300_000, 300_000));
+    const exhausted =
+      fresh &&
+      reading !== null &&
+      planWindows(reading).some(
+        (w) => (w.kind === "five_hour" || w.kind === "seven_day" || w.kind === "monthly") && w.used >= 100,
+      );
+    if (!exhausted) return skipped("scope_unknown");
+    const { proof } = q;
+    const at = Date.now();
+    if (
+      !SAFE_ID.test(proof.model) ||
+      !SAFE_ID.test(proof.evidenceRef) ||
+      !Number.isSafeInteger(proof.observedAt) ||
+      !Number.isSafeInteger(proof.validUntil) ||
+      proof.observedAt > at + 5_000 ||
+      proof.validUntil <= at ||
+      proof.validUntil > proof.observedAt + CREDIT_PROOF_MAX_MS
+    )
+      return skipped("proof_invalid");
+    // Mid-run the model starts from the portable record, as a new harness would: what was asked, what was done.
+    // Only text and known action receipts cross harnesses. Native reasoning/session blocks stay behind.
+    const next = { system: t.system, messages: portableMessages(t.messages) };
+    if (computerTurns > 0 || run.turns > 0) {
+      const workLog = await runWorkDigest(db, run.id).catch(() => "");
+      const conversation = await conversationDigest(db, run).catch(() => "");
+      const content = portableMessages(t.messages, workLog, conversation);
+      if (hasCredentialText(JSON.stringify(content))) return skipped("credential_in_context");
+      next.system = [
+        ...t.system,
+        {
+          turn: true,
+          found: true,
+          text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+        } as ContextBlock,
+      ];
+      appendUserText(next, QUOTA_HANDOFF_RESUME_PROMPT);
+    }
+    const route: NonNullable<Transcript["creditRoute"]> = {
+      schema: "credit-route/1",
+      routeId: proof.routeId,
+      poolId: proof.poolId,
+      cycleId: proof.cycleId,
+      provider: proof.provider,
+      product: proof.product,
+      routeKind: proof.routeKind,
+      ...(proof.bucket ? { bucket: proof.bucket } : {}),
+      ...(proof.approvalId ? { approvalId: proof.approvalId } : {}),
+      credentialId: proof.credentialId,
+      credentialVersion: proof.credentialVersion,
+      model: proof.model,
+      sourceKind: plan.kind,
+      sourceModel: plan.model,
+      ...requirements,
+      capabilities,
+      sourceSessionId: plan.session?.id ?? null,
+      evidenceRef: proof.evidenceRef,
+      selectedAt: at,
+    };
+    if (options.owned && !(await options.owned()))
+      throw new PermanentJobError("lost run ownership before credit route");
+    const stored = { ...t, system: next.system, messages: next.messages, creditRoute: route };
+    delete stored.quotaCliHandoff;
+    const moved = await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      const [current] = await tx
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.id, agent.id), eq(schema.agents.orgId, run.orgId)))
+        .for("update");
+      const keys = [
+        "ownerUserId",
+        "machineId",
+        "brain",
+        "brainModel",
+        "brainEffort",
+        "brainAccountId",
+        "brainExtraUsage",
+        "brainFallback",
+        "instructions",
+        "audienceMode",
+        "audienceUserIds",
+        "audienceRoleIds",
+      ] as const;
+      if (
+        !current ||
+        current.archivedAt ||
+        current.deletedAt ||
+        keys.some((key) => JSON.stringify(current[key]) !== JSON.stringify(agent[key]))
+      )
+        throw new PermanentJobError("agent ownership or settings changed before API handoff");
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null, transcript: storedTranscript(stored), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            plan.session?.id ? eq(agentRuns.brainSessionId, plan.session.id) : isNull(agentRuns.brainSessionId),
+            sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+            sql`not exists (select 1 from agent_run_steps c where c.run_id = ${run.id} and c.kind = 'tool_call'
+              and not exists (select 1 from agent_run_steps r where r.run_id = c.run_id and r.kind = 'tool_result'
+                and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')))`,
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+            sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+          ),
+        )
+        .returning();
+      if (!row) return null;
+      await addRunStep(tx, row, "context", {
+        creditRoute: {
+          state: "selected",
+          from: plan.kind,
+          why: "plan_limit",
+          model: proof.model,
+          pool: proof.pool,
+          eligibilityVerified: true,
+          minimumTier: requirements.minimumTier,
+          effort: requirements.effort,
+          capabilities,
+        },
+      });
+      return row;
+    });
+    if (!moved) return skipped("run_changed");
+    run = moved;
+    t.system = next.system;
+    t.messages = next.messages;
+    t.creditRoute = route;
+    hasCreditContinuity = true;
+    delete t.quotaCliHandoff;
+    creditSource = { plan, thinker };
+    await leaveLine();
+    plan = { kind: "model", effort: requirements.effort };
+    thinker = { ...thinker, model: proof.model, credentialId: proof.credentialId };
+    await modelInfoFor(db, thinker.model, run.orgId);
+    onDemandForOtherBrain(t);
+    brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
+    await creditNote(creditRouteNotice(proof.model, proof.provider), "selected").catch(() => {});
+    return true;
+  };
+  /**
+   * The route cannot go on (a refusal before anything was sent, or a provider refusal that charged nothing): the run
+   * goes back to a new session of the subscription it came from, carrying the whole conversation, and the usual
+   * choices follow: another subscription, or the wait for the reset. It never comes back to the route in this run.
+   */
+  const leaveCreditRoute = async (reason: string) => {
+    const source = creditSource;
+    if (!source) return "no" as const;
+    plan = await returnToSource(source.plan, reason);
+    thinker = source.thinker;
+    brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
+    await creditNote(creditRouteEndedNotice((transcript as Transcript).creditRoute?.provider), "ended").catch(() => {});
+    const route = (transcript as Transcript).creditRoute;
+    if (route)
+      await creditIncident(deps, {
+        orgId: run.orgId,
+        runId: run.id,
+        agentId: run.agentId,
+        channelId: run.channelId,
+        poolId: route.poolId,
+        cycleId: route.cycleId,
+        provider: route.provider,
+        reason,
+        text: "API grant fallback paused. The existing checkpoint is retained while subscription routes are evaluated.",
+      }).catch(() => {});
+    return brainUnavailable({ code: "plan_limit", message: "The source subscription is still at its limit." });
+  };
+  const moveToGlobalRouterRoute = async (): Promise<boolean> => {
+    const t = transcript as Transcript;
+    const enabled = Boolean(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled);
+    if (
+      !enabled ||
+      !options.creditClaim ||
+      !plan.session ||
+      plan.missionId ||
+      isRightHand(agent) ||
+      agent.brainAccountLentBy ||
+      agent.brainFallback === false ||
+      agent.brainExtraUsage !== false ||
+      t.creditRoute ||
+      t.openRouterFallback ||
+      t.globalRouterFallback ||
+      t.pending ||
+      t.effectUncertain ||
+      t.hostAcpUncertain ||
+      t.continuityCheckpoint ||
+      plan.kind !== agent.brain ||
+      (plan.account?.id ?? null) !== agent.brainAccountId ||
+      plan.session.machineId !== agent.machineId ||
+      t.quotaCliHandoff ||
+      t.spill
+    ) {
+      return false;
+    }
+    const evidence = await openRouterSubscriptionEvidence(
+      db,
+      deps.machines,
+      agent,
+      plan,
+      inspectorPolicy()?.maxAgeMs ?? 300_000,
+    ).catch(() => null);
+    if (!evidence) return false;
+    const body = JSON.stringify({ system: t.system, messages: t.messages });
+    const bytes = new TextEncoder().encode(body).length;
+    if (hasCredentialText(body) || bytes > PORTABLE_CONTEXT_MAX_BYTES) return false;
+    const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+    const taskClass = routineRunId
+      ? "routine"
+      : /engineering|developer|coding|software|programming|code|debug|工程|開發|程式/i.test(
+            `${agent.role} ${triggerText}`,
+          )
+        ? "engineering"
+        : "general";
+    const qualified = await qualifyGlobalRouterHandoff(db, {
+      orgId: run.orgId,
+      agentId: agent.id,
+      taskClass,
+      estimatedPromptTokens: Math.max(256, Math.ceil(bytes / 4)),
+      maxOutputTokens: deps.maxOutputTokens,
+      requiresTools: tools.length > 0,
+      requiresImages: false,
+      requiresPdf: false,
+      subscriptionSourceState: evidence.source,
+      subscriptionAlternatives: evidence.alternatives,
+    }).catch(() => null);
+    if (!qualified?.ok) return false;
+    if (deps.foundryPolicy) {
+      const allowed = await deps.foundryPolicy.beforeBrain(
+        { orgId: run.orgId, agentId: run.agentId, runId: run.id },
+        "model",
+      );
+      if (!allowed.ok) return false;
+    }
+    const next = {
+      ...t,
+      messages: portableMessages(t.messages, await runWorkDigest(db, run.id), await conversationDigest(db, run)),
+    };
+    if (hasCredentialText(JSON.stringify(next.messages))) return false;
+    appendUserText(next, QUOTA_HANDOFF_RESUME_PROMPT);
+    const route: NonNullable<Transcript["globalRouterFallback"]> = {
+      ...qualified.route,
+      sourceKind: plan.kind,
+      sourceMachineId: plan.session.machineId,
+      sourceAccountId: plan.account?.id ?? null,
+      agentBinding: openRouterAgentBinding(agent),
+      ...(routineRunId ? { routineRunId } : {}),
+    };
+    next.globalRouterFallback = route;
+    const moved = await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      const [current] = await tx
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)))
+        .for("update");
+      if (!current || current.archivedAt || current.deletedAt || openRouterAgentBinding(current) !== route.agentBinding)
+        return null;
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null, transcript: storedTranscript(next), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            eq(agentRuns.brainSessionId, plan.session?.id ?? ""),
+            sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+            sql`not exists (select 1 from agent_run_steps c where c.run_id = ${run.id} and c.kind = 'tool_call' and not exists (select 1 from agent_run_steps r where r.run_id = c.run_id and r.kind = 'tool_result' and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')))`,
+          ),
+        )
+        .returning();
+      if (!row) return null;
+      await addRunStep(tx, row, "context", {
+        globalRouterFallback: {
+          state: "selected",
+          from: route.sourceKind,
+          provider: qualified.initialProvider,
+          model: qualified.initialModel,
+          taskClass: route.taskClass,
+        },
+      });
+      if (routineRunId)
+        await tx
+          .update(routineRuns)
+          .set({ brain: "model" })
+          .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+      return row;
+    });
+    if (!moved) return false;
+    globalRouterSource = plan;
+    hasGlobalRouterContinuity = true;
+    run = moved;
+    t.messages = next.messages;
+    t.globalRouterFallback = route;
+    await leaveLine();
+    plan = { kind: "model" };
+    onDemandForOtherBrain(t);
+    brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
+    return true;
+  };
+  const moveToOpenRouterRoute = async (): Promise<boolean> => {
+    const t = transcript as Transcript;
+    if (
+      !deps.openRouterFallbackEnabled ||
+      !options.creditClaim ||
+      !plan.session ||
+      plan.missionId ||
+      isRightHand(agent) ||
+      agent.brainAccountLentBy ||
+      agent.brainFallback === false ||
+      agent.brainExtraUsage !== false ||
+      t.creditRoute ||
+      t.openRouterFallback ||
+      t.pending ||
+      t.effectUncertain ||
+      t.hostAcpUncertain ||
+      t.continuityCheckpoint
+    )
+      return false;
+    // The original assigned account is the source of this portable route. A prior cross-harness route is not reinterpreted.
+    if (
+      plan.kind !== agent.brain ||
+      (plan.account?.id ?? null) !== agent.brainAccountId ||
+      plan.session.machineId !== agent.machineId ||
+      t.quotaCliHandoff ||
+      t.spill
+    )
+      return false;
+    const config = await openRouterFallbackConfig(db, run.orgId).catch(() => null);
+    if (!config?.credentialId || !config.credentialVersion) return false;
+    const evidence = await openRouterSubscriptionEvidence(
+      db,
+      deps.machines,
+      agent,
+      plan,
+      inspectorPolicy()?.maxAgeMs ?? 300_000,
+    ).catch(() => null);
+    if (!evidence) return false;
+    const body = JSON.stringify({ system: t.system, messages: t.messages });
+    if (hasCredentialText(body) || new TextEncoder().encode(body).length > PORTABLE_CONTEXT_MAX_BYTES) return false;
+    const keyVerified = await deps.gateway.verifyOpenRouterFallbackKey(run.orgId).catch(() => false);
+    const decision = decideOpenRouterFallback({
+      enabled: true,
+      task: /engineering|developer|coding|software|programming|code|debug|工程|開發|程式/i.test(
+        `${agent.role} ${triggerText}`,
+      )
+        ? "engineering"
+        : "general",
+      subscriptionsConsidered: true,
+      source: evidence.source,
+      alternatives: evidence.alternatives,
+      scopeAuthorized: true,
+      safeTurnBoundary: true,
+      portableContextQualified: true,
+      keyLimitVerified: keyVerified,
+      policy: config.policy,
+    });
+    if (!decision.ok) return false;
+    if (deps.foundryPolicy) {
+      const allowed = await deps.foundryPolicy.beforeBrain(
+        { orgId: run.orgId, agentId: run.agentId, runId: run.id },
+        "model",
+      );
+      if (!allowed.ok) return false;
+    }
+    const next = {
+      ...t,
+      messages: portableMessages(t.messages, await runWorkDigest(db, run.id), await conversationDigest(db, run)),
+    };
+    if (hasCredentialText(JSON.stringify(next.messages))) return false;
+    appendUserText(next, QUOTA_HANDOFF_RESUME_PROMPT);
+    const route: NonNullable<Transcript["openRouterFallback"]> = {
+      schema: "openrouter-fallback/1",
+      router: decision.model,
+      revision: config.revision,
+      credentialId: config.credentialId,
+      credentialVersion: config.credentialVersion,
+      sourceKind: plan.kind,
+      sourceMachineId: plan.session.machineId,
+      sourceAccountId: plan.account?.id ?? null,
+      agentBinding: openRouterAgentBinding(agent),
+    };
+    next.openRouterFallback = route;
+    const moved = await db.transaction(async (tx) => {
+      await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+      const [current] = await tx
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)))
+        .for("update");
+      if (!current || current.archivedAt || current.deletedAt || openRouterAgentBinding(current) !== route.agentBinding)
+        return null;
+      const [row] = await tx
+        .update(agentRuns)
+        .set({ brain: "model", brainSessionId: null, transcript: storedTranscript(next), updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentRuns.id, run.id),
+            eq(agentRuns.status, "running"),
+            eq(agentRuns.brainSessionId, plan.session?.id ?? ""),
+            sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+            sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+            sql`not exists (select 1 from agent_run_steps c where c.run_id = ${run.id} and c.kind = 'tool_call' and not exists (select 1 from agent_run_steps r where r.run_id = c.run_id and r.kind = 'tool_result' and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')))`,
+          ),
+        )
+        .returning();
+      if (!row) return null;
+      await addRunStep(tx, row, "context", {
+        openRouterFallback: { state: "selected", from: route.sourceKind, router: route.router },
+      });
+      const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+      if (routineRunId)
+        await tx
+          .update(routineRuns)
+          .set({ brain: "model" })
+          .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+      return row;
+    });
+    if (!moved) return false;
+    openRouterSource = plan;
+    hasOpenRouterContinuity = true;
+    run = moved;
+    t.messages = next.messages;
+    t.openRouterFallback = route;
+    await leaveLine();
+    plan = { kind: "model" };
+    onDemandForOtherBrain(t);
+    brain = createBrain(deps, thinker, run, "model", turnToken, () => transcript as Transcript, triggerMessage);
+    return true;
+  };
   const brainUnavailable = async (
     u: BrainUnavailability & { queued?: boolean; retryAt?: number; quotaReserve?: boolean },
     look?: "first" | "again",
@@ -3810,21 +4953,6 @@ async function executeRunInner(
       if (back === null) return "canceled";
       if (back) return "back";
     }
-    // The team's right hand on a plan (ADR 0137 §7): one line says why, with the way to an API key; it never stands
-    // in on a key nor waits for the computer. Only waiting its turn for room stays a wait.
-    if (isRightHand(agent) && u.code !== "busy" && !u.queued) {
-      const ownModel = u.scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
-      const line = rightHandNoAiReason(u.code, ownModel ? u.scope : undefined);
-      // What the plan's CLI or its computer said is kept in the run and reported, as any agent's CLI failure is, and the
-      // line names what the CLI said. Otherwise a CLI that can't start there fails every turn with nothing saying why.
-      if (line === "cli_failed" || line === "computer_failed") {
-        await addRunStep(db, run, "error", { reason: "brain_unavailable", code: u.code, message: u.message });
-        options.failed?.(new BrainFailure(u.code, u.message, true));
-      }
-      const said = line === "cli_failed" ? cliWords({ code: u.code, message: u.message }) : "";
-      await failNoAi(line, undefined, ownModel?.label, said || undefined);
-      return "failed";
-    }
     // Tools already ran in a turn cut off by its computer: only that computer may finish it (the model
     // brain would redo them), so the run waits for it. A turn the plan cut after it worked parks with no
     // executed tools when the runner can't name them (Claude Code's own tools, an older runner): the same.
@@ -3834,8 +4962,49 @@ async function executeRunInner(
     // the source vendor's session. Missing capability, billing or data-policy evidence keeps the wait; with no cloud
     // route, only a local model brain may stand in. A cut turn with executed or unknown effects still holds.
     let allowLegacyFallback = true;
-    if (deps.quotaCliContinuation && (u.code === "plan_limit" || u.quotaReserve === true) && isHandoffKind(from)) {
+    let subscriptionsConsidered = false;
+    if (quotaContinuation && (u.code === "plan_limit" || u.quotaReserve === true) && isHandoffKind(from)) {
       allowLegacyFallback = await thinkerIsLocal(db, thinker).catch(() => false);
+      const inspector = inspectorPolicy();
+      const [previousSwitch] =
+        inspector && u.code !== "plan_limit" && (plan.quotaReserve?.usedPercent ?? 0) < 100
+          ? await db
+              .select({ at: schema.auditLog.createdAt, details: schema.auditLog.details })
+              .from(schema.auditLog)
+              .where(
+                and(
+                  eq(schema.auditLog.orgId, run.orgId),
+                  eq(schema.auditLog.targetType, "agent"),
+                  eq(schema.auditLog.targetId, agent.id),
+                  inArray(schema.auditLog.action, ["model_inspector.switch", "model_inspector.handoff"]),
+                  ...(isRightHand(agent) && personalUserId
+                    ? [sql`${schema.auditLog.details}->>'personalUserId' = ${personalUserId}`]
+                    : []),
+                ),
+              )
+              .orderBy(desc(schema.auditLog.createdAt))
+              .limit(1)
+          : [];
+      const lastTarget = previousSwitch?.details.to as { kind?: unknown; accountId?: unknown } | undefined;
+      const sameTarget = lastTarget?.kind === from && (lastTarget.accountId ?? null) === (plan.account?.id ?? null);
+      const priorHandoff = t.quotaCliHandoff;
+      const sameHandoff =
+        priorHandoff?.targetKind === from &&
+        priorHandoff.machineId === plan.session?.machineId &&
+        (priorHandoff.targetAccountId ?? null) === (plan.account?.id ?? null);
+      // A run handoff did not edit the agent's default. A later run still starting on that old source may move again.
+      const switchedAt = Math.max(
+        sameHandoff ? (priorHandoff?.observedAt ?? 0) : 0,
+        sameTarget ? (previousSwitch?.at.getTime() ?? 0) : 0,
+      );
+      const cooling =
+        inspector &&
+        u.code !== "plan_limit" &&
+        (plan.quotaReserve?.usedPercent ?? 0) < 100 &&
+        Date.now() - switchedAt < inspector.cooldownMs;
+      const mission = inspector && plan.missionId ? await getMissionRow(db, plan.missionId).catch(() => null) : null;
+      const nativeChildren = mission ? await hasLiveNativeMissionTasks(db, mission.id) : false;
+      const nativeModelsReady = !nativeChildren || (machineId ? await supportsMissionTaskModels(db, machineId) : false);
       const session = plan.session;
       const workLog = await runWorkDigest(db, run.id).catch(() => "");
       const conversation = await conversationDigest(db, run).catch(() => "");
@@ -3844,8 +5013,17 @@ async function executeRunInner(
       // A session the conversation's earlier runs shared holds turns only it had: the portable record carries the
       // conversation instead, and the target always starts a new session of its own.
       if (
-        !plan.missionId &&
-        !isRightHand(agent) &&
+        !cooling &&
+        (!plan.missionId ||
+          (mission &&
+            OPEN_MISSION_STATUSES.includes(mission.status) &&
+            mission.orgId === run.orgId &&
+            mission.agentId === agent.id &&
+            mission.channelId === run.channelId &&
+            mission.threadRootId === run.threadRootId &&
+            mission.mainSessionId === session?.id &&
+            mission.machineId === machineId)) &&
+        mayInspectQuota() &&
         agent.brainExtraUsage === false &&
         !onlyThisComputer &&
         !t.pending &&
@@ -3861,11 +5039,104 @@ async function executeRunInner(
         const context = structuredClone({ system: t.system, messages: content });
         const serializedContext = JSON.stringify(context);
         const contextSnapshot = JSON.stringify(t.messages);
-        const choices: { proof: QuotaCliQualification; target: BrainPlan; used: number; rank: number }[] = [];
-        const order = deps.quotaCliContinuation.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS;
+        const choices: {
+          proof: QuotaCliQualification;
+          target: BrainPlan;
+          used: number;
+          rank: number;
+          candidate?: ModelInspectorCandidate;
+        }[] = [];
+        const qualifiedMission = mission
+          ? { missionId: mission.id, sourceSessionId: mission.mainSessionId, ownerId: mission.ownerId }
+          : undefined;
+        const subscriptionAuth = async (source: Executor, proof: QuotaCliQualification) => {
+          const [machine] = await source
+            .select({ executors: schema.machines.executors })
+            .from(schema.machines)
+            .where(and(eq(schema.machines.id, machineId), eq(schema.machines.orgId, run.orgId)));
+          if (!machine) return false;
+          if (proof.accountId) {
+            const [account] = await source
+              .select()
+              .from(schema.machineAccounts)
+              .where(
+                and(
+                  eq(schema.machineAccounts.orgId, run.orgId),
+                  eq(schema.machineAccounts.machineId, machineId),
+                  eq(schema.machineAccounts.id, proof.accountId),
+                  eq(schema.machineAccounts.kind, proof.targetKind),
+                ),
+              );
+            return (
+              account?.status === "active" &&
+              account.authMethod === "cli_login" &&
+              account.keyHint === null &&
+              account.provider === null &&
+              (!isRightHand(agent) || account.createdBy === personalUserId)
+            );
+          }
+          if (proof.targetKind === "claude_code")
+            return machine.executors?.claude?.loggedIn === true && machine.executors.claude.authMethod === "claude.ai";
+          if (proof.targetKind !== "codex" || !machine.executors?.codex) return false;
+          const usage = machine.executors.ownUsage?.codex;
+          const at = usage ? Date.parse(usage.at) : Number.NaN;
+          return Boolean(
+            usage &&
+              ["probe", "turn"].includes(usage.source) &&
+              usage.windows?.length &&
+              Number.isFinite(at) &&
+              at <= Date.now() &&
+              Date.now() - at <= (inspector?.maxAgeMs ?? 300000),
+          );
+        };
+        const resolveTarget = async (proof: QuotaCliQualification) => {
+          if (inspector && !(await subscriptionAuth(db, proof))) return null;
+          if (inspector && proof.targetKind === "grok") {
+            const listed = (await deps.machines?.status(machineId).catch(() => null))?.executors?.grok?.models;
+            if (listed && !listed.some((model) => model.id === proof.model)) return null;
+          }
+          return resolveBrain(
+            { db, machines: deps.machines },
+            {
+              ...agent,
+              brain: proof.targetKind,
+              brainModel: proof.model,
+              brainAccountId: proof.accountId ?? null,
+              brainAccountLentBy: null,
+              brainExtraUsage: false,
+            } as Agent,
+            // Prevent candidate admission from writing a run session; only the handoff transaction may replace it.
+            { ...run, brainSessionId: session.id },
+            replyThreadId ?? run.channelId,
+            {
+              fresh: true,
+              quotaReservePercent: inspector?.thresholdPercent ?? deps.quotaReservePercent,
+              quotaReserveMaxAgeMs: inspector?.maxAgeMs ?? deps.quotaReserveMaxAgeMs,
+              ...(qualifiedMission ? { qualifiedQuotaHandoff: qualifiedMission } : {}),
+              ...(isRightHand(agent) && personalUserId
+                ? {
+                    qualifiedPersonalQuotaHandoff: { personId: personalUserId, machineId, sourceSessionId: session.id },
+                  }
+                : {}),
+            },
+          ).catch(() => null);
+        };
+        const eligible = (target: BrainPlan | null, proof: QuotaCliQualification): target is BrainPlan =>
+          Boolean(
+            target &&
+              target.kind === proof.targetKind &&
+              !target.unavailable &&
+              (target.account?.id ?? null) === (proof.accountId ?? null) &&
+              target.missionId === plan.missionId &&
+              target.quotaReserve?.state !== "low" &&
+              target.session?.machineId === machineId,
+          );
+        subscriptionsConsidered = true;
+        const order = quotaContinuation.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS;
         for (const [rank, kind] of order.entries()) {
-          if (kind === from || !deps.brains?.[kind]) continue;
-          const proof: QuotaCliQualification | null = await deps.quotaCliContinuation
+          if (kind === from || !deps.brains?.[kind] || !nativeModelsReady || (kind === "grok" && nativeChildren))
+            continue;
+          const proof: QuotaCliQualification | null = await quotaContinuation
             .qualify({
               orgId: run.orgId,
               runId: run.id,
@@ -3900,45 +5171,127 @@ async function executeRunInner(
             proof.validUntil > proof.observedAt + 300_000
           )
             continue;
-          // The judge's reading of this run (`autoModel`) picks the route's model: the top one only for large work.
-          proof.model = handoffModel(kind, proof.model, t.autoModel?.tier);
-          const target: BrainPlan | null = await resolveBrain(
-            { db, machines: deps.machines },
-            {
-              ...agent,
-              brain: kind,
-              brainModel: proof.model,
-              brainAccountId: proof.accountId ?? null,
-              brainAccountLentBy: null,
-              brainExtraUsage: false,
-            } as Agent,
-            // Carrying the source session keeps the resolver from storing a session on the run; the handoff
-            // assigns its own new one below.
-            { ...run, brainSessionId: session.id },
-            replyThreadId ?? run.channelId,
-            {
-              fresh: true,
-              quotaReservePercent: deps.quotaReservePercent,
-              quotaReserveMaxAgeMs: deps.quotaReserveMaxAgeMs,
-            },
-          ).catch(() => null);
+          // Inspector routes get a fresh task tier below; legacy routes retain the run's prior auto choice.
+          if (!inspector) proof.model = handoffModel(kind, proof.model, t.autoModel?.tier);
+          const target = await resolveTarget(proof);
           // Readings come from turns: a stale one is unknown. Subscription routes have no paid extra usage, so an
           // unknown window is tried (a full one refuses the turn and the task waits); a known low one is skipped.
-          if (
-            !target ||
-            target.kind !== kind ||
-            target.unavailable ||
-            target.missionId ||
-            target.quotaReserve?.state === "low" ||
-            !target.session ||
-            target.session.machineId !== machineId
-          )
-            continue;
-          choices.push({ proof, target, used: target.quotaReserve?.usedPercent ?? 50, rank });
+          if (!eligible(target, proof)) continue;
+          let candidate: ModelInspectorCandidate | undefined;
+          if (inspector) {
+            const [load] = await db
+              .select({ n: count() })
+              .from(schema.agents)
+              .where(
+                and(
+                  eq(schema.agents.orgId, run.orgId),
+                  eq(schema.agents.machineId, machineId),
+                  eq(schema.agents.brain, kind),
+                  isNull(schema.agents.archivedAt),
+                  sql`${schema.agents.brainAccountId} is not distinct from ${proof.accountId ?? null}`,
+                ),
+              );
+            const [active] = await db
+              .select({ n: count() })
+              .from(agentRuns)
+              .where(
+                and(
+                  eq(agentRuns.orgId, run.orgId),
+                  inArray(agentRuns.status, ["running", "queued"]),
+                  sql`${agentRuns.transcript}->'quotaCliHandoff'->>'targetPool' = ${proof.targetPool}`,
+                ),
+              );
+            candidate = {
+              id: `${kind}:${proof.accountId ?? "own"}`,
+              kind,
+              model: proof.model,
+              accountId: proof.accountId ?? null,
+              machineId,
+              pool: proof.targetPool,
+              usedPercent: target.quotaReserve?.state === "normal" ? (target.quotaReserve.usedPercent ?? null) : null,
+              quotaState: target.quotaReserve?.state === "normal" ? "normal" : "unknown",
+              pressure: Number(load?.n ?? 0) + Number(active?.n ?? 0),
+            };
+          }
+          choices.push({
+            proof,
+            target,
+            used: target.quotaReserve?.usedPercent ?? 50,
+            rank,
+            ...(candidate ? { candidate } : {}),
+          });
         }
         // The least used route first spreads the fleet over the plans with room; ties keep the configured order.
         choices.sort((x, y) => x.used - y.used || x.rank - y.rank);
-        const pick = choices[0];
+        let pick = choices[0];
+        let selection: ModelInspectorRoute | null = null;
+        if (inspector) {
+          const task = t.request ?? triggerMessage?.body ?? triggerText;
+          selection = await chooseModelInspectorRoute(
+            hasCredentialText(JSON.stringify({ task, role: agent.role, instructions: agent.instructions }))
+              ? undefined
+              : judge,
+            {
+              orgId: run.orgId,
+              agentId: agent.id,
+              runId: run.id,
+              role: agent.role,
+              instructions: agent.instructions,
+              task,
+              mission: Boolean(mission),
+              routine: run.background || viaRoutine !== null,
+              tools: tools.map((tool) => tool.name),
+              candidates: choices.flatMap((c) => (c.candidate ? [c.candidate] : [])),
+              thresholdPercent: inspector.thresholdPercent,
+            },
+          );
+          pick = undefined;
+          if (selection) {
+            const preferred = selection;
+            let available = [...choices];
+            let wanted = preferred.candidate.id;
+            let rejected = false;
+            while (available.length) {
+              const next = available.find((c) => c.candidate?.id === wanted);
+              if (!next) break;
+              const mapped = handoffModel(next.proof.targetKind, next.proof.model, preferred.tier);
+              // A healthy configured model may exceed the requested tier; it is still the same qualified subscription.
+              for (const model of new Set([mapped, next.proof.model])) {
+                const proof = { ...next.proof, model };
+                const target = await resolveTarget(proof);
+                if (eligible(target, proof) && target.model === model && inspectorPolicy()) {
+                  pick = { ...next, proof, target };
+                  selection = {
+                    ...preferred,
+                    candidate: next.candidate as ModelInspectorCandidate,
+                    source: rejected ? "fallback" : preferred.source,
+                    reason: rejected
+                      ? `The preferred model or route no longer qualified; continuing on ${proof.targetKind}/${model} after revalidation.`
+                      : `${preferred.reason} Using ${proof.targetKind}/${model}.`,
+                  };
+                  break;
+                }
+                rejected = true;
+              }
+              if (pick) break;
+              available = available.filter((c) => c !== next);
+              const fallback = await chooseModelInspectorRoute(undefined, {
+                orgId: run.orgId,
+                agentId: agent.id,
+                role: agent.role,
+                instructions: "",
+                task: "",
+                mission: Boolean(mission),
+                routine: run.background || viaRoutine !== null,
+                tools: [],
+                candidates: available.flatMap((c) => (c.candidate ? [c.candidate] : [])),
+                thresholdPercent: inspector.thresholdPercent,
+              });
+              if (!fallback) break;
+              wanted = fallback.candidate.id;
+            }
+          }
+        }
         if (pick && JSON.stringify(t.messages) === contextSnapshot && JSON.stringify(context) === serializedContext) {
           const { proof, target } = pick;
           const kind = proof.targetKind;
@@ -3946,9 +5299,11 @@ async function executeRunInner(
           // The agent's effort on `auto` is the judge's reading of the work, not of one harness: it goes with the run,
           // as the tier picked the model above. A level the agent set itself already did, through the resolver; left
           // out, the route would think with its default whatever the task is.
-          const judgedEffort = handoffEffort(agent, t.autoModel?.effort);
-          delete t.quotaReservePending;
-          t.quotaCliHandoff = {
+          const judgedEffort =
+            selection && (!agent.brainEffort || isAutoModel(agent.brainEffort))
+              ? selection.effort
+              : handoffEffort(agent, t.autoModel?.effort);
+          const handoff: NonNullable<Transcript["quotaCliHandoff"]> = {
             schema: "quota-cli-handoff/1",
             disposition: "CONTINUE",
             runId: run.id,
@@ -3968,45 +5323,207 @@ async function executeRunInner(
             evidence: proof.evidence,
             observedAt: proof.observedAt,
             validUntil: proof.validUntil,
+            ...(selection
+              ? {
+                  selection: {
+                    tier: selection.tier,
+                    effort: selection.effort,
+                    reason: selection.reason,
+                    source: selection.source,
+                  },
+                  afterTurns: run.turns,
+                }
+              : {}),
+            ...(mission ? { missionId: mission.id } : {}),
+            ...(isRightHand(agent) && personalUserId && personalFingerprint
+              ? { personalUserId, personalBinding: personalFingerprint }
+              : {}),
           };
           // This is portable context for a new harness, never a claim that the source native session resumed.
-          t.system = [
-            ...t.system,
-            {
-              turn: true,
-              found: true,
-              text: untrustedBlock(
-                "portable prior conversation",
-                JSON.stringify(context.messages),
-                PORTABLE_CONTEXT_MAX_BYTES,
-              ),
-            } as ContextBlock,
-          ];
+          const nextTranscript: Transcript = {
+            ...t,
+            quotaCliHandoff: handoff,
+            system: [
+              ...t.system,
+              {
+                turn: true,
+                found: true,
+                text: untrustedBlock(
+                  "portable prior conversation",
+                  JSON.stringify(context.messages),
+                  PORTABLE_CONTEXT_MAX_BYTES,
+                ),
+              } as ContextBlock,
+            ],
+          };
+          delete nextTranscript.quotaReservePending;
           if (options.owned && !(await options.owned()))
             throw new PermanentJobError("lost run ownership before handoff");
           await db.transaction(async (tx) => {
+            if (inspector) {
+              if (!inspectorPolicy() || proof.validUntil <= Date.now())
+                throw new PermanentJobError("inspector route expired before handoff");
+              // Queue insert/claim takes this lock before touching task foreign keys; keep that lock order.
+              if (mission) await lockMissionTaskQueue(tx, machineId);
+              const [current] = await tx
+                .select()
+                .from(schema.agents)
+                .where(and(eq(schema.agents.id, agent.id), eq(schema.agents.orgId, run.orgId)))
+                .for("update");
+              const keys = [
+                "ownerUserId",
+                "machineId",
+                "brain",
+                "brainModel",
+                "brainEffort",
+                "brainAccountId",
+                "brainAccountLentBy",
+                "brainExtraUsage",
+                "role",
+                "instructions",
+                "audienceMode",
+                "audienceUserIds",
+                "audienceRoleIds",
+              ] as const;
+              if (
+                !current ||
+                current.archivedAt ||
+                current.deletedAt ||
+                keys.some(
+                  (key) =>
+                    JSON.stringify(current[key]) !==
+                    JSON.stringify((isRightHand(agent) ? (stored ?? agent) : agent)[key]),
+                )
+              )
+                throw new PermanentJobError("agent ownership or settings changed before inspector handoff");
+              let owner = current;
+              if (isRightHand(agent)) {
+                const [binding] = personalUserId
+                  ? await tx
+                      .select()
+                      .from(schema.rightHandBrains)
+                      .where(
+                        and(
+                          eq(schema.rightHandBrains.orgId, run.orgId),
+                          eq(schema.rightHandBrains.userId, personalUserId),
+                        ),
+                      )
+                      .for("update")
+                  : [];
+                const effective = await thinkingAgent(tx, current, personalUserId);
+                if (
+                  !binding ||
+                  sha256(JSON.stringify(binding)) !== personalFingerprint ||
+                  (await rightHandPerson(tx, current, run)) !== personalUserId ||
+                  !personalSource ||
+                  effective.ownerUserId !== personalUserId ||
+                  effective.machineId !== machineId ||
+                  keys.some((key) => JSON.stringify(effective[key]) !== JSON.stringify(personalSource[key]))
+                )
+                  throw new PermanentJobError("personal ownership or settings changed before inspector handoff");
+                owner = effective;
+              }
+              const latestUsage = await storedPlanUsage(tx, run.orgId, machineId, kind, proof.accountId ?? undefined);
+              const latestReserve = quotaReserveOf(
+                latestUsage,
+                { machineId, kind, accountId: proof.accountId ?? null },
+                { thresholdPercent: inspector.thresholdPercent, maxAgeMs: inspector.maxAgeMs, model: proof.model },
+              );
+              if (
+                latestReserve.state === "low" ||
+                !(await subscriptionAuth(tx, proof)) ||
+                !(await planIsOwners(tx, owner, machineId, target.account))
+              )
+                throw new PermanentJobError(
+                  "target quota, subscription credentials or ownership changed before inspector handoff",
+                );
+              if (
+                mission &&
+                !(await persistMissionInspectorRoute(
+                  tx,
+                  mission,
+                  {
+                    brain: kind,
+                    model: proof.model,
+                    accountId: proof.accountId ?? null,
+                    sessionId,
+                    ...(judgedEffort ? { effort: judgedEffort } : target.effort ? { effort: target.effort } : {}),
+                  },
+                  run.id,
+                ))
+              )
+                throw new PermanentJobError("mission owner or source session changed before inspector handoff");
+            }
             const [moved] = await tx
               .update(agentRuns)
               .set({
                 brain: kind,
                 brainSessionId: sessionId,
-                transcript: storedTranscript(t),
+                transcript: storedTranscript(nextTranscript),
                 updatedAt: new Date(),
               })
               .where(
                 and(
                   eq(agentRuns.id, run.id),
                   eq(agentRuns.status, "running"),
-                  eq(agentRuns.brainSessionId, session.id),
+                  mission
+                    ? or(eq(agentRuns.brainSessionId, session.id), isNull(agentRuns.brainSessionId))
+                    : eq(agentRuns.brainSessionId, session.id),
                   sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
                   sql`coalesce(${agentRuns.transcript}->'continuityCheckpoint'->>'dispatch', '') <> 'hold'`,
+                  ...(inspector
+                    ? [
+                        sql`not exists (select 1 from ${agentRunSteps} c
+                    where c.run_id = ${run.id}::uuid and c.kind = 'tool_call' and not exists (
+                      select 1 from ${agentRunSteps} r where r.run_id = c.run_id and r.kind = 'tool_result'
+                      and r.seq > c.seq and coalesce(r.data->>'toolUseId', r.data->>'id') = coalesce(c.data->>'toolUseId', c.data->>'id')
+                    ))`,
+                      ]
+                    : []),
                 ),
               )
               .returning();
             if (!moved) throw new PermanentJobError("run changed before qualified handoff");
-            await addRunStep(tx, run, "context", { quotaCliHandoff: t.quotaCliHandoff });
+            await addRunStep(tx, run, "context", { quotaCliHandoff: handoff });
+            if (inspector)
+              await recordAudit(tx, {
+                orgId: run.orgId,
+                actor: { type: "system", id: null },
+                action: "model_inspector.handoff",
+                target: { type: "agent", id: agent.id },
+                runId: run.id,
+                channelId: run.channelId,
+                details: {
+                  runId: run.id,
+                  missionId: mission?.id ?? null,
+                  ...(isRightHand(agent) ? { personalUserId } : {}),
+                  from: {
+                    kind: from,
+                    model: plan.model ?? null,
+                    accountId: plan.account?.id ?? null,
+                    usedPercent: plan.quotaReserve?.usedPercent ?? null,
+                    observedAt: plan.quotaReserve?.observedAt ?? null,
+                    quotaState: plan.quotaReserve?.state ?? "unknown",
+                  },
+                  to: {
+                    kind,
+                    model: proof.model,
+                    accountId: proof.accountId ?? null,
+                    usedPercent: target.quotaReserve?.usedPercent ?? null,
+                    observedAt: target.quotaReserve?.observedAt ?? null,
+                    quotaState: target.quotaReserve?.state ?? "unknown",
+                  },
+                  selection: selection?.source ?? "fallback",
+                  tier: selection?.tier,
+                  effort: judgedEffort,
+                  reason: selection?.reason ?? "Qualified subscription handoff",
+                },
+              });
             run = moved;
           });
+          Object.assign(t, nextTranscript);
+          delete t.quotaReservePending;
           plan = {
             ...target,
             model: proof.model,
@@ -4025,12 +5542,63 @@ async function executeRunInner(
         }
       }
     }
+    // Subscription-first: only after every compatible subscription candidate was considered. A generic throttle,
+    // model-only limit or stale reading cannot authorize an API grant. Personal and mission harnesses keep their
+    // existing explicit route contract until a separate portable capability proof exists.
+    if (
+      deps.creditRoute &&
+      quotaContinuation &&
+      subscriptionsConsidered &&
+      agent.brainExtraUsage === false &&
+      isHandoffKind(from) &&
+      u.code === "plan_limit" &&
+      !u.scope &&
+      u.quotaReserve !== true &&
+      !t.creditRoute &&
+      !plan.missionId &&
+      !isRightHand(agent) &&
+      options.creditClaim &&
+      !onlyThisComputer &&
+      !t.pending &&
+      !t.effectUncertain &&
+      !t.hostAcpUncertain &&
+      !t.continuityCheckpoint &&
+      (await moveToCreditRoute())
+    )
+      return "fallback";
+    if (
+      subscriptionsConsidered &&
+      u.code === "plan_limit" &&
+      !u.scope &&
+      u.quotaReserve !== true &&
+      !onlyThisComputer &&
+      !u.queued &&
+      ((await moveToGlobalRouterRoute()) || (await moveToOpenRouterRoute()))
+    )
+      return "fallback";
     // A reserve reading is not provider exhaustion. If no alternate qualified, leave existing admission unchanged.
     if (u.quotaReserve) return "no";
+    // The right hand may continue on its person's qualified subscription above. Every other refusal keeps its
+    // no-AI behavior: it never stands in on an API key. Only waiting its turn for room stays a wait.
+    if (isRightHand(agent) && u.code !== "busy" && !u.queued) {
+      const ownModel = u.scope ? ownLimitsModel(plan.account?.provider, plan.model) : null;
+      const line = rightHandNoAiReason(u.code, ownModel ? u.scope : undefined);
+      // What the plan's CLI or its computer said is kept in the run and reported, as any agent's CLI failure is, and the
+      // line names what the CLI said. Otherwise a CLI that can't start there fails every turn with nothing saying why.
+      if (line === "cli_failed" || line === "computer_failed") {
+        await addRunStep(db, run, "error", { reason: "brain_unavailable", code: u.code, message: u.message });
+        options.failed?.(new BrainFailure(u.code, u.message, true));
+      }
+      const said = line === "cli_failed" ? cliWords({ code: u.code, message: u.message }) : "";
+      await failNoAi(line, undefined, ownModel?.label, said || undefined);
+      return "failed";
+    }
     // A background run never stands in on the model brain (`mayFallBack`): it waits for its computer.
     // Behind others in the computer's line (`roomGate`) is no refusal: it waits its turn.
     if (
       allowLegacyFallback &&
+      // A qualified outage return waits on its committed target; falling back again would revive stale API history.
+      t.quotaCliHandoff?.reason !== "provider_outage" &&
       !onlyThisComputer &&
       !u.queued &&
       mayFallBack(agent, run) &&
@@ -4477,6 +6045,13 @@ async function executeRunInner(
     error: BrainFailure,
   ): Promise<Pick<BrainUnavailability, "scope" | "resetsAt">> => {
     const account = plan.account;
+    if (plan.kind === "grok") {
+      const observedAt = Date.now();
+      notePlanLimit(machineId, "grok", error.resetsAt, observedAt, account?.id);
+      if (await recordGrokPlanRefusal(db, run.orgId, machineId, account?.id, observedAt))
+        await publishAccountsChanged(deps.pubsub, run.orgId, machineId);
+      return error.resetsAt ? { resetsAt: error.resetsAt } : {};
+    }
     const ownModel = ownLimitsModel(account?.provider, plan.model);
     if (!account || !ownModel) return error.resetsAt ? { resetsAt: error.resetsAt } : {};
     const stored = await storedPlanUsage(db, run.orgId, machineId, plan.kind, account.id).catch(() => null);
@@ -5155,13 +6730,522 @@ async function executeRunInner(
     await finished("waiting_input", undefined, undefined, undefined, undefined, usage);
   };
 
+  /**
+   * ADR 0210: an outage retry may return a legacy API fallback to its configured own Codex route.
+   * The ordinary fallback pin remains in force unless this claimed boundary commits a qualified portable handoff.
+   */
+  const returnFromFallbackOutage = async (): Promise<"unchanged" | "returned" | "stale"> => {
+    const t = transcript as Transcript;
+    const inspector = inspectorPolicy();
+    const waitId = t.outage?.waitId;
+    const sourceRunSessionId = run.brainSessionId;
+    const machineId = agent.machineId;
+    if (
+      !inspector ||
+      !quotaContinuation ||
+      !(quotaContinuation.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS).includes("codex") ||
+      !options.jobId ||
+      !options.owned ||
+      !backFromWait ||
+      !waitId ||
+      options.wait !== waitId ||
+      !machineId ||
+      plan.kind !== "model" ||
+      run.brain !== "model" ||
+      t.fallback?.from !== "codex" ||
+      t.quotaCliHandoff ||
+      t.pending ||
+      t.waitingForBrain ||
+      t.effectUncertain ||
+      t.hostAcpUncertain ||
+      t.continuityCheckpoint ||
+      t.interruptedTurn ||
+      run.background ||
+      viaRoutine !== null ||
+      isRightHand(agent) ||
+      agent.brain !== "codex" ||
+      agent.brainAccountId !== null ||
+      agent.brainAccountLentBy !== null ||
+      agent.brainExtraUsage !== false ||
+      !agent.ownerUserId ||
+      !deps.brains?.codex ||
+      !deps.machines
+    )
+      return "unchanged";
+    if (!(await options.owned()) || (await pauseOpen(db, run.id, t))) return "unchanged";
+    const [claim] = await db.select().from(outbox).where(eq(outbox.id, options.jobId));
+    if (
+      claim?.kind !== "agent_run.execute" ||
+      claim.payload.runId !== run.id ||
+      claim.status !== "processing" ||
+      !claim.lockedUntil ||
+      claim.lockedUntil.getTime() <= Date.now() ||
+      !(await options.owned())
+    )
+      return "unchanged";
+
+    const mission = plan.missionId ? await getMissionRow(db, plan.missionId).catch(() => null) : null;
+    const sourceSessionId = sourceRunSessionId ?? mission?.mainSessionId;
+    if (!sourceSessionId) return "unchanged";
+    if (
+      plan.missionId &&
+      (!mission ||
+        !OPEN_MISSION_STATUSES.includes(mission.status) ||
+        mission.orgId !== run.orgId ||
+        mission.agentId !== run.agentId ||
+        mission.channelId !== run.channelId ||
+        mission.threadRootId !== run.threadRootId ||
+        mission.machineId !== machineId ||
+        mission.mainSessionId !== sourceSessionId ||
+        mission.brain !== "codex")
+    )
+      return "unchanged";
+    const configured = await resolveBrain(deps, agent, run, replyThreadId ?? run.channelId, {
+      quotaReservePercent: inspector.thresholdPercent,
+      quotaReserveMaxAgeMs: inspector.maxAgeMs,
+    });
+    if (
+      configured.kind !== "codex" ||
+      configured.unavailable ||
+      configured.account ||
+      configured.session?.machineId !== machineId ||
+      configured.missionId !== plan.missionId
+    )
+      return "unchanged";
+
+    await deferred;
+    const workLog = await runWorkDigest(db, run.id);
+    const conversation = await conversationDigest(db, run);
+    const content = portableMessages(t.messages, workLog, conversation);
+    const context = structuredClone({ system: t.system, messages: content });
+    const contextJson = JSON.stringify(context);
+    if (new TextEncoder().encode(contextJson).length > PORTABLE_CONTEXT_MAX_BYTES || hasCredentialText(contextJson))
+      return "unchanged";
+    const snapshot = JSON.stringify(t.messages);
+    const throughSeq = await lastStepSeq(db, run.id);
+    const proof = await quotaContinuation
+      .qualify({
+        orgId: run.orgId,
+        runId: run.id,
+        agentId: agent.id,
+        channelId: run.channelId,
+        goalMessageId: run.triggerMessageId,
+        machineId,
+        sourceKind: "model",
+        sourceAccountId: null,
+        targetKind: "codex",
+        requiredTools: tools.map((tool) => tool.name),
+        context,
+      })
+      .catch(() => null);
+    const at = Date.now();
+    if (
+      proof?.targetKind !== "codex" ||
+      proof.machineId !== machineId ||
+      proof.accountId != null ||
+      !SAFE_ID.test(proof.model) ||
+      !SAFE_ID.test(proof.sourcePool) ||
+      !SAFE_ID.test(proof.targetPool) ||
+      proof.sourcePool === proof.targetPool ||
+      !SAFE_ID.test(proof.evidence) ||
+      proof.noPaidExtraUsage !== true ||
+      proof.noCredentialsInContext !== true ||
+      !Number.isSafeInteger(proof.observedAt) ||
+      !Number.isSafeInteger(proof.validUntil) ||
+      proof.observedAt > at ||
+      proof.observedAt < at - 300_000 ||
+      proof.validUntil <= at ||
+      proof.validUntil > proof.observedAt + 300_000
+    )
+      return "unchanged";
+    const model =
+      !configured.model || isAutoModel(configured.model)
+        ? handoffModel("codex", proof.model, t.autoModel?.tier)
+        : configured.model;
+    if (!SAFE_ID.test(model) || isAutoModel(model)) return "unchanged";
+    const target = await resolveBrain(
+      { db, machines: deps.machines },
+      { ...agent, brainModel: model },
+      run,
+      replyThreadId ?? run.channelId,
+      {
+        fresh: true,
+        quotaReservePercent: inspector.thresholdPercent,
+        quotaReserveMaxAgeMs: inspector.maxAgeMs,
+        ...(mission
+          ? {
+              qualifiedQuotaHandoff: {
+                missionId: mission.id,
+                sourceSessionId: mission.mainSessionId,
+                ownerId: mission.ownerId,
+              },
+            }
+          : {}),
+      },
+    );
+    if (
+      target.kind !== "codex" ||
+      target.model !== model ||
+      target.unavailable ||
+      target.account ||
+      target.session?.machineId !== machineId ||
+      target.missionId !== plan.missionId ||
+      target.quotaReserve?.state !== "normal"
+    )
+      return "unchanged";
+
+    const sessionId = Bun.randomUUIDv7();
+    const effort = handoffEffort(agent, t.autoModel?.effort);
+    const handoff: NonNullable<Transcript["quotaCliHandoff"]> = {
+      schema: "quota-cli-handoff/1",
+      disposition: "CONTINUE",
+      reason: "provider_outage",
+      runId: run.id,
+      agentId: agent.id,
+      channelId: run.channelId,
+      goalMessageId: run.triggerMessageId,
+      sourceKind: "model",
+      sourceSessionId,
+      targetKind: "codex",
+      targetAccountId: null,
+      targetSessionId: sessionId,
+      machineId,
+      model,
+      ...(effort ? { effort } : {}),
+      sourcePool: proof.sourcePool,
+      targetPool: proof.targetPool,
+      evidence: proof.evidence,
+      observedAt: proof.observedAt,
+      validUntil: proof.validUntil,
+      afterTurns: run.turns,
+      ...(mission ? { missionId: mission.id } : {}),
+      outageReturn: {
+        waitId,
+        throughSeq,
+        contextSha256: sha256(contextJson),
+        contextBytes: new TextEncoder().encode(contextJson).length,
+      },
+    };
+    const nextTranscript: Transcript = {
+      ...t,
+      quotaCliHandoff: handoff,
+      system: [
+        ...t.system,
+        {
+          turn: true,
+          found: true,
+          text: untrustedBlock(
+            "portable prior conversation",
+            JSON.stringify(context.messages),
+            PORTABLE_CONTEXT_MAX_BYTES,
+          ),
+        } as ContextBlock,
+      ],
+    };
+    if (JSON.stringify(t.messages) !== snapshot || JSON.stringify(context) !== contextJson || !(await options.owned()))
+      return "stale";
+    const identityKeys = [
+      "ownerUserId",
+      "machineId",
+      "brain",
+      "brainModel",
+      "brainAccountId",
+      "brainAccountLentBy",
+      "brainExtraUsage",
+      "brainFallback",
+      "brainEffort",
+      "brainSpeed",
+      "role",
+      "instructions",
+      "audienceMode",
+      "audienceUserIds",
+      "audienceRoleIds",
+      "contextTokens",
+      "planForOthers",
+    ] as const;
+    const staleAdmission = new Error("fallback return admission changed before commit");
+    const expiredAdmission = new Error("fallback return qualification expired before commit");
+    const moved = await db
+      .transaction(async (tx) => {
+        // Fence the real job claim, then use the existing mission queue lock order before any route update.
+        if (!(await lockJobClaim(tx, claim))) return null;
+        if (mission) await lockMissionTaskQueue(tx, machineId);
+        const [current] = await tx
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.id, agent.id), eq(schema.agents.orgId, run.orgId)))
+          .for("update");
+        if (
+          !current ||
+          current.archivedAt ||
+          current.deletedAt ||
+          current.operatorHoldAt ||
+          identityKeys.some((key) => JSON.stringify(current[key]) !== JSON.stringify(agent[key])) ||
+          !inspectorPolicy() ||
+          deps.quotaCliContinuation?.enabled?.(run.orgId) === false
+        )
+          return null;
+        const [machine] = await tx
+          .select()
+          .from(schema.machines)
+          .where(and(eq(schema.machines.id, machineId), eq(schema.machines.orgId, run.orgId)))
+          .for("update");
+        const usage = machine?.executors.ownUsage?.codex;
+        const live = await deps.machines?.status(machineId).catch(() => null);
+        const observedAt = usage ? Date.parse(usage.at) : Number.NaN;
+        const liveUsage = live?.executors.ownUsage?.codex;
+        const liveAt = liveUsage ? Date.parse(liveUsage.at) : Number.NaN;
+        const liveReserve = quotaReserveOf(
+          liveUsage,
+          { machineId, kind: "codex", accountId: null },
+          {
+            now: Date.now(),
+            thresholdPercent: inspector.thresholdPercent,
+            maxAgeMs: inspector.maxAgeMs,
+            model,
+          },
+        );
+        const reserve = quotaReserveOf(
+          usage,
+          { machineId, kind: "codex", accountId: null },
+          {
+            now: Date.now(),
+            thresholdPercent: inspector.thresholdPercent,
+            maxAgeMs: inspector.maxAgeMs,
+            model,
+          },
+        );
+        if (
+          !machine ||
+          machine.deletedAt ||
+          !machine.online ||
+          !machine.execAllowed ||
+          machinePause(machine) ||
+          !live ||
+          computerBrainUnavailable("codex", machineId, live, Date.now(), undefined, true, usage, model) ||
+          computerBrainUnavailable(
+            "codex",
+            machineId,
+            {
+              ...live,
+              protocol: machine.protocol,
+              os: machine.os,
+              executors: machine.executors,
+              execAllowed: machine.execAllowed,
+              access: machine.access,
+            },
+            Date.now(),
+            undefined,
+            true,
+            usage,
+            model,
+          ) ||
+          machine.pairedByUserId !== current.ownerUserId ||
+          live.pairedByUserId !== current.ownerUserId ||
+          !machine.executors.codex ||
+          !live.executors.codex ||
+          !liveUsage ||
+          !["probe", "turn"].includes(liveUsage.source) ||
+          !liveUsage.windows?.length ||
+          !Number.isFinite(liveAt) ||
+          liveAt > Date.now() ||
+          liveReserve.state === "low" ||
+          !usage ||
+          !["probe", "turn"].includes(usage.source) ||
+          !usage.windows?.length ||
+          !Number.isFinite(observedAt) ||
+          observedAt > Date.now() ||
+          reserve.state === "low" ||
+          !(await planIsOwners(tx, current, machineId, undefined)) ||
+          (await pauseOpen(tx, run.id, t))
+        )
+          return null;
+        const policyCurrent = () =>
+          Boolean(
+            inspectorPolicy() &&
+              deps.quotaCliContinuation?.enabled?.(run.orgId) !== false &&
+              (deps.quotaCliContinuation?.targets ?? QUOTA_HANDOFF_DEFAULT_TARGETS).includes("codex"),
+          );
+        const freshnessCurrent = () => {
+          const now = Date.now();
+          return (
+            proof.validUntil > now &&
+            proof.observedAt <= now &&
+            observedAt <= now &&
+            now - observedAt <= inspector.maxAgeMs &&
+            liveAt <= now &&
+            now - liveAt <= inspector.maxAgeMs
+          );
+        };
+        const [source] = await tx
+          .select()
+          .from(agentRuns)
+          .where(
+            and(
+              eq(agentRuns.id, run.id),
+              eq(agentRuns.orgId, run.orgId),
+              eq(agentRuns.agentId, agent.id),
+              eq(agentRuns.channelId, run.channelId),
+              sql`${agentRuns.threadRootId} is not distinct from ${run.threadRootId}`,
+              eq(agentRuns.triggerMessageId, run.triggerMessageId),
+              eq(agentRuns.status, "running"),
+              eq(agentRuns.brain, "model"),
+              sql`${agentRuns.brainSessionId} is not distinct from ${sourceRunSessionId}`,
+              eq(agentRuns.turns, run.turns),
+              sql`${agentRuns.workId} is not distinct from ${run.workId}`,
+              sql`${agentRuns.issueId} is not distinct from ${run.issueId}`,
+              sql`${agentRuns.transcript}->'outage'->>'waitId' = ${waitId}`,
+              sql`${agentRuns.transcript}->'fallback'->>'from' = 'codex'`,
+              sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'waitingForBrain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'quotaCliHandoff', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+              sql`nullif(${agentRuns.transcript}->'interruptedTurn', 'null'::jsonb) is null`,
+              sql`not exists (select 1 from ${schema.runToolTokens}
+            where ${schema.runToolTokens.runId} = ${run.id} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`,
+              sql`not exists (select 1 from ${schema.approvals} a where a.run_id = ${run.id}::uuid
+            and (a.status = 'pending' or (a.executed_at is not null and coalesce(a.result->>'isError','true') <> 'false')))`,
+            ),
+          )
+          .for("update");
+        if (
+          !source ||
+          (await lastStepSeq(tx, run.id)) !== throughSeq ||
+          JSON.stringify((source.transcript as unknown as Transcript)?.messages) !== snapshot ||
+          (await executedSince(tx, run.id, 0, [], [], true)).some((effect) => effect.uncertain) ||
+          !(await lockJobClaim(tx, claim)) ||
+          !policyCurrent()
+        )
+          return null;
+        // Only freshness expired: the same owned, unchanged API boundary keeps its ordinary retry/park path.
+        if (!freshnessCurrent()) return "retry-model" as const;
+        if (reserve.state !== "normal" || liveReserve.state !== "normal") return null;
+        if (
+          mission &&
+          !(await persistMissionInspectorRoute(
+            tx,
+            mission,
+            {
+              brain: "codex",
+              model,
+              accountId: null,
+              sessionId,
+              ...(effort ? { effort } : {}),
+            },
+            run.id,
+          ))
+        )
+          return null;
+        // A Mission row lock or its queued-child work may have waited. Expiry now rolls that entire route move back.
+        if (!(await lockJobClaim(tx, claim)) || !policyCurrent()) throw staleAdmission;
+        if (!freshnessCurrent()) throw expiredAdmission;
+        const [updated] = await tx
+          .update(agentRuns)
+          .set({
+            brain: "codex",
+            brainSessionId: sessionId,
+            transcript: storedTranscript(nextTranscript),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(agentRuns.id, source.id),
+              eq(agentRuns.status, "running"),
+              sql`${agentRuns.brainSessionId} is not distinct from ${sourceRunSessionId}`,
+            ),
+          )
+          .returning();
+        if (!updated) throw staleAdmission;
+        await addRunStep(tx, run, "context", { quotaCliHandoff: handoff });
+        await recordAudit(tx, {
+          orgId: run.orgId,
+          actor: { type: "system", id: null },
+          action: "run.fallback_return",
+          target: { type: "agent_run", id: run.id },
+          runId: run.id,
+          channelId: run.channelId,
+          details: {
+            reason: "provider_outage",
+            waitId,
+            agentId: agent.id,
+            issueId: run.issueId,
+            workId: run.workId,
+            missionId: mission?.id ?? null,
+            from: { kind: "model", sessionId: sourceSessionId },
+            to: { kind: "codex", model, sessionId, machineId, accountId: null },
+            throughSeq,
+            contextSha256: handoff.outageReturn?.contextSha256,
+            usageObservedAt: usage.at,
+            evidence: proof.evidence,
+          },
+        });
+        return updated;
+      })
+      .catch((error: unknown) => {
+        if (error === staleAdmission) return null;
+        if (error === expiredAdmission) return "retry-model" as const;
+        throw error;
+      });
+    if (moved === "retry-model") return "unchanged";
+    if (!moved) return "stale";
+    run = moved;
+    Object.assign(t, nextTranscript);
+    plan = {
+      ...target,
+      ...(effort ? { effort } : {}),
+      session: {
+        id: sessionId,
+        resume: false,
+        machineId,
+        cwd: target.session?.cwd ?? "",
+      },
+    };
+    nextPrompt = [FALLBACK_RETURN_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+    brain = createBrain(deps, thinker, run, "codex", turnToken, () => transcript as Transcript, triggerMessage);
+    return "returned";
+  };
+
+  /** Read shared telemetry at the completed boundary; a worker never edits a running transcript to request this. */
+  const inspectBoundaryQuota = async (): Promise<(BrainUnavailability & { quotaReserve?: boolean }) | null> => {
+    const policy = inspectorPolicy();
+    const machineId = plan.session?.machineId;
+    if (!policy || !quotaContinuation || !isHandoffKind(plan.kind) || !machineId || !mayInspectQuota()) return null;
+    const usage = await storedPlanUsage(db, run.orgId, machineId, plan.kind, plan.account?.id).catch(() => null);
+    const reserve = quotaReserveOf(
+      usage,
+      { machineId, kind: plan.kind, accountId: plan.account?.id ?? null },
+      { model: plan.model, thresholdPercent: policy.thresholdPercent, maxAgeMs: policy.maxAgeMs },
+    );
+    plan = { ...plan, ...(usage ? { usage } : {}), quotaReserve: reserve };
+    const now = Date.now();
+    const at = usage ? Date.parse(usage.at) : Number.NaN;
+    // An explicit fresh refusal can have no percentages; it still bypasses warning cooldown without inventing 100%.
+    if (
+      usage &&
+      (usage.source === "turn" || usage.source === "probe") &&
+      at <= now &&
+      now - at <= policy.maxAgeMs &&
+      storedPlanLimit(usage, now, plan.kind === "claude_code" ? (plan.model ?? "sonnet") : undefined)
+    ) {
+      return { code: "plan_limit", message: "The current subscription reading reports its plan limit." };
+    }
+    return reserve.state === "low"
+      ? { code: "quota_reserve", message: "The source account is near its configured reserve.", quotaReserve: true }
+      : null;
+  };
+  // A stale claim must not fall through and dispatch the old model with a concurrently changed transcript.
+  if ((await returnFromFallbackOutage()) === "stale") return;
+  const initialInspection = await inspectBoundaryQuota();
+  if (initialInspection?.code === "plan_limit") plan = { ...plan, unavailable: initialInspection };
   const reservePending = (transcript as Transcript).quotaReservePending;
   if (
     reservePending ||
     (!plan.unavailable &&
       isHandoffKind(plan.kind) &&
-      !isRightHand(agent) &&
-      deps.quotaCliContinuation &&
+      mayInspectQuota() &&
+      quotaContinuation &&
       plan.quotaReserve?.state === "low")
   ) {
     const reserve = plan.quotaReserve;
@@ -5172,7 +7256,7 @@ async function executeRunInner(
         reserve?.pool.accountId === reservePending.pool.accountId);
     await addRunStep(db, run, "context", { quotaReserveWarning: reserve });
     const reserveHandled =
-      samePool && isHandoffKind(plan.kind) && !isRightHand(agent) && deps.quotaCliContinuation
+      samePool && isHandoffKind(plan.kind) && mayInspectQuota() && quotaContinuation
         ? await brainUnavailable(
             {
               code: "quota_reserve",
@@ -5465,15 +7549,200 @@ async function executeRunInner(
       if (takeLocalMove(run.id)) await adoptWork();
       if (run.workId && (await workQueued(db, run.workId))) return parkInWorkQueue();
       if (run.workId && plan.kind === "model" && Date.now() - claimedAt > WORK_JOB_YIELD_MS) return yieldWorkJob();
+      if (computerTurns > 0) {
+        const inspection = await inspectBoundaryQuota();
+        if (inspection) {
+          const moved = await brainUnavailable(inspection);
+          if (moved === "canceled") return stopCanceled("");
+          if (moved === "fallback") continue;
+          if (moved === "waited" || moved === "failed") return;
+        }
+      }
+      if (transcript.globalRouterFallback && !transcript.globalRouterFallback.ended) {
+        const t = transcript;
+        const route = t.globalRouterFallback;
+        if (!globalRouterSource || !route || !options.creditClaim) return holdGlobalRouter("source_unverified");
+        const [current] = await db
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)));
+        if (
+          !current ||
+          current.archivedAt ||
+          current.deletedAt ||
+          openRouterAgentBinding(current) !== route.agentBinding
+        )
+          return holdGlobalRouter("agent_changed");
+        const evidence = await openRouterSubscriptionEvidence(
+          db,
+          deps.machines,
+          agent,
+          globalRouterSource,
+          inspectorPolicy()?.maxAgeMs ?? 300_000,
+        ).catch(() => null);
+        if (evidence?.source === "healthy") {
+          if (t.pending || t.effectUncertain || t.hostAcpUncertain || t.continuityCheckpoint)
+            return holdGlobalRouter("unsafe_checkpoint");
+          const content = portableMessages(
+            t.messages,
+            await runWorkDigest(db, run.id),
+            await conversationDigest(db, run),
+          );
+          if (hasCredentialText(JSON.stringify(content))) return holdGlobalRouter("context_unqualified");
+          const fresh = Bun.randomUUIDv7();
+          const source = globalRouterSource;
+          if (!source.session) return holdGlobalRouter("source_unverified");
+          t.system = [
+            ...t.system,
+            {
+              turn: true,
+              found: true,
+              text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+            } as ContextBlock,
+          ];
+          route.ended = "subscription_recovered";
+          const moved = await db.transaction(async (tx) => {
+            await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+            const [row] = await tx
+              .update(agentRuns)
+              .set({
+                brain: source.kind,
+                brainSessionId: fresh,
+                transcript: storedTranscript(t),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(agentRuns.id, run.id),
+                  eq(agentRuns.status, "running"),
+                  sql`nullif(${agentRuns.transcript}->'pending', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'hostAcpUncertain', 'null'::jsonb) is null`,
+                  sql`nullif(${agentRuns.transcript}->'continuityCheckpoint', 'null'::jsonb) is null`,
+                ),
+              )
+              .returning();
+            if (!row) return null;
+            await addRunStep(tx, row, "context", {
+              globalRouterFallback: { state: "recovered", to: source.kind },
+            });
+            const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+            if (routineRunId)
+              await tx
+                .update(routineRuns)
+                .set({ brain: source.kind })
+                .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+            return row;
+          });
+          if (!moved) return holdGlobalRouter("run_changed");
+          run = moved;
+          plan = {
+            ...source,
+            unavailable: undefined,
+            quotaReserve: undefined,
+            session: { ...source.session, id: fresh, resume: false },
+          };
+          thinker = agent;
+          brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
+          nextPrompt = [QUOTA_HANDOFF_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+          globalRouterSource = null;
+        } else if (
+          evidence?.source !== "exhausted" ||
+          evidence.alternatives.some((a) => a.state !== "exhausted" && a.state !== "unavailable")
+        )
+          return holdGlobalRouter("subscription_recheck_required");
+        else if (!(deps.globalModelRouterEnabled ?? deps.openRouterFallbackEnabled))
+          return holdGlobalRouter("disabled");
+      }
+      if (transcript.openRouterFallback && !transcript.openRouterFallback.ended) {
+        const t = transcript;
+        const route = t.openRouterFallback;
+        if (!openRouterSource || !route || !options.creditClaim) return holdOpenRouter("source_unverified");
+        const [current] = await db
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.orgId, run.orgId), eq(schema.agents.id, agent.id)));
+        if (
+          !current ||
+          current.archivedAt ||
+          current.deletedAt ||
+          openRouterAgentBinding(current) !== route.agentBinding
+        )
+          return holdOpenRouter("agent_changed");
+        const evidence = await openRouterSubscriptionEvidence(
+          db,
+          deps.machines,
+          agent,
+          openRouterSource,
+          inspectorPolicy()?.maxAgeMs ?? 300_000,
+        ).catch(() => null);
+        if (evidence?.source === "healthy") {
+          if (t.pending || t.effectUncertain || t.hostAcpUncertain || t.continuityCheckpoint)
+            return holdOpenRouter("unsafe_checkpoint");
+          const content = portableMessages(
+            t.messages,
+            await runWorkDigest(db, run.id),
+            await conversationDigest(db, run),
+          );
+          if (hasCredentialText(JSON.stringify(content))) return holdOpenRouter("context_unqualified");
+          const fresh = Bun.randomUUIDv7();
+          const source = openRouterSource;
+          if (!source.session) return holdOpenRouter("source_unverified");
+          t.system = [
+            ...t.system,
+            {
+              turn: true,
+              found: true,
+              text: untrustedBlock("portable prior conversation", JSON.stringify(content), PORTABLE_CONTEXT_MAX_BYTES),
+            } as ContextBlock,
+          ];
+          route.ended = "subscription_recovered";
+          const moved = await db.transaction(async (tx) => {
+            await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+            const [row] = await tx
+              .update(agentRuns)
+              .set({
+                brain: source.kind,
+                brainSessionId: fresh,
+                transcript: storedTranscript(t),
+                updatedAt: new Date(),
+              })
+              .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running"), eq(agentRuns.brain, "model")))
+              .returning();
+            if (!row) return null;
+            await addRunStep(tx, row, "context", {
+              openRouterFallback: { state: "ended", reason: "subscription_recovered" },
+            });
+            const routineRunId = run.background ? routineRunIdOf(triggerMessage?.meta) : null;
+            if (routineRunId)
+              await tx
+                .update(routineRuns)
+                .set({ brain: source.kind })
+                .where(and(eq(routineRuns.id, routineRunId), eq(routineRuns.orgId, run.orgId)));
+            return row;
+          });
+          if (!moved) return holdOpenRouter("run_changed");
+          run = moved;
+          plan = {
+            ...source,
+            unavailable: undefined,
+            quotaReserve: undefined,
+            session: { ...source.session, id: fresh, resume: false },
+          };
+          thinker = agent;
+          brain = createBrain(deps, thinker, run, plan.kind, turnToken, () => transcript as Transcript, triggerMessage);
+          nextPrompt = [QUOTA_HANDOFF_RESUME_PROMPT, nextPrompt ?? carried].filter(Boolean).join("\n\n");
+          openRouterSource = null;
+        } else if (
+          evidence?.source !== "exhausted" ||
+          evidence.alternatives.some((a) => a.state !== "exhausted" && a.state !== "unavailable")
+        )
+          return holdOpenRouter("subscription_recheck_required");
+        else if (!deps.openRouterFallbackEnabled) return holdOpenRouter("disabled");
+      }
       // Long work near its limit parks here, between steps: nothing is in flight and the next step reads on.
       const pause = await longWorkPause();
-      if (
-        pause &&
-        pause.source === "plan" &&
-        isHandoffKind(plan.kind) &&
-        !isRightHand(agent) &&
-        deps.quotaCliContinuation
-      ) {
+      if (pause && pause.source === "plan" && isHandoffKind(plan.kind) && mayInspectQuota() && quotaContinuation) {
         // Between steps nothing is in flight: try a qualified route before parking the task.
         const moved = await brainUnavailable({
           code: "quota_reserve",
@@ -5595,6 +7864,18 @@ async function executeRunInner(
         }
       }
       const turn = run.turns + 1;
+      turnToken.creditTurn = turn;
+      if (plan.kind === "model" && transcript.creditRoute && !transcript.creditRoute.ended) {
+        await assertCreditClaim(db, run.orgId, run.id, options.creditClaim as CreditNativeClaim);
+        transcript.creditInFlight = {
+          schema: "credit-turn/1",
+          turn,
+          workUnitKey: creditWorkUnitKey(run.id, turn),
+          phase: "request",
+          startedAt: new Date().toISOString(),
+        };
+        await saveTranscript(db, transcript);
+      }
       const deltas = createTurnText(deps.pubsub, run, where, {
         onFirst: () => {
           deps.onTiming?.("claim_to_first_delta_ms", Date.now() - claimedAt, { runId: run.id });
@@ -5650,6 +7931,7 @@ async function executeRunInner(
         if (admitted && !admitted.fromLine) await publishQueueChanged(deps.pubsub, run.orgId, admitted.machineId);
       }
       const turnPlan = plan;
+      const turnStartedAt = Date.now();
       // Where this computer turn's steps start (the bridge records a step per tool it runs).
       const turnStepSeq = plan.kind !== "model" ? await lastStepSeq(db, run.id) : 0;
       /** Calls the computer brain said it ran in this turn (through the bridge or on its own). */
@@ -5829,7 +8111,13 @@ async function executeRunInner(
                 turnPlan.kind !== "model" &&
                 !ownLimitsModel(turnPlan.account?.provider, turnPlan.model)
               ) {
-                notePlanLimit(machineId, turnPlan.kind, resetsAt, Date.now(), turnPlan.account?.id);
+                const observedAt = Date.now();
+                notePlanLimit(machineId, turnPlan.kind, resetsAt, observedAt, turnPlan.account?.id);
+                if (turnPlan.kind === "grok")
+                  later(async () => {
+                    if (await recordGrokPlanRefusal(db, run.orgId, machineId, turnPlan.account?.id, observedAt))
+                      await publishAccountsChanged(deps.pubsub, run.orgId, machineId);
+                  });
               }
             },
             ...(deps.planLimitGraceMs !== undefined ? { limitGraceMs: deps.planLimitGraceMs } : {}),
@@ -5945,7 +8233,12 @@ async function executeRunInner(
           // The plan had room for this turn: the runs parked on its limit go on now, not at their own timers.
           const planMachine = turnPlan.session?.machineId;
           if (planMachine && !turnLimited) {
-            forgetPlanLimit(planMachine, turnPlan.kind, account?.id);
+            forgetPlanLimit(
+              planMachine,
+              turnPlan.kind,
+              account?.id,
+              turnPlan.kind === "grok" ? turnStartedAt : undefined,
+            );
             const ownModel = ownLimitsModel(account?.provider, turnPlan.model);
             if (account && ownModel)
               later(async () => {
@@ -5959,7 +8252,15 @@ async function executeRunInner(
               kind: turnPlan.kind,
               accountId: account?.id,
             });
-            later(() => wakePlanWaits(db, run.orgId, key, turnPlan.model ?? null));
+            later(async () => {
+              if (turnPlan.kind === "grok") {
+                if (await clearGrokPlanRefusal(db, run.orgId, planMachine, account?.id, turnStartedAt))
+                  await publishAccountsChanged(deps.pubsub, run.orgId, planMachine);
+                const usage = await storedPlanUsage(db, run.orgId, planMachine, "grok", account?.id);
+                if (planLimitOf(planMachine, "grok", account?.id, usage)) return;
+              }
+              await wakePlanWaits(db, run.orgId, key, turnPlan.model ?? null);
+            });
           }
           turnLimited = false;
           // Later turns of this run continue the same session.
@@ -6049,12 +8350,50 @@ async function executeRunInner(
             return suspendedByBridge(row.status, deltas.lastText(), deltas.text() ? deltas.textBefore : undefined);
           }
         }
-        // Only while the run is running: never over the pending calls of a bridged pause.
-        await db
-          .update(agentRuns)
-          .set({ transcript: storedTranscript(transcript), updatedAt: new Date() })
-          .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running")))
-          .catch(() => {});
+        // Before grant handoff, a native checkpoint and its pause state must be read and written atomically.
+        // A bridge normally writes pending + waiting_* together. Even an inconsistent pending-only write must
+        // survive this stale in-memory transcript: it cannot authorize replay on another provider.
+        if (deps.creditRoute && options.creditClaim && turnPlan.kind !== "model") {
+          const blocked = await db.transaction(async (tx) => {
+            await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+            const [current] = await tx.select().from(agentRuns).where(eq(agentRuns.id, run.id)).for("update");
+            if (!current) throw new CreditRouteRefusal("stale_owner");
+            if (current.status !== "running" || current.transcript?.pending) return current;
+            await tx
+              .update(agentRuns)
+              .set({ transcript: storedTranscript(transcript), updatedAt: new Date() })
+              .where(eq(agentRuns.id, run.id));
+            return null;
+          });
+          if (blocked) {
+            if (blocked.status === "waiting_approval" || blocked.status === "waiting_input") {
+              const pending = (blocked.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
+              await holdUnknownWhileWaiting(pending);
+              return suspendedByBridge(
+                blocked.status,
+                deltas.lastText(),
+                deltas.text() ? deltas.textBefore : undefined,
+              );
+            }
+            if (blocked.status === "running") {
+              const held = await holdCreditRun(deps, {
+                orgId: run.orgId,
+                runId: run.id,
+                claim: options.creditClaim,
+                reason: "native_pause_checkpoint_inconsistent",
+              });
+              if (held) await finished("waiting_input");
+            }
+            return;
+          }
+        } else {
+          // Only while the run is running: never over the pending calls of a bridged pause.
+          await db
+            .update(agentRuns)
+            .set({ transcript: storedTranscript(transcript), updatedAt: new Date() })
+            .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running")))
+            .catch(() => {});
+        }
         // Tools already ran in this computer turn (their side effects happened; they aren't in the
         // transcript): neither the model brain (fallback) nor a retried job may redo the turn from scratch,
         // they would run them again. Post what the brain said and what it did instead, and end the run there.
@@ -6144,6 +8483,43 @@ async function executeRunInner(
                 : { code: "brain_failed", message: error instanceof Error ? error.message : String(error) };
             const names = [...new Set(executed.map((c) => c.name))];
             return interruptedAfterTools(turnPlan.kind, failure, names, deltas.lastText());
+          }
+        }
+        // A turn on a credit route that failed (ADR 0212). A refusal before anything was sent, or a provider's refusal
+        // that charged nothing and ends the route, sends the run back to its subscription's choices. A call that went
+        // out and whose outcome nobody knows is never sent again: it may have been charged.
+        const onGlobalRouter = turnPlan.kind === "model" && (transcript as Transcript).globalRouterFallback;
+        if (onGlobalRouter && !onGlobalRouter.ended)
+          return holdGlobalRouter(error instanceof GlobalRouterRefusal ? error.reason : "reconciliation_required");
+        const onRouter = turnPlan.kind === "model" && (transcript as Transcript).openRouterFallback;
+        if (onRouter && !onRouter.ended)
+          return holdOpenRouter(error instanceof OpenRouterFallbackRefusal ? error.reason : "reconciliation_required");
+        const onCredit = turnPlan.kind === "model" && (transcript as Transcript).creditRoute;
+        if (onCredit && !onCredit.ended) {
+          const outcome = creditOutcomeOf(error);
+          if (
+            (outcome && outcome.hold === "unknown") ||
+            (error instanceof CreditRouteRefusal &&
+              ["reconciliation_required", "duplicate_attempt", "stale_owner"].includes(error.reason))
+          ) {
+            await creditNote(creditRouteUnknownNotice(onCredit.provider), "unknown").catch(() => {});
+            const held = await holdCreditRun(deps, {
+              orgId: run.orgId,
+              runId: run.id,
+              claim: options.creditClaim,
+              reason: error instanceof CreditRouteRefusal ? error.reason : "credit_reconciliation_required",
+              ...(outcome ? { attemptId: outcome.attemptId } : {}),
+              transcript: transcript as unknown as Record<string, unknown>,
+            });
+            if (held) await finished("waiting_input");
+            return;
+          }
+          if (error instanceof CreditRouteRefusal || (outcome && endsCreditRoute(outcome.class))) {
+            const left = await leaveCreditRoute(
+              error instanceof CreditRouteRefusal ? error.reason : (outcome?.class ?? "ended"),
+            );
+            if (left === "fallback") continue;
+            if (left === "waited" || left === "failed") return;
           }
         }
         // A computer brain that can't answer now (offline, not logged in, plan limit, a retryable failure):
@@ -6282,27 +8658,54 @@ async function executeRunInner(
           ...(transcript.harnessTried ?? []),
           ...own.map((c) => callLine(c.name, c.input, c.result)),
         ].slice(-20);
-      // Independent writes in parallel (different rows).
-      const [counted] = await Promise.all([
-        db
-          .update(agentRuns)
-          .set({ turns: sql`${agentRuns.turns} + 1` })
-          .where(eq(agentRuns.id, run.id))
-          .returning(),
-        addRunStep(db, run, "model_call", {
-          model: result.model,
-          ...(ranItself > 0 ? { executed: ranItself } : {}),
-          ...(toolSearches > 0 ? { toolSearches } : {}),
-          stopReason: result.stopReason,
-          usageRecordId: result.usageRecordId,
-          costNanoUsd: result.costNanoUsd,
-          ...result.usage,
-          thinking: result.thinking,
-          turn,
-          ...(narration ? { narration: cutText(narration, 4000) } : {}),
-        }),
-      ]);
-      if (counted[0]) run = counted[0];
+      if (transcript.creditInFlight) {
+        transcript.creditInFlight.phase = "response";
+        const checkpointed = await db.transaction(async (tx) => {
+          await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+          const [row] = await tx
+            .update(agentRuns)
+            .set({ turns: turn, transcript: storedTranscript(transcript), updatedAt: new Date() })
+            .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "running"), eq(agentRuns.turns, turn - 1)))
+            .returning();
+          if (!row) throw new CreditRouteRefusal("stale_owner");
+          await addRunStep(tx, run, "model_call", {
+            model: result.model,
+            ...(ranItself > 0 ? { executed: ranItself } : {}),
+            ...(toolSearches > 0 ? { toolSearches } : {}),
+            stopReason: result.stopReason,
+            usageRecordId: result.usageRecordId,
+            costNanoUsd: result.costNanoUsd,
+            ...result.usage,
+            thinking: result.thinking,
+            turn,
+            ...(narration ? { narration: cutText(narration, 4000) } : {}),
+          });
+          return row;
+        });
+        run = checkpointed;
+      } else {
+        // Independent writes in parallel (different rows).
+        const [counted] = await Promise.all([
+          db
+            .update(agentRuns)
+            .set({ turns: sql`${agentRuns.turns} + 1` })
+            .where(eq(agentRuns.id, run.id))
+            .returning(),
+          addRunStep(db, run, "model_call", {
+            model: result.model,
+            ...(ranItself > 0 ? { executed: ranItself } : {}),
+            ...(toolSearches > 0 ? { toolSearches } : {}),
+            stopReason: result.stopReason,
+            usageRecordId: result.usageRecordId,
+            costNanoUsd: result.costNanoUsd,
+            ...result.usage,
+            thinking: result.thinking,
+            turn,
+            ...(narration ? { narration: cutText(narration, 4000) } : {}),
+          }),
+        ]);
+        if (counted[0]) run = counted[0];
+      }
       // A computer brain's call through the bridge paused the run during the turn: it waits now.
       if (turnPlan.kind !== "model" && (run.status === "waiting_approval" || run.status === "waiting_input")) {
         const pending = (run.transcript as unknown as Transcript | null)?.pending?.calls ?? [];
@@ -6329,7 +8732,11 @@ async function executeRunInner(
         for (const use of toolUses) {
           // Canceled during a tool, or the server is shutting down: the rest never run.
           if (signal.aborted) break;
+          if (transcript.creditRoute && !transcript.creditRoute.ended)
+            await assertCreditClaim(db, run.orgId, run.id, options.creditClaim as CreditNativeClaim);
           const outcome = await invokeWithChip(toolScope, use);
+          if (transcript.creditRoute && !transcript.creditRoute.ended)
+            await assertCreditClaim(db, run.orgId, run.id, options.creditClaim as CreditNativeClaim);
           // The shutdown aborted it while it ran: its error may hide work it already did.
           const cutShort = shuttingDown();
           await absorbToolOutcome(use, outcome);
@@ -6441,6 +8848,7 @@ async function executeRunInner(
               }
             }
           }
+          delete transcript.creditInFlight;
           await saveTranscript(db, transcript);
           // It passed and did nothing else: the run ends here, no closing call spent.
           if (transcript.passed && toolUses.every((u) => u.name === PASS_TOOL)) {
@@ -6451,6 +8859,7 @@ async function executeRunInner(
 
         // Suspend: post what the agent said (`pauseLead`), one card per approval and each question, then wait.
         transcript.pending = { calls };
+        delete transcript.creditInFlight;
         const t = transcript;
         // Only this turn's text: what leads to a question, or what says more than an approval's or a secret's
         // card, with a reply it held back (`heldWords`). Earlier narration is in the steps. A background run never
@@ -6491,7 +8900,9 @@ async function executeRunInner(
         return;
       }
 
-      // Final answer.
+      // The response marker remains durable through native acceptance and JEV. A crash here holds this exact
+      // work unit; it cannot turn a billed but unaccepted answer into a new model call.
+      // Final answer: all native acceptance and JEV verification below remain in force.
       if (result.stopReason === "refusal") return fail("model_refused");
       closing = true;
       // Long work (ADR 0121): a move its tool made in this turn is taken now, so the answer goes home as the report. A
@@ -6588,6 +8999,7 @@ async function executeRunInner(
           transcript.routineRecord = kept;
           appendUserText(transcript, nudge);
           if (plan.kind !== "model") nextPrompt = nudge;
+          delete transcript.creditInFlight;
           await saveTranscript(db, transcript);
           continue;
         }
@@ -6808,6 +9220,7 @@ async function executeRunInner(
           decision.rule === "secret" ||
           decision.rule === "unbacked"
         ) {
+          delete t.creditInFlight;
           await saveTranscript(db, t);
           continue;
         }
@@ -6824,6 +9237,8 @@ async function executeRunInner(
         const posted =
           text && !repeatsLastPost(text)
             ? await db.transaction(async (tx) => {
+                if (t.creditRoute) await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
+                delete t.creditInFlight;
                 const m = await post(tx, replyThreadId, text, withFallback(t, withCode(takeMemoryUpdates(t), code)));
                 t.postedUpTo = t.messages.length;
                 t.postedCount++;
@@ -6845,6 +9260,7 @@ async function executeRunInner(
       // A move made since (a computer brain's tool, through the bridge): the report goes home, or it waits in line.
       if (await workWaitsInLine()) return parkQueuedWork();
       const reply = await db.transaction(async (tx) => {
+        if (t.creditRoute) await lockCreditClaim(tx, run.orgId, run.id, options.creditClaim);
         // Told to wrap up near its cap, or found stuck twice: this is where it stands, and Continuar under it goes
         // on from here.
         const ended =
@@ -6918,6 +9334,8 @@ async function executeRunInner(
   }
 }
 
+type CreditTurnToken = { current: string; creditClaim?: CreditNativeClaim; creditTurn: number };
+
 // Result metadata stays with the original brain; the wrapper alone remains the execution path (ADR 0185).
 const brainResultSources = new WeakMap<Brain, Brain>();
 
@@ -6927,7 +9345,7 @@ function createBrain(
   agent: Agent,
   run: AgentRun,
   kind: BrainKind,
-  token: { current: string },
+  token: CreditTurnToken,
   transcript: () => Transcript,
   trigger: Message | null | undefined,
 ): Brain {
@@ -6972,7 +9390,7 @@ function createUnboundBrain(
   agent: Agent,
   run: AgentRun,
   kind: BrainKind,
-  token: { current: string },
+  token: CreditTurnToken,
   transcript: () => Transcript,
 ): Brain {
   const factory = deps.brains?.[kind];
@@ -6996,6 +9414,43 @@ function createUnboundBrain(
     },
     // Where it answers, as a computer brain's session counts it: its thread, or the channel it answers in.
     session: brainSessionId(agent.id, replyThreadOf(run) ?? run.channelId, "model"),
+    openRouterFallback: () => {
+      const route = transcript().openRouterFallback;
+      if (!route || route.ended) return undefined;
+      if (!token.creditClaim || token.creditTurn < 1) throw new OpenRouterFallbackRefusal("stale_owner");
+      return { route, claim: token.creditClaim, turn: token.creditTurn };
+    },
+    globalRouterFallback: () => {
+      const route = transcript().globalRouterFallback;
+      if (!route || route.ended) return undefined;
+      if (!token.creditClaim || token.creditTurn < 1) throw new GlobalRouterRefusal("stale_owner");
+      return {
+        route,
+        claim: token.creditClaim,
+        turn: token.creditTurn,
+        routineRunId: route.routineRunId ?? null,
+      };
+    },
+    // A run on a credit route (ADR 0212): read at each call, so a run that left the route stops asking for it.
+    credit: () => {
+      const c = transcript().creditRoute;
+      if (!c || c.ended) return undefined;
+      if (!token.creditClaim || token.creditTurn < 1) throw new CreditRouteRefusal("stale_owner");
+      return {
+        routeId: c.routeId,
+        cycleId: c.cycleId,
+        credentialId: c.credentialId,
+        credentialVersion: c.credentialVersion,
+        minimumTier: c.minimumTier,
+        effort: c.effort,
+        capabilities: Array.isArray(c.capabilities) ? [...c.capabilities] : undefined,
+        workUnitKey: creditWorkUnitKey(run.id, token.creditTurn),
+        attemptKey: `${run.id}:${token.creditTurn}:${token.creditClaim.ownerJobId}:${token.creditClaim.ownerEpoch}`,
+        ...token.creditClaim,
+        ...(c.bucket ? { bucket: c.bucket } : {}),
+        ...(c.approvalId ? { approvalId: c.approvalId } : {}),
+      };
+    },
   });
 }
 
@@ -7369,8 +9824,7 @@ async function thinkOnce(
           value?.selectedModel === "gemini-4-argon" &&
           value?.thoughtLevel === "high";
         if (
-          !value ||
-          value.source !== "cli_response" ||
+          value?.source !== "cli_response" ||
           value.runId !== turn.runId ||
           !turn.session ||
           value.nativeSessionId !== turn.session.id ||
@@ -8095,7 +10549,7 @@ const withFallback = (t: Transcript, meta: Record<string, unknown> | undefined) 
   t.fallback || t.speedFallback || t.modelStandIn
     ? {
         ...(meta ?? {}),
-        ...(t.fallback ? { brainFallback: t.fallback } : {}),
+        ...(t.fallback && t.quotaCliHandoff?.reason !== "provider_outage" ? { brainFallback: t.fallback } : {}),
         ...(t.speedFallback ? { speedFallback: true } : {}),
         ...(t.modelStandIn ? { modelStandIn: t.modelStandIn } : {}),
       }

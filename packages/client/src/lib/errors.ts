@@ -22,6 +22,13 @@ export const REAUTH_PASSWORD = "reauth.password";
 const KNOWN = {
   // New native refusal codes reuse the existing localized reason families; raw provider details stay out.
   "brain.config_changed": "errors.said.changed",
+  "credit.conflict": "errors.credit.conflict",
+  "credit.disabled": "errors.credit.disabled",
+  "credit.resume_refused": "errors.credit.resumeRefused",
+  "openrouter.conflict": "errors.said.conflict",
+  "openrouter.disabled": "errors.said.offHere",
+  "global_router.conflict": "errors.said.conflict",
+  "global_router.disabled": "errors.said.offHere",
   "delivery_binding.observation_stale": "errors.said.changed",
   "delivery_binding.release_owner_unavailable": "errors.said.changed",
   "delivery_binding.revision_conflict": "errors.said.changed",
@@ -31,6 +38,23 @@ const KNOWN = {
   "paperclip.target_changed": "errors.said.changed",
   "paperclip.workspace_changed": "errors.said.changed",
   "skill.version_conflict": "errors.said.changed",
+  // A personal subscription route (ADR 0208): a machine that isn't the owner's, fallback or extra usage asked for,
+  // or no verified sign-in for that brain on the computer.
+  "brain.invalid_machine": "errors.said.input",
+  "brain.personal_subscription": "errors.said.input",
+  "brain.unavailable": "errors.said.computer",
+  // Google Colab (ADR 0200): connect from the catalog with Google, and allow its permission and offline access.
+  "connector.colab_oauth_required": "errors.said.input",
+  "connector.colab_refresh_required": "errors.said.notApproved",
+  "connector.colab_scope_required": "errors.said.notApproved",
+  // Delivering a mission's task without the evidence its delivery needs (ADR 0209).
+  "mission.delivery_evidence_required": "errors.said.fillIn",
+  // Settling a held run's unknown outcome (ADR 0203): the run ended, a turn still works, the outcome was settled
+  // already, or the approval behind it no longer stands.
+  "run.effect_run_ended": "errors.said.alreadyDone",
+  "run.effect_turn_open": "errors.said.conflict",
+  "run.effect_unknown_id": "errors.said.gone",
+  "run.effect_grant_revoked": "errors.said.changed",
   // Native memory: an edit raced by another, an event replayed, or a write that isn't well formed.
   "memory.version_conflict": "errors.said.changed",
   "memory.event_applied": "errors.said.gone",

@@ -1,4 +1,197 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter-uitwijkoptie",
+    "intro": "Abonnementen gaan voor. Geschikte agents en routines delen een afzonderlijke maandlimiet van 50 USD.",
+    "disabled": "Uitgeschakeld",
+    "serverDisabled": "Uitgeschakeld door serverbeleid",
+    "configured": "Geconfigureerd. Controle vóór verzending",
+    "blocked": "Geblokkeerd. Afstemming vereist",
+    "spent": "Deze maand uitgegeven",
+    "pending": "Gereserveerd / onopgelost",
+    "cap": "Maandlimiet (USD)",
+    "key": "Aparte OpenRouter-sleutel",
+    "chooseKey": "Selecteer een sleutel",
+    "keyHint": "Voeg een aparte OpenRouter-sleutel toe met een maandlimiet van maximaal dit bedrag, inclusief BYOK. Gebruik deze niet voor gewone verzoeken.",
+    "models": "Toegestane concrete model-ID’s (één per regel)",
+    "inputPrice": "Maximale invoerprijs in USD per miljoen tokens",
+    "outputPrice": "Maximale uitvoerprijs in USD per miljoen tokens",
+    "tier": "Kostenklasse van de router",
+    "enable": "Opslaan en inschakelen",
+    "disable": "Uitwijkoptie uitschakelen",
+    "refresh": "Vernieuwen",
+    "error": "Opslaan mislukt. Controleer je sleutel en het beleid.",
+    "routes": "Ontwikkeling: openrouter/auto-code · Algemeen: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Globale modelrouter",
+    "intro": "Primaire abonnementen draaien eerst. Geschikte agents en routines vallen terug op OpenCode Go, geverifieerde gratis API's, goedkope modellen met limiet en goedgekeurde directe API-aanbieders.",
+    "cascade": "Volgorde: Abonnementen · OpenCode Go · Gratis API's · Lage kosten · Directe API's · Begrensde escalatie",
+    "refresh": "Vernieuwen",
+    "syncCatalog": "Catalogus synchroniseren",
+    "syncing": "Catalogus synchroniseren",
+    "unknown": "Onbekend",
+    "freeCap": "US$ 0 (gratis of inbegrepen)",
+    "states": {
+      "loading": "Routerstatus laden",
+      "disconnected": "Geen terugval-API-routes verbonden",
+      "serverDisabled": "Uitgeschakeld door serverbeleid",
+      "disabled": "Uitgeschakeld. Alleen abonnementen",
+      "authorization_needed": "Autorisatie vereist. Controleer de aanbiederssleutel",
+      "stale_catalog": "Catalogus verlopen. Synchroniseer de catalogus om aanbod te controleren",
+      "unverified": "Wachten op geverifieerde catalogus en sleutel",
+      "eligible": "Gereed. Gecontroleerd voor verzending",
+      "quota_warning": "Nadert quotum of maandbudgetdrempel",
+      "rate_limited": "Snelheidslimiet bereikt. Wachten op nieuw tijdvenster",
+      "provider_outage": "Aanbieder niet beschikbaar. Schakelt naar volgende geschikte route",
+      "incompatible": "Overgeslagen wegens incompatibele tools of modaliteiten",
+      "privacy_blocked": "Geblokkeerd door gegevensbewaar- of regiobeleid",
+      "budget_held": "Gepauzeerd. Openstaande reservering of limiet bereikt",
+      "needs_owner": "Wachten op goedkeuring van eigenaar van werkruimte",
+      "recovered": "Hersteld naar primair abonnement"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go-pakket",
+      "free_api": "Gratis API-pool",
+      "paid_low_cost": "Betaald met lage kosten",
+      "direct_api": "Directe API van aanbieder",
+      "paid_dynamic": "Dynamische autorouter"
+    },
+    "entitlements": {
+      "subscription_go": "Go-abonnement ($ 0 extra)",
+      "free_only": "Alleen gratis laag ($ 0 limiet)",
+      "paid_capped": "Betaald met maandlimiet"
+    },
+    "policy": {
+      "heading": "Routeringsbeleid van werkruimte",
+      "enable": "Beleid opslaan",
+      "disable": "Router uitschakelen",
+      "enabledLabel": "Terugval via globale modelrouter inschakelen",
+      "killSwitchLabel": "Noodschakelaar (blokkeer alle terugvalverzendingen)",
+      "maxEscalations": "Max. kwaliteitsescalaties per beurt (0 tot 2)",
+      "maxRetries": "Max. transportpogingen per route (0 tot 1)",
+      "optOutAgents": "Uitgesloten agent-ID's (leeg erft de router)",
+      "warnThresholds": "Budgetmeldingen sturen bij 50%, 80% en 95%"
+    },
+    "accounts": {
+      "caption": "Geconfigureerde aanbiedersroutes en quotumvensters",
+      "empty": "Nog geen aanbiedersroutes geconfigureerd.",
+      "configureHeading": "Aanbiedersroute configureren",
+      "provider": "Modelaanbieder",
+      "lane": "Routeringsroute",
+      "entitlement": "Factureringsmodus",
+      "key": "Toegewezen aanbiederssleutel",
+      "chooseKey": "Kies een toegewezen sleutel",
+      "cloudflareAccount": "Cloudflare Account-ID van 32 hex-tekens",
+      "cap": "Maandlimiet (USD)",
+      "models": "Toegestane concrete model-ID's (een per regel)",
+      "zdr": "Geen gegevensbewaring (ZDR) vereisen",
+      "save": "Route opslaan",
+      "columns": {
+        "provider": "API-aanbieder",
+        "lane": "Route",
+        "state": "Status",
+        "budget": "Besteed / limiet",
+        "quota": "Dagquotum",
+        "reset": "Venster / gemeten"
+      }
+    },
+    "catalog": {
+      "summary": "Catalogusaanbod: {{eligible}} geschikt · {{total}} vastgelegd",
+      "caption": "Gekwalificeerd API-modelaanbod",
+      "columns": {
+        "model": "Model-ID",
+        "provider": "API-aanbieder",
+        "lane": "Route",
+        "status": "Geschiktheid",
+        "context": "Contextvenster"
+      }
+    },
+    "receipts": {
+      "caption": "Recente routeringsbewijzen en geverifieerde kwaliteit",
+      "empty": "Geen terugvalverzendingen vastgelegd in deze periode.",
+      "reconcileNoSend": "Reservering vrijgeven",
+      "columns": {
+        "requested": "Gevraagd model",
+        "actual": "Werkelijk model",
+        "lane": "Route",
+        "cost": "Werkelijk / gereserveerd",
+        "quality": "Kwaliteit",
+        "state": "Status"
+      },
+      "verified": "Geverifieerd",
+      "unverified": "Controle mislukt"
+    },
+    "metrics": {
+      "caption": "Kosten per geverifieerd succes en latentie",
+      "columns": {
+        "model": "Model-ID",
+        "successes": "Geverifieerd / pogingen",
+        "costPerSuccess": "Kosten per geverifieerd succes",
+        "latency": "p50 / p95 latentie"
+      }
+    },
+    "benchmarkSummary": "Laatste benchmark: {{tasks}} taken · {{models}} modellen",
+    "error": "Kan instellingen van globale modelrouter niet bijwerken. Controleer sleutel, limiet en modellen."
+  },
+  "creditContinuity": {
+    "title": "Doorgaan met API-tegoed",
+    "refresh": "Status bijwerken",
+    "unavailable": "De tegoedstatus is niet beschikbaar. Hier is nog geen toegekend tegoed geverifieerd.",
+    "intro": "Geschikte abonnementen worden eerst gebruikt. De API-uitwijkmogelijkheid gebruikt geverifieerd toegekend tegoed binnen de gedeelde limieten van de factureringsperiode.",
+    "status": {
+      "unavailable": "De tegoedstatus is niet beschikbaar. Automatische uitgaven zijn niet geverifieerd.",
+      "disabled": "Automatisch uitwijken naar de API is uitgeschakeld. Geregistreerde uitgaven en openstaande kosten blijven zichtbaar.",
+      "unverified": "Er is geen geschikt API-tegoed geverifieerd. Het automatisch beschikbare bedrag is $0.",
+      "blocked": "Uitwijken naar de API wacht op actueel bewijs, budget of afstemming.",
+      "available": "Uitwijken naar de API is beschikbaar binnen de geregistreerde tegoedlimieten."
+    },
+    "caption": "Toegekend API-tegoed en periodebudgetten",
+    "columns": {
+      "provider": "Aanbieder",
+      "state": "Status",
+      "automatic": "Automatisch beschikbaar / limiet",
+      "costs": "Uitgegeven / openstaand",
+      "reserve": "Reserve van de eigenaar",
+      "buffer": "Veiligheidsmarge",
+      "expires": "Tegoed verloopt",
+      "forecast": "Historische p95"
+    },
+    "provider": {
+      "openai": "API van ChatGPT",
+      "anthropic": "API van Claude"
+    },
+    "unknown": "Onbekend",
+    "state": {
+      "unavailable": "Niet beschikbaar",
+      "unverified": "Niet geverifieerd",
+      "expired": "Tegoed verlopen",
+      "stale": "Bewijs moet worden bijgewerkt",
+      "disabled": "Uitgeschakeld",
+      "paused": "Gepauzeerd",
+      "pricingExpired": "Tarieven verlopen",
+      "pricingChanged": "Tarieven gewijzigd",
+      "pricingUnverified": "Tarieven niet geverifieerd",
+      "noRoute": "Geen geschikte API-route",
+      "budgetUnavailable": "Budget niet beschikbaar",
+      "ready": "Gereed",
+      "reserveAvailable": "Reserve van de eigenaar beschikbaar",
+      "billingBlocked": "Facturering geblokkeerd",
+      "reconciliation": "Afstemming vereist",
+      "blocked": "Geblokkeerd"
+    },
+    "evidence": "Bewijs: {{date}}",
+    "approvedAvailable": "Goedgekeurd beschikbaar: {{amount}}",
+    "approvals_one": "{{count}} actieve goedkeuring van de eigenaar",
+    "approvals_other": "{{count}} actieve goedkeuringen van de eigenaar",
+    "ownerApproval": "Goedkeuring van de eigenaar",
+    "historyHigh": "{{count}} afgerekende werkeenheden. Hoge onzekerheid.",
+    "historyMedium": "{{count}} afgerekende werkeenheden. Gemiddelde onzekerheid.",
+    "historyUnknown": "{{count}} afgerekende werkeenheden. Onzekerheid onbekend.",
+    "insufficientHistory": "Onvoldoende historische gegevens",
+    "obligations_one": "{{count}} API-aanroep heeft gereserveerde of onopgeloste kosten. Noodreserves vereisen goedkeuring van de eigenaar. Deze functie schakelt betaald opwaarderen niet in.",
+    "obligations_other": "{{count}} API-aanroepen hebben gereserveerde of onopgeloste kosten. Noodreserves vereisen goedkeuring van de eigenaar. Deze functie schakelt betaald opwaarderen niet in.",
+    "evidenceNote": "De geschiktheid van toegekend tegoed wordt bepaald aan de hand van factureringsbewijs van de aanbieder dat de eigenaar heeft vastgelegd. Historische prognoses geven geen toestemming om geld uit te geven. Status geraadpleegd: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1320,7 +1513,13 @@
       "moonshot": "Kimi-sleutels beginnen met sk-. Controleer hem en plak hem opnieuw.",
       "zai": "Plak de hele Z.ai-sleutel, zonder spaties. Controleer hem en plak hem opnieuw.",
       "minimax": "Plak de hele MiniMax-sleutel, zonder spaties. Sleutels die met sk-cp- beginnen horen bij het abonnement en werken hier niet.",
-      "openrouter": "OpenRouter-sleutels beginnen met sk-or-v1-. Controleer hem en plak hem opnieuw."
+      "openrouter": "OpenRouter-sleutels beginnen met sk-or-v1-. Controleer hem en plak hem opnieuw.",
+      "groq": "Groq-sleutels beginnen met gsk_. Controleer hem en plak hem opnieuw.",
+      "cloudflare": "Plak het volledige Cloudflare Workers AI-token zonder spaties. Controleer het en plak het opnieuw.",
+      "opencode": "Plak de volledige OpenCode API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "tencent": "Plak de volledige Tencent Hunyuan API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "xiaomi": "Plak de volledige Xiaomi MiMo API-sleutel zonder spaties. Controleer hem en plak hem opnieuw.",
+      "nvidia": "NVIDIA NIM-sleutels beginnen met nvapi-. Controleer hem en plak hem opnieuw."
     },
     "keyFromOther": "Is hij van een andere aanbieder?",
     "anthropicWorkspace": "Workspace-ID van Claude Console",
@@ -3127,6 +3326,8 @@
     "atOnceHelp": "Hoeveel klussen waar niemand om vroeg hij tegelijk doet. De rest wacht op zijn beurt.",
     "prs": "Pull requests per uur",
     "prsHelp": "Het hoogste aantal dat zijn eigen werk in een uur opent.",
+    "shots": "Schermafbeeldingen per taak",
+    "shotsHelp": "Het maximum dat één stuk werk mag maken. Verhoog het voor een agent die controleert hoe pagina’s eruitzien. Nieuwe schermafbeeldingen pauzeren ook als de schijf van zijn computer bijna vol is.",
     "call": "Agents die hij mag roepen",
     "callHelp": "Wie hij mag noemen of aan wie hij werk mag doorgeven.",
     "callAll": "Alle",
@@ -7151,6 +7352,18 @@
       "label": "Taken",
       "description": "Taken maken en bijwerken."
     },
+    "colab_read": {
+      "label": "Colab lezen",
+      "description": "Het abonnementsniveau, de bruikbare runtimetypes en sessienamen lezen."
+    },
+    "colab_run": {
+      "label": "Colab-taken uitvoeren",
+      "description": "Runtimes en sessies maken, Python uitvoeren en de sessies sluiten die het zelf opende. Gebruikt Colab-rekeneenheden."
+    },
+    "colab_delete": {
+      "label": "Colab-runtimes verwijderen",
+      "description": "Een runtime definitief verwijderen, met al zijn bestanden en sessies."
+    },
     "github_repo_read": {
       "label": "Code lezen",
       "description": "Bestanden en commits lezen en code doorzoeken."
@@ -8467,6 +8680,8 @@
       "draftingNoComputer_female": "{{executor}} leest de map en stelt het plan op",
       "empty": "Nog geen items. Je kunt toch starten of om een plan vragen met „Iets wijzigen”.",
       "waitPlan": "Opent zodra het plan er is",
+      "repositoryFolder": "Repositorymap",
+      "repositoryFolderRelative": "Pad relatief aan de werkmap van de agent, bijvoorbeeld repos/project.",
       "adjusts": "{{executor}} past de lijst onderweg steeds aan",
       "adjusts_female": "{{executor}} past de lijst onderweg steeds aan",
       "switched": "{{executor}} programmeert nu. Het plan begint opnieuw.",
@@ -11696,6 +11911,44 @@
   },
   "storage": {
     "title": "Opslag",
+    "clean": {
+      "title": "Werkruimte opruimen",
+      "intro": "Wat afgeronde taken op de computers van agents hebben achtergelaten. Opleveringen, bewijs en alles zonder uitleg blijven. Jij kiest welke tijdelijke bestanden worden opgeruimd.",
+      "computers": "Schijven van de computers",
+      "level": {
+        "ok": "{{free}} GB vrij",
+        "low": "Weinig ruimte: {{free}} GB vrij",
+        "critical": "Bijna vol: {{free}} GB vrij. Nieuwe schermafbeeldingen en opnames staan stil.",
+        "unknown": "Nog niet gemeten"
+      },
+      "none": "Er is geen taak afgerond sinds agents hun bestanden registreren.",
+      "task": "Taak",
+      "mission": "Missie",
+      "ended": {
+        "done": "Klaar",
+        "canceled": "Geannuleerd"
+      },
+      "kept_one": "{{count}} bewaard",
+      "kept_other": "{{count}} bewaard",
+      "candidates_one": "{{count}} tijdelijk bestand, {{size}}",
+      "candidates_other": "{{count}} tijdelijke bestanden, {{size}}",
+      "duplicates_one": "{{count}} exacte kopie",
+      "duplicates_other": "{{count}} exacte kopieën",
+      "restorable": "Bewijs: {{restorable}} terug te zetten uit de Drive, {{manifestOnly}} alleen vermeld",
+      "approve": "Tijdelijke bestanden opruimen",
+      "approved_one": "{{count}} bestand goedgekeurd: het wordt op zijn computer opnieuw gecontroleerd voordat het verdwijnt.",
+      "approved_other": "{{count}} bestanden goedgekeurd: elk wordt op zijn computer opnieuw gecontroleerd voordat het verdwijnt.",
+      "status": {
+        "approved": "Wacht op de computer",
+        "done": "Verwijderd",
+        "skipped": "Was al weg",
+        "blocked": "Bewaard: {{reason}}",
+        "unknown": "Nog onzeker: later opnieuw gecontroleerd"
+      },
+      "freed": "Vrije ruimte op de computer: {{before}} ervoor, {{after}} erna",
+      "show": "Bestanden tonen",
+      "hide": "Bestanden verbergen"
+    },
     "options": "Waar bestanden te bewaren",
     "agentes": "agentes.chat-opslag",
     "agentesText": "Je bestanden blijven in onze opslag, gescheiden per werkruimte.",
@@ -11901,6 +12154,16 @@
       "list": "Gekoppelde MCP-servers",
       "none": "MCP-servers die je via hun adres koppelt, verschijnen hier."
     },
+    "hostMcp": {
+      "title": "Host MCP op je computer",
+      "intro": "Gebruik een gecontroleerd Host MCP-profiel op een vertrouwde computer. Alleen de gekozen agent krijgt leestoegang.",
+      "connectRead": "Verbinden en leestoegang geven",
+      "bindFailed": "De koppeling is niet bevestigd. Wis de selectie, laad de profiellijst opnieuw en controleer de computer, profielversie en agent voordat je opnieuw probeert.",
+      "grantUnconfirmed": "Het profiel is gekoppeld, maar leestoegang is niet bevestigd. Probeer opnieuw voor deze agent of wis de selectie zonder bestaande machtigingen te wijzigen. Kies na herladen dezelfde profielversie en agent.",
+      "retryRead": "Leestoegang opnieuw proberen",
+      "resetSelection": "Selectie wissen",
+      "note": "De toestemmingslijst van de computer blijft gelden. Controleer de toegang met een echte toolaanroep van de agent."
+    },
     "addTitle": "Connector toevoegen",
     "catalogText": "Koppel één keer voor {{org}}. Kies daarna wat elke agent mag gebruiken.",
     "catalog": "Beschikbare connectors",
@@ -11939,6 +12202,8 @@
     "more": "Meer diensten",
     "tileConnected": "{{name}}, gekoppeld",
     "tileSoon": "{{name}}, binnenkort",
+    "tileSetupRequired": "{{name}}, instellen vereist",
+    "setupRequired": "Instellen vereist",
     "otherTitle": "Een andere dienst",
     "otherDetail": "Elke dienst die een koppeling voor agents biedt, via zijn adres (dat begint met https://).",
     "otherSteps": {
@@ -11962,6 +12227,7 @@
     "how": {
       "oneClick": "Eén klik: je geeft toestemming op de pagina van de dienst",
       "oauthOrKey": "Je geeft toestemming op de pagina van de dienst, of gebruikt een API-sleutel",
+      "oauthSetup": "Inloggen voor deze app is nog niet ingesteld.",
       "key": "Heeft een API-sleutel nodig",
       "appPassword": "Heeft een app-wachtwoord nodig",
       "addressPassword": "Heeft het adres van de database en een wachtwoord nodig",
@@ -13389,6 +13655,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Er bestaat al een kredietregistratie. Vernieuw de pagina om de status te bekijken.",
+      "disabled": "Terugvallen op krediet is uitgeschakeld.",
+      "resumeRefused": "Deze uitvoering kan nog niet verder. Controleer het vastgehouden krediet en de openstaande acties."
+    },
     "passwordLink": {
       "email": "Deze server verstuurt e-mail: de persoon vraagt zelf een link aan bij Wachtwoord vergeten.",
       "serverOwner": "Wie deze server installeerde, meldt zich aan op de computer waarop hij draait, zonder link.",
@@ -15700,6 +15971,14 @@
       "oldSub": "Gebruik van voordat het account werd vastgelegd",
       "ofMonth": "{{percent}} van de maand",
       "shareLabel": "{{source}}: {{percent}} van de maand"
+    },
+    "costPerSuccess": {
+      "title": "Kosten per geverifieerd succes",
+      "intro": "Afgelopen 30 dagen. Een succes is een taak waarvan een persoon de acceptatiecriteria heeft afgevinkt en die sindsdien niemand heeft heropend. Elke run telt mee in de kosten.",
+      "perSuccess": "{{cost}} per succes",
+      "unknown": "Kosten onbekend",
+      "noSuccess": "Nog geen geverifieerd succes",
+      "line": "{{runs}} runs · {{successes}} geverifieerd · {{failed}} mislukt · {{retries}} nieuwe pogingen"
     }
   },
   "budget": {
@@ -16104,6 +16383,7 @@
         "updatingThread": "Een thread bijgewerkt",
         "addingAgent": "Een agent aan een kanaal toegevoegd",
         "readingConversation": "Het gesprek gelezen",
+        "checkingPlanUsage": "Het plangebruik van het team gecontroleerd",
         "usingTool": "De tool {{tool}} gebruikt",
         "thinking": "Nagedacht",
         "typing": "Geschreven",
@@ -16221,6 +16501,7 @@
       "updatingThread": "een thread aan het bijwerken",
       "addingAgent": "een agent aan een kanaal aan het toevoegen",
       "readingConversation": "het gesprek aan het lezen",
+      "checkingPlanUsage": "het plangebruik van het team aan het controleren",
       "usingTool": "een tool aan het gebruiken"
     },
     "tokens": "{{value}} tokens",

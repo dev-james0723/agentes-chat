@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -281,7 +281,8 @@ async function route(req: BrainRouteRequest, deps: RouteDeps, home: string | nul
 
 async function claudeRoute(req: BrainRouteRequest, o: RouteDeps & { dir: string; home: string | null }) {
   const systemFile = path.join(o.dir, "system.txt");
-  writeFileSync(systemFile, req.system, { mode: o.shared ? 0o640 : 0o600 });
+  writeFileSync(systemFile, req.system, { mode: 0o600, flag: "wx" });
+  if (o.shared) chmodSync(systemFile, 0o640);
   const launched = await o.shared?.launch();
   // An account's folder is the CLI's home, and requests go only to Claude's own endpoint.
   const token = o.grant?.kind === "token" ? o.grant.token : undefined;

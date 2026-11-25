@@ -300,6 +300,67 @@ const notices = async (threadId: string) =>
     .map((x) => x.text ?? "");
 
 describe("missions (ADR 0029)", () => {
+  test("mission folders reject absolute paths before normalization", async () => {
+    f = await setup({ machines: true, missionTools: true });
+    const paired = await pairedMachine();
+    const runner = missionRunner(f.machineHub as MachineHub);
+    await runner.hello(paired.token);
+
+    for (const repoDir of [
+      "/Users/james/Projects/HeyTracki",
+      " /tmp/project/ ",
+      "/",
+      "//server/share/project",
+      "\\\\server\\share\\project",
+      "\\Users\\james\\Projects\\HeyTracki",
+      "C:\\Projects\\HeyTracki",
+      "../project",
+      "repos/../outside",
+    ]) {
+      await expect(
+        createMission(md(), f.owner.id, f.org.id, {
+          agentId: f.agent.id,
+          channelId: f.general.id,
+          goal: "Improve the app",
+          repoDir,
+        }),
+      ).rejects.toMatchObject({ code: "mission.bad_folder" });
+    }
+
+    // A rejected host path must not create a mission that later writes into a misleading Users/... subtree.
+    expect(await f.db.select().from(schema.missions)).toHaveLength(0);
+    expect(runner.started).toHaveLength(0);
+    expect(runner.files.size).toBe(0);
+  });
+
+  test("mission folders preserve relative checkouts and the agent folder", async () => {
+    f = await setup({ machines: true, missionTools: true });
+    const paired = await pairedMachine();
+    const runner = missionRunner(f.machineHub as MachineHub);
+    await runner.hello(paired.token);
+
+    for (const [repoDir, expected] of [
+      ["repos/HeyTracki", "repos/HeyTracki"],
+      [" ./repos/HeyTracki/ ", "repos/HeyTracki"],
+      [".//repos/HeyTracki//", "repos/HeyTracki"],
+      ["repos\\HeyTracki\\", "repos/HeyTracki"],
+      ["", ""],
+    ]) {
+      const view = await createMission(md(), f.owner.id, f.org.id, {
+        agentId: f.agent.id,
+        channelId: f.general.id,
+        goal: "Improve the app",
+        repoDir,
+      });
+      const [stored] = await f.db.select().from(schema.missions).where(eq(schema.missions.id, view.id));
+      expect(stored?.repoDir).toBe(expected);
+      expect(stored?.status).toBe("proposed");
+    }
+
+    // Normalization does not start work or bypass the person's review of a proposed mission.
+    expect(runner.started).toHaveLength(0);
+  });
+
   test("get_context: its owner's preferences come in, nobody else's", async () => {
     await proposed();
     const bob = await addMember(f.db, f.org.id, "member", "bob");
