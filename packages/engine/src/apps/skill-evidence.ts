@@ -154,7 +154,12 @@ export async function readSkillEvidence(
           name: skill.name,
           version: skill.version,
           body: exactText(skill.body, 32768),
-          files: skill.files.map((f) => ({ path: exactText(f.path, 300) })),
+          files: skill.files.map((f) => ({
+            path: exactText(f.path, 300),
+            size: f.size,
+            mime: f.mime,
+            status: f.status,
+          })),
         },
         assignments,
         runs,

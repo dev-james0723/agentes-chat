@@ -210,3 +210,26 @@ test("excludes external and malformed skill loads while retaining the actual nat
   ]);
   expect(JSON.stringify(result)).not.toContain("UNTRUSTED_VERSION_DATA");
 });
+
+test("only current-version package metadata is exposed, without blob locators or contents", async () => {
+  const f = await fixture();
+  const file = {
+    orgId: f.orgId,
+    skillId: String(f.skill.id),
+    path: "references/example.md",
+    size: 24,
+    mime: "text/markdown",
+    status: "stored",
+    blobKey: "PRIVATE_STORAGE_KEY",
+  };
+  await t.db.insert(schema.skillFiles).values([
+    { ...file, version: 1 },
+    { ...file, version: 2, path: "future.md" },
+  ]);
+  const result = await f.call(f.args);
+  expect(result.structuredContent?.skill).toMatchObject({
+    files: [{ path: { untrusted_text: "references/example.md" }, size: 24, mime: "text/markdown", status: "stored" }],
+  });
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_STORAGE_KEY");
+  expect(JSON.stringify(result)).not.toContain("future.md");
+});

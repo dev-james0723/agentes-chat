@@ -8,7 +8,7 @@ The structured response includes the following fields.
 
 | Field | Meaning |
 | --- | --- |
-| `skill` | ID, name, version, exact Markdown body without frontmatter in `body.untrusted_text`, and file paths in `files[].path.untrusted_text`. Files are metadata only. |
+| `skill` | ID, name, version, exact Markdown body without frontmatter in `body.untrusted_text`, and version-scoped file metadata in `files[]`: `path.untrusted_text`, byte size, MIME and storage status (stored, script or ignored). File bytes and file content hashes are not returned. |
 | `assignments[agentId].skills` | Native ID, version and enabled flag for the requested skill. |
 | `runs[runId].run` | Native run ID, agent ID, status and original trigger message ID. |
 | `runs[runId].steps` | Successful native `load_skill` result records for this skill only. Inspect `data.data.skill.version` for the version actually loaded. |
