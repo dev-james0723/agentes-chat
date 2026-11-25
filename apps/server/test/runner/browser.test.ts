@@ -2320,13 +2320,22 @@ test.if(posix)(
 test.if(posix)(
   "a command says what it waited on: the first, getting the browser ready, its desktop and its Chrome; the next nothing",
   async () => {
+    let now = 1_000_000;
     const chromes = fakeChromes();
+    const desktops = fakeDesktop();
     const t = setup({
-      startChrome: async (exe, args, profile) => {
-        await sleep(25);
+      now: () => now,
+      startChrome: (exe, args, profile) => {
+        now += 25;
         return chromes.start(exe, args, profile);
       },
-      desktops: fakeDesktop(25),
+      desktops: {
+        ...desktops,
+        ensure(...args) {
+          now += 25;
+          return desktops.ensure(...args);
+        },
+      },
     });
     const folder = await t.folder();
     const act = (command: string, args: string[]) =>
