@@ -100,7 +100,7 @@ import {
 import { planLentGroup, planModelDroppedGroup } from "./notification-producers";
 import { resolveNotifications } from "./notifications";
 import { can, getMembership, requirePermission } from "./organizations";
-import { isRightHand, personalBrain } from "./right-hand";
+import { isRightHand, personalBrain, personalOwnSignIn } from "./right-hand";
 import { orgModelProvider } from "./router";
 import { readRefusal } from "./standing";
 import { canonicalJson } from "./tools/json-schema";
@@ -715,7 +715,12 @@ async function personalAgent(db: Database, agent: Agent, userId: string, account
     brainFallback: false,
     brainExtraUsage: false,
     planForOthers: false,
+    machineId: own?.machineId ?? null,
   };
+  if (own?.machineId && !own.brainAccountId && account === undefined) {
+    const machine = await agentMachine(db, agent.orgId, own.machineId);
+    return { ...mine, machineId: machine?.pairedByUserId === userId ? machine.id : null, ownerUserId: userId };
+  }
   // ponytail: the computer of their first plan, so plans on a second computer don't list here; loop over their
   // computers if self-hosted people connect plans on several.
   const [first] =
@@ -778,15 +783,16 @@ async function personalView(db: Database, userId: string, orgId: string, agent: 
     ...view(mine, machine, [], accounts, userId),
     scope: "mine",
     workspaceAi: fallback,
-    // It serves the caller alone, never through a computer's own sign-in.
+    // It serves this caller alone, including an explicitly selected personal computer sign-in.
     onlyOwner: true,
-    ownSignIn: false,
+    ownSignIn: !!machine && machine.pairedByUserId === userId && personalOwnSignIn(mine.brain, machine.executors),
   };
 }
 
 /**
  * `PUT …/agents/{id}/brain` for the right hand's `mine` (ADR 0137 §11): any member gives their own DM with it one of
- * their plans, or someone else's that serves the whole workspace (ADR 0059 §3); `brain: "model"` or `account: null`
+ * their plans, or someone else's that serves the whole workspace (ADR 0059 §3). `account: null` with an explicit
+ * `machineId` uses their own verified computer subscription. `brain: "model"` or `account: null` without a machine
  * goes back to the workspace's. Audited.
  */
 async function setPersonalBrain(
@@ -802,7 +808,13 @@ async function setPersonalBrain(
     throw new ValidationError("Choose model, claude_code, codex or cursor", "brain.invalid");
   }
   const from = current
-    ? { brain: current.brain, model: current.brainModel, account: current.brainAccountId, effort: current.brainEffort }
+    ? {
+        brain: current.brain,
+        model: current.brainModel,
+        account: current.brainAccountId,
+        machineId: current.machineId,
+        effort: current.brainEffort,
+      }
     : null;
   const audit = (to: unknown) =>
     recordAudit(db, {
@@ -812,13 +824,74 @@ async function setPersonalBrain(
       target: { type: "agent", id: agent.id },
       details: { scope: "mine", from, to },
     });
-  if (input.brain === "model" || input.account === null) {
+  const explicitOwn = input.account === null && typeof input.machineId === "string" && !!input.machineId;
+  if (
+    input.machineId !== undefined &&
+    (!explicitOwn || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(input.machineId as string))
+  ) {
+    throw new ValidationError(
+      "Choose a computer with account: null for your personal sign-in",
+      "brain.invalid_machine",
+    );
+  }
+  if (input.brain === "model" || (input.account === null && !explicitOwn)) {
     if (current) {
       await db
         .delete(schema.rightHandBrains)
         .where(and(eq(schema.rightHandBrains.orgId, orgId), eq(schema.rightHandBrains.userId, userId)));
       await audit(null);
     }
+    return personalView(db, userId, orgId, agent);
+  }
+  const ownMachineId = explicitOwn
+    ? (input.machineId as string)
+    : input.account === undefined && !current?.brainAccountId
+      ? current?.machineId
+      : null;
+  if (ownMachineId) {
+    const brain = (input.brain as BrainKind | undefined) ?? (current?.brain as BrainKind | undefined);
+    const machine = await agentMachine(db, orgId, ownMachineId);
+    if (!machine || machine.pairedByUserId !== userId) {
+      throw new ForbiddenError("A personal sign-in uses only the computer you connected", "account.not_owner");
+    }
+    const option = brainOptions(machine).find((o) => o.kind === brain);
+    if (!brain || !option?.available || !personalOwnSignIn(brain, machine.executors)) {
+      throw new ConflictError("This computer has no verified subscription sign-in for that brain", "brain.unavailable");
+    }
+    if (input.fallback === true || input.extraUsage === true) {
+      throw new ValidationError(
+        "Personal subscription routing keeps API fallback and paid extra usage off",
+        "brain.personal_subscription",
+      );
+    }
+    if (input.effort !== undefined && input.effort !== null && !isBrainEffortSetting(input.effort)) {
+      throw new ValidationError("Choose auto, low, medium, high, xhigh or max", "brain.invalid_effort");
+    }
+    const changed = current?.brain !== brain;
+    const model =
+      input.model !== undefined
+        ? normalizeBrainModel(brain, input.model, changed ? null : current?.brainModel)
+        : changed
+          ? isAutoModel(current?.brainModel)
+            ? AUTO_MODEL
+            : null
+          : (current?.brainModel ?? null);
+    const effort =
+      input.effort === undefined ? (current?.brainEffort ?? null) : (input.effort as BrainEffortSetting | null);
+    const values = {
+      brain,
+      brainModel: model,
+      brainEffort: effort,
+      brainAccountId: null,
+      brainAccountLentBy: null,
+      machineId: machine.id,
+      updatedAt: new Date(),
+    };
+    await db
+      .insert(schema.rightHandBrains)
+      .values({ orgId, userId, ...values })
+      .onConflictDoUpdate({ target: [schema.rightHandBrains.orgId, schema.rightHandBrains.userId], set: values });
+    await audit({ brain, model, account: null, machineId: machine.id, effort });
     return personalView(db, userId, orgId, agent);
   }
   const accountId = typeof input.account === "string" && input.account ? input.account : current?.brainAccountId;
@@ -906,6 +979,7 @@ async function setPersonalBrain(
     brainModel: model,
     brainAccountId: account.id,
     brainAccountLentBy: lentBy,
+    machineId: null,
     brainEffort: effort ?? null,
     updatedAt: new Date(),
   };
@@ -1008,6 +1082,8 @@ export interface AgentBrainInput {
    * Omitted = keep it (cleared when the brain kind changes).
    */
   account?: unknown;
+  /** Right hand, scope mine: with account null, explicitly use this owned computer's subscription sign-in. */
+  machineId?: unknown;
   /** The account thinks for another agent: take it from that one, which loses it (`releaseAgents`). */
   moveAccount?: unknown;
   /** `low`…`max`, `auto` (picked per run), or null for the CLI's default. Omitted = keep it. */

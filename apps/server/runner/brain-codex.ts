@@ -281,6 +281,34 @@ export function codexFolderPermissions(input: {
   ];
 }
 
+/**
+ * Toolchain folders in the home that a folder-profile turn reads and runs from, never writes (ADR 0205): a fixed list,
+ * not the home. On macOS Homebrew (`/opt/homebrew`, `/usr/local`) is outside the hidden roots already; on Linux it lives
+ * under `/home`, so it is named.
+ */
+export const CODEX_TOOLCHAINS: readonly string[] = [".bun", ".cargo", ".rustup", ".nvm", ".local/bin"];
+const LINUX_HOMEBREW = "/home/linuxbrew/.linuxbrew";
+
+/** The toolchain folders that exist for a turn, as real paths (a linked folder is read where it really is). */
+export function codexToolchainDirs(
+  home: string,
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = existsSync,
+): string[] {
+  const dirs = [...CODEX_TOOLCHAINS.map((d) => path.join(home, d)), ...(platform === "linux" ? [LINUX_HOMEBREW] : [])];
+  return [
+    ...new Set(
+      dirs.filter(exists).map((d) => {
+        try {
+          return realpathSync(d);
+        } catch {
+          return d;
+        }
+      }),
+    ),
+  ];
+}
+
 /** The Codex home a turn runs in: its account's folder (ADR 0041), else the computer's own. */
 export const codexHomeOf = (account?: { home: string }) =>
   account?.home ?? (envValue(process.env, "CODEX_HOME") || path.join(homedir(), ".codex"));
@@ -1010,7 +1038,9 @@ async function runCodexExec(input: CodexTurnInput, opts: CodexTurnOptions): Prom
     profile: input.profile ?? "work",
     ...(input.chat ? { chat: true } : {}),
     ...(windows ? { windows } : {}),
-    ...(input.readsOnlyInFolders && bin ? { readsOnlyInFolders: true, readable: [path.dirname(bin)] } : {}),
+    ...(input.readsOnlyInFolders && bin
+      ? { readsOnlyInFolders: true, readable: [path.dirname(bin), ...codexToolchainDirs(homedir(), platform)] }
+      : {}),
   });
   const base: NodeJS.ProcessEnv = {
     ...withoutContainers(input.chat ? withoutSignIns(process.env) : process.env),

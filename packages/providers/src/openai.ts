@@ -8,6 +8,13 @@ import type {
 } from "openai/resources/responses/responses";
 import { MODEL_CATALOG } from "./catalog";
 import {
+  annotateProviderFailure,
+  providerBillingFailure,
+  safeProviderRequestId,
+  safeProviderResponseId,
+  withoutBillingRetries,
+} from "./errors";
+import {
   type ContentBlock,
   deniedError,
   laidOut,
@@ -44,15 +51,30 @@ import {
 export function createOpenAIProvider(
   options: { baseURL?: string; maxRetries?: number /** Tests only: scripted transport. */; fetch?: typeof fetch } = {},
 ): ModelProvider {
-  const client = (apiKey: string, organization?: string, project?: string) =>
-    new OpenAI({
+  const client = (
+    apiKey: string,
+    organization?: string,
+    project?: string,
+    noTransportRetries = false,
+    receipt?: { requestId?: string },
+  ) => {
+    const officialBaseURL = "https://api.openai.com/v1";
+    if (noTransportRetries && options.baseURL !== undefined && options.baseURL !== officialBaseURL)
+      throw new ProviderError("grant route requires the official OpenAI endpoint", false);
+    return new OpenAI({
       apiKey,
-      baseURL: options.baseURL,
-      maxRetries: options.maxRetries ?? 2,
-      fetch: options.fetch,
+      // An absent SDK baseURL inherits OPENAI_BASE_URL; grant admission proves only this official route.
+      baseURL: noTransportRetries ? officialBaseURL : options.baseURL,
+      maxRetries: noTransportRetries ? 0 : (options.maxRetries ?? 2),
+      fetch: withoutBillingRetries((async (input: string | URL | Request, init?: RequestInit) => {
+        const response = await (options.fetch ?? globalThis.fetch)(input, init);
+        if (receipt) receipt.requestId = safeProviderRequestId(response.headers.get("x-request-id"));
+        return response;
+      }) as typeof fetch),
       organization: organization ?? null,
       project: project ?? null,
     });
+  };
 
   return {
     id: "openai",
@@ -65,15 +87,20 @@ export function createOpenAIProvider(
         outputTokens: null,
         outputChars: 0,
       };
+      let accepted = false;
+      let finalUsage = false;
+      const receipt: { requestId?: string } = {};
       const info = MODEL_CATALOG[request.model];
       const effort = request.effort === "none" && info?.leastThinking !== "off" ? "low" : request.effort;
       try {
-        const stream = client(apiKey, organization, project).responses.stream(
+        const stream = client(apiKey, organization, project, request.noTransportRetries, receipt).responses.stream(
           {
             model: request.model,
             instructions: systemText(request.system),
             input: toInput(request.messages),
             max_output_tokens: request.maxTokens,
+            // Project auto/priority settings must not change the standard catalog ceiling.
+            ...(request.noTransportRetries ? { service_tier: "default" as const } : {}),
             store: false,
             include: ["reasoning.encrypted_content"],
             ...(request.tools && request.tools.length > 0 ? { tools: toTools(request) } : {}),
@@ -94,6 +121,16 @@ export function createOpenAIProvider(
           { signal: request.signal },
         );
         stream.on("event", (event: ResponseStreamEvent) => {
+          if (event.type === "response.completed" || event.type === "response.incomplete") {
+            accepted = true;
+            finalUsage = verifiedOpenAIUsage(event.response.usage);
+          }
+          if (
+            event.type === "response.created" ||
+            event.type === "response.in_progress" ||
+            event.type.startsWith("response.output_")
+          )
+            accepted = true;
           if (event.type === "response.output_text.delta") {
             partial.outputChars += event.delta.length;
             onDelta(event.delta);
@@ -106,14 +143,49 @@ export function createOpenAIProvider(
         if (response.status === "failed") {
           throw new OpenAI.APIError(undefined, response.error ?? undefined, response.error?.message, undefined);
         }
-        return fromResponse(response as unknown as Response);
+        const result = fromResponse(response as unknown as Response);
+        if (
+          request.noTransportRetries &&
+          (!finalUsage || response.model !== request.model || response.service_tier !== "default")
+        )
+          throw new ProviderError(
+            "grant response lacks verified final usage, reserved model or standard pricing tier",
+            false,
+            undefined,
+            partial,
+          );
+        return {
+          ...result,
+          ...(finalUsage ? { usageVerified: true as const } : {}),
+          ...(receipt.requestId ? { providerRequestId: receipt.requestId } : {}),
+          ...(safeProviderResponseId(response.id) ? { providerResponseId: safeProviderResponseId(response.id) } : {}),
+        };
       } catch (error) {
         const mapped = openAIError(error);
-        if (partial.outputChars > 0) mapped.partial = partial;
+        if (accepted || partial.outputChars > 0) mapped.partial = partial;
         throw mapped;
       }
     },
   };
+}
+
+function verifiedOpenAIUsage(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const u = value as {
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+    input_tokens_details?: { cached_tokens?: unknown; cache_write_tokens?: unknown };
+  };
+  const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  const cached = u.input_tokens_details?.cached_tokens ?? 0,
+    written = u.input_tokens_details?.cache_write_tokens ?? 0;
+  return (
+    count(u.input_tokens) &&
+    count(u.output_tokens) &&
+    count(cached) &&
+    count(written) &&
+    cached + written <= u.input_tokens
+  );
 }
 
 function toTools(request: ModelRequest): FunctionTool[] {
@@ -248,15 +320,25 @@ export function saidIn(error: InstanceType<typeof OpenAI.APIError>) {
  * credit is a 429 on OpenAI: it never passes by waiting.
  */
 export function openAIError(error: unknown): ProviderError {
+  return annotateProviderFailure(mappedOpenAIError(error), error);
+}
+
+function mappedOpenAIError(error: unknown): ProviderError {
   if (error instanceof ProviderError) return error;
   if (error instanceof OpenAI.APIError) {
-    if (error.code === "insufficient_quota") {
+    const billing = providerBillingFailure(error);
+    if (billing === "billing_blocked") {
       const said = saidIn(error);
-      const why = `no prepaid credit left at the provider (429 insufficient_quota)${said ? `: ${said}` : ""}`;
+      return new ProviderError("provider spending limit reached", false, error.status ?? 429, undefined, said);
+    }
+    if (billing === "exhausted") {
+      const said = saidIn(error);
+      const why = `no prepaid credit left at the provider (429 ${error.code === "credit_balance_exhausted" ? error.code : "insufficient_quota"})${said ? `: ${said}` : ""}`;
       return new ProviderError(why, false, error.status ?? 429, undefined, said);
     }
     if (error.status === undefined) {
-      if (error.code === "rate_limit_exceeded") return new ProviderError("rate limited by provider", true, 429);
+      if (error.code === "rate_limit_exceeded" || error.code === "slow_down")
+        return new ProviderError("rate limited by provider", true, 429);
       if (error.code === "invalid_api_key") return new ProviderError("invalid provider API key", false, 401);
       if (error.code === "server_error") return new ProviderError("provider error", true);
     }

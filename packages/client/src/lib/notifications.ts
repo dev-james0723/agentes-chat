@@ -435,7 +435,8 @@ export function openTarget(n: AppNotification): OpenTarget | null {
         ? { to: "/org/$orgId/routines", search: { open: s.routineId } }
         : null;
   // The month's Composio calls are counted in Uso.
-  if (n.kind === "composio_limit") return { to: "/org/$orgId/settings/$section", params: { section: "usage" } };
+  if (n.kind === "composio_limit" || n.kind === "credit_continuity")
+    return { to: "/org/$orgId/settings/$section", params: { section: "usage" } };
   // A person's limit (ADR 0141): who decides opens that person's month in Uso › Pessoas; the person, Seu uso.
   if (n.kind === "usage_limit") {
     const theirs = n.latest.statusTo === "reached" || n.latest.statusTo === "request";

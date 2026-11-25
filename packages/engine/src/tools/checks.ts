@@ -1,4 +1,5 @@
 import { checkGithubCall } from "../git/repos";
+import { ownerEpochCheck } from "../owner-epoch";
 import type { CallCheck, ToolContext, ToolDefinition } from "./types";
 
 type ScopedCheck = (input: Record<string, unknown>, ctx: ToolContext) => Promise<CallCheck>;
@@ -15,6 +16,8 @@ const SCOPE_CHECKS: Record<string, ScopedCheck> = {
     if (r.ok) return { ok: true, ...(r.repo ? { data: { repo: r.repo } } : {}) };
     return { ok: false, message: r.message, data: r.repo ? { deniedRepo: r.repo, refusal: "repo" } : {} };
   },
+  // Our tasks: a run writes the task it is tied to only at the owner epoch it started under (ADR 0202).
+  "issues:write": ownerEpochCheck,
 };
 
 /**

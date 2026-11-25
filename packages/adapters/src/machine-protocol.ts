@@ -1846,8 +1846,8 @@ export interface TaskStart {
    */
   account?: string;
   /**
-   * `claude` on a coding plan's key: the model the agent thinks with there, as `BrainTurnRequest.model` (a runner
-   * that doesn't read it runs the plan's `sonnet`).
+   * With `executors.taskModels`, the explicit model for native Claude Code and Codex tasks, including resumes.
+   * Older runners only apply this to Claude coding-plan keys (otherwise the CLI's default runs).
    */
   model?: string;
 }
@@ -2386,6 +2386,8 @@ export interface RunnerInfo {
     opencode?: RunnerExecutorInfo;
     grok?: RunnerExecutorInfo;
     antigravity?: RunnerExecutorInfo;
+    /** This runner enforces TaskStart.model for native Claude/Codex tasks, including resumed sessions. */
+    taskModels?: true;
   };
   /** Protocol 9: whether the owner paused this computer. */
   paused?: RunnerPause;
@@ -3356,9 +3358,10 @@ export function parseCursorModels(v: unknown): CursorModelInfo[] {
   return out;
 }
 
-/** `hello.executors`: only `claude`, `codex`, `cursor`, `opencode`, `grok` and `antigravity`, each with a short version line (and Claude Code's login). */
+/** `hello.executors`: supported CLIs and explicit runner capabilities; missing flags are not inferred from version. */
 export function parseExecutors(v: Record<string, unknown>): NonNullable<RunnerInfo["executors"]> {
   const out: NonNullable<RunnerInfo["executors"]> = {};
+  if (v.taskModels === true) out.taskModels = true;
   const word = (x: unknown) => (isString(x) && /^[\w.-]{1,40}$/.test(x) ? x : undefined);
   for (const name of ["claude", "codex", "cursor", "opencode", "grok", "antigravity"] as const) {
     const e = v[name];

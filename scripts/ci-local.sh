@@ -46,7 +46,7 @@ step "typecheck" "bun run typecheck"
 step "build web and server" "bun run build"
 # A drift check that finds a difference leaves the generated files behind; they are removed so the tree stays as it was.
 step "migrations up to date with the schema" \
-  "bun run db:generate ci-drift-check < /dev/null; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
+  "bun run db:generate ci-drift-check < /dev/null || exit $?; s=\$(git status --porcelain -- packages/db/migrations); echo \"\$s\"; if [ -n \"\$s\" ]; then git checkout -- packages/db/migrations; git clean -fdq -- packages/db/migrations; exit 1; fi"
 step "migrations keep the running version working" "bun test scripts/check-migrations.test.ts && bun run check:migrations"
 step "deploy and backup scripts" "bun test ./deploy/deploy.test.ts"
 step "test backend 1/3" "bun test packages/engine/test/[a-m]*.test.ts"

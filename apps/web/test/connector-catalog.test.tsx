@@ -64,6 +64,26 @@ const withSoonAsana = (state: FakeState) => {
   api.connectors.catalog = async () => ({ ...CATALOG, connectors: [asana, ...CATALOG.connectors] });
   return api;
 };
+/** OAuth-only catalog service, unavailable until this server has its Google application. */
+const colabDefinition = (configured: boolean): ConnectorDef => {
+  const github = CATALOG.connectors.find((d) => d.id === "github");
+  if (!github) throw new Error("missing catalog fixture");
+  return {
+    ...github,
+    id: "colab",
+    label: "Google Colab",
+    description: "Run Python and GPU jobs in Google Colab runtimes.",
+    category: "data",
+    serverUrl: "https://colaboratory.googleapis.com/mcp",
+    auth: ["oauth"],
+    oauthConfigured: configured,
+    available: configured,
+    soon: false,
+    iconUrl: "/connectors/plug.svg",
+    brandColor: null,
+    scopes: [],
+  };
+};
 /** As the server leaves a first connection: every agent's, whole. */
 const everyAgent = (api: ReturnType<typeof createFakeApi>, connectionId: string) =>
   (api.access as typeof api.access & { connected: (id: string, agents: string[]) => void }).connected(connectionId, [
@@ -380,6 +400,48 @@ describe("Adicionar conector: one catalog", () => {
       "Entre numa conta que ainda não está conectada, a gente não consegue conferir.",
     );
     expect(flow().textContent).not.toContain("sem agentes");
+  });
+
+  test("an OAuth-only catalog service stays visible and explains required server setup", async () => {
+    const state = seedState({ connections: [] });
+    const api = createFakeApi(state);
+    const colab = colabDefinition(false);
+    api.connectors.catalog = async () => ({ ...CATALOG, connectors: [...CATALOG.connectors, colab] });
+    expect(authKind(colab)).toBe("oauthSetup");
+    const { dialog } = await open(state, api);
+    const tile = within(dialog).getByRole("button", { name: "Google Colab, falta configurar" });
+    expect(tile.hasAttribute("disabled")).toBe(false);
+    expect(tile.querySelector(".ac-chip")?.textContent).toBe("Falta configurar");
+    expect(tile.querySelector(".connector-icon__mark")?.getAttribute("style")).toContain("/connectors/plug.svg");
+    await click(tile);
+    const detail = service("Google Colab");
+    expect(detail.textContent).toContain("O login deste app ainda não foi configurado.");
+    expect(within(detail).getByRole("button", { name: "Falta configurar" }).hasAttribute("disabled")).toBe(true);
+    expect(within(detail).queryByRole("button", { name: "Conectar Google Colab" })).toBeNull();
+    expect(detail.textContent).not.toMatch(/chave de API|Em breve/);
+    expect(state.calls.filter((c) => /connectors\.(connect|startOAuth)/i.test(c.method))).toHaveLength(0);
+  });
+
+  test("a configured OAuth-only service describes sign-in and offers no API-key flow", async () => {
+    const state = seedState({ connections: [] });
+    const api = createFakeApi(state);
+    const colab = colabDefinition(true);
+    api.connectors.catalog = async () => ({ ...CATALOG, connectors: [...CATALOG.connectors, colab] });
+    expect(authKind(colab)).toBe("oneClick");
+    const { dialog } = await open(state, api);
+    const tile = within(dialog).getByRole("button", { name: "Google Colab" });
+    expect(tile.querySelector(".ac-chip")).toBeNull();
+    await click(tile);
+    const detail = service("Google Colab");
+    expect(detail.textContent).toContain("Um clique: você autoriza na página do serviço");
+    expect(detail.textContent).not.toMatch(/chave de API|Falta configurar/);
+    await click(within(detail).getByRole("button", { name: "Conectar Google Colab" }));
+    const flow = screen().getByRole("dialog", { name: "Conectar Google Colab" });
+    expect(within(flow).getByRole("button", { name: "Continuar no Google Colab" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+    expect(within(flow).queryByLabelText("Chave de API")).toBeNull();
+    expect(within(flow).queryByRole("button", { name: "Conectar com a chave" })).toBeNull();
   });
 
   test("rules: how it connects, search", () => {

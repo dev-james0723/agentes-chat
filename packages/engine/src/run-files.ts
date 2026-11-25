@@ -1,7 +1,8 @@
 import { and, type Database, type Executor, eq, gte, inArray, isNull, lte, or, schema, sql } from "@agenteschat/db";
 import { refusalData, ValidationError } from "./errors";
+import { missionOfRun } from "./mission-context";
 import { enqueue } from "./outbox";
-import type { ToolDefinition } from "./tools/types";
+import type { ToolContext, ToolDefinition } from "./tools/types";
 
 /**
  * The files agents make, and what to keep once the work ends (ADR 0197).
@@ -83,7 +84,7 @@ export interface RunFileInput {
 /** Records (or updates, same run and path) the files a run made. All or nothing: one bad path records none. */
 export async function registerRunFiles(
   db: Database,
-  who: { orgId: string; agentId: string; runId: string },
+  who: { orgId: string; agentId: string; runId: string; machineId?: string | null },
   files: RunFileInput[],
 ) {
   if (!Array.isArray(files) || files.length === 0) throw new ValidationError("List at least one file.");
@@ -95,7 +96,19 @@ export async function registerRunFiles(
     const size = Number.isSafeInteger(f.size) && (f.size as number) >= 0 ? (f.size as number) : null;
     const sha256 = typeof f.sha256 === "string" && /^[a-f0-9]{64}$/.test(f.sha256) ? f.sha256 : null;
     const note = typeof f.note === "string" && f.note.trim() ? f.note.trim().slice(0, 300) : null;
-    return { orgId: who.orgId, agentId: who.agentId, runId: who.runId, path, role, kind, size, sha256, note };
+    const machineId = who.machineId ?? null;
+    return {
+      orgId: who.orgId,
+      agentId: who.agentId,
+      runId: who.runId,
+      machineId,
+      path,
+      role,
+      kind,
+      size,
+      sha256,
+      note,
+    };
   });
   const byPath = new Map(rows.map((r) => [r.path, r]));
   return db
@@ -106,9 +119,11 @@ export async function registerRunFiles(
       set: {
         role: sql`excluded.role`,
         kind: sql`excluded.kind`,
-        size: sql`excluded.size`,
-        sha256: sql`excluded.sha256`,
-        note: sql`excluded.note`,
+        // What the capture tools measured stays when the agent names the file again without it (ADR 0201).
+        size: sql`coalesce(excluded.size, ${runFiles.size})`,
+        sha256: sql`coalesce(excluded.sha256, ${runFiles.sha256})`,
+        note: sql`coalesce(excluded.note, ${runFiles.note})`,
+        machineId: sql`coalesce(excluded.machine_id, ${runFiles.machineId})`,
         updatedAt: new Date(),
       },
     })
@@ -119,11 +134,15 @@ export async function registerRunFiles(
  * The tool, offered by the computer's tool source only where the agent has a computer (ADR 0197): an agent that
  * only chats makes no files there to register.
  */
-export function registerFilesTool(db: Database): ToolDefinition {
+export function registerFilesTool(
+  db: Database,
+  /** The computer the files are on, as the other computer tools pick it (`computer` names another device). */
+  computerOf?: (ctx: ToolContext, computer: string | undefined) => Promise<string>,
+): ToolDefinition {
   return {
     name: "register_files",
     description:
-      "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept.",
+      "Note the files you made on your computer for this work and what each is for: canonical (the deliverable), evidence (proof a check passed: a screenshot, a test log), scratch (temporary), derived (output that can be made again, like a build) or unknown. One entry per file, its path relative to your workspace. When the task ends this feeds a report of what to keep; it never deletes anything, and a file you don't register is always kept. Files you made on another device: name it in `computer`, one call per device.",
     // The computer's scope, written out: importing it would tie this module to the computer's whole graph.
     scope: "sandbox:run",
     inputSchema: {
@@ -147,6 +166,12 @@ export function registerFilesTool(db: Database): ToolDefinition {
             additionalProperties: false,
           },
         },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "The device the files are on, by its name as computer_status lists it. Leave it out for your own computer.",
+        },
       },
       required: ["files"],
       additionalProperties: false,
@@ -155,9 +180,11 @@ export function registerFilesTool(db: Database): ToolDefinition {
       // A mission task's bridge call has no run of its own to file these under.
       if (!ctx.runId) return refused(new ValidationError("Files are registered from a run. This call has none."));
       try {
+        const named = typeof input.computer === "string" && input.computer.trim() ? input.computer.trim() : undefined;
+        const machineId = computerOf ? await computerOf(ctx, named) : named ? null : await machineOfRun(db, ctx);
         const rows = await registerRunFiles(
           db,
-          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId },
+          { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId, machineId },
           input.files as RunFileInput[],
         );
         const counts = new Map<string, number>();
@@ -172,6 +199,62 @@ export function registerFilesTool(db: Database): ToolDefinition {
       }
     },
   };
+}
+
+/**
+ * The computer a run works on, as `withSandbox` picks it: a mission's thread runs on the mission's computer, other
+ * work on the agent's own. A cleanup later goes to that computer and no other (ADR 0201).
+ */
+export async function machineOfRun(
+  db: Database,
+  ctx: Pick<ToolContext, "orgId" | "agentId" | "threadRootId">,
+): Promise<string | null> {
+  const mission = await missionOfRun({ ...ctx, db });
+  if (mission) return mission.machineId ?? null;
+  const [agent] = await db
+    .select({ machineId: schema.agents.machineId })
+    .from(schema.agents)
+    .where(and(eq(schema.agents.orgId, ctx.orgId), eq(schema.agents.id, ctx.agentId)));
+  return agent?.machineId ?? null;
+}
+
+/**
+ * A screenshot or recording a tool just saved, registered for the run on its own (ADR 0201): role `unknown` (kept)
+ * until the agent says what it is for, with the size and hash the tool knows. `captured_by` marks it as a capture
+ * (the agent naming the file again keeps the mark), so a run's captures count against its budget.
+ */
+export async function recordCapture(
+  db: Database,
+  ctx: Pick<ToolContext, "orgId" | "agentId" | "runId">,
+  machineId: string | null,
+  file: { path: string; kind: "image" | "video"; tool: string; size?: number; sha256?: string },
+) {
+  if (!ctx.runId) return;
+  const path = cleanRunPath(file.path);
+  await db
+    .insert(runFiles)
+    .values({
+      orgId: ctx.orgId,
+      agentId: ctx.agentId,
+      runId: ctx.runId,
+      machineId,
+      path,
+      kind: file.kind,
+      role: "unknown",
+      size: file.size ?? null,
+      sha256: file.sha256 ?? null,
+      capturedBy: file.tool,
+    })
+    .onConflictDoUpdate({
+      target: [runFiles.runId, runFiles.path],
+      // A new capture over the same path: its bytes now, its tool; a measure it lacks keeps the one before.
+      set: {
+        size: sql`coalesce(excluded.size, ${runFiles.size})`,
+        sha256: sql`coalesce(excluded.sha256, ${runFiles.sha256})`,
+        capturedBy: sql`excluded.captured_by`,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 /** A refusal the bridge knows as one (a bad path is fixed and sent again, never an effect left in doubt). */
@@ -189,6 +272,52 @@ export interface RetentionItem {
   runId: string | null;
   decision: RetentionDecision;
   why: string;
+  /** Known only when a tool or the agent measured it, or for a Drive file (ADR 0201). */
+  sha256?: string | null;
+  /** The agent that made it, for a file on its computer: a cleanup runs as that agent, on that computer. */
+  agentId?: string | null;
+  machineId?: string | null;
+  /** The first file with the same bytes (same SHA-256): a hint for review, never a reason to delete (ADR 0201). */
+  sameAs?: string;
+}
+
+/**
+ * The evidence snapshot of an ended task (ADR 0201): its deliverables and evidence, each with its hash and whether
+ * it can actually be restored. A Drive file can: its bytes are kept with their SHA-256 and `import_file` brings them
+ * back, checked. A file only on the computer cannot: the manifest names it, it is not a backup.
+ */
+export interface EvidenceSnapshot {
+  items: { where: "drive" | "computer"; path: string; role: string; sha256: string | null; restorable: boolean }[];
+  restorable: number;
+  manifestOnly: number;
+}
+
+export function evidenceSnapshot(items: RetentionItem[]): EvidenceSnapshot {
+  const kept = items.filter((i) => i.where === "drive" || i.role === "canonical" || i.role === "evidence");
+  const out = kept.map((i) => ({
+    where: i.where,
+    path: i.path,
+    role: i.role,
+    sha256: i.sha256 ?? null,
+    restorable: i.where === "drive" && Boolean(i.sha256),
+  }));
+  const restorable = out.filter((i) => i.restorable).length;
+  return { items: out, restorable, manifestOnly: out.length - restorable };
+}
+
+/** Marks files whose bytes match an earlier one (exact SHA-256 only; looking alike is not the same). */
+export function markDuplicates(items: RetentionItem[]): number {
+  const first = new Map<string, string>();
+  let n = 0;
+  for (const i of items) {
+    if (!i.sha256) continue;
+    const seen = first.get(i.sha256);
+    if (seen) {
+      i.sameAs = seen;
+      n++;
+    } else first.set(i.sha256, `${i.where}:${i.path}`);
+  }
+  return n;
 }
 
 /**
@@ -296,6 +425,7 @@ export async function buildRetentionReport(db: Database, orgId: string, subject:
         title: artifacts.title,
         fileName: artifactVersions.fileName,
         size: artifactVersions.size,
+        sha256: artifactVersions.sha256,
       })
       .from(artifactVersions)
       .innerJoin(artifacts, eq(artifacts.id, artifactVersions.artifactId))
@@ -311,7 +441,7 @@ export async function buildRetentionReport(db: Database, orgId: string, subject:
     for (const d of drive) {
       const path = d.fileName ?? d.title;
       const file = { where: "drive" as const, path, role: "canonical", kind: kindOfPath(path) };
-      items.push({ ...file, size: d.size, runId: d.runId, ...retentionDecision(file) });
+      items.push({ ...file, size: d.size, runId: d.runId, sha256: d.sha256, ...retentionDecision(file) });
     }
     const local = await db
       .select()
@@ -322,13 +452,32 @@ export async function buildRetentionReport(db: Database, orgId: string, subject:
       const file = { where: "computer" as const, path: f.path, role: f.role, kind: f.kind };
       // A path that holds other registered files is a folder after all: it stays.
       const holdsOthers = [...paths].some((p) => p !== f.path && p.startsWith(`${f.path}/`));
+      // The same file kept by another run of this work (a deliverable, evidence, unknown): it stays (ADR 0201).
+      const keptElsewhere = local.find(
+        (g) =>
+          g !== f &&
+          g.agentId === f.agentId &&
+          g.path === f.path &&
+          retentionDecision({ where: "computer", path: g.path, role: g.role, kind: g.kind }).decision === "keep",
+      );
       const decided = holdsOthers
         ? { decision: "keep" as const, why: "A folder holding other registered files." }
-        : retentionDecision(file);
-      items.push({ ...file, size: f.size, runId: f.runId, ...decided });
+        : keptElsewhere
+          ? { decision: "keep" as const, why: `Another run of this work registered it as ${keptElsewhere.role}.` }
+          : retentionDecision(file);
+      items.push({
+        ...file,
+        size: f.size,
+        runId: f.runId,
+        sha256: f.sha256,
+        agentId: f.agentId,
+        machineId: f.machineId,
+        ...decided,
+      });
     }
   }
   const candidates = items.filter((i) => i.decision === "candidate");
+  const duplicates = markDuplicates(items);
   return {
     dryRun: true,
     subject,
@@ -337,7 +486,9 @@ export async function buildRetentionReport(db: Database, orgId: string, subject:
     kept: items.length - candidates.length,
     candidates: candidates.length,
     candidateBytes: candidates.reduce((n, i) => n + (i.size ?? 0), 0),
-    note: "Nothing was deleted. Files no agent registered are not listed and stay where they are.",
+    duplicates,
+    snapshot: evidenceSnapshot(items),
+    note: "Nothing was deleted. Files no agent registered are not listed and stay where they are. A person approves each cleanup, file by file.",
     items,
   };
 }

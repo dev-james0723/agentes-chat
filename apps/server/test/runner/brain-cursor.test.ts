@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { MachineRequest } from "@agenteschat/adapters";
 import { accountCodeAad, CURSOR_KEY_PROVIDER } from "@agenteschat/adapters/machine-protocol";
@@ -439,6 +439,49 @@ test.skipIf(!posix)(
     });
   },
   20_000,
+);
+
+test.skipIf(!posix)(
+  "the folder allow-list in force: Cursor, OpenCode and Antigravity work turns are refused before they start (ADR 0205)",
+  async () => {
+    const root = tempDir("brain-cursor-");
+    dirs.push(root);
+    const { ctx } = turnContext(root);
+    const log = path.join(root, "cursor.log");
+    process.env.FAKE_CURSOR_LOG = log;
+    const enforced = { ...ctx, readsOnlyInFolders: true };
+    const scope = { signal: new AbortController().signal, output: () => {}, emit: () => {} };
+    for (const kind of ["cursor", "opencode", "antigravity"]) {
+      for (const mode of ["work", "plan"]) {
+        await expect(
+          handleRequest(enforced as never, turn({ kind, permissions: { mode } }), scope as never),
+        ).rejects.toMatchObject({ code: "not_allowed", message: expect.stringContaining("folders") });
+      }
+    }
+    // Nothing started: the CLI never ran.
+    expect(existsSync(log)).toBe(false);
+  },
+);
+
+test.skipIf(!posix)(
+  "ADR 0205: with the allow-list unset (the default), Cursor, OpenCode and Antigravity turns are not refused",
+  async () => {
+    const root = tempDir("brain-cursor-");
+    dirs.push(root);
+    const { ctx } = turnContext(root);
+    process.env.FAKE_CURSOR_LOG = path.join(root, "cursor.log");
+    const scope = { signal: new AbortController().signal, output: () => {}, emit: () => {} };
+    for (const kind of ["cursor", "opencode", "antigravity"]) {
+      const out = handleRequest(
+        ctx as never,
+        turn({ kind, runId: `${RUN.slice(0, -1)}${kind.length}` }),
+        scope as never,
+      );
+      // Whatever the CLI then does, the allow-list never stops it.
+      await out.catch((err: { code?: string }) => expect(err.code).not.toBe("not_allowed"));
+    }
+  },
+  30_000,
 );
 
 test.skipIf(!posix)("Cursor turned off on the computer refuses the turn", async () => {

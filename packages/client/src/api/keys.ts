@@ -102,6 +102,7 @@ export const keys = {
   audit: (orgId: string, query: object) => ["org", orgId, "audit", query] as const,
   /** The usage views; an agent's sits under it, so one invalidation refreshes both. */
   planUsage: (orgId: string) => ["org", orgId, "plan-usage"] as const,
+  costPerSuccess: (orgId: string) => ["org", orgId, "plan-usage", "cost-per-success"] as const,
   agentPlanUsage: (orgId: string, agentId: string) => ["org", orgId, "plan-usage", "agent", agentId] as const,
   /** Uso › Pessoas and a person's month (ADR 0141); one invalidation refreshes both. */
   peopleUsage: (orgId: string, period: object = {}) => ["org", orgId, "people-usage", period] as const,
@@ -115,6 +116,7 @@ export const keys = {
   teamMemories: (orgId: string) => ["org", orgId, "team-memories"] as const,
   memory: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory"] as const,
   /** Under `memory`: invalidating an agent's memories also refreshes "O que sabe sobre você". */
+  memoryHistory: (orgId: string, id: string) => ["org", orgId, "memory-history", id] as const,
   memoryAboutMe: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "memory", "me"] as const,
   agentForYou: (orgId: string, agentId: string) => ["org", orgId, "agent", agentId, "for-you"] as const,
   proposals: (orgId: string) => ["org", orgId, "proposals"] as const,
@@ -123,6 +125,7 @@ export const keys = {
   dms: (orgId: string) => ["org", orgId, "dms"] as const,
   dmReads: (orgId: string, channelId: string) => ["org", orgId, "dmReads", channelId] as const,
   storage: (orgId: string) => ["org", orgId, "storage"] as const,
+  cleanWorkspace: (orgId: string) => ["org", orgId, "clean-workspace"] as const,
   artifacts: (orgId: string) => ["org", orgId, "artifacts"] as const,
   sandbox: (orgId: string) => ["org", orgId, "sandbox"] as const,
   sandboxSettings: (orgId: string) => ["org", orgId, "sandbox", "settings"] as const,
@@ -172,6 +175,7 @@ export const keys = {
   issueList: (orgId: string, q: string, project = "") => ["org", orgId, "issues", "list", q, project] as const,
   issue: (orgId: string, number: number) => ["org", orgId, "issues", "one", number] as const,
   issueActivity: (orgId: string, id: string) => ["org", orgId, "issues", "activity", id] as const,
+  issueFounderStatus: (orgId: string, id: string) => ["org", orgId, "issues", "founder-status", id] as const,
   issueColumns: (orgId: string) => ["org", orgId, "issues", "columns"] as const,
   issueProjects: (orgId: string) => ["org", orgId, "issues", "projects"] as const,
   /** Every thread view and list (prefix): a `thread.updated` refreshes them all. */

@@ -7,6 +7,7 @@ import { ARTIFACT_LIMITS, type ArtifactDeps, createFileArtifact, fileReach } fro
 import { recordAudit } from "../audit";
 import { connectorKeyOf } from "../connector-usage";
 import { cutText } from "../format";
+import { mergeDetailsOf } from "../founder-status";
 import { type GitHubAppAccess, githubCallAuth, githubListingHeaders } from "../git/github-call";
 import { githubItemOfCall, recordGitHubItem } from "../git/github-events";
 import { creditedMessage, runCoAuthors, signatureLine, signedBody } from "../git/signature";
@@ -17,6 +18,7 @@ import { MAX_RESULT_CHARS } from "../tools/gateway";
 import type { ToolContext, ToolDefinition, ToolSource } from "../tools/types";
 import { CONNECTOR_CATALOG, type ConnectorTool, connectorScope, fillTitle } from "./catalog";
 import { sqlArgOf } from "./classify";
+import { colabCallTimeoutMs, colabToolGuidance } from "./colab";
 import { composioFailure, composioServiceOf } from "./composio";
 import {
   activeConnections,
@@ -88,7 +90,7 @@ const NO_OUTPUT_VALIDATION: jsonSchemaValidator = {
 };
 
 /** Wraps an official MCP SDK client over any transport. */
-export async function mcpSessionOver(transport: Transport): Promise<McpSession> {
+export async function mcpSessionOver(transport: Transport, serverUrl?: string): Promise<McpSession> {
   const client = new Client({ name: "agentes.chat", version: "1" }, { jsonSchemaValidator: NO_OUTPUT_VALIDATION });
   await client.connect(transport);
   return {
@@ -112,7 +114,9 @@ export async function mcpSessionOver(transport: Transport): Promise<McpSession> 
       return tools;
     },
     async callTool(name, args) {
-      const res = (await client.callTool({ name, arguments: args })) as {
+      const timeout = colabCallTimeoutMs(serverUrl, name);
+      // One dispatch only: a Colab timeout can leave code running; the caller must reattach with the same UUID.
+      const res = (await client.callTool({ name, arguments: args }, undefined, timeout ? { timeout } : undefined)) as {
         content?: { type: string; text?: string; resource?: { text?: unknown } }[];
         isError?: boolean;
         structuredContent?: unknown;
@@ -153,6 +157,7 @@ export const connectOverHttp: McpConnect = (connection, headers) => {
       requestInit: { headers },
       fetch: tolerantMcpFetch(http),
     }),
+    connection.serverUrl,
   );
 };
 
@@ -481,7 +486,10 @@ export function createConnectorToolSource(
           if (!mapped || mapped.ours) continue; // not in our catalog, or one we serve: never exposed
           out.push({
             name: exposedToolName(prefix, tool.name),
-            description: cutText(`[${connection.label}] ${tool.description ?? tool.name}`, 1024),
+            description: cutText(
+              `[${connection.label}] ${def.id === "colab" ? `${colabToolGuidance(tool.name)} ` : ""}${tool.description ?? tool.name}`,
+              1024,
+            ),
             inputSchema: tool.inputSchema?.type === "object" ? tool.inputSchema : { type: "object" },
             scope: connectorScope(def.id, mapped.scope),
             connectionId: connection.id,
@@ -531,6 +539,8 @@ export function createConnectorToolSource(
                         kind: mapped.onSuccess.kind,
                         subject: fillTitle(mapped.onSuccess.subject, input),
                         summary: `${def.label} ${tool.name}`,
+                        // The merge commit GitHub answered with: what a task's status matches deploys against (ADR 0204).
+                        ...mergeDetailsOf(mapped.onSuccess.kind, result.content),
                       },
                     }
                   : {}),

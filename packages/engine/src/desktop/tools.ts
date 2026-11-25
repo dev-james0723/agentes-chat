@@ -15,6 +15,7 @@ import { ToolOffError } from "../errors";
 import type { Judge } from "../judge";
 import { callWhenBack, type MachineCaller, MachineRequestError } from "../machine-hub";
 import { MachineOfflineError, MachinePausedError } from "../machines";
+import { recordCapture } from "../run-files";
 import { getSandboxSettings, SANDBOX_SCOPE } from "../sandbox";
 import {
   actsBeforeOpening,
@@ -32,6 +33,7 @@ import {
   screenStepOf,
   type TargetCache,
 } from "../screen";
+import { captureGate } from "../storage-pressure";
 import type { JsonSchema } from "../tools/json-schema";
 import { accessWithNeeds, grantedScopeKeys, isAllowed, toolAccess } from "../tools/scopes";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolSource } from "../tools/types";
@@ -539,11 +541,23 @@ export function createDesktopToolSource(deps: DesktopToolDeps): ToolSource {
         const path = /\.jpe?g$/i.test(chosen) ? chosen : `${chosen.replace(/\.[^./]*$/, "")}.jpg`;
         const linked = await linkFor(ctx);
         if (!linked.ok) return { content: linked.text, isError: true };
+        // A nearly full disk or a spent budget refuses it before anything is written (ADR 0201).
+        const gate = await captureGate(ctx.db, ctx, linked.machineId, "screenshot");
+        if ("refused" in gate) return { content: gate.refused, isError: true };
         try {
           const shot = await linked.link.capture();
           await linked.write(path, shot.data);
+          // The bytes passed through here, so the hash is exact: the report can tell identical screenshots apart.
+          const bytes = Buffer.from(shot.data, "base64");
+          await recordCapture(ctx.db, ctx, linked.machineId, {
+            path,
+            kind: "image",
+            tool: "desktop_screenshot",
+            size: bytes.byteLength,
+            sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+          }).catch(() => undefined);
           const saved = {
-            content: `Saved ${path} in your folder: the whole screen as a JPEG (${shot.width}×${shot.height}). ${
+            content: `Saved ${path} in your folder: the whole screen as a JPEG (${shot.width}×${shot.height}).${gate.warning ? ` ${gate.warning}` : ""} ${
               // A computer brain (Claude Code, Codex) sees pictures with its own Read; read_file gives text only.
               ctx.bridge
                 ? "Open it with your own Read tool to look at it."

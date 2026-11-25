@@ -42,11 +42,13 @@ import {
   createCoAuthorToolSource,
   createConnectorToolSource,
   createContextToolSource,
+  createCreditRouteQualifier,
   createDashboardToolSource,
   createDatabaseToolSource,
   createDesktopControl,
   createDesktopToolSource,
   createDeviceToolSource,
+  createEffectReconcileToolSource,
   createFeedbackToolSource,
   createFindAgentToolSource,
   createFollowUpToolSource,
@@ -66,6 +68,8 @@ import {
   createMissionRunToolSource,
   createMissionToolSource,
   createModelGateway,
+  createModelInspector,
+  createModelInspectorToolSource,
   createNativeFoundryIntegration,
   createPassToolSource,
   createPermissionToolSource,
@@ -232,6 +236,10 @@ export function buildEngine(o: EngineOptions) {
     },
     embeddings,
     errors: o.errors,
+    // Credit routes (ADR 0200): off unless the operator turns them on, and then only for routes they registered.
+    creditRoutes: config.CREDIT_FALLBACK_ENABLED,
+    openRouterFallbackEnabled: config.OPENROUTER_FALLBACK_ENABLED,
+    globalModelRouterEnabled: config.GLOBAL_MODEL_ROUTER_ENABLED || config.OPENROUTER_FALLBACK_ENABLED,
   });
   const context: ContextDeps = {
     db,
@@ -324,6 +332,25 @@ export function buildEngine(o: EngineOptions) {
     replicaId: o.replicaId,
     readyEmail: adapters.email.delivers ? { publicUrl: config.PUBLIC_URL, gateway } : null,
     errors: o.errors,
+  });
+  // A deterministic sweep reads quota once per pool; the judge is used only for an actual routing decision.
+  const modelInspector = createModelInspector({
+    db,
+    pubsub: adapters.pubsub,
+    machines: machineHub,
+    orgIds: config.MODEL_INSPECTOR_ORG_IDS,
+    models: {
+      claude_code: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+      codex: config.QUOTA_HANDOFF_CODEX_MODEL,
+      grok: config.QUOTA_HANDOFF_GROK_MODEL,
+    },
+    targets: config.QUOTA_HANDOFF_TARGETS,
+    judge: context.judge,
+    thresholdPercent: config.MODEL_INSPECTOR_THRESHOLD_PERCENT,
+    maxAgeMs: config.MODEL_INSPECTOR_MAX_AGE_MS,
+    cooldownMs: config.MODEL_INSPECTOR_COOLDOWN_MS,
+    maxSwitches: config.MODEL_INSPECTOR_MAX_SWITCHES,
+    creditFallbackEnabled: config.CREDIT_FALLBACK_ENABLED,
   });
   const workspaceComputer =
     config.MACHINE_PROVISIONING === "external" ? { billing: Boolean(config.BILLING_URL) } : undefined;
@@ -444,6 +471,7 @@ export function buildEngine(o: EngineOptions) {
       }),
       createFindAgentToolSource({ machines: machineHub, judge: context.judge, ai: { gateway, machines: machineHub } }),
       createUsageToolSource(),
+      createModelInspectorToolSource(modelInspector),
       createSelfProfileToolSource({ listTools: (ctx) => tools.list(ctx), ai: { gateway, machines: machineHub } }),
       // What people saved for the agent in the Vault, found before it asks them (ADR 0144).
       createVaultToolSource(vault),
@@ -476,6 +504,8 @@ export function buildEngine(o: EngineOptions) {
         tools: () => tools,
         gif: createAgentGifPoster(adapters.gifs),
       }),
+      // A held task's unknown outcome, settled by the lead agent it was routed to (ADR 0203 §6): listed only to it.
+      createEffectReconcileToolSource(),
       // Runs nobody called by name may stay quiet (reply-policy.ts): listed only for them.
       createPassToolSource(),
       createArtifactToolSource(artifacts),
@@ -833,19 +863,31 @@ export function buildEngine(o: EngineOptions) {
     maxToolTurns: config.AGENT_MAX_TOOL_TURNS,
     quotaReservePercent: config.QUOTA_RESERVE_PERCENT,
     quotaReserveMaxAgeMs: config.QUOTA_RESERVE_MAX_AGE_MS,
-    // Owner policy 2026-11-14: a plan at its limit continues on the least used qualified subscription route.
-    ...(config.QUOTA_HANDOFF_ENABLED
+    ...(config.CREDIT_FALLBACK_ENABLED ? { creditRoute: createCreditRouteQualifier(db) } : {}),
+    openRouterFallbackEnabled: config.OPENROUTER_FALLBACK_ENABLED,
+    globalModelRouterEnabled: config.GLOBAL_MODEL_ROUTER_ENABLED || config.OPENROUTER_FALLBACK_ENABLED,
+    modelInspector: {
+      enabled: (orgId) => modelInspector.enabled(orgId),
+      thresholdPercent: config.MODEL_INSPECTOR_THRESHOLD_PERCENT,
+      maxAgeMs: config.MODEL_INSPECTOR_MAX_AGE_MS,
+      cooldownMs: config.MODEL_INSPECTOR_COOLDOWN_MS,
+    },
+    // Global continuity keeps its existing scope. Inspector-only continuity is restricted to its opted-in workspaces.
+    ...(config.QUOTA_HANDOFF_ENABLED || config.MODEL_INSPECTOR_ORG_IDS.length
       ? {
-          quotaCliContinuation: createQuotaCliQualifier({
-            db,
-            machines: machineHub,
-            models: {
-              claude_code: config.QUOTA_HANDOFF_CLAUDE_MODEL,
-              grok: config.QUOTA_HANDOFF_GROK_MODEL,
-              codex: config.QUOTA_HANDOFF_CODEX_MODEL,
-            },
-            targets: config.QUOTA_HANDOFF_TARGETS,
-          }),
+          quotaCliContinuation: scopeQuotaContinuation(
+            config,
+            createQuotaCliQualifier({
+              db,
+              machines: machineHub,
+              models: {
+                claude_code: config.QUOTA_HANDOFF_CLAUDE_MODEL,
+                grok: config.QUOTA_HANDOFF_GROK_MODEL,
+                codex: config.QUOTA_HANDOFF_CODEX_MODEL,
+              },
+              targets: config.QUOTA_HANDOFF_TARGETS,
+            }),
+          ),
         }
       : {}),
     // A run started on a person's message reads what they add in the next seconds with it (ADR 0112).
@@ -909,6 +951,7 @@ export function buildEngine(o: EngineOptions) {
     context,
     handlers,
     foundry,
+    modelInspector,
     /** The same router as `message.posted`'s, for "Responder agora" (null: routing is off). */
     router: messageRouter(jobDeps),
     connectorDeps,
@@ -937,3 +980,18 @@ export function buildEngine(o: EngineOptions) {
 }
 
 export type Engine = ReturnType<typeof buildEngine>;
+
+/** Enabling one inspector never enables subscription continuity for unrelated workspaces. */
+export function scopeQuotaContinuation(
+  config: Pick<Config, "QUOTA_HANDOFF_ENABLED" | "MODEL_INSPECTOR_ORG_IDS">,
+  qualifier: NonNullable<JobDeps["quotaCliContinuation"]>,
+): NonNullable<JobDeps["quotaCliContinuation"]> {
+  if (config.QUOTA_HANDOFF_ENABLED) return qualifier;
+  const orgIds = new Set(config.MODEL_INSPECTOR_ORG_IDS);
+  const enabled = (orgId: string) => orgIds.has(orgId) && (qualifier.enabled?.(orgId) ?? true);
+  return {
+    ...qualifier,
+    enabled,
+    qualify: (input) => (enabled(input.orgId) ? qualifier.qualify(input) : Promise.resolve(null)),
+  };
+}

@@ -556,6 +556,8 @@ describe("mission proposed already investigated", () => {
       goal: "Mostrar o pedido de avaliação no momento certo",
       title: "Mostrar o pedido de avaliação no momento certo",
       channelId: ENG_ID,
+      // The engine posts the plan inside the mission's thread; the card acts only where it's bound to the mission.
+      threadId: "m-1",
       folder: "/Users/ada/code/loja-ios",
     });
     const get = api.missions.get;
@@ -587,7 +589,7 @@ describe("mission proposed already investigated", () => {
     state.messages.push({
       id: "m-plan",
       channelId: ENG_ID,
-      threadId: null,
+      threadId: "m-1",
       author: { type: "agent", id: ADA_ID },
       body: "",
       mentionedAgentIds: [],
@@ -603,7 +605,7 @@ describe("mission proposed already investigated", () => {
       },
       createdAt: new Date().toISOString(),
     });
-    await renderApp(`/org/${ORG_ID}/c/${ENG_ID}`, { api });
+    await renderApp(`/org/${ORG_ID}/c/${ENG_ID}?thread=m-1`, { api });
     await settle(10);
     const card = document.querySelector(".mi-plan--investigated") as HTMLElement;
     expect(card).not.toBeNull();

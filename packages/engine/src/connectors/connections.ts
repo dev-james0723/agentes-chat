@@ -280,6 +280,9 @@ export async function createApiKeyConnection(
 ) {
   await requirePermission(deps.db, actorId, orgId, "manage_connectors");
   const def = connectorDefinition(input.connector);
+  if (!def.auth.includes("api_key")) {
+    throw new ValidationError("This service connects by signing in", "connector.oauth_only");
+  }
   const serverUrl = checkServerUrl(def.serverUrl);
   const apiKey = input.apiKey?.trim();
   if (apiKey !== undefined && apiKey.length < 8) throw new ValidationError("apiKey looks too short");
@@ -779,6 +782,20 @@ export async function completeOAuth(
     {},
     def,
   );
+  if (row.connector === "colab") {
+    if (!token.refresh_token) {
+      throw new ValidationError(
+        "Google Colab did not grant offline access. Reconnect with Google and allow the Colab permission.",
+        "connector.colab_refresh_required",
+      );
+    }
+    if (typeof token.scope === "string" && !token.scope.split(/\s+/).includes(def.oauth.scopes[0] ?? "")) {
+      throw new ValidationError(
+        "Google did not grant the Colab permission. Reconnect and allow it.",
+        "connector.colab_scope_required",
+      );
+    }
+  }
   const stored = await storeConnection(deps, {
     orgId: row.orgId,
     actorId: user.id,

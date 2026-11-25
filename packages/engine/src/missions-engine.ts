@@ -1,4 +1,4 @@
-import type { PubSub } from "@agenteschat/adapters";
+import { type BrainEffort, isBrainEffort, type PubSub } from "@agenteschat/adapters";
 import { and, desc, type Executor, eq, gte, inArray, rowsOf, schema, sql } from "@agenteschat/db";
 import { publishApproval } from "./approvals";
 import type { BrainKind, BrainSession, BrainTurn, ToolResult } from "./brains/types";
@@ -8,6 +8,12 @@ import { publishChannelEvent, publishMessageCreated } from "./events";
 import type { RunIdentity } from "./executor";
 import { wakesLater } from "./follow-through";
 import { cutText } from "./format";
+import {
+  hasLiveNativeMissionTasks,
+  lockMissionTaskQueue,
+  retargetQueuedMissionChildren,
+  supportsMissionTaskModels,
+} from "./machine-tasks";
 import { insertMessage, messageView } from "./messages";
 import { MISSION_LIMITS } from "./mission-limits";
 import { enqueueRunJob } from "./mission-runs";
@@ -149,6 +155,78 @@ export function missionBrain(mission: Pick<MissionRow, "executor"> & BrainOverri
 
 /** Marks the first engine turn of a session (so later turns resume it). */
 const SESSION_EVENT = "engine_session";
+const INSPECTOR_ROUTE_EVENT = "model_inspector_route";
+
+export interface MissionInspectorRoute {
+  brain: "claude_code" | "codex" | "grok";
+  model: string;
+  accountId: string | null;
+  sessionId: string;
+  effort?: BrainEffort;
+}
+
+/**
+ * Inside the run's handoff transaction after fresh target qualification: compare the source mission and move its
+ * main route plus provably unstarted native items. Claimed, running and resumed item sessions stay pinned.
+ */
+export async function persistMissionInspectorRoute(
+  tx: Executor,
+  expected: MissionRow,
+  target: MissionInspectorRoute,
+  runId: string,
+): Promise<boolean> {
+  if (!expected.machineId) return false;
+  await lockMissionTaskQueue(tx, expected.machineId);
+  if (await hasLiveNativeMissionTasks(tx, expected.id)) {
+    if (target.brain === "grok" || !(await supportsMissionTaskModels(tx, expected.machineId))) return false;
+  }
+  const [moved] = await tx
+    .update(missions)
+    .set({
+      brain: target.brain,
+      brainModel: target.model,
+      mainSessionId: target.sessionId,
+      inbox: sql`coalesce((select jsonb_agg(case when x.value->>'sessionId' = ${expected.mainSessionId}
+      then jsonb_set(x.value, '{sessionId}', to_jsonb(${target.sessionId}::text)) else x.value end order by x.n)
+      from jsonb_array_elements(${missions.inbox}) with ordinality as x(value, n)), '[]'::jsonb)`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(missions.id, expected.id),
+        eq(missions.orgId, expected.orgId),
+        eq(missions.agentId, expected.agentId),
+        eq(missions.channelId, expected.channelId),
+        eq(missions.threadRootId, expected.threadRootId),
+        eq(missions.mainSessionId, expected.mainSessionId),
+        eq(missions.status, expected.status),
+        sql`${missions.ownerId} is not distinct from ${expected.ownerId}`,
+        sql`${missions.machineId} is not distinct from ${expected.machineId}`,
+        sql`${missions.machineLentBy} is not distinct from ${expected.machineLentBy}`,
+        sql`${missions.brain} is not distinct from ${expected.brain}`,
+        sql`${missions.brainModel} is not distinct from ${expected.brainModel}`,
+        eq(missions.executor, expected.executor),
+        eq(missions.repoDir, expected.repoDir),
+        sql`${missions.worktreePath} is not distinct from ${expected.worktreePath}`,
+        eq(missions.worktreeState, expected.worktreeState),
+      ),
+    )
+    .returning({ id: missions.id });
+  if (!moved) return false;
+  await retargetQueuedMissionChildren(tx, expected, target);
+  await recordMissionEvent(tx, expected, INSPECTOR_ROUTE_EVENT, {
+    schema: "model-inspector-mission-route/1",
+    ...target,
+    runId,
+    sourceSessionId: expected.mainSessionId,
+    machineId: expected.machineId,
+    ownerId: expected.ownerId,
+    agentId: expected.agentId,
+  });
+  // As in tellMainSession: the run that starts this session does not count as an earlier run when it resumes.
+  await recordMissionEvent(tx, expected, SESSION_EVENT, { sessionId: target.sessionId, runId });
+  return true;
+}
 
 /**
  * Whether the session already exists on the machine: an earlier engine turn
@@ -182,6 +260,45 @@ export async function missionSession(
   return { id: mission.mainSessionId, resume, machineId: mission.machineId, cwd: missionCwd(mission) };
 }
 
+/** A durable inspector route bound to this mission's current owner, machine and main session. */
+export async function missionInspectorRouteFor(
+  db: Executor,
+  mission: MissionRow,
+): Promise<MissionInspectorRoute | null> {
+  const [event] = await db
+    .select({ data: missionEvents.data })
+    .from(missionEvents)
+    .where(
+      and(
+        eq(missionEvents.orgId, mission.orgId),
+        eq(missionEvents.missionId, mission.id),
+        eq(missionEvents.kind, INSPECTOR_ROUTE_EVENT),
+        sql`${missionEvents.data}->>'sessionId' = ${mission.mainSessionId}`,
+      ),
+    )
+    .orderBy(desc(missionEvents.createdAt), desc(missionEvents.id))
+    .limit(1);
+  const route = event?.data;
+  const matched =
+    route?.schema === "model-inspector-mission-route/1" &&
+    route.brain === missionBrain(mission).brain &&
+    (route.brain === "claude_code" || route.brain === "codex" || route.brain === "grok") &&
+    typeof route.model === "string" &&
+    typeof route.sessionId === "string" &&
+    route.machineId === mission.machineId &&
+    route.ownerId === mission.ownerId &&
+    route.agentId === mission.agentId &&
+    (route.accountId === null || typeof route.accountId === "string");
+  if (!matched) return null;
+  return {
+    brain: route.brain as MissionInspectorRoute["brain"],
+    model: mission.brainModel ?? (route.model as string),
+    accountId: route.accountId as string | null,
+    sessionId: route.sessionId as string,
+    ...(isBrainEffort(route.effort) ? { effort: route.effort } : {}),
+  };
+}
+
 /**
  * The first step of `resolveBrain` (`brainFor(agent, run, mission?)`): a run of
  * the mission's agent in an open mission's home thread thinks with the
@@ -192,14 +309,34 @@ export async function missionSession(
 export async function missionTurnFor(
   db: Executor,
   run: { id?: string | null; orgId: string; agentId: string; threadRootId: string; triggerMessageId?: string },
-): Promise<{ missionId: string; brain: BrainKind; model?: string; session?: BrainSession } | null> {
+): Promise<{
+  missionId: string;
+  ownerId: string | null;
+  brain: BrainKind;
+  model?: string;
+  session?: BrainSession;
+  accountId?: string | null;
+  effort?: BrainEffort;
+} | null> {
   // A run started by a top-level message can't be a mission's (its home thread exists only after it): no query.
   if (!run.threadRootId || run.threadRootId === run.triggerMessageId) return null;
   const mission = await missionOfThread(db, run.orgId, run.threadRootId);
   if (!mission || mission.agentId !== run.agentId || !OPEN_MISSION_STATUSES.includes(mission.status)) return null;
   const choice = missionBrain(mission as MissionRow & BrainOverride);
   const session = await missionSession(db, mission, choice.brain, { exceptRunId: run.id ?? null });
-  return { missionId: mission.id, ...choice, ...(session ? { session } : {}) };
+  const route = await missionInspectorRouteFor(db, mission);
+  return {
+    missionId: mission.id,
+    ownerId: mission.ownerId,
+    ...choice,
+    ...(session ? { session } : {}),
+    ...(route
+      ? {
+          accountId: route.accountId as string | null,
+          ...(isBrainEffort(route.effort) ? { effort: route.effort } : {}),
+        }
+      : {}),
+  };
 }
 
 // ── Telling the main session ─────────────────────────────────────────────────

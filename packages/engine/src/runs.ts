@@ -489,6 +489,9 @@ export async function transitionRun(
       and(
         eq(agentRuns.id, runId),
         eq(agentRuns.status, from),
+        to === "running" || to === "done"
+          ? sql`nullif(${agentRuns.transcript}->'creditHold', 'null'::jsonb) is null`
+          : undefined,
         requireNoUnknownEffect
           ? sql`nullif(${agentRuns.transcript}->'effectUncertain', 'null'::jsonb) is null`
           : undefined,
@@ -496,7 +499,7 @@ export async function transitionRun(
           ? sql`not exists (select 1 from ${schema.runToolTokens} where ${schema.runToolTokens.runId} = ${runId} and ${schema.runToolTokens.effectEpochState} in ('open', 'closed_unknown'))`
           : undefined,
         requireNoUnknownEffect
-          ? sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false')`
+          ? sql`not exists (select 1 from ${schema.approvals} where ${schema.approvals.runId} = ${runId} and ${schema.approvals.executedAt} is not null and coalesce(${schema.approvals.result}->>'isError', 'true') <> 'false' and ${schema.approvals.result}->'reconciled' is null)`
           : undefined,
         // A timer must still own the exact wait, and no waiting run may resume while its checkpoint is held.
         claim

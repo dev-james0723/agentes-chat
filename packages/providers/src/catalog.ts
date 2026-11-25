@@ -20,7 +20,16 @@ export interface TokenPrices {
 export interface ProviderInfo {
   label: string;
   /** The API it speaks, which picks its adapter (`createModelProviders`). */
-  protocol: "anthropic" | "openai" | "gemini" | "openrouter" | "custom";
+  protocol:
+    | "anthropic"
+    | "openai"
+    | "gemini"
+    | "openrouter"
+    | "groq"
+    | "cloudflare"
+    | "opencode"
+    | "openai_compatible"
+    | "custom";
   /** Replaces the SDK's default host. */
   baseURL?: string;
   /**
@@ -64,6 +73,35 @@ export const PROVIDERS = {
     protocol: "anthropic",
     baseURL: "https://api.minimax.io/anthropic",
     compat: { toolChoiceAny: false },
+  },
+  groq: {
+    label: "GroqCloud",
+    protocol: "groq",
+    baseURL: "https://api.groq.com/openai/v1",
+  },
+  cloudflare: {
+    label: "Cloudflare Workers AI",
+    protocol: "cloudflare",
+  },
+  opencode: {
+    label: "OpenCode",
+    protocol: "opencode",
+    baseURL: "https://opencode.ai/inference/go/openai/v1",
+  },
+  tencent: {
+    label: "Tencent Hunyuan",
+    protocol: "openai_compatible",
+    baseURL: "https://api.hunyuan.cloud.tencent.com/v1",
+  },
+  xiaomi: {
+    label: "Xiaomi MiMo",
+    protocol: "openai_compatible",
+    baseURL: "https://api.xiaomimimo.com/v1",
+  },
+  nvidia: {
+    label: "NVIDIA NIM",
+    protocol: "openai_compatible",
+    baseURL: "https://integrate.api.nvidia.com/v1",
   },
   // Its models come from its public list at run time (`openrouter.ts`), never from this catalog.
   openrouter: { label: "OpenRouter", protocol: "openrouter" },
@@ -358,6 +396,120 @@ export const MODEL_CATALOG: Record<string, ModelInfo> = {
     contextWindow: 1_000_000,
     serverSideFallback: false,
     cheap: true,
+    tier: "small",
+  },
+  // GroqCloud, Cloudflare Workers AI, Tencent Hunyuan, Xiaomi MiMo and NVIDIA NIM catalog entries.
+  // Free-only entitlements in Global Router override incremental USD spend to 0 while enforcing RPM/RPD/neuron quotas.
+  "groq/gpt-oss-120b": {
+    provider: "groq",
+    label: "GPT-OSS 120B",
+    prices: { input: 150, output: 600, cacheRead: 75, cacheWrite: 150 },
+    contextWindow: 131_072,
+    serverSideFallback: false,
+    reasoning: true,
+    recommended: true,
+    tier: "large",
+  },
+  "groq/gpt-oss-20b": {
+    provider: "groq",
+    label: "GPT-OSS 20B",
+    prices: { input: 75, output: 300, cacheRead: 38, cacheWrite: 75 },
+    contextWindow: 131_072,
+    serverSideFallback: false,
+    reasoning: true,
+    cheap: true,
+    router: true,
+    leastThinking: "off",
+    tier: "small",
+  },
+  "@cf/openai/gpt-oss-120b": {
+    provider: "cloudflare",
+    label: "Workers AI GPT-OSS 120B",
+    prices: { input: 350, output: 750, cacheRead: 350, cacheWrite: 350 },
+    contextWindow: 128_000,
+    serverSideFallback: false,
+    reasoning: true,
+    recommended: true,
+    tier: "medium",
+  },
+  "@cf/openai/gpt-oss-20b": {
+    provider: "cloudflare",
+    label: "Workers AI GPT-OSS 20B",
+    prices: { input: 200, output: 300, cacheRead: 200, cacheWrite: 200 },
+    contextWindow: 128_000,
+    serverSideFallback: false,
+    reasoning: true,
+    cheap: true,
+    router: true,
+    leastThinking: "off",
+    tier: "small",
+  },
+  "hunyuan-hy4": {
+    provider: "tencent",
+    label: "Tencent Hy4",
+    prices: { input: 417, output: 1251, cacheRead: 84, cacheWrite: 417 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    recommended: true,
+    tier: "medium",
+  },
+  "hunyuan-hy4-flash": {
+    provider: "tencent",
+    label: "Tencent Hy4 Flash",
+    prices: { input: 35, output: 141, cacheRead: 7, cacheWrite: 35 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    cheap: true,
+    router: true,
+    leastThinking: "off",
+    tier: "small",
+  },
+  "mimo-v2.6-pro": {
+    provider: "xiaomi",
+    label: "Xiaomi MiMo V2.6 Pro",
+    prices: { input: 435, output: 870, cacheRead: 87, cacheWrite: 435 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    recommended: true,
+    tier: "medium",
+  },
+  "mimo-v2.6-flash": {
+    provider: "xiaomi",
+    label: "Xiaomi MiMo V2.6 Flash",
+    prices: { input: 140, output: 280, cacheRead: 28, cacheWrite: 140 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    cheap: true,
+    router: true,
+    leastThinking: "off",
+    tier: "small",
+  },
+  "nvidia-nemotron-3-ultra-550b-a55b": {
+    provider: "nvidia",
+    label: "NVIDIA Nemotron 3 Ultra",
+    prices: { input: 500, output: 2200, cacheRead: 500, cacheWrite: 500 },
+    contextWindow: 262_144,
+    serverSideFallback: false,
+    recommended: true,
+    tier: "large",
+  },
+  "nvidia-nemotron-3.5-super-vl": {
+    provider: "nvidia",
+    label: "NVIDIA Nemotron 3.5 Super VL",
+    prices: { input: 150, output: 470, cacheRead: 150, cacheWrite: 150 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    tier: "medium",
+  },
+  "nvidia-nemotron-3.5-lightning": {
+    provider: "nvidia",
+    label: "NVIDIA Nemotron 3.5 Lightning",
+    prices: { input: 50, output: 200, cacheRead: 50, cacheWrite: 50 },
+    contextWindow: 1_048_576,
+    serverSideFallback: false,
+    cheap: true,
+    router: true,
+    leastThinking: "off",
     tier: "small",
   },
 };

@@ -1965,8 +1965,43 @@
     {
       "idx": 282,
       "version": "7",
-      "when": 1795126146756,
-      "tag": "0282_agent_image_avatars",
+      "when": 1795171310295,
+      "tag": "0282_right_hand_own_brains",
+      "breakpoints": true
+    },
+    {
+      "idx": 283,
+      "version": "7",
+      "when": 1795587776258,
+      "tag": "0283_file_cleanups",
+      "breakpoints": true
+    },
+    {
+      "idx": 284,
+      "version": "7",
+      "when": 1795588013237,
+      "tag": "0284_issue_owner_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1795590220909,
+      "tag": "0285_issue_completion_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 286,
+      "version": "7",
+      "when": 1795599204523,
+      "tag": "0286_global_model_router",
+      "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1795647168097,
+      "tag": "0287_agent_image_avatars",
       "breakpoints": true
     }
   ]

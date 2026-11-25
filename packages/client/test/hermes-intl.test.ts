@@ -16,6 +16,7 @@ const NativeRtf = Intl.RelativeTimeFormat;
 const NativePlural = Intl.PluralRules;
 const native = LOCALES.map((l) => [-1, 0, 1].map((n) => new NativeRtf(l.intl, { numeric: "auto" }).format(n, "day")));
 const nativeOrdinal = (locale: string, n: number) => new NativePlural(locale, { type: "ordinal" }).select(n);
+const spanishOrdinal = (n: number) => ((n % 10 === 1 && n % 100 !== 11) || n % 10 === 3 ? "one" : "other");
 
 // The phone's Hermes has only Collator, DateTimeFormat and NumberFormat.
 beforeAll(() => {
@@ -45,12 +46,13 @@ test("the board's due label, relative time and the undo line still read without 
 
 test("without Intl.PluralRules, ordinals follow each language's rule", () => {
   for (const l of LOCALES)
-    for (const n of [1, 2, 3, 4, 8, 11, 12, 13, 21, 22, 23, 101, 111])
+    for (const n of [1, 2, 3, 4, 8, 11, 12, 13, 21, 22, 23, 101, 111, 113, 213])
       expect([l.code, n, ordinalForm(l.intl, n)]).toEqual([
         l.code,
         n,
-        // Italian's "many" (8°, 11°) is written as "other" in the strings.
-        l.code === "it" ? "other" : nativeOrdinal(l.intl, n),
+        // Italian's "many" (8°, 11°) is written as "other" in the strings. Spanish follows CLDR's current rule
+        // (1st, 3rd, 21st... are "one", 11th is not); hosts' ICU versions disagree on it, so it is spelled out.
+        l.code === "it" ? "other" : l.code === "es" ? spanishOrdinal(n) : nativeOrdinal(l.intl, n),
       ]);
   expect([1, 2, 3, 11, 22].map((n) => nthText(tFor("en"), "en", n))).toEqual(["1st", "2nd", "3rd", "11th", "22nd"]);
 });

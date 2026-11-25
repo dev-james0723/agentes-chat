@@ -287,6 +287,8 @@ describe("Responder inside a thread", () => {
       goal: "Fotos",
       title: "Fotos",
       channelId: ENG_ID,
+      // The plan below is in thread m-1: the mission's home, so its card offers Mudar algo.
+      threadId: "m-1",
     });
     api.missions.get = async () => ({ ...mission, status: "proposed", canAct: true });
     state.messages.push(

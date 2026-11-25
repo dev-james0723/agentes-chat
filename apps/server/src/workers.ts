@@ -5,6 +5,7 @@ import {
   type BrowserLive,
   type ContextDeps,
   clearOldOutboxPayloads,
+  type createModelInspector,
   createOutboxPump,
   type DesktopControl,
   enqueue,
@@ -129,6 +130,8 @@ export interface WorkerDeps {
   browserLive?: BrowserLive;
   /** Connected computers: plans stuck at their limit are read again there (`recheckStuckPlans`). */
   machines?: Pick<MachineCaller, "call" | "status">;
+  /** Native model inspection; one deterministic sweep, without a polling agent run. */
+  modelInspector?: Pick<ReturnType<typeof createModelInspector>, "sweep">;
   /** Agents' desktops (ADR 0058): the ones with an open handoff stay up. */
   desktops?: Pick<DesktopControl, "keepAlive">;
   /** The daily stall-and-noise report (`OPS_REPORT_EMAIL`); absent: none. */
@@ -198,6 +201,7 @@ export const WORKER_INTERVALS_MS = {
   planModels: 3600_000,
   /** Plans stuck at their limit, read again on their computers (each at most every 5 or 10 minutes). */
   planRechecks: 60_000,
+  modelInspector: 60_000,
 };
 
 /**
@@ -285,6 +289,10 @@ export function startWorkers(deps: WorkerDeps) {
   if (machines)
     every("planRechecks", WORKER_INTERVALS_MS.planRechecks, async () => {
       await recheckStuckPlans({ db, hub: machines });
+    });
+  if (deps.modelInspector)
+    every("modelInspector", WORKER_INTERVALS_MS.modelInspector, async () => {
+      await deps.modelInspector?.sweep();
     });
   every("skillUpdates", WORKER_INTERVALS_MS.skillUpdates, async () => {
     if ((await enqueueSkillUpdates(db)) > 0) void ticks.get("outbox")?.();

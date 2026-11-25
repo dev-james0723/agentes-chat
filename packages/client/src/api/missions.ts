@@ -23,9 +23,13 @@ import type {
 type QC = ReturnType<typeof useQueryClient>;
 
 /** A mission view came back: the one, its thread's, and every list. */
-export function cacheMission(qc: QC, orgId: string, mission: Mission) {
+export function cacheMission(qc: QC, orgId: string, mission: Mission, { preserveThreadBinding = false } = {}) {
   qc.setQueryData(keys.mission(orgId, mission.id), mission);
-  qc.setQueryData(keys.threadMission(orgId, mission.threadId), mission);
+  const threadKey = keys.threadMission(orgId, mission.threadId);
+  const current = qc.getQueryData<Mission | null>(threadKey);
+  // An in-flight action on one mission may finish after the task has been rebound or cleared.
+  if (!preserveThreadBinding || current === undefined || current?.id === mission.id)
+    qc.setQueryData(threadKey, mission);
   void qc.invalidateQueries({ queryKey: [...keys.missions(orgId), "list"] });
   void qc.invalidateQueries({ queryKey: keys.threads(orgId), predicate: (q) => q.queryKey[3] !== "one" });
 }
@@ -328,15 +332,16 @@ export function useSetAgentMissionDefault(orgId: string, missionId: string, agen
 }
 
 /** Começar, Pausar, Retomar, Parar. Errors are the caller's to say (translated by code). */
-export function useMissionControl(orgId: string) {
+export function useMissionControl(orgId: string, boundMissionId?: string) {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: boundMissionId ? keys.missionPart(orgId, boundMissionId, "control") : undefined,
     meta: { silent: true },
     mutationFn: ({ missionId, action }: { missionId: string; action: MissionControl }) =>
       api.missions.control(orgId, missionId, action),
     onSuccess: (mission) => {
-      cacheMission(qc, orgId, mission);
+      cacheMission(qc, orgId, mission, { preserveThreadBinding: true });
       void qc.invalidateQueries({ queryKey: keys.threadTasks(orgId, mission.threadId) });
     },
   });

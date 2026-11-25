@@ -391,6 +391,10 @@ a.mi-ref:hover code {
   font-size: 12.5px;
   color: var(--muted);
 }
+.mi-plan__folder {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
 .mi-plan__label {
   display: inline-flex;
   align-items: center;
@@ -432,6 +436,11 @@ a.mi-ref:hover code {
 .mi-created .mi-ok {
   width: 32px;
   height: 32px;
+}
+/* The words keep a line's room beside the mark: where they and "Ver plano" don't fit on one line, the button goes
+   under them (a basis of 0 squeezed "3 itens · no MacBook" into a narrow column at 320px). */
+.mi-created .mi-decided__t {
+  flex: 1 1 12rem;
 }
 
 /* ── The mission header (a mission's thread: the thread header is the mission's) ─

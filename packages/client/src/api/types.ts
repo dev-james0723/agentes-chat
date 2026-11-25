@@ -773,6 +773,8 @@ export interface AgentBrakes {
   never: CostKind[];
   maxUnrequested: number;
   maxPrsPerHour: number;
+  /** Screenshots one run may take (ADR 0201). */
+  maxScreenshotsPerRun: number;
   callAgents: "all" | "some" | "none";
   callAgentIds: string[];
   project: string;
@@ -786,6 +788,7 @@ export const BRAKES_DEFAULTS: AgentBrakes = {
   never: [],
   maxUnrequested: 2,
   maxPrsPerHour: 3,
+  maxScreenshotsPerRun: 60,
   callAgents: "all",
   callAgentIds: [],
   project: "",
@@ -2235,6 +2238,41 @@ export interface Memory {
   updatedAt: string;
   /** `about: "me"` only: the viewer's message it came from ("Você disse hoje, nesta conversa"). */
   from?: { messageId: string; channelId: string; threadId: string | null; dm: boolean; at: string } | null;
+  /** Where it applies (`agent`, `channel`, `thread`, `org`, `person`, `entity`); older servers leave it out. */
+  scope?: { type: string; id: string | null };
+  trust?: "high" | "low";
+  status?: "active" | "archived";
+  /** When the claim holds in the world (ISO, half-open); null: unknown. */
+  validFrom?: string | null;
+  validTo?: string | null;
+  /** The revision of the source it was read from (a message edit, a file hash). */
+  sourceRevision?: string | null;
+  /** The newest message it was saved from that the viewer reads. */
+  sourceMessage?: { messageId: string; channelId: string; threadId: string | null; at: string } | null;
+}
+
+/** A memory's versions (oldest first) and the newest runs that received it, as far as the viewer reads them. */
+export interface MemoryHistory {
+  versions: {
+    id: string;
+    version: number;
+    text: string;
+    /** The version asked about. */
+    current: boolean;
+    status: "active" | "archived";
+    createdAt: string;
+    supersededAt: string | null;
+    validFrom: string | null;
+    validTo: string | null;
+  }[];
+  runs: {
+    runId: string;
+    agentId: string;
+    agentName: string | null;
+    channelId: string;
+    channelName: string | null;
+    createdAt: string;
+  }[];
 }
 
 export type ProposalStatus = "pending" | "accepted" | "refused";
@@ -3676,6 +3714,86 @@ export interface IssueConversation extends IssueConversationRef {
   /** The first ones to write, oldest first (at most 5). */
   participants: Actor[];
   working: boolean;
+}
+
+/**
+ * A task's status from stored evidence only (ADR 0204), in Hong Kong Traditional Chinese: what changed, whether this
+ * server runs it, what is verified, blockers, the next step and its owner, and whether the reader must decide.
+ */
+export interface FounderStatus {
+  issueId: string;
+  number: number;
+  observedAt: string;
+  changed: { title: string; pullRequests: { number: number; url: string }[]; why: string | null; text: string };
+  delivery: {
+    state:
+      | "not_merged"
+      | "reverted"
+      | "merge_commit_unknown"
+      | "merged_not_deployed"
+      | "rolled_back"
+      | "deployed_not_running"
+      | "runtime_unknown"
+      | "available";
+    available: boolean;
+    merge: { subject: string; commit: string | null; at: string } | null;
+    deploy: { commit: string; digest: string; at: string } | null;
+    running: { digest: string; files: number } | null;
+    text: string;
+  };
+  verification: {
+    state: "verified" | "stale" | "rejected" | "done_unverified" | "unverified" | "no_criteria";
+    /** An independent verifier confirmed it and the evidence still meets its completion contract (ADR 0211). */
+    verified: boolean;
+    criteria: { total: number; checkedByPerson: number };
+    checks: { kind: string; positive: boolean; at: string }[];
+    contract: {
+      evidence: ("criteria" | "person_vouched" | "pr_merged" | "deploy_running" | "tests_passed")[];
+      tests: { suite: string; digest: string } | null;
+      isDefault: boolean;
+    };
+    verifier: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    missing: (
+      | "not_claimed"
+      | "no_criteria"
+      | "criteria_unchecked"
+      | "not_person_vouched"
+      | "not_merged"
+      | "merge_reverted"
+      | "merge_commit_unknown"
+      | "not_deployed"
+      | "deploy_stale"
+      | "deploy_rolled_back"
+      | "runtime_unknown"
+      | "tests_not_pinned"
+      | "tests_receipt_missing"
+      | "tests_receipt_untrusted"
+      | "tests_wrong_commit"
+      | "tests_changed"
+      | "tests_failed"
+    )[];
+    rejectedReasons: string[];
+    text: string;
+  };
+  blockers: { reason: string; since: string; text: string }[];
+  next: {
+    action: string;
+    owner: { type: "you" | "person" | "agent"; id: string; name: string | null } | null;
+    text: string;
+  };
+  needsMe: {
+    needed: boolean;
+    decisions: {
+      approvalId: string;
+      title: string;
+      channelId: string;
+      threadId: string | null;
+      messageId: string | null;
+      expiresAt: string;
+    }[];
+    text: string;
+  };
+  summary: string;
 }
 
 export interface IssueActivity {
@@ -6306,6 +6424,7 @@ export type NotificationKind =
   /** A routine's run waits for its agent's plan to reset (once per outage). Opens it in Rotinas. */
   | "routine_waiting_plan"
   | "plan_reset_unknown"
+  | "credit_continuity"
   /** ADR 0136: an agent back from its plan or budget skipped catch-ups that looked handled (its owner; `count`). */
   | "catch_up_closed"
   /** ADR 0136: who asked, when their catch-up was skipped crediting someone else (`latest.title` who, `latest.reason`). */
@@ -6511,6 +6630,9 @@ export interface NotificationActor {
 
 /** Where it lives: only the relevant ids are set. */
 export interface NotificationSource {
+  creditPoolId?: string;
+  creditCycleId?: string;
+  creditProvider?: "openai" | "anthropic";
   channelId?: string;
   threadId?: string;
   messageId?: string;
@@ -7434,6 +7556,38 @@ export interface PlanAccountUsage extends PlanAccountInfo {
   monthTokens: number;
   /** `view_usage` only: what the month's tokens would cost through the API (null: no price). */
   equivalentUsd?: number | null;
+}
+
+/** One row of `GET …/usage/cost-per-success` (ADR 0207). Null money is unknown, never 0. */
+export interface CostPerSuccessRow {
+  runs: number;
+  failedRuns: number;
+  retries: number;
+  verifiedSuccesses: number;
+  tokens: number;
+  costUsd: number | null;
+  unknownCostRuns: number;
+  costPerSuccessUsd: number | null;
+  missing: "no_success" | "unknown_cost" | null;
+  /** The number in plain Hong Kong Chinese, from the server. */
+  text: string;
+}
+
+/** `GET …/usage/cost-per-success`: cost per verified successful task by agent, brain and model (ADR 0207). */
+export interface CostPerSuccessReport {
+  from: string;
+  to: string;
+  groups: (CostPerSuccessRow & { agentId: string; agentName: string; brain: string; model: string | null })[];
+  total: CostPerSuccessRow;
+  /** False-pass counts (ADR 0211): tasks claimed done in the window, verified, rejected after the claim. */
+  claims: {
+    claimedDone: number;
+    verified: number;
+    rejectedAfterClaim: number;
+    unverified: number;
+    falseClaimRate: number | null;
+    text: string;
+  };
 }
 
 /** `GET …/usage/plans`: every plan account by computer, and the API per agent this month. */

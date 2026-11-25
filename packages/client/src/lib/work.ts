@@ -820,6 +820,7 @@ const QUIET_READS: ReadonlySet<ActivityKind> = new Set([
   "consultingSkill",
   "openingSkill",
   "readingConversation",
+  "checkingPlanUsage",
   "readingDashboards",
 ]);
 

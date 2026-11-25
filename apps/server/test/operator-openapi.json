@@ -3,7 +3,7 @@
   "info": {
     "title": "agentes.chat operator API",
     "version": "test",
-    "description": "Workspace and account lookups, workspace standing, billing holds and limits (ADR 0079), the events feed and review blocks, the workspaces' computers from an external provisioner, who may sign up (the waiting list and early-access invitations, ADR 0078), how new Claude sign-ins for all agents are made (ADR 0150), and how connectors are used (ADR 0103), for the people who run this instance (ADR 0056)."
+    "description": "Workspace and account lookups, workspace standing, billing holds and limits (ADR 0079), the events feed and review blocks, the workspaces' computers from an external provisioner, who may sign up (the waiting list and early-access invitations, ADR 0078), how new Claude sign-ins for all agents are made (ADR 0150), how connectors are used (ADR 0103), and deploy records checked against this server's own source (ADR 0204), for the people who run this instance (ADR 0056)."
   },
   "servers": [
     {
@@ -2959,6 +2959,42 @@
       "OperatorAuthMethod": {
         "type": "string",
         "enum": ["cli_login", "setup_token", "api_key"]
+      },
+      "OperatorDeployRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "sourceDigest": {
+            "type": "string"
+          },
+          "recordedAt": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "commit", "sourceDigest", "recordedAt"]
+      },
+      "OperatorTestReceipt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["tests_passed", "tests_failed"]
+          },
+          "recordedAt": {
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind", "recordedAt"]
       }
     },
     "parameters": {}
@@ -5517,6 +5553,222 @@
           },
           "404": {
             "description": "No workspace with this id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{orgId}/deploys": {
+      "post": {
+        "tags": ["Operator"],
+        "summary": "Record that this server runs a commit, for the workspace's task status",
+        "description": "Refused with 409 `deploy_not_running` unless `sourceDigest` is this server's own source identity now (the one `/api/health` reports). The same commit and digest again returns the record already there.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "orgId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 200,
+                    "description": "`owner/name` on GitHub."
+                  },
+                  "commit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                    "description": "The deployed commit."
+                  },
+                  "commits": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+                    },
+                    "maxItems": 500,
+                    "description": "Other commits the caller vouches this deploy holds (e.g. the first-parent history since the last deploy): a task whose merge commit is one of them reads as deployed."
+                  },
+                  "sourceDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "description": "The commit's source identity, as `scripts/runtime-identity.ts rev <commit>` works it out."
+                  }
+                },
+                "required": ["repo", "commit", "sourceDigest"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorDeployRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This server does not run that source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orgs/{orgId}/test-receipts": {
+      "post": {
+        "tags": ["Operator"],
+        "summary": "Record a CI test receipt, the only test evidence a task's completion contract accepts (ADR 0211)",
+        "description": "Written as a `tests_passed` / `tests_failed` outcome with source `operator`. A receipt counts for a task only when it names the task's merge commit, the contract's suite and the test files' digest the contract pinned. The same receipt again returns the record already there.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "orgId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 200,
+                    "description": "`owner/name` on GitHub."
+                  },
+                  "commit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+                    "description": "The commit the suite ran on (a task's merge commit, for its receipt)."
+                  },
+                  "suite": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The suite's name, as a task's completion contract pins it."
+                  },
+                  "testsDigest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "description": "Digest of the suite's test files as run; must equal the digest the contract pinned."
+                  },
+                  "passed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["repo", "commit", "suite", "testsDigest", "passed"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTestReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "This server does not run that source",
             "content": {
               "application/json": {
                 "schema": {

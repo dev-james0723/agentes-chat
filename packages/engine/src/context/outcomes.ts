@@ -42,6 +42,10 @@ export const OUTCOME_KINDS = {
   run_effect_unknown: "negative",
   /** Every acceptance criterion of a task checked. */
   criteria_met: "positive",
+  /** An independent verifier confirmed a task against its completion contract and stored evidence (ADR 0211). */
+  task_verified: "positive",
+  /** An independent verifier rejected a task's claim of done, with reasons (ADR 0211). */
+  task_rejected: "negative",
 } as const;
 
 export type OutcomeKind = keyof typeof OUTCOME_KINDS;
@@ -55,7 +59,7 @@ export interface OutcomeInput {
   subject?: string;
   summary?: string;
   details?: Record<string, unknown>;
-  source: "tool" | "approval" | "webhook" | "run" | "issue";
+  source: "tool" | "approval" | "webhook" | "run" | "issue" | "operator";
   channelId?: string | null;
   threadRootId?: string | null;
 }

@@ -2022,6 +2022,10 @@ export function agentRoutes(deps: AppDeps) {
               description:
                 "An account on the agent's computer of the brain's kind (ADR 0041); null = the computer's own sign-in; omitted = keep (cleared when the brain kind changes). One of the agent's owner's accounts, chosen by its owner or an admin (`account.not_owner`), or anyone's there that serves the whole workspace (`account.lent` in the audit).",
             }),
+            machineId: z.uuid().optional().openapi({
+              description:
+                "Right hand, scope mine: with account null, explicitly use the subscription sign-in on this computer owned by the caller. Account null without machineId still resets the personal choice.",
+            }),
             moveAccount: z.boolean().optional().openapi({
               description: "The account thinks for another agent (`account.in_use`): take it from that one (audited).",
             }),

@@ -1,4 +1,5 @@
 import { and, type Executor, eq, inArray, isNull, schema } from "@agenteschat/db";
+import { issueDeliveryBrief } from "./issue-delivery";
 
 const { issues, artifacts } = schema;
 
@@ -59,6 +60,7 @@ export async function issueWorkBrief(
     : [];
   const criteria = issue.criteria.map((c, i) => `${i + 1}. [${c.done ? "x" : " "}] ${c.text}`).join("\n");
   const prs = issue.pullRequests.map((p) => `- #${p.number} ${p.url}`).join("\n");
+  const delivery = await issueDeliveryBrief(db, orgId, issue.id);
   const here = options.inConversation ?? true;
   return [
     asked ? `# Your task: issue #${issue.number}` : `# This conversation: task #${issue.number}`,
@@ -68,6 +70,7 @@ export async function issueWorkBrief(
     issue.description.trim() ? `## Description\n${issue.description.trim()}` : "",
     criteria ? `## Acceptance criteria\n${criteria}` : "",
     prs ? `## Pull requests linked\n${prs}` : "",
+    delivery,
     files.length
       ? `## Files attached to the issue\n${files.map((f) => `- ${f.title} (artifact ${f.id})`).join("\n")}\nOpen each with \`read_artifact\` before you work on it: pictures and PDFs are shown to you, documents, sheets and audio come as text.`
       : "",
@@ -77,7 +80,9 @@ export async function issueWorkBrief(
         ? "- This is the task's own conversation: everyone who sees the task reads it and writes here, and your replies land here. Say when you start, at each real step and when you finish, in your replies."
         : `- This conversation is private between you and the person who asked. ${options.personal ? "Everyone else who sees the task follows" : "The rest of the team follows"} the task's own conversation: post progress there with \`comment_issue\` when you start, at each real step and when you finish.`,
       asked
-        ? `- Refer to the issue as #${issue.number} in your tools. Check each criterion you meet with \`update_issue\` (\`done_criteria\`), and link the pull request with \`update_issue\`. The issue's status follows your work on its own: don't set it yourself.`
+        ? delivery
+          ? `- Refer to the issue as #${issue.number} in your tools. Check each criterion you actually verify with \`update_issue\` (\`done_criteria\`). A finished turn does not complete the task. When implementation is ready, submit its actual artifacts and preview for review; use \`update_issue.delivery\` when a delivery contract is configured, otherwise set \`in_review\` and hand it to the existing reviewer. Linking a PR also moves it to review; pushing a PR is not required for local review. Record a concrete next owner/action if work remains. Do not mark untested work done.`
+          : `- Refer to the issue as #${issue.number} in your tools. Check each criterion you meet with \`update_issue\` (\`done_criteria\`), and link the pull request with \`update_issue\`. The issue's status follows your work on its own: don't set it yourself.`
         : `- Refer to the task as #${issue.number} in your tools. Change it only when someone asks you to.`,
       "- Merge, deploy and rollback follow your approvals here as anywhere else.",
     ].join("\n"),

@@ -27,6 +27,7 @@ import {
   ISSUES_VIEW_PRIORITIES,
   inviteMany,
   listAgentChannels,
+  listHeldEffects,
   listInvitationsWithStatus,
   listMembers,
   listRuns,
@@ -43,6 +44,7 @@ import {
   pickerModels,
   publishWorkspaceMode,
   queueInvitationEmail,
+  reconcileRunEffect,
   requirePermission,
   resendInvitation,
   rotateCredential,
@@ -1658,6 +1660,66 @@ export function managementRoutes(deps: AppDeps) {
       const { orgId, runId } = c.req.valid("param");
       const { reason } = c.req.valid("json");
       const out = await setStopReason({ db, pubsub: adapters.pubsub }, c.get("user").id, orgId, runId, reason);
+      return c.json(out, 200);
+    },
+  );
+
+  const UnknownEffect = z.object({
+    id: z.string(),
+    kind: z.enum(["bridge_call", "approval", "marker"]),
+    tools: z.array(z.string()),
+    state: z.string().optional(),
+  });
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/organizations/{orgId}/runs/{runId}/unknown-effects",
+      tags: ["Usage"],
+      security,
+      summary: "What holds a run on an unknown tool outcome (ADR 0203)",
+      description:
+        "To whoever approves actions or owns the agent. `open`: a turn still works and nothing can be settled yet. An ended run lists nothing. 404 otherwise.",
+      request: { params: OrgParams.extend({ runId: z.uuid() }) },
+      responses: {
+        200: json(z.object({ status: z.string(), open: z.boolean(), effects: z.array(UnknownEffect) })),
+        ...errors,
+      },
+    }),
+    async (c) => {
+      const { orgId, runId } = c.req.valid("param");
+      return c.json(await listHeldEffects(db, c.get("user").id, orgId, runId), 200);
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/organizations/{orgId}/runs/{runId}/unknown-effects/reconcile",
+      tags: ["Usage"],
+      security,
+      summary: "Say whether one unknown tool outcome happened (ADR 0203): never runs it again",
+      description:
+        "Checked now: the person's right, the run still held (a stopped run stays stopped), the workspace and agent at work, the approval behind it still standing. Audited. When it was the last one, the run is released.",
+      request: {
+        params: OrgParams.extend({ runId: z.uuid() }),
+        body: body(
+          z.object({
+            effectId: z.string().min(1).max(600),
+            verdict: z.enum(["done", "not_done"]),
+            note: z.string().max(1000).optional(),
+          }),
+        ),
+      },
+      responses: {
+        200: json(z.object({ released: z.boolean(), remaining: z.array(UnknownEffect) })),
+        ...errors,
+      },
+    }),
+    async (c) => {
+      const { orgId, runId } = c.req.valid("param");
+      const input = c.req.valid("json");
+      const out = await reconcileRunEffect({ db, pubsub: adapters.pubsub }, c.get("user").id, orgId, runId, input);
       return c.json(out, 200);
     },
   );

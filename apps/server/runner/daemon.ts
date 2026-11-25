@@ -92,6 +92,7 @@ import {
   DEFAULT_AGENT_UID_RANGE,
   effectiveAccess,
   expandHome,
+  foldersEnforced,
   normalizeServerUrl,
   normalizeStored,
   pairedConfig,
@@ -246,7 +247,7 @@ export function configFromGrant(
     ...(prev?.mode ? { mode: prev.mode } : {}),
     ...(same && prev?.orgId && prev.orgId === grant.org.id && prev.hostMcp ? { hostMcp: prev.hostMcp } : {}),
     ...(prev?.phonesDisabled ? { phonesDisabled: true as const } : {}),
-    ...(prev?.readsOnlyInFolders ? { readsOnlyInFolders: true as const } : {}),
+    ...(typeof prev?.readsOnlyInFolders === "boolean" ? { readsOnlyInFolders: prev.readsOnlyInFolders } : {}),
     ...(prev?.agentUidRange ? { agentUidRange: prev.agentUidRange } : {}),
     ...(prev?.networkLauncher ? { networkLauncher: prev.networkLauncher } : {}),
     ...(prev?.networkMark ? { networkMark: prev.networkMark } : {}),
@@ -1507,7 +1508,7 @@ export class RunnerDaemon implements RequestObserver {
     const context: HandlerContext = {
       hostMcp,
       workspaceReal,
-      ...(config.readsOnlyInFolders ? { readsOnlyInFolders: true } : {}),
+      ...(foldersEnforced(config) ? { readsOnlyInFolders: true } : {}),
       ...(paperclip ? { paperclip } : {}),
       get exec() {
         return daemon.access().tools.commands;
@@ -2001,7 +2002,7 @@ export class RunnerDaemon implements RequestObserver {
   /** The coding CLIs for `hello`: the ones installed (whether each may run is `access.tools`). */
   private helloExecutors(): RunnerInfo["executors"] {
     // Asked first: asking is what starts a look, and a runner with no app has no other first one.
-    const found = this.executors();
+    const found = { ...this.executors(), taskModels: true as const };
     if (!this.executorsKnown()) return undefined;
     // Claude Code installed or logged in since the last look: the app shows it.
     const visible =
@@ -2025,7 +2026,7 @@ export class RunnerDaemon implements RequestObserver {
   private executorsChanged() {
     this.queueStatus();
     if (!this.executorsKnown()) return;
-    const found = this.executors();
+    const found = { ...this.executors(), taskModels: true as const };
     const executors =
       this.hostAcpOptIn() && found.antigravity
         ? { ...found, antigravity: { ...found.antigravity, hostAuth: true as const } }

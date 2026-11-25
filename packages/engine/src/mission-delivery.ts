@@ -3,6 +3,12 @@ import { recordAudit } from "./audit";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { publishMessageCreated, publishUserEvent } from "./events";
 import { cutText } from "./format";
+import {
+  acceptMissionDeliveryTasks,
+  type DeliveryReceipt,
+  missionDeliveryReadiness,
+  publishAcceptedDeliveryTasks,
+} from "./issue-delivery";
 import type { MachineTaskRow } from "./machine-tasks";
 import { messageView } from "./messages";
 import { pendingCommandsSql } from "./mission-command-rules";
@@ -143,9 +149,26 @@ async function createDelivery(
     checklist: { id: string; text: string }[];
     artifactIds: string[];
     paths: string[];
+    deliveryReceipts?: DeliveryReceipt[];
   },
 ) {
   const out = await deps.db.transaction(async (tx) => {
+    // Same order as contract configuration/acceptance: Mission first, then its delivery/task rows.
+    const [lockedMission] = await tx.select().from(missions).where(eq(missions.id, mission.id)).for("update");
+    const current = await missionDeliveryReadiness(tx, mission.orgId, mission.id);
+    if (current) {
+      const key = (r: DeliveryReceipt) => `${r.parentId}:${r.contractId}:${r.submissionId}`;
+      if (
+        !current.ready ||
+        !lockedMission ||
+        !["active", "awaiting_close"].includes(lockedMission.status) ||
+        JSON.stringify(current.receipts.map(key).sort()) !==
+          JSON.stringify((input.deliveryReceipts ?? []).map(key).sort())
+      )
+        throw new ConflictError(
+          "The engineering delivery changed before its review card was created. Read the current evidence and deliver again.",
+        );
+    }
     await tx
       .update(missionDeliveries)
       .set({ status: "superseded" })
@@ -195,7 +218,12 @@ async function createDelivery(
       .set({ status: "awaiting_close", updatedAt: new Date() })
       .where(and(eq(missions.id, mission.id), eq(missions.status, "active")))
       .returning();
-    await recordMissionEvent(tx, mission, "delivered", { deliveryId: row.id, auto: input.auto, taskId: input.taskId });
+    await recordMissionEvent(tx, mission, "delivered", {
+      deliveryId: row.id,
+      auto: input.auto,
+      taskId: input.taskId,
+      ...(input.deliveryReceipts ? { deliveryReceipts: input.deliveryReceipts } : {}),
+    });
     return { delivery: linked ?? row, message, mission: moved ?? null };
   });
   if (deps.pubsub) await publishMessageCreated(deps.pubsub, messageView(out.message));
@@ -231,13 +259,23 @@ export async function completeMission(
   requireOpen(mission);
   const summary = noMentions(cleanMissionText(input.summary, DELIVERY_LIMITS.summary));
   if (!summary) throw new ValidationError("Say what you delivered", "mission.invalid_delivery");
+  const readiness = await missionDeliveryReadiness(deps.db, mission.orgId, mission.id);
+  if (readiness && !readiness.ready) throw new ValidationError(readiness.summary, "mission.delivery_evidence_required");
+  if (readiness && readiness.summary.length >= DELIVERY_LIMITS.summary - 200)
+    throw new ValidationError(
+      "The delivery packet is too large. Deliver the existing engineering work packages separately.",
+      "mission.invalid_delivery",
+    );
   return createDelivery(deps, mission, {
     auto: false,
     taskId: task?.id ?? null,
-    summary,
+    summary: readiness
+      ? `${cutText(summary, DELIVERY_LIMITS.summary - readiness.summary.length - 2)}\n\n${readiness.summary}`
+      : summary,
     checklist: checklistOf(input.checklist),
     artifactIds: input.artifactIds ?? [],
-    paths: (input.paths ?? []).slice(0, DELIVERY_LIMITS.paths),
+    paths: [...new Set([...(input.paths ?? []), ...(readiness?.paths ?? [])])].slice(0, DELIVERY_LIMITS.paths),
+    ...(readiness ? { deliveryReceipts: readiness.receipts } : {}),
   });
 }
 
@@ -293,13 +331,16 @@ export async function checkMissionDone(deps: MissionDeps, missionId: string, att
     return null;
   }
   if (mission.status !== "active") return null;
+  const readiness = await missionDeliveryReadiness(deps.db, mission.orgId, mission.id);
+  if (readiness && !readiness.ready) return null;
   return createDelivery(deps, mission, {
     auto: true,
     taskId: null,
-    summary: "",
+    summary: readiness?.summary ?? "",
     checklist: [],
     artifactIds: [],
-    paths: [],
+    paths: (readiness?.paths ?? []).slice(0, DELIVERY_LIMITS.paths),
+    ...(readiness ? { deliveryReceipts: readiness.receipts } : {}),
   });
 }
 
@@ -377,12 +418,16 @@ export async function acceptDelivery(
   requireOpen(mission);
   const row = await requireDelivery(deps.db, mission, deliveryId);
   requirePending(row);
-  const [claimed] = await deps.db
-    .update(missionDeliveries)
-    .set({ status: "accepted", saveToWiki: input.saveToWiki === true, decidedBy: userId, decidedAt: new Date() })
-    .where(and(eq(missionDeliveries.id, row.id), eq(missionDeliveries.status, "pending")))
-    .returning();
-  if (!claimed) throw new ConflictError("This delivery was already answered", "mission.delivery_decided");
+  const completedTasks = await deps.db.transaction(async (tx) => {
+    const taskIds = await acceptMissionDeliveryTasks(tx, orgId, mission.id, row.id, userId);
+    const [claimed] = await tx
+      .update(missionDeliveries)
+      .set({ status: "accepted", saveToWiki: input.saveToWiki === true, decidedBy: userId, decidedAt: new Date() })
+      .where(and(eq(missionDeliveries.id, row.id), eq(missionDeliveries.status, "pending")))
+      .returning();
+    if (!claimed) throw new ConflictError("This delivery was already answered", "mission.delivery_decided");
+    return taskIds;
+  });
   await recordAudit(deps.db, {
     orgId,
     actor: { type: "person", id: userId },
@@ -395,6 +440,8 @@ export async function acceptDelivery(
     outcome: "done",
     saveToWiki: input.saveToWiki === true,
   });
+  // A missed board refresh must never strand an accepted delivery before durable Mission closure.
+  await publishAcceptedDeliveryTasks(deps, orgId, userId, completedTasks).catch(() => {});
   await publishMissionEvent(deps, { ...mission, status: "done" }, "delivery", { deliveryId: row.id });
   return view;
 }

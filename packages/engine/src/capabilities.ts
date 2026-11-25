@@ -258,7 +258,7 @@ export function describeCapabilities(
  * behind it are the retention report's, never the prompt's.
  */
 export const FILES_GUIDANCE =
-  "- Files on your computer: put deliverables where the task asks and temporary files in a scratch folder. Take a screenshot only at a meaningful change or a check; before recording, set a length and size limit. When you hand off, list the files you made with `register_files` (deliverable, evidence, scratch or rebuildable). It deletes nothing; files you don't register are kept.";
+  "- Files on your computer: deliverables where the task asks, temporary files in `scratch/`. Screenshot only at a meaningful change or a check (60 per piece of work); before recording, set a length and size limit. Evidence that must last goes to the Drive (`upload_file`): that copy can be restored. At hand-off, list your files with `register_files`. Once the task ends a person may approve cleaning your scratch, nothing else.";
 
 /**
  * GitHub work (ADR 0016, amended 2026-11-03): the workspace's GitHub connection and our git proxy, never the person's

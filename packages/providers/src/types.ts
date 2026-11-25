@@ -1,3 +1,4 @@
+import type { OpenRouterAutoPolicy } from "./openrouter-auto";
 /**
  * Provider-neutral model interface. Only the Model Gateway
  * (`@agenteschat/engine`, `createModelGateway`) calls it: no other code talks
@@ -138,6 +139,20 @@ export interface ModelRequest {
    * `after` are left out of the system. Absent: the system as it is.
    */
   notes?: { at: number; text: string };
+  /** One admitted credit attempt dispatches once; disables SDK and adapter retries. Never sent upstream. */
+  noTransportRetries?: true;
+  /** Internal gateway-supplied, separately admitted policy for dynamic OpenRouter routers. */
+  openRouterAuto?: OpenRouterAutoPolicy;
+  /** Enforces zero upstream spend and disables paid fallbacks for `:free` OpenRouter variants. */
+  openRouterFreeOnly?: true;
+  /** Enforces upstream price ceilings and privacy constraints on concrete OpenRouter paid calls. */
+  openRouterConcretePolicy?: {
+    maxPromptUsdPerMillion: number;
+    maxCompletionUsdPerMillion: number;
+    zdr?: boolean;
+  };
+  /** Conservative admitted charge, used only for the upstream balance preflight. */
+  openRouterReservedNanoUsd?: number;
   signal?: AbortSignal;
 }
 
@@ -181,6 +196,12 @@ export interface ModelResult {
   usage: ModelUsage;
   /** What the provider says the call cost (OpenRouter's `usage.cost`); absent: priced from the catalog. */
   costNanoUsd?: number;
+  /** Complete final API usage receipt was observed and token counts validated. */
+  usageVerified?: true;
+  /** Bounded upstream HTTP request identifier, never a generated identifier or credential. */
+  providerRequestId?: string;
+  /** Bounded final response/message object identifier, distinct from the HTTP request id. */
+  providerResponseId?: string;
   /**
    * Thinking sent back that the call went without (Anthropic): the blocks the API dropped, by reason, or the
    * refusal that sent the call again without any.

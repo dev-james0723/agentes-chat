@@ -57,10 +57,22 @@ const stageScalarsSchema = objectSchema({
   revision: revisionSchema,
   manifestJson: textSchema(PACKAGE_LIMITS.manifestBytes),
 });
-const fileSchema = objectSchema({
+/** A file as UTF-8 `text` (preferred: models write text reliably) or canonical `base64`, exactly one of them. */
+const fileProperties: Record<"path" | "text" | "base64", JsonSchema> = {
   path: textSchema(PACKAGE_LIMITS.pathBytes),
-  base64: { type: "string", maxLength: Math.ceil(PACKAGE_LIMITS.fileBytes / 3) * 4 },
-});
+  text: { type: "string", maxLength: PACKAGE_LIMITS.fileBytes, description: "The file as UTF-8 text." },
+  base64: {
+    type: "string",
+    maxLength: Math.ceil(PACKAGE_LIMITS.fileBytes / 3) * 4,
+    description: "The file as canonical base64, only for bytes that are not text. Give text or base64, not both.",
+  },
+};
+const fileSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path"],
+  properties: fileProperties,
+};
 const stageSchema = objectSchema({
   ...(stageScalarsSchema.properties as Record<string, JsonSchema>),
   files: { type: "array", minItems: 1, maxItems: PACKAGE_LIMITS.files, items: fileSchema },
@@ -68,6 +80,10 @@ const stageSchema = objectSchema({
 
 function invalid(): never {
   throw new FoundryError("SCHEMA_INVALID");
+}
+/** A refusal the builder can act on: names the field and the fix, never protected evaluation data. */
+function refuse(reason: string): never {
+  throw new FoundryPackageError("SCHEMA_INVALID", reason);
 }
 
 /** Tool arguments are JSON data only; never invoke a supplied getter or accept an inherited field. */
@@ -129,15 +145,21 @@ function stageArgs(input: unknown) {
   for (let index = 0; index < length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(raw.files, String(index));
     if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return invalid();
-    const file = scalarArgs<{ path: string; base64: string }>(descriptor.value, fileSchema);
-    const bytes = Buffer.from(file.base64, "base64");
+    const at = `files[${index}]`;
+    const value = descriptor.value as Record<string, unknown> | null;
+    const form = value && typeof value === "object" && "text" in value ? "text" : "base64";
+    if (value && typeof value === "object" && "text" in value && "base64" in value)
+      return refuse(`${at}: give text or base64, not both`);
+    const file = scalarArgs<{ path: string; text?: string; base64?: string }>(
+      descriptor.value,
+      objectSchema({ path: fileProperties.path, [form]: fileProperties[form] }),
+    );
+    const bytes = form === "text" ? Buffer.from(file.text ?? "", "utf8") : Buffer.from(file.base64 ?? "", "base64");
     total += bytes.byteLength;
-    if (
-      bytes.toString("base64") !== file.base64 ||
-      bytes.byteLength > PACKAGE_LIMITS.fileBytes ||
-      total > PACKAGE_LIMITS.totalBytes
-    )
-      return invalid();
+    if (form === "base64" && bytes.toString("base64") !== file.base64)
+      return refuse(`${at}: base64 is not canonical; send the file as text instead`);
+    if (bytes.byteLength > PACKAGE_LIMITS.fileBytes || total > PACKAGE_LIMITS.totalBytes)
+      return refuse(`${at}: the package is over its size limit`);
     files.push({ path: file.path, bytes, kind: "file" });
   }
   return {
@@ -149,13 +171,21 @@ function stageArgs(input: unknown) {
 
 const codeOf = (error: unknown) =>
   error instanceof FoundryError || error instanceof FoundryPackageError ? error.code : "INTERNAL_ERROR";
+/** A package refusal's own fixed wording (which field, what to change); every other refusal stays a bare code. */
+const reasonOf = (error: unknown) => (error instanceof FoundryPackageError ? error.message : undefined);
 const denied = (error: unknown): CallCheck => {
   const code = codeOf(error);
-  return { ok: false, message: "Foundry call refused: " + code, data: { code } };
+  const reason = reasonOf(error);
+  return { ok: false, message: `Foundry call refused: ${code}${reason ? ` (${reason})` : ""}`, data: { code } };
 };
 function refused(error: unknown): ToolOutput {
   const code = codeOf(error);
-  return { content: JSON.stringify({ state: "REFUSED", code }), isError: true, data: { code } };
+  const reason = reasonOf(error);
+  return {
+    content: JSON.stringify({ state: "REFUSED", code, ...(reason ? { reason } : {}) }),
+    isError: true,
+    data: { code },
+  };
 }
 function output(value: unknown): ToolOutput {
   const status = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -261,7 +291,7 @@ export function createFoundryToolSource(deps: FoundryLifecycleDependencies & { e
     ),
     management(
       "stage_foundry_package",
-      "Freeze supplied receipt-normalizer manifest and base64 files as inert private bytes. This does not run or activate code.",
+      "Freeze the supplied receipt-normalizer manifest and files (UTF-8 text, or base64 for non-text bytes) as inert private bytes. This does not run or activate code.",
       "skills:read",
       stageSchema,
       stageArgs,

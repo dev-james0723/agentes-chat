@@ -20,6 +20,7 @@ import type {
   ApiRule,
   CalendarEvent,
   CalendarProposal,
+  FounderStatus,
   Issue,
   IssueActivity,
   IssueColumn,
@@ -200,6 +201,8 @@ interface Store {
   /** None until a test makes one, as a workspace that never used projects. */
   projects: IssueProjectRef[];
   activity: Map<string, IssueActivity[]>;
+  /** A task's evidence status (ADR 0204), as a test sets it; none set: nothing merged, nothing to decide. */
+  founder: Map<string, FounderStatus>;
   routines: Routine[];
   runs: Map<string, RoutineRun[]>;
   /** Webhook routines' addresses and calls. */
@@ -221,6 +224,7 @@ export function createMockPlanning(
       columns: defaultColumns(),
       projects: [],
       activity: new Map(),
+      founder: new Map(),
       routines: [],
       runs: new Map(),
       hooks: new Map(),
@@ -641,6 +645,45 @@ export function createMockPlanning(
         return clone(i);
       },
       activity: async (orgId, id) => clone((await store(orgId)).activity.get(id) ?? []),
+      founderStatus: async (orgId, id) => {
+        const set = (await store(orgId)).founder.get(id);
+        if (set) return clone(set);
+        const i = await findIssue(orgId, id);
+        return {
+          issueId: i.id,
+          number: i.number,
+          observedAt: new Date().toISOString(),
+          changed: {
+            title: i.title,
+            pullRequests: [],
+            why: null,
+            text: `改動：#${i.number}「${i.title}」（未有 PR）。`,
+          },
+          delivery: {
+            state: "not_merged",
+            available: false,
+            merge: null,
+            deploy: null,
+            running: null,
+            text: "程式碼：未有合併紀錄，未入現用版本。",
+          },
+          verification: {
+            state: "no_criteria",
+            verified: false,
+            criteria: { total: 0, checkedByPerson: 0 },
+            checks: [],
+            contract: { evidence: ["criteria"], tests: null, isDefault: true },
+            verifier: null,
+            missing: ["no_criteria"],
+            rejectedReasons: [],
+            text: "驗收：未定驗收條件，冇嘢可以核實，只可以當「已實作」。",
+          },
+          blockers: [],
+          next: { action: "implement", owner: null, text: "下一步：未有人負責完成實作。" },
+          needsMe: { needed: false, decisions: [], text: "唔使你決定任何嘢。" },
+          summary: "",
+        };
+      },
       comment: async (orgId, id, text, attachmentIds) => {
         const i = await findIssue(orgId, id);
         const author = await me();

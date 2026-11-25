@@ -312,6 +312,275 @@ describe("skills", () => {
     expect(bad.isError).toBe(true);
   });
 
+  test("MCP reads and toggles new-agent default without changing skill version or old agents", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const made = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: inherited-context\ndescription: Verified new-agent defaults\n---\nInstructions.",
+      }),
+    );
+    const skillId = String(made.id);
+    const initial = data(await callTool(t, app.access, "get_skill_default_for_new_agents", { skill: skillId }));
+    expect(initial).toMatchObject({ id: skillId, default_for_new_agents: false, version: 1 });
+    const enabled = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: "inherited-context",
+        enabled: true,
+      }),
+    );
+    expect(enabled).toMatchObject({ id: skillId, default_for_new_agents: true, changed: true, version: 1 });
+    const again = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: skillId,
+        enabled: true,
+      }),
+    );
+    expect(again).toMatchObject({ changed: false, version: 1 });
+    const listed = data(await callTool(t, app.access, "list_skills", {})).skills as {
+      id: string;
+      default_for_new_agents: boolean;
+    }[];
+    expect(listed.find((s) => s.id === skillId)?.default_for_new_agents).toBe(true);
+    const future = data(await callTool(t, app.access, "create_agent", { name: "InheritedSkillAgent" }));
+    const assigned = await t.db
+      .select()
+      .from(schema.agentSkills)
+      .where(eq(schema.agentSkills.agentId, String(future.id)));
+    expect(assigned.some((x) => x.skillId === skillId && x.enabled)).toBe(true);
+    const [source] = await t.db.select().from(schema.skills).where(eq(schema.skills.id, skillId));
+    expect(source).toMatchObject({ version: 1, body: "Instructions.", defaultForNewAgents: true });
+
+    const disabled = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: skillId,
+        enabled: false,
+      }),
+    );
+    expect(disabled).toMatchObject({ changed: true, default_for_new_agents: false, version: 1 });
+    const next = data(await callTool(t, app.access, "create_agent", { name: "LaterSkillAgent" }));
+    const laterSkills = await t.db
+      .select()
+      .from(schema.agentSkills)
+      .where(eq(schema.agentSkills.agentId, String(next.id)));
+    expect(laterSkills.some((x) => x.skillId === skillId && x.enabled)).toBe(false);
+    const priorSkills = await t.db
+      .select()
+      .from(schema.agentSkills)
+      .where(eq(schema.agentSkills.agentId, String(future.id)));
+    expect(priorSkills.some((x) => x.skillId === skillId && x.enabled)).toBe(true);
+    const logs = await t.db.select().from(schema.auditLog).where(eq(schema.auditLog.orgId, orgId));
+    expect(logs.filter((x) => x.action === "apps.updated" && x.targetId === skillId).length).toBe(2);
+  });
+
+  test("only a manager may change new-agent skill defaults; no cross-workspace access", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const installed = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: secure-default\ndescription: Privileged default\n---\nBody.",
+      }),
+    );
+    const initial = data(
+      await callTool(t, app.access, "get_skill_default_for_new_agents", {
+        skill: "secure-default",
+      }),
+    );
+    expect(initial.default_for_new_agents).toBe(false);
+    const member = await joinByInvitation(t, b, orgId, "member@example.com");
+    const memberApp = await connectApp(t, member, orgId, MANAGE);
+    const refused = await callTool(t, memberApp.access, "set_skill_default_for_new_agents", {
+      skill: String(installed.id),
+      enabled: true,
+    });
+    expect(refused.isError).toBe(true);
+    expect(
+      (
+        await callTool(t, app.access, "set_skill_default_for_new_agents", {
+          skill: "does-not-exist",
+          enabled: true,
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(t, app.access, "set_skill_default_for_new_agents", {
+          skill: String(installed.id),
+          enabled: "yes",
+        })
+      ).isError,
+    ).toBe(true);
+    const [unchanged] = await t.db
+      .select()
+      .from(schema.skills)
+      .where(eq(schema.skills.id, String(installed.id)));
+    expect(unchanged?.defaultForNewAgents).toBe(false);
+  });
+
+  test("MCP skill ID resolution wins over UUID-shaped names", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const target = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: real-default\ndescription: original\n---\nBody.",
+      }),
+    );
+    const imposter = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: `---\nname: ${target.id}\ndescription: UUID-named skill\n---\nOther body.`,
+      }),
+    );
+    expect(imposter.id).not.toBe(target.id);
+    const read = data(await callTool(t, app.access, "get_skill_default_for_new_agents", { skill: String(target.id) }));
+    expect(read.id).toBe(target.id);
+    const enabled = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(target.id),
+        enabled: true,
+      }),
+    );
+    expect(enabled.id).toBe(target.id);
+    const rows = await t.db.select().from(schema.skills).where(eq(schema.skills.orgId, orgId));
+    expect(rows.find((x) => x.id === target.id)?.defaultForNewAgents).toBe(true);
+    expect(rows.find((x) => x.id === imposter.id)?.defaultForNewAgents).toBe(false);
+    // The old ID must not fall through to the still-installed skill with that UUID-shaped name.
+    await t.db
+      .update(schema.skills)
+      .set({ deletedAt: new Date() })
+      .where(eq(schema.skills.id, String(target.id)));
+    const staleRead = await callTool(t, app.access, "get_skill_default_for_new_agents", { skill: String(target.id) });
+    expect(staleRead.isError).toBe(true);
+    const staleWrite = await callTool(t, app.access, "set_skill_default_for_new_agents", {
+      skill: String(target.id),
+      enabled: true,
+    });
+    expect(staleWrite.isError).toBe(true);
+    const explicitName = data(
+      await callTool(t, app.access, "get_skill_default_for_new_agents", {
+        skill: String(target.id),
+        by: "name",
+      }),
+    );
+    expect(explicitName.id).toBe(imposter.id);
+    const explicitChange = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(target.id),
+        by: "name",
+        enabled: true,
+      }),
+    );
+    expect(explicitChange.id).toBe(imposter.id);
+    const [after] = await t.db
+      .select()
+      .from(schema.skills)
+      .where(eq(schema.skills.id, String(imposter.id)));
+    expect(after?.defaultForNewAgents).toBe(true);
+  });
+
+  test("a foreign workspace skill ID cannot be read or changed through this MCP grant", async () => {
+    const { b, orgId } = await setup();
+    const source = await connectApp(t, b, orgId, MANAGE);
+    const [foreignOrg] = await t.db
+      .insert(schema.organizations)
+      .values({
+        name: "Foreign tenant",
+        context: "Tests strict workspace boundaries.",
+      })
+      .returning();
+    if (!foreignOrg) throw new Error("missing foreign organization test fixture");
+    const [foreignSkill] = await t.db
+      .insert(schema.skills)
+      .values({
+        orgId: foreignOrg.id,
+        slug: "foreign-default",
+        name: "foreign-default",
+        description: "Only foreign workspace",
+        body: "Private to that workspace.",
+        source: "manual",
+      })
+      .returning();
+    if (!foreignSkill) throw new Error("missing foreign skill test fixture");
+    expect(
+      (
+        await callTool(t, source.access, "get_skill_default_for_new_agents", {
+          skill: foreignSkill.id,
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(t, source.access, "set_skill_default_for_new_agents", {
+          skill: foreignSkill.id,
+          enabled: true,
+        })
+      ).isError,
+    ).toBe(true);
+    const [unchanged] = await t.db.select().from(schema.skills).where(eq(schema.skills.id, foreignSkill.id));
+    expect(unchanged?.defaultForNewAgents).toBe(false);
+  });
+
+  test("two concurrent changes have one transition and one audited record", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const created = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: race-default\ndescription: concurrency\n---\nBody.",
+      }),
+    );
+    const outputs = await Promise.all([
+      callTool(t, app.access, "set_skill_default_for_new_agents", { skill: String(created.id), enabled: true }),
+      callTool(t, app.access, "set_skill_default_for_new_agents", { skill: String(created.id), enabled: true }),
+    ]);
+    expect(outputs.every((r) => !r.isError)).toBe(true);
+    expect(outputs.map((x) => data(x).changed).filter(Boolean)).toHaveLength(1);
+    const events = await t.db.select().from(schema.auditLog).where(eq(schema.auditLog.orgId, orgId));
+    const changes = events.filter((e) => e.action === "apps.updated" && e.targetId === created.id);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.details).toMatchObject({ before: false, after: true });
+  });
+
+  test("only a true post-lock default transition consumes the manage quota", async () => {
+    const { b, orgId } = await setup();
+    const app = await connectApp(t, b, orgId, MANAGE);
+    const created = data(
+      await callTool(t, app.access, "create_skill", {
+        markdown: "---\nname: quota-default\ndescription: quota transitions\n---\nBody.",
+      }),
+    );
+    const rate = t.adapters.rateLimiter;
+    const consume = rate.consume.bind(rate);
+    let manageCharges = 0;
+    rate.consume = async (key, rule) => {
+      if (key.startsWith("mcp:manage:")) manageCharges += 1;
+      return consume(key, rule);
+    };
+    const turnOn = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: true,
+      }),
+    );
+    expect(turnOn.changed).toBe(true);
+    expect(manageCharges).toBe(2);
+    manageCharges = 0;
+    const repeat = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: true,
+      }),
+    );
+    expect(repeat.changed).toBe(false);
+    expect(manageCharges).toBe(0);
+    const turnOff = data(
+      await callTool(t, app.access, "set_skill_default_for_new_agents", {
+        skill: String(created.id),
+        enabled: false,
+      }),
+    );
+    expect(turnOff.changed).toBe(true);
+    expect(manageCharges).toBe(2);
+  });
+
   test("a member without manage_agents can't install one", async () => {
     const { b, orgId } = await setup();
     const member = await joinByInvitation(t, b, orgId, "member@example.com");

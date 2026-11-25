@@ -378,6 +378,18 @@ test("a provider refused this server's own OAuth app: what's wrong and who fixes
  * hit goes in `KNOWN` instead.
  */
 const PLAIN_LINE = new Set([
+  // Only the lead agent's `settle_unknown_effect` tool meets these (ADR 0203 §6); a person's verdict never does.
+  "run.effect_evidence_missing",
+  "run.effect_lead_changed",
+  "run.effect_not_routed",
+  "run.effect_person_only",
+  // Only the operator API answers it (a deploy record for a source this server doesn't run, ADR 0204): no person meets it.
+  "deploy_not_running",
+  // Independent verification (ADR 0211) has no screen yet: only the API and the engine meet these.
+  "evidence_missing",
+  "reasons_required",
+  "self_verification",
+  "verifier_can_write",
   // Only an agent names a project by a name that isn't one, and the pickers offer only projects that exist.
   "issue_project.unknown",
   "issue_project.not_found",

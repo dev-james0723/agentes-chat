@@ -116,6 +116,7 @@ import type {
   ConnectorCatalog,
   ConsultationConversation,
   CostlyDecision,
+  CostPerSuccessReport,
   CreatedPersonalToken,
   Credential,
   CustomConnectStart,
@@ -142,6 +143,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GifQuery,
@@ -198,6 +200,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -361,6 +364,54 @@ import type {
 export interface OpenedWorkspace {
   rightHandId?: string | null;
   me?: Me;
+}
+
+/** The Clean workspace card (ADR 0201): each computer's disk, and what ended tasks left with its cleanup receipts. */
+export interface CleanWorkspaceItem {
+  where: "drive" | "computer";
+  path: string;
+  kind: string;
+  role: string;
+  size: number | null;
+  decision: "keep" | "candidate";
+  why: string;
+  sha256?: string | null;
+  sameAs?: string;
+}
+export interface CleanWorkspaceReceipt {
+  path: string;
+  status: "approved" | "done" | "skipped" | "blocked" | "unknown";
+  reason: string | null;
+  bytes: number | null;
+  freeBefore: number | null;
+  freeAfter: number | null;
+  executedAt: string | null;
+}
+export interface CleanWorkspaceReport {
+  id: string;
+  subjectType: "issue" | "mission";
+  subjectId: string;
+  outcome: "done" | "canceled";
+  createdAt: string;
+  kept: number;
+  candidates: number;
+  candidateBytes: number;
+  duplicates: number;
+  snapshot: { restorable: number; manifestOnly: number } | null;
+  items: CleanWorkspaceItem[];
+  cleanups: CleanWorkspaceReceipt[];
+  removedBytes: number;
+}
+export interface CleanWorkspace {
+  computers: {
+    id: string;
+    name: string;
+    level: "ok" | "low" | "critical" | "unknown";
+    freeGb: number | null;
+    use: number | null;
+  }[];
+  pending: number;
+  reports: CleanWorkspaceReport[];
 }
 
 export interface ApiClient {
@@ -608,6 +659,8 @@ export interface ApiClient {
     usageReport(orgId: string, since?: string): Promise<UsageReport>;
     /** Every plan account by computer and the API per agent, this month (ADR 0063). */
     planUsage(orgId: string): Promise<OrgPlanUsage>;
+    /** Cost per verified successful task, last 30 days by default (ADR 0207; `view_usage`). */
+    costPerSuccess(orgId: string, window?: { from?: string; to?: string }): Promise<CostPerSuccessReport>;
     /** Uso › Pessoas (ADR 0141): each person's use, their limit and what they do now (`view_usage`). */
     peopleUsage(orgId: string, period?: { since?: string; until?: string }): Promise<PeopleUsage>;
     /** Where the CSV of `peopleUsage` downloads from, one row per person per day. */
@@ -1261,6 +1314,8 @@ export interface ApiClient {
     confirm(orgId: string, memoryId: string, expectedVersion?: number): Promise<Memory>;
     /** Undoes a change the agent made from the chat (`update.undo.path`). */
     revert(orgId: string, memoryId: string): Promise<void>;
+    /** Its versions and the runs that used it (who may change it). */
+    history(orgId: string, memoryId: string): Promise<MemoryHistory>;
   };
   proposals: {
     /** The newest 200, pending ones first; with `ids`, only those (a chat card's rows). */
@@ -1341,6 +1396,8 @@ export interface ApiClient {
     /** Who sees it (ADR 0151): anyone who can edit it changes it. */
     setAudience(orgId: string, id: string, audience: AudienceChoice): Promise<Issue>;
     activity(orgId: string, id: string): Promise<IssueActivity[]>;
+    /** Its status from stored evidence only, in Hong Kong Chinese (ADR 0204). */
+    founderStatus(orgId: string, id: string): Promise<FounderStatus>;
     comment(orgId: string, id: string, text: string, attachmentIds?: string[]): Promise<IssueActivity>;
     /** "Pedir à Ada para implementar": assigns the agent and starts its work in the task's conversation. */
     askAgent(orgId: string, id: string, agentId: string): Promise<Issue>;
@@ -1751,6 +1808,11 @@ export interface ApiClient {
     restore(orgId: string, id: string): Promise<ArtifactDetail | undefined>;
     /** Out of the trash for good, now. */
     purge(orgId: string, id: string): Promise<void>;
+  };
+  cleanWorkspace: {
+    get(orgId: string): Promise<CleanWorkspace>;
+    /** Approves cleaning a report's candidates (all, or the paths given); each is checked again on its computer. */
+    approve(orgId: string, reportId: string, paths?: string[]): Promise<{ approved: number; notOnAComputer: number }>;
   };
   storage: {
     get(orgId: string): Promise<StorageConfig>;

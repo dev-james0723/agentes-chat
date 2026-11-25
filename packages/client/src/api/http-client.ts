@@ -14,7 +14,7 @@ import type {
   VaultKeysImportResult,
   VaultOverview,
 } from "../vault/types";
-import type { HttpApi, OpenedWorkspace } from "./client";
+import type { CleanWorkspace, HttpApi, OpenedWorkspace } from "./client";
 import { ApiError, createFileRequester, createRequester, enc, type TransportOptions } from "./http";
 import type {
   AccountDeletionPlan,
@@ -88,6 +88,7 @@ import type {
   ConnectorCatalog,
   ConsultationConversation,
   CostlyDecision,
+  CostPerSuccessReport,
   CreatedPersonalToken,
   Credential,
   CustomConnectStart,
@@ -107,6 +108,7 @@ import type {
   FeedbackOffer,
   ForeignMailbox,
   FormerAgent,
+  FounderStatus,
   GifKey,
   GifPage,
   GitHubAppInfo,
@@ -151,6 +153,7 @@ import type {
   Me,
   Member,
   Memory,
+  MemoryHistory,
   Message,
   MessageCard,
   MessagePin,
@@ -711,6 +714,8 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         request<{ roleIds: string[] }>(`${org(orgId)}/invitations/${enc(id)}`, { method: "PATCH", json: { roleIds } }),
       usageReport: (orgId, since) => request<UsageReport>(`${org(orgId)}/usage/report`, { query: { since } }),
       planUsage: (orgId) => request<OrgPlanUsage>(`${org(orgId)}/usage/plans`),
+      costPerSuccess: (orgId, window = {}) =>
+        request<CostPerSuccessReport>(`${org(orgId)}/usage/cost-per-success`, { query: window }),
       peopleUsage: (orgId, period = {}) => request<PeopleUsage>(`${org(orgId)}/usage/people`, { query: period }),
       peopleUsageCsvUrl: (orgId, period = {}) => {
         const qs = new URLSearchParams(Object.entries(period).filter((e): e is [string, string] => !!e[1]));
@@ -1192,6 +1197,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
       revert: async (orgId, id) => {
         await request<unknown>(`${org(orgId)}/memories/${enc(id)}/revert`, { json: {} });
       },
+      history: (orgId, id) => request<MemoryHistory>(`${org(orgId)}/memories/${enc(id)}/history`),
     },
     dms: {
       list: async (orgId) => (await request<{ dms: DirectMessage[] }>(`${org(orgId)}/dms`)).dms,
@@ -1426,6 +1432,16 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         (await request<{ suggestions: MySuggestion[] }>(`${org(orgId)}/join-requests/mine`)).suggestions,
       cancel: (orgId, id) => request<void>(`${org(orgId)}/join-requests/${enc(id)}`, { method: "DELETE" }),
     },
+    cleanWorkspace: {
+      get: (orgId) => request<CleanWorkspace>(`${org(orgId)}/clean-workspace`),
+      approve: (orgId, reportId, paths) =>
+        request<{ approved: number; notOnAComputer: number }>(
+          `${org(orgId)}/clean-workspace/${enc(reportId)}/approve`,
+          {
+            json: paths ? { paths } : {},
+          },
+        ),
+    },
     storage: {
       get: (orgId) => request<StorageConfig>(`${org(orgId)}/storage`),
       test: (orgId, input) => request<StorageTestResult>(`${org(orgId)}/storage/test`, { json: input }),
@@ -1526,6 +1542,7 @@ export function createHttpApi(options: TransportOptions = {}): HttpApi {
         }),
       activity: async (orgId, id) =>
         (await request<{ activity: IssueActivity[] }>(`${org(orgId)}/issues/${enc(id)}/activity`)).activity,
+      founderStatus: (orgId, id) => request<FounderStatus>(`${org(orgId)}/issues/${enc(id)}/founder-status`),
       comment: (orgId, id, text, attachmentIds) =>
         request<IssueActivity>(`${org(orgId)}/issues/${enc(id)}/comments`, {
           json: { text, ...(attachmentIds?.length ? { attachmentIds } : {}) },

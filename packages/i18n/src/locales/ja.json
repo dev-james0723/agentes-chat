@@ -1,4 +1,195 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter フォールバック",
+    "intro": "サブスクリプションを優先します。対象のエージェントとルーチンは、月額50米ドルの独立した上限を共有します。",
+    "disabled": "無効",
+    "serverDisabled": "サーバーポリシーにより無効",
+    "configured": "設定済み。送信前に確認します",
+    "blocked": "ブロック中。照合が必要です",
+    "spent": "今月の使用額",
+    "pending": "予約済み・未解決",
+    "cap": "月額上限（USD）",
+    "key": "専用の OpenRouter キー",
+    "chooseKey": "キーを選択",
+    "keyHint": "この金額以下の月額上限（BYOK を含む）を設定した別の OpenRouter キーを追加してください。通常のリクエストには再利用しないでください。",
+    "models": "許可する具体的なモデル ID（1行に1つ）",
+    "inputPrice": "100万トークンあたりの最大入力料金（USD）",
+    "outputPrice": "100万トークンあたりの最大出力料金（USD）",
+    "tier": "ルーターの料金区分",
+    "enable": "保存して有効化",
+    "disable": "フォールバックを無効化",
+    "refresh": "更新",
+    "error": "設定を保存できませんでした。キーとポリシーを確認してください。",
+    "routes": "開発: openrouter/auto-code · 一般: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "グローバルモデルルーター",
+    "intro": "メインのサブスクリプションを最優先で使用します。対象のエージェントとルーチンは OpenCode Go、検証済み無料 API、上限付き低コストモデル、承認済み直結 API プロバイダーへ順に切り替わります。",
+    "cascade": "順序: サブスクリプション · OpenCode Go · 無料 API · 低コスト有料 · 直結 API · 上限付き昇格",
+    "refresh": "更新",
+    "syncCatalog": "カタログを同期",
+    "syncing": "カタログを同期中",
+    "unknown": "不明",
+    "freeCap": "US$0（無料またはプラン内）",
+    "states": {
+      "loading": "ルーター状態を読み込み中",
+      "disconnected": "代替 API レーンが未接続です",
+      "serverDisabled": "サーバーポリシーにより無効",
+      "disabled": "無効。サブスクリプションのみ使用",
+      "authorization_needed": "認証が必要です。プロバイダーキーを確認してください",
+      "stale_catalog": "カタログの有効期限切れです。同期して再検証してください",
+      "unverified": "検証済みのカタログとキーを待機中",
+      "eligible": "準備完了。送信前にガード検証を実施",
+      "quota_warning": "クォータまたは月間予算の閾値に近づいています",
+      "rate_limited": "レート制限中です。ウィンドウのリセットを待機中",
+      "provider_outage": "プロバイダーが一時停止中です。次の対象レーンへ切り替え中",
+      "incompatible": "ツールまたはモダリティ非対応のためスキップ",
+      "privacy_blocked": "データ保持または地域ポリシーによりブロック",
+      "budget_held": "一時停止中。未解決の予算保留または上限到達",
+      "needs_owner": "ワークスペース所有者の承認待ち",
+      "recovered": "メインのサブスクリプションへ復帰済み"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go プラン",
+      "free_api": "無料 API プール",
+      "paid_low_cost": "低コスト有料",
+      "direct_api": "直結プロバイダー API",
+      "paid_dynamic": "動的オートルーター"
+    },
+    "entitlements": {
+      "subscription_go": "Go サブスクリプション（追加費用 $0）",
+      "free_only": "無料枠のみ（上限 $0）",
+      "paid_capped": "月間上限付き有料"
+    },
+    "policy": {
+      "heading": "ワークスペースのルーティング方針",
+      "enable": "方針を保存",
+      "disable": "ルーターを無効化",
+      "enabledLabel": "グローバルモデルルーターの代替を有効化",
+      "killSwitchLabel": "緊急停止スイッチ（すべての代替送信を遮断）",
+      "maxEscalations": "1ターンあたりの最大品質昇格回数（0〜2）",
+      "maxRetries": "1ルートあたりの最大通信再試行回数（0〜1）",
+      "optOutAgents": "除外するエージェント ID（空欄でルーターを継承）",
+      "warnThresholds": "予算の 50%・80%・95% で警告を通知"
+    },
+    "accounts": {
+      "caption": "設定済みプロバイダーレーンとクォータ枠",
+      "empty": "プロバイダーレーンはまだ設定されていません。",
+      "configureHeading": "プロバイダーレーンを設定",
+      "provider": "モデルプロバイダー",
+      "lane": "ルーティングレーン",
+      "entitlement": "課金モード",
+      "key": "専用プロバイダーキー",
+      "chooseKey": "専用キーを選択",
+      "cloudflareAccount": "Cloudflare 32桁16進数アカウント ID",
+      "cap": "月間上限（USD）",
+      "models": "許可する具体的なモデル ID（1行に1つ）",
+      "zdr": "データ保持ゼロ（ZDR）を必須にする",
+      "save": "レーンを保存",
+      "columns": {
+        "provider": "API プロバイダー",
+        "lane": "レーン",
+        "state": "状態",
+        "budget": "使用済み / 上限",
+        "quota": "日次クォータ",
+        "reset": "枠 / 観測時刻"
+      }
+    },
+    "catalog": {
+      "summary": "カタログ提供枠: 利用可能 {{eligible}} 件 · 記録済み {{total}} 件",
+      "caption": "検証済み API モデル一覧",
+      "columns": {
+        "model": "モデル ID",
+        "provider": "API プロバイダー",
+        "lane": "レーン",
+        "status": "適格状態",
+        "context": "コンテキスト長"
+      }
+    },
+    "receipts": {
+      "caption": "直近のルーティング明細と品質検証",
+      "empty": "この期間の代替送信記録はありません。",
+      "reconcileNoSend": "保留を解除",
+      "columns": {
+        "requested": "要求モデル",
+        "actual": "実行モデル",
+        "lane": "レーン",
+        "cost": "実績 / 予約額",
+        "quality": "品質",
+        "state": "状態"
+      },
+      "verified": "検証済み",
+      "unverified": "検証不一致"
+    },
+    "metrics": {
+      "caption": "検証済み成功あたりのコストと遅延",
+      "columns": {
+        "model": "モデル ID",
+        "successes": "成功 / 試行",
+        "costPerSuccess": "成功1件あたりのコスト",
+        "latency": "p50 / p95 遅延"
+      }
+    },
+    "benchmarkSummary": "最新ベンチマーク: {{tasks}} タスク · {{models}} モデル",
+    "error": "グローバルモデルルーターの設定を更新できませんでした。キー、上限、許可モデルを確認してください。"
+  },
+  "creditContinuity": {
+    "title": "APIクレジットによる継続",
+    "refresh": "状態を更新",
+    "unavailable": "クレジットの状態を取得できません。ここでは付与クレジットの利用可能額がまだ確認されていません。",
+    "intro": "利用条件に合うサブスクリプションを優先します。APIへの切り替えでは、請求期間の共有上限内で確認済みの付与クレジットを使用します。",
+    "status": {
+      "unavailable": "クレジットの状態を取得できません。自動支出は確認されていません。",
+      "disabled": "APIへの自動切り替えは無効です。記録済みの支出と未確定の費用は引き続き表示されます。",
+      "unverified": "条件を満たすAPI付与クレジットはまだ確認されていません。自動利用可能額は$0です。",
+      "blocked": "APIへの切り替えは、最新の証拠、予算、または照合を待っています。",
+      "available": "記録された付与クレジットの上限内でAPIへの切り替えを利用できます。"
+    },
+    "caption": "API付与クレジットと請求期間の予算",
+    "columns": {
+      "provider": "提供元",
+      "state": "状態",
+      "automatic": "自動利用可能額 / 上限",
+      "costs": "支出済み / 未確定",
+      "reserve": "オーナーの予備枠",
+      "buffer": "安全余裕枠",
+      "expires": "クレジットの有効期限",
+      "forecast": "過去のp95"
+    },
+    "provider": {
+      "openai": "ChatGPT の API",
+      "anthropic": "Claude の API"
+    },
+    "unknown": "不明",
+    "state": {
+      "unavailable": "利用不可",
+      "unverified": "未確認",
+      "expired": "クレジットの期限切れ",
+      "stale": "証拠の更新が必要",
+      "disabled": "無効",
+      "paused": "一時停止中",
+      "pricingExpired": "料金の有効期限切れ",
+      "pricingChanged": "料金が変更されました",
+      "pricingUnverified": "料金が未確認",
+      "noRoute": "条件を満たすAPI経路がありません",
+      "budgetUnavailable": "予算を利用できません",
+      "ready": "利用可能",
+      "reserveAvailable": "オーナーの予備枠を利用可能",
+      "billingBlocked": "請求がブロックされています",
+      "reconciliation": "照合が必要",
+      "blocked": "ブロック中"
+    },
+    "evidence": "証拠: {{date}}",
+    "approvedAvailable": "承認済みの利用可能額: {{amount}}",
+    "approvals_other": "有効なオーナー承認が{{count}}件",
+    "ownerApproval": "オーナーの承認",
+    "historyHigh": "精算済みの作業単位は{{count}}件です。不確実性は高いです。",
+    "historyMedium": "精算済みの作業単位は{{count}}件です。不確実性は中程度です。",
+    "historyUnknown": "精算済みの作業単位は{{count}}件です。不確実性は不明です。",
+    "insufficientHistory": "過去のデータが不足しています",
+    "obligations_other": "{{count}}件のAPI呼び出しに、確保済みまたは未確定の費用があります。緊急予備枠の使用にはオーナーの承認が必要です。この機能は有料チャージを有効にしません。",
+    "evidenceNote": "付与クレジットの利用資格は、オーナーが記録した提供元の請求証拠に基づいて確認します。過去のデータによる予測は支出を許可するものではありません。状態の取得日時: {{date}}。"
+  },
   "app": {
     "name": "agentes"
   },
@@ -1283,7 +1474,13 @@
       "moonshot": "Kimiのキーはsk-で始まります。確認してもう一度貼り付けてください。",
       "zai": "Z.aiのキー全体を、スペースなしで貼り付けてください。確認してもう一度貼り付けてください。",
       "minimax": "MiniMaxのキー全体を、スペースなしで貼り付けてください。sk-cp-で始まるキーはプラン用で、ここでは使えません。",
-      "openrouter": "OpenRouterのキーはsk-or-v1-で始まります。確認してもう一度貼り付けてください。"
+      "openrouter": "OpenRouterのキーはsk-or-v1-で始まります。確認してもう一度貼り付けてください。",
+      "groq": "Groq キーは gsk_ で始まります。確認してもう一度貼り付けてください。",
+      "cloudflare": "Cloudflare Workers AI トークン全体を空白なしで貼り付けてください。確認してやり直してください。",
+      "opencode": "OpenCode API キー全体を空白なしで貼り付けてください。確認してやり直してください。",
+      "tencent": "Tencent Hunyuan API キー全体を空白なしで貼り付けてください。確認してやり直してください。",
+      "xiaomi": "Xiaomi MiMo API キー全体を空白なしで貼り付けてください。確認してやり直してください。",
+      "nvidia": "NVIDIA NIM キーは nvapi- で始まります。確認してもう一度貼り付けてください。"
     },
     "keyFromOther": "別のプロバイダーのキーですか？",
     "anthropicWorkspace": "Claude ConsoleのワークスペースID",
@@ -3016,6 +3213,8 @@
     "atOnceHelp": "誰も頼んでいない作業を同時にいくつ行うか。ほかは順番を待ちます。",
     "prs": "1時間あたりのプルリクエスト",
     "prsHelp": "自分の作業が1時間に開ける最大数。",
+    "shots": "タスクあたりのスクリーンショット",
+    "shotsHelp": "1 つの作業で撮れる上限です。ページの見た目を確認するエージェントには高くしてください。コンピュータのディスクがほぼ満杯のときも、新しいスクリーンショットは一時停止します。",
     "call": "呼び出せるエージェント",
     "callHelp": "メンションしたり作業を渡したりできる相手。",
     "callAll": "すべて",
@@ -5622,6 +5821,36 @@
     "editTitle": "{{kind}}を編集",
     "text": "テキスト",
     "editHelp": "以前のバージョンは履歴に残ります。{{source}}",
+    "inspect": {
+      "scope": "適用範囲：{{scope}}",
+      "scopes": {
+        "agent": "このエージェント",
+        "channel": "1つのチャンネル",
+        "thread": "1つのスレッド",
+        "org": "ワークスペース全体",
+        "person": "1人",
+        "entity": "1つのトピック",
+        "other": "より限られた範囲"
+      },
+      "trustHigh": "信頼できる情報源",
+      "trustLow": "外部の情報源",
+      "statusActive": "使用中",
+      "statusArchived": "アーカイブ済み",
+      "validFrom": "{{date}} から有効",
+      "validTo": "{{date}} まで有効",
+      "source": "元のメッセージを開く",
+      "toggle": "履歴と使用状況",
+      "versions": "バージョン",
+      "version": "バージョン {{version}}",
+      "current": "これ",
+      "replaced": "{{when}}に置き換え",
+      "runs": "最近使ったエージェント",
+      "run": "#{{channel}} の {{agent}} · {{when}}",
+      "noRuns": "まだどのエージェントも使っていません。",
+      "revert": "元に戻す",
+      "revertTitle": "前のバージョンに戻しますか？",
+      "revertText": "このバージョンはアーカイブされ、前のバージョンが戻ります。どちらも履歴に残ります。"
+    },
     "origin": {
       "person": "{{name}}が記入",
       "app": "{{name}}がAIアプリから送信",
@@ -6835,6 +7064,18 @@
       "label": "タスク",
       "description": "タスクを作成・更新します。"
     },
+    "colab_read": {
+      "label": "Colab を読む",
+      "description": "サブスクリプションのプラン、使えるランタイムの種類、セッション名を読みます。"
+    },
+    "colab_run": {
+      "label": "Colab でジョブを実行",
+      "description": "ランタイムとセッションを作成し、Python を実行し、自分が開いたセッションを閉じます。Colab のコンピューティング ユニットを使います。"
+    },
+    "colab_delete": {
+      "label": "Colab のランタイムを削除",
+      "description": "ランタイムを、すべてのファイルとセッションごと完全に削除します。"
+    },
     "github_repo_read": {
       "label": "コードを読む",
       "description": "ファイルやコミットを読み、コードを検索します。"
@@ -7238,6 +7479,14 @@
     "notFound": "このタスクは存在しないか、アクセス権がありません。",
     "createdBy": "#{{number}} · 作成者: {{name}}",
     "createdByShort": "作成者: {{name}}",
+    "founder": {
+      "title": "納品状況",
+      "available": "使用中のアプリに反映済み",
+      "notAvailable": "使用中のアプリに未反映",
+      "verified": "確認済み",
+      "notVerified": "未確認",
+      "needsYou": "あなたの判断が必要"
+    },
     "fromMessage": "<0>#{{channel}}のメッセージ</0>から",
     "fromAgent": "エージェントへの依頼から",
     "subIssues_other": "サブタスク · {{count}}",
@@ -8100,6 +8349,8 @@
       "draftingNoComputer": "{{executor}}がフォルダを読み、計画を作成しています",
       "empty": "まだ項目がありません。このまま開始するか、「変更を依頼」で計画を頼めます。",
       "waitPlan": "計画が届くと開きます",
+      "repositoryFolder": "リポジトリのフォルダー",
+      "repositoryFolderRelative": "エージェントの作業フォルダーからの相対パス（例: repos/project）。",
       "adjusts": "{{executor}}が進めながらリストを調整していきます",
       "switched": "これからは{{executor}}がプログラムを書きます。計画は最初からやり直しです。",
       "more_other": "+{{count}}項目",
@@ -11133,6 +11384,40 @@
   },
   "storage": {
     "title": "ストレージ",
+    "clean": {
+      "title": "ワークスペースの整理",
+      "intro": "終了したタスクがエージェントのコンピュータに残したものです。成果物、証拠、目的のわからないファイルは残ります。整理する一時ファイルはあなたが選びます。",
+      "computers": "コンピュータのディスク",
+      "level": {
+        "ok": "空き {{free}} GB",
+        "low": "空きが少なくなっています: {{free}} GB",
+        "critical": "ほぼ満杯です: 空き {{free}} GB。新しいスクリーンショットと録画は一時停止中です。",
+        "unknown": "まだ測定されていません"
+      },
+      "none": "エージェントがファイルを登録し始めてから、終了したタスクはありません。",
+      "task": "タスク",
+      "mission": "ミッション",
+      "ended": {
+        "done": "完了",
+        "canceled": "キャンセル"
+      },
+      "kept_other": "{{count}} 件を保持",
+      "candidates_other": "一時ファイル {{count}} 件、{{size}}",
+      "duplicates_other": "完全な重複 {{count}} 件",
+      "restorable": "証拠: Drive から復元できるもの {{restorable}} 件、一覧のみ {{manifestOnly}} 件",
+      "approve": "一時ファイルを整理",
+      "approved_other": "{{count}} 件を承認しました。削除する前にそれぞれのコンピュータで再確認します。",
+      "status": {
+        "approved": "コンピュータを待っています",
+        "done": "削除済み",
+        "skipped": "すでにありません",
+        "blocked": "保持: {{reason}}",
+        "unknown": "まだ不明: 後で再確認します"
+      },
+      "freed": "コンピュータの空き容量: 前 {{before}}、後 {{after}}",
+      "show": "ファイルを表示",
+      "hide": "ファイルを隠す"
+    },
     "options": "ファイルの保存先",
     "agentes": "agentes.chatストレージ",
     "agentesText": "ファイルは当社のストレージに、ワークスペースごとに分けて保存されます。",
@@ -11338,6 +11623,16 @@
       "list": "接続済みのMCPサーバー",
       "none": "アドレスで接続したMCPサーバーがここに表示されます。"
     },
+    "hostMcp": {
+      "title": "コンピューター上のHost MCP",
+      "intro": "信頼できるコンピューターで審査済みのHost MCPプロファイルを使用します。選択したエージェントにのみ読み取り権限を付与します。",
+      "connectRead": "接続して読み取りを許可",
+      "bindFailed": "接続を確認できませんでした。選択を解除してプロファイル一覧を再読み込みし、コンピューター、プロファイルのバージョン、エージェントを確認してから再試行してください。",
+      "grantUnconfirmed": "プロファイルは接続されていますが、読み取り権限を確認できません。このエージェントの読み取り権限を再試行するか、既存の権限を変更せずに選択を解除してください。再読み込み後は同じプロファイルのバージョンとエージェントを選んでください。",
+      "retryRead": "読み取り権限を再試行",
+      "resetSelection": "選択を解除",
+      "note": "コンピューターの許可リストも適用されます。エージェントの実際のツール呼び出しで確認してください。"
+    },
     "addTitle": "コネクタを追加",
     "catalogText": "{{org}}で一度接続すれば、各エージェントが何を使えるかを選べます。",
     "catalog": "利用できるコネクタ",
@@ -11376,6 +11671,8 @@
     "more": "その他のサービス",
     "tileConnected": "{{name}}、接続済み",
     "tileSoon": "{{name}}、近日公開",
+    "tileSetupRequired": "{{name}}、設定が必要",
+    "setupRequired": "設定が必要",
     "otherTitle": "別のサービス",
     "otherDetail": "エージェント向けの接続を提供しているサービスなら、アドレス（https://で始まるもの）で接続できます。",
     "otherSteps": {
@@ -11399,6 +11696,7 @@
     "how": {
       "oneClick": "ワンクリック: サービスのページで承認します",
       "oauthOrKey": "サービスのページで承認するか、APIキーを使います",
+      "oauthSetup": "このアプリのログインはまだ設定されていません。",
       "key": "APIキーが必要です",
       "appPassword": "アプリパスワードが必要です",
       "addressPassword": "データベースのアドレスとパスワードが必要です",
@@ -12789,6 +13087,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "クレジットの記録はすでにあります。更新して状態を確認してください。",
+      "disabled": "クレジットを使う代替処理はオフです。",
+      "resumeRefused": "この実行はまだ再開できません。保留中のクレジットと未完了の操作を確認してください。"
+    },
     "passwordLink": {
       "email": "このサーバーはメールを送ります。本人が「パスワードを忘れた」から自分のリンクを依頼します。",
       "serverOwner": "このサーバーをインストールした人は、サーバーが動いているコンピューターからリンクなしで入ります。",
@@ -15077,6 +15380,14 @@
       "oldSub": "アカウントが記録される前の使用量",
       "ofMonth": "月の{{percent}}",
       "shareLabel": "{{source}}: 月の{{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "検証済み成功あたりのコスト",
+      "intro": "過去30日間。成功とは、受け入れ条件を人がチェックし、その後誰も再オープンしていないタスクです。すべての実行がコストに含まれます。",
+      "perSuccess": "成功あたり{{cost}}",
+      "unknown": "コスト不明",
+      "noSuccess": "検証済みの成功はまだありません",
+      "line": "実行{{runs}}回 · 検証済み{{successes}} · 失敗{{failed}} · 再試行{{retries}}"
     }
   },
   "budget": {
@@ -15461,6 +15772,7 @@
         "updatingThread": "スレッドを更新しました",
         "addingAgent": "エージェントをチャンネルに追加しました",
         "readingConversation": "会話を読みました",
+        "checkingPlanUsage": "チームのプラン使用量を確認しました",
         "usingTool": "ツール{{tool}}を使いました",
         "thinking": "考えました",
         "typing": "書きました",
@@ -15578,6 +15890,7 @@
       "updatingThread": "スレッドを更新中",
       "addingAgent": "エージェントをチャンネルに追加中",
       "readingConversation": "会話を読み中",
+      "checkingPlanUsage": "チームのプラン使用量を確認中",
       "usingTool": "ツールを使用中"
     },
     "tokens": "{{value}}トークン",

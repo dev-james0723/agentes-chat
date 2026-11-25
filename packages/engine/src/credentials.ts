@@ -248,6 +248,7 @@ export async function createCredential(
         provider: input.provider,
         label: input.label,
         secretCiphertext: sealed.ciphertext,
+        secretFingerprint: sha256(apiKey),
         wrappedDataKey: sealed.wrappedDataKey,
         kekId: sealed.kekId,
         keyHint: apiKey === ENDPOINT_NO_KEY ? "" : apiKey.slice(-4),
@@ -527,6 +528,38 @@ export async function decryptCredential(db: Database, keyWrappers: KeyWrapper[],
   return credential;
 }
 
+/** Establish an internal identity for a legacy encrypted key without replacing its ID, key or owner. */
+export async function ensureCreditCredentialIdentity(
+  db: Database,
+  keyWrappers: KeyWrapper[],
+  orgId: string,
+  id: string,
+): Promise<void> {
+  const row = await usableCredentialRow(db, orgId, id);
+  if (!row) throw new NotFoundError("Credential not found");
+  const apiKey = await openSecret(
+    keyWrappers,
+    { ciphertext: row.secretCiphertext, wrappedDataKey: row.wrappedDataKey, kekId: row.kekId },
+    aadFor(orgId, id),
+  );
+  const fingerprint = sha256(apiKey);
+  if (row.secretFingerprint === fingerprint) return;
+  const [saved] = await db
+    .update(providerCredentials)
+    .set({ secretFingerprint: fingerprint })
+    .where(
+      and(
+        eq(providerCredentials.orgId, orgId),
+        eq(providerCredentials.id, id),
+        eq(providerCredentials.secretCiphertext, row.secretCiphertext),
+        eq(providerCredentials.wrappedDataKey, row.wrappedDataKey),
+        isNull(providerCredentials.revokedAt),
+      ),
+    )
+    .returning({ id: providerCredentials.id });
+  if (!saved) throw new ConflictError("The credential changed while its grant identity was verified.");
+}
+
 /**
  * Replaces the key of a credential, keeping its id (agents keep pointing at
  * it). The old ciphertext is overwritten; usage history is untouched.
@@ -589,6 +622,7 @@ export async function rotateCredential(
       .update(providerCredentials)
       .set({
         secretCiphertext: sealed.ciphertext,
+        secretFingerprint: sha256(apiKey),
         wrappedDataKey: sealed.wrappedDataKey,
         kekId: sealed.kekId,
         keyHint: apiKey.slice(-4),

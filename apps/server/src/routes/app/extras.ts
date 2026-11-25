@@ -3,6 +3,7 @@ import type {
   ArtifactDeps,
   BrowserLive,
   ContextDeps,
+  createModelInspector,
   GifKey,
   GitHubAppSettings,
   GitProxyDeps,
@@ -27,6 +28,8 @@ import type {
  * app's own routes don't have to provide them.
  */
 export interface AppExtras {
+  /** Inspection status from stored observations; reading never runs a sweep or changes an agent. */
+  modelInspector?: Pick<ReturnType<typeof createModelInspector>, "enabled" | "report">;
   /** Private runtime controls; never a native agent tool source. */
   foundry?: NativeFoundryIntegration;
   internalDatabaseTargets?: readonly InternalDatabaseTarget[];

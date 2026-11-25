@@ -7,6 +7,8 @@
  * - No internal notes: every file is public, comments included, so none may point at the maintainers'
  *   private docs (planning decision ids, progress logs, prototype screens) or name the team's other
  *   projects, companies and repositories.
+ * - Recorded architecture (docs/adr/0206-requirement-traceability.md): every top-level package or app under
+ *   apps/ and packages/ is named, by its path or its package name, in at least one ADR.
  */
 import { createHash } from "node:crypto";
 import { Glob } from "bun";
@@ -86,6 +88,40 @@ export function internalNotes(text: string, privateWords = PRIVATE_WORDS): strin
   return hits;
 }
 
+export interface WorkspacePackage {
+  /** `apps/web`, `packages/engine`. */
+  dir: string;
+  /** Its `package.json` name, `@agenteschat/web`. */
+  name: string | null;
+}
+
+/** The packages no ADR names, by path (`packages/engine`) or package name (`@agenteschat/engine`), as whole words. */
+export function unrecordedPackages(packages: WorkspacePackage[], adrs: string[]): string[] {
+  const literal = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  return packages
+    .filter(({ dir, name }) => {
+      const refs = [dir, ...(name ? [name] : [])].map((r) => new RegExp(`(?<![\\w@/-])${literal(r)}(?![\\w-])`));
+      return !adrs.some((text) => refs.some((re) => re.test(text)));
+    })
+    .map((p) => p.dir);
+}
+
+/** Every top-level package or app: a folder under apps/ or packages/ with a `package.json`. */
+export async function workspacePackages(): Promise<WorkspacePackage[]> {
+  const found: WorkspacePackage[] = [];
+  for (const file of ["apps", "packages"].flatMap((d) => [...new Glob(`${d}/*/package.json`).scanSync()]).sort()) {
+    const pkg = (await Bun.file(file).json()) as { name?: unknown };
+    found.push({ dir: file.replace(/\/package\.json$/, ""), name: typeof pkg.name === "string" ? pkg.name : null });
+  }
+  return found;
+}
+
+export async function adrTexts(): Promise<string[]> {
+  const texts: string[] = [];
+  for (const file of new Glob("docs/adr/*.md").scanSync()) texts.push(await Bun.file(file).text());
+  return texts;
+}
+
 if (import.meta.main) {
   const forbidden =
     /(from\s+|import\s*\(\s*|require\s*\(\s*)["'](@agenteschat\/(cloud|ee)(\/[^"']*)?|(\.\.\/)+(cloud|ee)(\/[^"']*)?)["']/;
@@ -137,6 +173,11 @@ if (import.meta.main) {
     console.error("Internal notes in public files: cite the ADR or state the reason itself:");
     console.error(notes.join("\n"));
   }
-  if (violations.length > 0 || tracked.length > 0 || notes.length > 0) process.exit(1);
+  const unrecorded = unrecordedPackages(await workspacePackages(), await adrTexts());
+  if (unrecorded.length > 0) {
+    console.error("New packages need an ADR that names them (by path or package name) in docs/adr/:");
+    console.error(unrecorded.join("\n"));
+  }
+  if (violations.length > 0 || tracked.length > 0 || notes.length > 0 || unrecorded.length > 0) process.exit(1);
   console.log("boundaries ok");
 }

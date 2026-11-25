@@ -1886,7 +1886,9 @@ export function createSandboxToolSource(
       const tools = keep([
         ...build(settings.requireApproval, settings.execTimeoutSeconds, computer, ctx.threadRootId, devices, holds),
         // What the agent made on its computer and what for (ADR 0197): only where there is a computer.
-        ...(computer.kind === "none" ? [] : [registerFilesTool(ctx.db)]),
+        ...(computer.kind === "none"
+          ? []
+          : [registerFilesTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named }))]),
       ]);
       if (!mission) return tools;
       return tools.map((t) => ({

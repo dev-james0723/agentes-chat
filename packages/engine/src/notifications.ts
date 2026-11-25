@@ -86,6 +86,8 @@ export const NOTIFICATION_KINDS = [
    * once per wait): `latest.title` the plan's name, `source.label` the agent's.
    */
   "plan_reset_unknown",
+  /** One API grant incident per shared pool and billing cycle. Amounts and recovery state are in Model Inspector. */
+  "credit_continuity",
   /**
    * An agent back from its plan or budget skipped catch-ups that looked handled (ADR 0136): its owner, one row per line
    * (`count` the conversations they can read), opening the latest skipped note. Inbox only (no category, no push).
@@ -288,6 +290,9 @@ export interface NotificationActor {
 }
 
 export interface NotificationSource {
+  creditPoolId?: string;
+  creditCycleId?: string;
+  creditProvider?: "openai" | "anthropic";
   channelId?: string;
   threadId?: string;
   messageId?: string;

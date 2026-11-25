@@ -533,6 +533,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "fr": [
+      "storage.clean.mission",
       "channel.tooLong.fileName",
       "calendar.moreRuns",
       "devices.cpus",
@@ -945,6 +946,8 @@
       "machines.oneClick.tools.antigravity"
     ],
     "de": [
+      "storage.clean.mission",
+      "memory.inspect.run",
       "devices.iphone.steps.account",
       "devices.workspace",
       "devices.cpus",
@@ -1381,6 +1384,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "it": [
+      "memory.inspect.run",
       "shell.email.label",
       "calendar.moreRuns",
       "devices.iphone.steps.account",
@@ -1736,6 +1740,7 @@
       "machines.oneClick.tools.antigravity"
     ],
     "nl": [
+      "memory.inspect.run",
       "calendar.moreRuns",
       "devices.iphone.steps.account",
       "devices.filter.computers",

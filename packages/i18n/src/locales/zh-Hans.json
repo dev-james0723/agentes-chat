@@ -1,4 +1,195 @@
 {
+  "openRouterFallback": {
+    "title": "OpenRouter 回退",
+    "intro": "优先使用订阅。符合条件的代理和例程共享每月 50 美元的独立限额。",
+    "disabled": "已停用",
+    "serverDisabled": "已由服务器策略停用",
+    "configured": "已配置。发送前核查",
+    "blocked": "已阻止。需要对账",
+    "spent": "本月已支出",
+    "pending": "已预留 / 未解决",
+    "cap": "月度限额（USD）",
+    "key": "OpenRouter 专用密钥",
+    "chooseKey": "选择密钥",
+    "keyHint": "添加独立的 OpenRouter 密钥，月度限额不得高于此金额（包括 BYOK）。不要将其用于普通请求。",
+    "models": "允许的具体模型 ID（每行一个）",
+    "inputPrice": "每百万输入 token 的最高费用（USD）",
+    "outputPrice": "每百万输出 token 的最高费用（USD）",
+    "tier": "路由器费用等级",
+    "enable": "保存并启用",
+    "disable": "停用回退",
+    "refresh": "刷新",
+    "error": "无法保存回退设置。请检查密钥和策略。",
+    "routes": "工程：openrouter/auto-code · 通用：openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "全局模型路由器",
+    "intro": "优先使用主订阅。符合条件的代理和例程依次回退至 OpenCode Go、已核实免费 API、低成本封顶模型和已批准的直连 API 服务商。",
+    "cascade": "顺序：主订阅 · OpenCode Go · 免费 API · 低成本付费 · 直连 API · 受限升级",
+    "refresh": "刷新",
+    "syncCatalog": "同步目录",
+    "syncing": "正在同步目录",
+    "unknown": "未知",
+    "freeCap": "US$0（免费或包含在内）",
+    "states": {
+      "loading": "正在加载路由器状态",
+      "disconnected": "尚未连接回退 API 通道",
+      "serverDisabled": "已由服务器策略停用",
+      "disabled": "已停用。仅使用订阅",
+      "authorization_needed": "需要授权。请检查服务商密钥",
+      "stale_catalog": "目录已过期。请同步目录以核实可用模型",
+      "unverified": "正在等待已核实的目录和密钥",
+      "eligible": "就绪。发送前执行守卫检查",
+      "quota_warning": "接近配额或月度预算阈值",
+      "rate_limited": "已触发速率限制。等待窗口重置",
+      "provider_outage": "服务商暂不可用。已切换至下一可用通道",
+      "incompatible": "因工具或模态不兼容而跳过",
+      "privacy_blocked": "已被数据保留或地区策略拦截",
+      "budget_held": "已暂停。存在未决预算预留或已达上限",
+      "needs_owner": "等待工作区所有者批准",
+      "recovered": "已恢复至主订阅"
+    },
+    "lanes": {
+      "opencode_go": "OpenCode Go 套餐",
+      "free_api": "免费 API 池",
+      "paid_low_cost": "低成本付费",
+      "direct_api": "直连厂商 API",
+      "paid_dynamic": "动态自动路由"
+    },
+    "entitlements": {
+      "subscription_go": "Go 订阅（额外费用 $0）",
+      "free_only": "仅限免费层（上限 $0）",
+      "paid_capped": "月度封顶付费"
+    },
+    "policy": {
+      "heading": "工作区路由策略",
+      "enable": "保存策略",
+      "disable": "停用路由器",
+      "enabledLabel": "启用全局模型路由器回退",
+      "killSwitchLabel": "紧急熔断开关（阻止所有回退调度）",
+      "maxEscalations": "每轮最高质量升级次数（0 至 2）",
+      "maxRetries": "每条路由最高传输重试次数（0 至 1）",
+      "optOutAgents": "退出的代理 ID（留空则继承全局路由）",
+      "warnThresholds": "在 50%、80% 和 95% 时发送预算提醒"
+    },
+    "accounts": {
+      "caption": "已配置的服务商通道与配额窗口",
+      "empty": "尚未配置任何服务商通道。",
+      "configureHeading": "配置服务商通道",
+      "provider": "模型服务商",
+      "lane": "路由通道",
+      "entitlement": "计费模式",
+      "key": "服务商专用密钥",
+      "chooseKey": "选择专用密钥",
+      "cloudflareAccount": "Cloudflare 32 位十六进制账户 ID",
+      "cap": "月度上限（USD）",
+      "models": "允许的具体模型 ID（每行一个）",
+      "zdr": "强制要求零数据保留（ZDR）",
+      "save": "保存通道",
+      "columns": {
+        "provider": "API 服务商",
+        "lane": "通道",
+        "state": "状态",
+        "budget": "已花费 / 上限",
+        "quota": "每日配额",
+        "reset": "窗口 / 观测时间"
+      }
+    },
+    "catalog": {
+      "summary": "目录报价：{{eligible}} 个可用 · 共记录 {{total}} 个",
+      "caption": "符合资格的 API 模型报价",
+      "columns": {
+        "model": "模型 ID",
+        "provider": "API 服务商",
+        "lane": "通道",
+        "status": "可用资格",
+        "context": "上下文窗口"
+      }
+    },
+    "receipts": {
+      "caption": "近期路由回执与已核实质量",
+      "empty": "本周期内暂无回退调度记录。",
+      "reconcileNoSend": "释放预留",
+      "columns": {
+        "requested": "请求模型",
+        "actual": "实际模型",
+        "lane": "通道",
+        "cost": "实际 / 预留",
+        "quality": "质量",
+        "state": "状态"
+      },
+      "verified": "已通过",
+      "unverified": "未通过检查"
+    },
+    "metrics": {
+      "caption": "单次核实成功成本与延迟",
+      "columns": {
+        "model": "模型 ID",
+        "successes": "核实成功 / 尝试次数",
+        "costPerSuccess": "单次核实成功成本",
+        "latency": "p50 / p95 延迟"
+      }
+    },
+    "benchmarkSummary": "最新基准评测：{{tasks}} 项任务 · {{models}} 个模型",
+    "error": "无法更新全局模型路由器设置。请检查密钥、上限和允许的模型。"
+  },
+  "creditContinuity": {
+    "title": "API 赠送额度续接",
+    "refresh": "刷新状态",
+    "unavailable": "无法获取额度状态。此处尚未核实任何赠送额度的可用金额。",
+    "intro": "优先使用适用的订阅。API 回退使用已核实的赠送额度，并遵守计费周期的共享限额。",
+    "status": {
+      "unavailable": "无法获取额度状态。自动支出尚未核实。",
+      "disabled": "API 自动回退已停用。已记录的支出和待结算费用仍会显示。",
+      "unverified": "尚未核实任何符合条件的 API 赠送额度。自动可用金额为 $0。",
+      "blocked": "API 回退正在等待最新凭证、预算或对账。",
+      "available": "可在已记录的赠送额度限额内使用 API 回退。"
+    },
+    "caption": "API 赠送额度和周期预算",
+    "columns": {
+      "provider": "服务商",
+      "state": "状态",
+      "automatic": "自动可用金额 / 限额",
+      "costs": "已花费 / 待结算",
+      "reserve": "所有者储备额度",
+      "buffer": "安全缓冲额度",
+      "expires": "赠送额度到期时间",
+      "forecast": "历史 p95"
+    },
+    "provider": {
+      "openai": "ChatGPT 的 API",
+      "anthropic": "Claude 的 API"
+    },
+    "unknown": "未知",
+    "state": {
+      "unavailable": "不可用",
+      "unverified": "尚未核实",
+      "expired": "赠送额度已到期",
+      "stale": "凭证需要更新",
+      "disabled": "已停用",
+      "paused": "已暂停",
+      "pricingExpired": "价格已过期",
+      "pricingChanged": "价格已变更",
+      "pricingUnverified": "价格尚未核实",
+      "noRoute": "无符合条件的 API 路由",
+      "budgetUnavailable": "预算不可用",
+      "ready": "已就绪",
+      "reserveAvailable": "所有者储备额度可用",
+      "billingBlocked": "计费已被阻止",
+      "reconciliation": "需要对账",
+      "blocked": "已阻止"
+    },
+    "evidence": "凭证：{{date}}",
+    "approvedAvailable": "已批准的可用金额：{{amount}}",
+    "approvals_other": "{{count}} 项有效的所有者批准",
+    "ownerApproval": "所有者批准",
+    "historyHigh": "{{count}} 个已结算工作单元。不确定性高。",
+    "historyMedium": "{{count}} 个已结算工作单元。不确定性中等。",
+    "historyUnknown": "{{count}} 个已结算工作单元。不确定性未知。",
+    "insufficientHistory": "历史记录不足",
+    "obligations_other": "{{count}} 次 API 调用存在已预留或尚未解决的费用。动用紧急储备额度需要所有者批准。此功能不会启用付费充值。",
+    "evidenceNote": "赠送额度资格依据所有者记录的服务商账单凭证进行核实。历史预测不构成支出授权。状态读取时间：{{date}}。"
+  },
   "app": {
     "name": "agentes"
   },
@@ -1283,7 +1474,13 @@
       "moonshot": "Kimi 密钥以 sk- 开头。请检查后重新粘贴。",
       "zai": "请粘贴完整的 Z.ai 密钥，不要有空格。请检查后重新粘贴。",
       "minimax": "请粘贴完整的 MiniMax 密钥，不要有空格。以 sk-cp- 开头的密钥属于套餐，在这里无法使用。",
-      "openrouter": "OpenRouter 密钥以 sk-or-v1- 开头。请检查后重新粘贴。"
+      "openrouter": "OpenRouter 密钥以 sk-or-v1- 开头。请检查后重新粘贴。",
+      "groq": "Groq 密钥以 gsk_ 开头。请检查后重新粘贴。",
+      "cloudflare": "请完整粘贴 Cloudflare Workers AI 令牌，不要包含空格。检查后重试。",
+      "opencode": "请完整粘贴 OpenCode API 密钥，不要包含空格。检查后重试。",
+      "tencent": "请完整粘贴腾讯混元 API 密钥，不要包含空格。检查后重试。",
+      "xiaomi": "请完整粘贴小米 MiMo API 密钥，不要包含空格。检查后重试。",
+      "nvidia": "NVIDIA NIM 密钥以 nvapi- 开头。请检查后重新粘贴。"
     },
     "keyFromOther": "是其他服务商的密钥？",
     "anthropicWorkspace": "Claude Console 工作区 ID",
@@ -3019,6 +3216,8 @@
     "atOnceHelp": "它同时进行多少项没人要求的工作。其余的排队等候。",
     "prs": "每小时拉取请求数",
     "prsHelp": "它自己的工作一小时内最多打开的数量。",
+    "shots": "每项任务的截图数",
+    "shotsHelp": "一项工作最多可截取的数量。对于检查页面外观的智能体，可以调高。电脑磁盘快满时，新的截图也会暂停。",
     "call": "可以呼叫的智能体",
     "callHelp": "它可以提及或交接工作的对象。",
     "callAll": "全部",
@@ -5669,6 +5868,36 @@
     "editTitle": "编辑{{kind}}",
     "text": "内容",
     "editHelp": "之前的版本会保留在历史记录中。{{source}}",
+    "inspect": {
+      "scope": "适用于{{scope}}",
+      "scopes": {
+        "agent": "这个智能体",
+        "channel": "一个频道",
+        "thread": "一个话题",
+        "org": "整个工作区",
+        "person": "一个人",
+        "entity": "一个主题",
+        "other": "更小的范围"
+      },
+      "trustHigh": "可信来源",
+      "trustLow": "外部来源",
+      "statusActive": "使用中",
+      "statusArchived": "已归档",
+      "validFrom": "自 {{date}} 起有效",
+      "validTo": "有效期至 {{date}}",
+      "source": "打开来源消息",
+      "toggle": "历史与使用",
+      "versions": "版本",
+      "version": "版本 {{version}}",
+      "current": "当前",
+      "replaced": "{{when}}被替换",
+      "runs": "最近使用者",
+      "run": "{{agent}} 在 #{{channel}} · {{when}}",
+      "noRuns": "还没有智能体使用过它。",
+      "revert": "还原",
+      "revertTitle": "回到上一个版本？",
+      "revertText": "这个版本会被归档，上一个版本会恢复。两者都会保留在历史中。"
+    },
     "origin": {
       "person": "由 {{name}} 撰写",
       "app": "由 {{name}} 通过 AI 应用发送",
@@ -6874,6 +7103,18 @@
       "label": "任务",
       "description": "创建和更新任务。"
     },
+    "colab_read": {
+      "label": "读取 Colab",
+      "description": "读取订阅等级、可用的运行时类型和会话名称。"
+    },
+    "colab_run": {
+      "label": "运行 Colab 任务",
+      "description": "创建运行时和会话，运行 Python，并关闭自己打开的会话。会消耗 Colab 计算单元。"
+    },
+    "colab_delete": {
+      "label": "删除 Colab 运行时",
+      "description": "永久删除一个运行时及其所有文件和会话。"
+    },
     "github_repo_read": {
       "label": "读取代码",
       "description": "读取文件、提交记录和搜索代码。"
@@ -7283,6 +7524,14 @@
     "notFound": "这个任务不存在，或你无权访问。",
     "createdBy": "#{{number}} · 由 {{name}} 创建",
     "createdByShort": "由 {{name}} 创建",
+    "founder": {
+      "title": "交付状态",
+      "available": "已在使用中的应用里",
+      "notAvailable": "不在使用中的应用里",
+      "verified": "已核实",
+      "notVerified": "未核实",
+      "needsYou": "需要你"
+    },
     "fromMessage": "来自<0>#{{channel}} 中的一条消息</0>",
     "fromAgent": "来自对智能体的一个请求",
     "subIssues_other": "子任务 · {{count}}",
@@ -8145,6 +8394,8 @@
       "draftingNoComputer": "{{executor}} 正在读取文件夹并起草计划",
       "empty": "还没有任何项目。你可以直接开始，或通过“修改一下”要求制定计划。",
       "waitPlan": "计划到达后打开",
+      "repositoryFolder": "仓库文件夹",
+      "repositoryFolderRelative": "相对于智能体工作文件夹的路径，例如 repos/project。",
       "adjusts": "{{executor}} 会在过程中持续调整列表",
       "switched": "现在由 {{executor}} 编程。计划重新开始。",
       "more_other": "+{{count}} 项",
@@ -11199,6 +11450,40 @@
   },
   "storage": {
     "title": "存储",
+    "clean": {
+      "title": "清理工作区",
+      "intro": "已结束的任务在智能体电脑上留下的内容。交付物、证据和用途不明的文件都会保留。由你选择要清理哪些临时文件。",
+      "computers": "电脑磁盘",
+      "level": {
+        "ok": "可用 {{free}} GB",
+        "low": "空间不足：可用 {{free}} GB",
+        "critical": "几乎已满：可用 {{free}} GB。新的截图和录屏已暂停。",
+        "unknown": "尚未测量"
+      },
+      "none": "自智能体开始登记文件以来，还没有任务结束。",
+      "task": "任务",
+      "mission": "使命",
+      "ended": {
+        "done": "已完成",
+        "canceled": "已取消"
+      },
+      "kept_other": "保留 {{count}} 个",
+      "candidates_other": "{{count}} 个临时文件，{{size}}",
+      "duplicates_other": "{{count}} 个完全相同的副本",
+      "restorable": "证据：{{restorable}} 个可从 Drive 恢复，{{manifestOnly}} 个仅列出",
+      "approve": "清理临时文件",
+      "approved_other": "已批准 {{count}} 个文件：每个文件删除前都会在其电脑上再次检查。",
+      "status": {
+        "approved": "等待其电脑",
+        "done": "已删除",
+        "skipped": "已不存在",
+        "blocked": "已保留：{{reason}}",
+        "unknown": "尚不确定：稍后再次检查"
+      },
+      "freed": "电脑可用空间：之前 {{before}}，之后 {{after}}",
+      "show": "显示文件",
+      "hide": "隐藏文件"
+    },
     "options": "文件存放位置",
     "agentes": "agentes.chat 存储",
     "agentesText": "你的文件保存在我们的存储中，每个工作区彼此隔离。",
@@ -11400,6 +11685,16 @@
       "list": "已连接的 MCP 服务器",
       "none": "通过地址连接的 MCP 服务器会显示在这里。"
     },
+    "hostMcp": {
+      "title": "电脑上的 Host MCP",
+      "intro": "使用可信电脑上已审核的 Host MCP 配置。只有选定的智能体获得读取权限。",
+      "connectRead": "连接并授予读取权限",
+      "bindFailed": "尚未确认绑定。请清除选择并重新加载配置列表，核对电脑、配置版本和智能体后重试。",
+      "grantUnconfirmed": "配置已绑定，但读取权限尚未确认。请为此智能体重试读取授权，或清除选择而不改变已有权限。重新加载后请选择相同的配置版本和智能体。",
+      "retryRead": "重试读取授权",
+      "resetSelection": "清除选择",
+      "note": "电脑的允许列表仍然有效。请通过智能体实际调用工具来验证。"
+    },
     "addTitle": "添加连接器",
     "catalogText": "为 {{org}} 连接一次，然后选择每个智能体可以使用什么。",
     "catalog": "可用的连接器",
@@ -11438,6 +11733,8 @@
     "more": "更多服务",
     "tileConnected": "{{name}}，已连接",
     "tileSoon": "{{name}}，即将推出",
+    "tileSetupRequired": "{{name}}，需要配置",
+    "setupRequired": "需要配置",
     "otherTitle": "其他服务",
     "otherDetail": "任何为智能体提供连接的服务，通过它的地址连接（以 https:// 开头）。",
     "otherSteps": {
@@ -11461,6 +11758,7 @@
     "how": {
       "oneClick": "一键完成：在服务的页面上授权",
       "oauthOrKey": "在服务的页面上授权，或使用 API 密钥",
+      "oauthSetup": "此应用的登录尚未设置。",
       "key": "需要 API 密钥",
       "appPassword": "需要应用专用密码",
       "addressPassword": "需要数据库地址和密码",
@@ -12851,6 +13149,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "信用额度记录已存在。请刷新查看状态。",
+      "disabled": "信用额度备用调用已关闭。",
+      "resumeRefused": "此运行暂时无法恢复。请核对保留的信用额度和待处理操作。"
+    },
     "passwordLink": {
       "email": "这台服务器会发送邮件：对方可以在「忘记密码」中自己申请链接。",
       "serverOwner": "安装这台服务器的人在运行它的电脑上直接登录，不需要链接。",
@@ -15133,6 +15436,14 @@
       "oldSub": "记录账号之前的用量",
       "ofMonth": "本月的 {{percent}}",
       "shareLabel": "{{source}}：本月的 {{percent}}"
+    },
+    "costPerSuccess": {
+      "title": "每次已验证成功的成本",
+      "intro": "最近 30 天。成功是指验收条件由人勾选、之后无人重新打开的任务。每次运行都计入成本。",
+      "perSuccess": "每次成功 {{cost}}",
+      "unknown": "成本未知",
+      "noSuccess": "还没有已验证的成功",
+      "line": "{{runs}} 次运行 · {{successes}} 个已验证 · {{failed}} 次失败 · {{retries}} 次重试"
     }
   },
   "budget": {
@@ -15528,6 +15839,7 @@
         "updatingThread": "更新了一个话题",
         "addingAgent": "把智能体添加到频道",
         "readingConversation": "读了对话",
+        "checkingPlanUsage": "查看了团队的套餐用量",
         "usingTool": "使用了 {{tool}} 工具",
         "thinking": "思考了",
         "typing": "撰写了",
@@ -15645,6 +15957,7 @@
       "updatingThread": "更新话题",
       "addingAgent": "把智能体添加到频道",
       "readingConversation": "阅读对话",
+      "checkingPlanUsage": "查看团队的套餐用量",
       "usingTool": "使用工具"
     },
     "tokens": "{{value}} 个 token",

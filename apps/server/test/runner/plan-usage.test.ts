@@ -203,7 +203,7 @@ test("Codex's rate limits: windows told apart by their length, else primary is t
   expect(codexUsage({ primary: null, secondary: null }, "turn", NOW)).toBeNull();
 });
 
-test("people hear at once only when a limit is hit or cleared or a window crosses 80, 90 (its bar turns red) or 100", () => {
+test("people hear at once only when a limit is hit or cleared or a window crosses 80, 90, 95 or 100", () => {
   const u = (used: number, limited?: boolean): PlanUsage => ({
     windows: [{ kind: "five_hour", usedPercent: used }],
     ...(limited ? { limited } : {}),
@@ -215,9 +215,34 @@ test("people hear at once only when a limit is hit or cleared or a window crosse
   expect(usageCrossed(u(79), u(80))).toBe(true);
   expect(usageCrossed(u(85), u(89))).toBe(false);
   expect(usageCrossed(u(89), u(90))).toBe(true);
-  expect(usageCrossed(u(91), u(99))).toBe(false);
+  expect(usageCrossed(u(91), u(94))).toBe(false);
+  expect(usageCrossed(u(94), u(95))).toBe(true);
+  expect(usageCrossed(u(95), u(99))).toBe(false);
+  expect(usageCrossed(u(95), u(94))).toBe(true);
   expect(usageCrossed(u(99), u(100))).toBe(true);
   expect(usageCrossed(u(100), u(100, true))).toBe(true);
+});
+
+test("the 95 percent handoff line keeps named windows separate and reports a reset", () => {
+  const at = "2030-01-01T00:00:00.000Z";
+  const fable = { kind: "other", label: "Fable", usedPercent: 94, resetsAt: at } as const;
+  const extra = { kind: "other", label: "Extra usage", usedPercent: 99 } as const;
+  const before: PlanUsage = {
+    windows: [fable, extra],
+    source: "turn",
+    at,
+  };
+  const crossed: PlanUsage = {
+    ...before,
+    windows: [extra, { ...fable, usedPercent: 95 }],
+  };
+  expect(usageCrossed(before, crossed)).toBe(true);
+  expect(usageCrossed(crossed, crossed)).toBe(false);
+  const reset: PlanUsage = {
+    ...crossed,
+    windows: [extra, { ...fable, usedPercent: 0, resetsAt: "2030-01-08T00:00:00.000Z" }],
+  };
+  expect(usageCrossed(crossed, reset)).toBe(true);
 });
 
 test("on the wire: at most 8 known windows, 0–100, labels of 40 printable characters; the own sign-ins by brain", () => {
@@ -601,4 +626,21 @@ test("what turns say: the first news and a crossed line at once, the rest at mos
   m.noteCodexRateLimits(OWN_USAGE_ID.codex, { primary: { usedPercent: 91, windowDurationMins: 300 } });
   expect(m.ownUsage().claude_code?.windows[0]?.usedPercent).toBe(50);
   expect(m.ownUsage().codex?.windows[0]).toEqual({ kind: "five_hour", usedPercent: 91 });
+});
+
+test("Claude and Codex reaching 95 percent notify before the normal usage interval", () => {
+  const { m, changes } = manager({ usageNotifyMs: 60_000 });
+  const at = (utilization: number) => ({ status: "allowed", rateLimitType: "five_hour", utilization, resetsAt: RESET });
+  m.noteRateLimit(ACCOUNT, at(0.94));
+  expect(changes()).toBe(1);
+  m.noteRateLimit(ACCOUNT, at(0.95));
+  expect(changes()).toBe(2);
+  m.noteRateLimit(ACCOUNT, at(0.96));
+  expect(changes()).toBe(2);
+
+  m.noteCodexRateLimits(OWN_USAGE_ID.codex, { primary: { usedPercent: 94, windowDurationMins: 300 } });
+  expect(changes()).toBe(3);
+  m.noteCodexRateLimits(OWN_USAGE_ID.codex, { primary: { usedPercent: 95, windowDurationMins: 300 } });
+  expect(changes()).toBe(4);
+  expect(m.ownUsage().codex?.windows[0]?.usedPercent).toBe(95);
 });

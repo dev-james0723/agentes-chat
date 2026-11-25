@@ -24,6 +24,7 @@ import {
   type ToolToClassify,
   UNKNOWN_CLASS,
 } from "./classify";
+import { isColabMcpEndpoint } from "./colab";
 import { beginComposioConnect, composioServiceOf, forgetComposioAccount } from "./composio";
 import {
   bearerHeaders,
@@ -38,6 +39,7 @@ import {
   OAUTH_STATE_TTL_MS,
   oauthRedirectUri,
   prefixService,
+  startOAuth,
   toolPrefixOf,
   toolPrefixOfConnection,
 } from "./connections";
@@ -753,6 +755,17 @@ export async function connectCustomServer(
   if (composioToolkitOf(input.serverUrl.trim())) return beginComposioConnect(deps, actorId, orgId, input);
   const url = await assertPublicHttpsUrl(input.serverUrl.trim(), deps.resolveHost);
   const serverUrl = url.toString();
+  // Colab lists tools publicly but requires OAuth to use them. A successful probe is not a sign-in.
+  if (url.hostname === "colaboratory.googleapis.com") {
+    if (!isColabMcpEndpoint(serverUrl) || input.apiKey?.trim() || input.connectionId) {
+      throw new ValidationError(
+        "Connect Google Colab from the connector catalog and sign in with Google. Use https://colaboratory.googleapis.com/mcp without a pasted token. Reconnect an existing account from its Colab card.",
+        "connector.colab_oauth_required",
+      );
+    }
+    const { authorizeUrl } = await startOAuth(deps, actorId, orgId, "colab", { returnTo: input.returnTo });
+    return { status: "oauth", authorizeUrl };
+  }
   // Checked before anyone signs in for nothing.
   if (input.connectionId) await reconnectTarget(deps.db, orgId, input.connectionId, serverUrl);
   const label = input.label?.trim() || presetForServer(serverUrl)?.label || url.hostname;

@@ -1,4 +1,201 @@
 {
+  "openRouterFallback": {
+    "title": "Tryb awaryjny OpenRouter",
+    "intro": "Najpierw subskrypcje. Uprawnieni agenci i procedury korzystają ze wspólnego, niezależnego limitu 50 USD miesięcznie.",
+    "disabled": "Wyłączony",
+    "serverDisabled": "Wyłączony przez politykę serwera",
+    "configured": "Skonfigurowany. Sprawdzany przed wysłaniem",
+    "blocked": "Zablokowany. Wymaga uzgodnienia kosztów",
+    "spent": "Wydatki w tym miesiącu",
+    "pending": "Zarezerwowane / nierozliczone",
+    "cap": "Limit miesięczny (USD)",
+    "key": "Dedykowany klucz OpenRouter",
+    "chooseKey": "Wybierz klucz",
+    "keyHint": "Dodaj osobny klucz OpenRouter z limitem miesięcznym nieprzekraczającym tej kwoty, z uwzględnieniem BYOK. Nie używaj go do zwykłych żądań.",
+    "models": "Dozwolone identyfikatory konkretnych modeli (jeden na wiersz)",
+    "inputPrice": "Maksymalna cena wejścia w USD za milion tokenów",
+    "outputPrice": "Maksymalna cena wyjścia w USD za milion tokenów",
+    "tier": "Poziom kosztów routera",
+    "enable": "Zapisz i włącz",
+    "disable": "Wyłącz tryb awaryjny",
+    "refresh": "Odśwież",
+    "error": "Nie udało się zapisać ustawień. Sprawdź klucz i politykę.",
+    "routes": "Inżynieria: openrouter/auto-code · Ogólne: openrouter/auto"
+  },
+  "globalModelRouter": {
+    "title": "Globalny router modeli",
+    "intro": "Główne subskrypcje działają jako pierwsze. Uprawnieni agenci i rutyny przełączają się kolejno na OpenCode Go, zweryfikowane darmowe API, tanie modele z limitem oraz zatwierdzonych dostawców API.",
+    "cascade": "Kolejność: Subskrypcje · OpenCode Go · Darmowe API · Niski koszt · Bezpośrednie API · Ograniczona eskalacja",
+    "refresh": "Odśwież",
+    "syncCatalog": "Synchronizuj katalog",
+    "syncing": "Synchronizowanie katalogu",
+    "unknown": "Nieznane",
+    "freeCap": "0 US$ (darmowe lub w pakiecie)",
+    "states": {
+      "loading": "Ładowanie stanu routera",
+      "disconnected": "Brak podłączonych zapasowych ścieżek API",
+      "serverDisabled": "Wyłączony przez politykę serwera",
+      "disabled": "Wyłączony. Tylko subskrypcje",
+      "authorization_needed": "Wymagana autoryzacja. Sprawdź klucz dostawcy",
+      "stale_catalog": "Katalog wygasł. Zsynchronizuj katalog, aby zweryfikować oferty",
+      "unverified": "Oczekiwanie na zweryfikowany katalog i klucz",
+      "eligible": "Gotowy. Sprawdzany przed wysłaniem",
+      "quota_warning": "Blisko progu limitu lub budżetu miesięcznego",
+      "rate_limited": "Osiągnięto limit zapytań. Oczekiwanie na nowe okno",
+      "provider_outage": "Dostawca niedostępny. Przełączanie na kolejną ścieżkę",
+      "incompatible": "Pominięto z powodu niezgodnych narzędzi lub modalności",
+      "privacy_blocked": "Zablokowano przez politykę retencji danych lub regionu",
+      "budget_held": "Wstrzymany. Nierozliczona blokada budżetu lub osiągnięty limit",
+      "needs_owner": "Oczekiwanie na zgodę właściciela przestrzeni",
+      "recovered": "Przywrócono główną subskrypcję"
+    },
+    "lanes": {
+      "opencode_go": "Pakiet OpenCode Go",
+      "free_api": "Pula darmowych API",
+      "paid_low_cost": "Płatne niskokosztowe",
+      "direct_api": "Bezpośrednie API dostawcy",
+      "paid_dynamic": "Dynamiczny router automatyczny"
+    },
+    "entitlements": {
+      "subscription_go": "Subskrypcja Go (0 $ dopłaty)",
+      "free_only": "Tylko plan darmowy (limit 0 $)",
+      "paid_capped": "Płatne z limitem miesięcznym"
+    },
+    "policy": {
+      "heading": "Polityka routingu przestrzeni roboczej",
+      "enable": "Zapisz politykę",
+      "disable": "Wyłącz router",
+      "enabledLabel": "Włącz zapasowy globalny router modeli",
+      "killSwitchLabel": "Wyłącznik awaryjny (zablokuj wszystkie wywołania zapasowe)",
+      "maxEscalations": "Maks. eskalacji jakości na turę (od 0 do 2)",
+      "maxRetries": "Maks. ponowień transportu na trasę (od 0 do 1)",
+      "optOutAgents": "ID wykluczonych agentów (puste dziedziczy router)",
+      "warnThresholds": "Wysyłaj alerty budżetowe przy 50%, 80% i 95%"
+    },
+    "accounts": {
+      "caption": "Skonfigurowane ścieżki dostawców i okna limitów",
+      "empty": "Nie skonfigurowano jeszcze żadnych ścieżek dostawców.",
+      "configureHeading": "Skonfiguruj ścieżkę dostawcy",
+      "provider": "Dostawca modeli",
+      "lane": "Ścieżka routingu",
+      "entitlement": "Tryb rozliczeń",
+      "key": "Dedykowany klucz dostawcy",
+      "chooseKey": "Wybierz dedykowany klucz",
+      "cloudflareAccount": "32-znakowy szesnastkowy Account ID Cloudflare",
+      "cap": "Limit miesięczny (USD)",
+      "models": "Dozwolone konkretne ID modeli (jeden w wierszu)",
+      "zdr": "Wymagaj zerowej retencji danych (ZDR)",
+      "save": "Zapisz ścieżkę",
+      "columns": {
+        "provider": "Dostawca API",
+        "lane": "Ścieżka",
+        "state": "Stan",
+        "budget": "Wydano / limit",
+        "quota": "Limit dzienny",
+        "reset": "Okno / odczyt"
+      }
+    },
+    "catalog": {
+      "summary": "Oferty w katalogu: kwalifikujące się {{eligible}} · zapisane {{total}}",
+      "caption": "Zakwalifikowane oferty modeli API",
+      "columns": {
+        "model": "ID modelu",
+        "provider": "Dostawca API",
+        "lane": "Ścieżka",
+        "status": "Uprawnienie",
+        "context": "Okno kontekstu"
+      }
+    },
+    "receipts": {
+      "caption": "Ostatnie potwierdzenia routingu i zweryfikowana jakość",
+      "empty": "Brak wywołań zapasowych w tym okresie.",
+      "reconcileNoSend": "Zwolnij blokadę",
+      "columns": {
+        "requested": "Żądany model",
+        "actual": "Rzeczywisty model",
+        "lane": "Ścieżka",
+        "cost": "Rzeczywisty / zarezerwowany",
+        "quality": "Jakość",
+        "state": "Stan"
+      },
+      "verified": "Zweryfikowano",
+      "unverified": "Błąd weryfikacji"
+    },
+    "metrics": {
+      "caption": "Koszt zweryfikowanego sukcesu i opóźnienie",
+      "columns": {
+        "model": "ID modelu",
+        "successes": "Zweryfikowane / próby",
+        "costPerSuccess": "Koszt zweryfikowanego sukcesu",
+        "latency": "Opóźnienie p50 / p95"
+      }
+    },
+    "benchmarkSummary": "Ostatni benchmark: zadania {{tasks}} · modele {{models}}",
+    "error": "Nie udało się zaktualizować ustawień globalnego routera modeli. Sprawdź klucz, limit i modele."
+  },
+  "creditContinuity": {
+    "title": "Ciągłość pracy dzięki środkom API",
+    "refresh": "Odśwież stan",
+    "unavailable": "Stan środków jest niedostępny. Nie zweryfikowano tu jeszcze żadnego przyznanego limitu.",
+    "intro": "Najpierw używane są odpowiednie subskrypcje. Awaryjne przełączenie na API korzysta ze zweryfikowanych przyznanych środków w ramach wspólnych limitów cyklu.",
+    "status": {
+      "unavailable": "Stan środków jest niedostępny. Automatyczne wydatki nie są zweryfikowane.",
+      "disabled": "Automatyczne przełączanie na API jest wyłączone. Zapisane wydatki i oczekujące koszty pozostają widoczne.",
+      "unverified": "Nie zweryfikowano żadnych kwalifikujących się środków API. Limit automatycznego użycia wynosi $0.",
+      "blocked": "Przełączenie na API czeka na aktualne dowody, budżet lub uzgodnienie kosztów.",
+      "available": "Przełączenie na API jest dostępne w granicach zapisanych limitów przyznanych środków."
+    },
+    "caption": "Przyznane środki API i budżety cyklu",
+    "columns": {
+      "provider": "Dostawca",
+      "state": "Stan",
+      "automatic": "Dostępne automatycznie / limit",
+      "costs": "Wydano / oczekujące",
+      "reserve": "Rezerwa właściciela",
+      "buffer": "Bufor bezpieczeństwa",
+      "expires": "Wygaśnięcie środków",
+      "forecast": "Historyczny p95"
+    },
+    "provider": {
+      "openai": "API dla ChatGPT",
+      "anthropic": "API dla Claude"
+    },
+    "unknown": "Nieznane",
+    "state": {
+      "unavailable": "Niedostępne",
+      "unverified": "Niezweryfikowane",
+      "expired": "Przyznane środki wygasły",
+      "stale": "Dowody wymagają aktualizacji",
+      "disabled": "Wyłączone",
+      "paused": "Wstrzymane",
+      "pricingExpired": "Ceny wygasły",
+      "pricingChanged": "Ceny zmienione",
+      "pricingUnverified": "Ceny niezweryfikowane",
+      "noRoute": "Brak kwalifikującej się ścieżki API",
+      "budgetUnavailable": "Budżet niedostępny",
+      "ready": "Gotowe",
+      "reserveAvailable": "Rezerwa właściciela dostępna",
+      "billingBlocked": "Rozliczenia zablokowane",
+      "reconciliation": "Wymagane uzgodnienie kosztów",
+      "blocked": "Zablokowane"
+    },
+    "evidence": "Dowody: {{date}}",
+    "approvedAvailable": "Zatwierdzona dostępna kwota: {{amount}}",
+    "approvals_one": "{{count}} aktywna zgoda właściciela",
+    "approvals_few": "{{count}} aktywne zgody właściciela",
+    "approvals_many": "{{count}} aktywnych zgód właściciela",
+    "approvals_other": "{{count}} aktywnej zgody właściciela",
+    "ownerApproval": "Zgoda właściciela",
+    "historyHigh": "Rozliczone jednostki: {{count}}. Wysoka niepewność.",
+    "historyMedium": "Rozliczone jednostki: {{count}}. Średnia niepewność.",
+    "historyUnknown": "Rozliczone jednostki: {{count}}. Nieznany poziom niepewności.",
+    "insufficientHistory": "Za mało danych historycznych",
+    "obligations_one": "{{count}} wywołanie API ma zarezerwowane lub nierozliczone koszty. Rezerwy awaryjne wymagają zgody właściciela. Ta funkcja nie włącza płatnych doładowań.",
+    "obligations_few": "{{count}} wywołania API mają zarezerwowane lub nierozliczone koszty. Rezerwy awaryjne wymagają zgody właściciela. Ta funkcja nie włącza płatnych doładowań.",
+    "obligations_many": "{{count}} wywołań API ma zarezerwowane lub nierozliczone koszty. Rezerwy awaryjne wymagają zgody właściciela. Ta funkcja nie włącza płatnych doładowań.",
+    "obligations_other": "{{count}} wywołania API ma zarezerwowane lub nierozliczone koszty. Rezerwy awaryjne wymagają zgody właściciela. Ta funkcja nie włącza płatnych doładowań.",
+    "evidenceNote": "Kwalifikowalność przyznanych środków jest ustalana na podstawie dowodów rozliczeń dostawcy zapisanych przez właściciela. Prognozy historyczne nie upoważniają do wydatków. Odczyt stanu: {{date}}."
+  },
   "app": {
     "name": "agentes"
   },
@@ -1397,7 +1594,13 @@
       "moonshot": "Klucze Kimi zaczynają się od sk-. Sprawdź go i wklej ponownie.",
       "zai": "Wklej cały klucz Z.ai, bez spacji. Sprawdź go i wklej ponownie.",
       "minimax": "Wklej cały klucz MiniMax, bez spacji. Klucze zaczynające się od sk-cp- należą do planu i tu nie działają.",
-      "openrouter": "Klucze OpenRouter zaczynają się od sk-or-v1-. Sprawdź go i wklej ponownie."
+      "openrouter": "Klucze OpenRouter zaczynają się od sk-or-v1-. Sprawdź go i wklej ponownie.",
+      "groq": "Klucze Groq zaczynają się od gsk_. Sprawdź go i wklej ponownie.",
+      "cloudflare": "Wklej cały token Cloudflare Workers AI bez spacji. Sprawdź go i wklej ponownie.",
+      "opencode": "Wklej cały klucz API OpenCode bez spacji. Sprawdź go i wklej ponownie.",
+      "tencent": "Wklej cały klucz API Tencent Hunyuan bez spacji. Sprawdź go i wklej ponownie.",
+      "xiaomi": "Wklej cały klucz API Xiaomi MiMo bez spacji. Sprawdź go i wklej ponownie.",
+      "nvidia": "Klucze NVIDIA NIM zaczynają się od nvapi-. Sprawdź go i wklej ponownie."
     },
     "keyFromOther": "Jest od innego dostawcy?",
     "anthropicWorkspace": "ID przestrzeni roboczej w Claude Console",
@@ -3324,6 +3527,8 @@
     "atOnceHelp": "Ile zadań, o które nikt nie prosił, wykonuje jednocześnie. Pozostałe czekają na swoją kolej.",
     "prs": "Pull requesty na godzinę",
     "prsHelp": "Najwięcej, ile jego własna praca otwiera w godzinę.",
+    "shots": "Zrzuty ekranu na zadanie",
+    "shotsHelp": "Najwięcej, ile może zrobić jedna jego praca. Zwiększ dla agenta, który sprawdza wygląd stron. Nowe zrzuty są też wstrzymywane, gdy dysk jego komputera jest prawie pełny.",
     "call": "Agenci, których może wołać",
     "callHelp": "Kogo może wspomnieć lub komu przekazać pracę.",
     "callAll": "Wszyscy",
@@ -6232,6 +6437,36 @@
     "editTitle": "Edytuj: {{kind}}",
     "text": "Treść",
     "editHelp": "Poprzednia wersja zostaje w historii. {{source}}",
+    "inspect": {
+      "scope": "Dotyczy: {{scope}}",
+      "scopes": {
+        "agent": "tego agenta",
+        "channel": "jednego kanału",
+        "thread": "jednego wątku",
+        "org": "całej przestrzeni roboczej",
+        "person": "jednej osoby",
+        "entity": "jednego tematu",
+        "other": "węższego miejsca"
+      },
+      "trustHigh": "Zaufane źródło",
+      "trustLow": "Źródło zewnętrzne",
+      "statusActive": "W użyciu",
+      "statusArchived": "Zarchiwizowana",
+      "validFrom": "Obowiązuje od {{date}}",
+      "validTo": "Obowiązuje do {{date}}",
+      "source": "Otwórz wiadomość źródłową",
+      "toggle": "Historia i użycie",
+      "versions": "Wersje",
+      "version": "Wersja {{version}}",
+      "current": "ta",
+      "replaced": "zastąpiona {{when}}",
+      "runs": "Ostatnio używana przez",
+      "run": "{{agent}} w #{{channel}} · {{when}}",
+      "noRuns": "Żaden agent jeszcze jej nie użył.",
+      "revert": "Przywróć",
+      "revertTitle": "Wrócić do poprzedniej wersji?",
+      "revertText": "Ta wersja zostanie zarchiwizowana, a poprzednia wróci. Obie zostaną w historii."
+    },
     "origin": {
       "person": "Napisane przez {{name}}",
       "app": "Wysłane przez {{name}} z aplikacji AI",
@@ -7537,6 +7772,18 @@
       "label": "Zadania",
       "description": "Tworzenie i aktualizowanie zadań."
     },
+    "colab_read": {
+      "label": "Odczyt Colab",
+      "description": "Odczyt poziomu subskrypcji, dostępnych typów środowisk uruchomieniowych i nazw sesji."
+    },
+    "colab_run": {
+      "label": "Uruchamianie zadań w Colab",
+      "description": "Tworzenie środowisk i sesji, uruchamianie Pythona i zamykanie otwartych przez siebie sesji. Zużywa jednostki obliczeniowe Colab."
+    },
+    "colab_delete": {
+      "label": "Usuwanie środowisk Colab",
+      "description": "Trwałe usunięcie środowiska uruchomieniowego wraz ze wszystkimi plikami i sesjami."
+    },
     "github_repo_read": {
       "label": "Czytanie kodu",
       "description": "Czytanie plików i commitów oraz przeszukiwanie kodu."
@@ -7962,6 +8209,14 @@
     "notFound": "To zadanie nie istnieje albo nie masz do niego dostępu.",
     "createdBy": "#{{number}} · utworzone przez: {{name}}",
     "createdByShort": "Utworzone przez: {{name}}",
+    "founder": {
+      "title": "Stan dostarczenia",
+      "available": "W używanej aplikacji",
+      "notAvailable": "Poza używaną aplikacją",
+      "verified": "Zweryfikowane",
+      "notVerified": "Niezweryfikowane",
+      "needsYou": "Czeka na ciebie"
+    },
     "fromMessage": "z <0>wiadomości na #{{channel}}</0>",
     "fromAgent": "z prośby do agenta",
     "subIssues_one": "Podzadania · {{count}}",
@@ -8903,6 +9158,8 @@
       "draftingNoComputer": "{{executor}} czyta folder i przygotowuje plan",
       "empty": "Na razie brak punktów. Możesz mimo to zacząć albo poprosić o plan przez „Zmień coś”.",
       "waitPlan": "Otworzy się, gdy przyjdzie plan",
+      "repositoryFolder": "Folder repozytorium",
+      "repositoryFolderRelative": "Ścieżka względem folderu roboczego agenta, np. repos/projekt.",
       "adjusts": "{{executor}} dopasowuje listę na bieżąco",
       "switched": "Teraz programuje {{executor}}. Plan zaczyna się od nowa.",
       "more_one": "+{{count}} punkt",
@@ -12449,6 +12706,52 @@
   },
   "storage": {
     "title": "Miejsce na dane",
+    "clean": {
+      "title": "Porządki w przestrzeni roboczej",
+      "intro": "To, co zakończone zadania zostawiły na komputerach agentów. Rezultaty, dowody i wszystko bez wyjaśnienia zostają. Ty wybierasz, które pliki tymczasowe usunąć.",
+      "computers": "Dyski komputerów",
+      "level": {
+        "ok": "{{free}} GB wolne",
+        "low": "Mało miejsca: {{free}} GB wolne",
+        "critical": "Prawie pełny: {{free}} GB wolne. Nowe zrzuty ekranu i nagrania są wstrzymane.",
+        "unknown": "Jeszcze nie zmierzono"
+      },
+      "none": "Żadne zadanie nie zakończyło się, odkąd agenci rejestrują swoje pliki.",
+      "task": "Zadanie",
+      "mission": "Misja",
+      "ended": {
+        "done": "Gotowe",
+        "canceled": "Anulowane"
+      },
+      "kept_one": "{{count}} zachowany",
+      "kept_few": "{{count}} zachowane",
+      "kept_many": "{{count}} zachowanych",
+      "kept_other": "{{count}} zachowanego",
+      "candidates_one": "{{count}} plik tymczasowy, {{size}}",
+      "candidates_few": "{{count}} pliki tymczasowe, {{size}}",
+      "candidates_many": "{{count}} plików tymczasowych, {{size}}",
+      "candidates_other": "{{count}} pliku tymczasowego, {{size}}",
+      "duplicates_one": "{{count}} dokładna kopia",
+      "duplicates_few": "{{count}} dokładne kopie",
+      "duplicates_many": "{{count}} dokładnych kopii",
+      "duplicates_other": "{{count}} dokładnej kopii",
+      "restorable": "Dowody: {{restorable}} do przywrócenia z Drive, {{manifestOnly}} tylko na liście",
+      "approve": "Usuń pliki tymczasowe",
+      "approved_one": "Zatwierdzono {{count}} plik: przed usunięciem zostanie ponownie sprawdzony na swoim komputerze.",
+      "approved_few": "Zatwierdzono {{count}} pliki: każdy zostanie ponownie sprawdzony na swoim komputerze przed usunięciem.",
+      "approved_many": "Zatwierdzono {{count}} plików: każdy zostanie ponownie sprawdzony na swoim komputerze przed usunięciem.",
+      "approved_other": "Zatwierdzono {{count}} pliku: każdy zostanie ponownie sprawdzony na swoim komputerze przed usunięciem.",
+      "status": {
+        "approved": "Czeka na swój komputer",
+        "done": "Usunięty",
+        "skipped": "Już go nie było",
+        "blocked": "Zachowany: {{reason}}",
+        "unknown": "Jeszcze niepewne: sprawdzimy ponownie później"
+      },
+      "freed": "Wolne miejsce na komputerze: {{before}} przed, {{after}} po",
+      "show": "Pokaż pliki",
+      "hide": "Ukryj pliki"
+    },
     "options": "Gdzie przechowywać pliki",
     "agentes": "Przestrzeń dyskowa agentes.chat",
     "agentesText": "Twoje pliki zostają w naszej przestrzeni dyskowej, oddzielnie dla każdej przestrzeni roboczej.",
@@ -12662,6 +12965,16 @@
       "list": "Połączone serwery MCP",
       "none": "Tu pojawiają się serwery MCP połączone przez ich adres."
     },
+    "hostMcp": {
+      "title": "Host MCP na Twoim komputerze",
+      "intro": "Użyj sprawdzonego profilu Host MCP na zaufanym komputerze. Tylko wybrany agent otrzyma dostęp do odczytu.",
+      "connectRead": "Połącz i przyznaj odczyt",
+      "bindFailed": "Powiązanie nie zostało potwierdzone. Wyczyść wybór, odśwież listę profili i sprawdź komputer, wersję profilu oraz agenta przed ponowną próbą.",
+      "grantUnconfirmed": "Profil jest powiązany, ale dostęp do odczytu nie został potwierdzony. Ponów próbę dla tego agenta lub wyczyść wybór bez zmiany istniejących uprawnień. Po odświeżeniu wybierz tę samą wersję profilu i tego samego agenta.",
+      "retryRead": "Ponów dostęp do odczytu",
+      "resetSelection": "Wyczyść wybór",
+      "note": "Lista dozwolonych zasobów komputera nadal obowiązuje. Sprawdź dostęp prawdziwym wywołaniem narzędzia przez agenta."
+    },
     "addTitle": "Dodaj konektor",
     "catalogText": "Połącz raz dla {{org}}. Potem wybierz, z czego może korzystać każdy agent.",
     "catalog": "Dostępne konektory",
@@ -12700,6 +13013,8 @@
     "more": "Więcej usług",
     "tileConnected": "{{name}}, połączono",
     "tileSoon": "{{name}}, wkrótce",
+    "tileSetupRequired": "{{name}}, wymagana konfiguracja",
+    "setupRequired": "Wymagana konfiguracja",
     "otherTitle": "Inna usługa",
     "otherDetail": "Dowolna usługa, która oferuje połączenie dla agentów, po jej adresie (zaczyna się od https://).",
     "otherSteps": {
@@ -12723,6 +13038,7 @@
     "how": {
       "oneClick": "Jedno kliknięcie: autoryzujesz na stronie usługi",
       "oauthOrKey": "Autoryzujesz na stronie usługi albo używasz klucza API",
+      "oauthSetup": "Logowanie do tej aplikacji nie jest jeszcze skonfigurowane.",
       "key": "Wymaga klucza API",
       "appPassword": "Wymaga hasła do aplikacji",
       "addressPassword": "Wymaga adresu bazy danych i hasła",
@@ -14224,6 +14540,11 @@
     }
   },
   "errors": {
+    "credit": {
+      "conflict": "Rejestr kredytu już istnieje. Odśwież stronę, aby sprawdzić jego stan.",
+      "disabled": "Zastępcze użycie kredytów jest wyłączone.",
+      "resumeRefused": "Tego uruchomienia nie można jeszcze wznowić. Sprawdź wstrzymany kredyt i oczekujące działania."
+    },
     "passwordLink": {
       "email": "Ten serwer wysyła e-maile: osoba sama prosi o link w Nie pamiętam hasła.",
       "serverOwner": "Osoba, która zainstalowała ten serwer, loguje się na komputerze, na którym działa, bez linku.",
@@ -16594,6 +16915,14 @@
       "oldSub": "Zużycie sprzed zarejestrowania konta",
       "ofMonth": "{{percent}} miesiąca",
       "shareLabel": "{{source}}: {{percent}} miesiąca"
+    },
+    "costPerSuccess": {
+      "title": "Koszt na zweryfikowany sukces",
+      "intro": "Ostatnie 30 dni. Sukces to zadanie, którego kryteria akceptacji zaznaczyła osoba i którego nikt od tego czasu nie otworzył ponownie. Każde uruchomienie wlicza się do kosztu.",
+      "perSuccess": "{{cost}} na sukces",
+      "unknown": "Koszt nieznany",
+      "noSuccess": "Brak zweryfikowanych sukcesów",
+      "line": "Uruchomienia: {{runs}} · zweryfikowane: {{successes}} · nieudane: {{failed}} · ponowienia: {{retries}}"
     }
   },
   "budget": {
@@ -17016,6 +17345,7 @@
         "updatingThread": "Zaktualizowano wątek",
         "addingAgent": "Dodano agenta do kanału",
         "readingConversation": "Przeczytano rozmowę",
+        "checkingPlanUsage": "Sprawdzono użycie planu zespołu",
         "usingTool": "Użyto narzędzia {{tool}}",
         "thinking": "Myślenie",
         "typing": "Pisanie",
@@ -17133,6 +17463,7 @@
       "updatingThread": "aktualizowanie wątku",
       "addingAgent": "dodawanie agenta do kanału",
       "readingConversation": "czytanie rozmowy",
+      "checkingPlanUsage": "sprawdzanie użycia planu zespołu",
       "usingTool": "korzystanie z narzędzia"
     },
     "tokens": "{{value}} tokenów",
