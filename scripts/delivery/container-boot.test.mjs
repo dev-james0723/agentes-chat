@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,26 +12,57 @@ const imageTag = sha.slice(0, 12);
 const project = `agentes-ci-${imageTag}`;
 const s3Container = `${project}-s3`;
 const s3Endpoint = `http://${s3Container}:8080`;
-const s3ProbeStubs = String.raw`
-import assert from "node:assert/strict";
-import { appendFileSync } from "node:fs";
+const probeCommands = String.raw`#!/bin/sh
+set -eu
 
-const responses = process.env.S3_RESPONSES.split(",");
-const trace = (event) => appendFileSync(process.env.BOOT_TRACE, event + "\n");
+command_name=$(basename "$0")
 
-AbortSignal.timeout = (ms) => {
-  assert.equal(ms, 2_000);
-  return new AbortController().signal;
-};
-globalThis.Bun = { sleep: async (ms) => trace("S3 backoff " + ms) };
-globalThis.fetch = async (url, { redirect, signal }) => {
-  assert.equal(redirect, "manual");
-  assert.ok(signal instanceof AbortSignal);
-  const outcome = responses.length > 1 ? responses.shift() : responses[0];
-  trace("probe " + url + " " + outcome);
-  if (outcome === "transport") throw new TypeError("fixture connection refused");
-  return new Response(null, { status: Number(outcome) });
-};
+trace() { printf '%s\n' "$*" >> "$BOOT_TRACE"; }
+invalid() { trace "invalid $command_name invocation"; exit 97; }
+
+case "$command_name" in
+  timeout)
+    [ "$#" -eq 10 ] && [ "$1" = -s ] && [ "$2" = KILL ] && [ "$3" = 2 ] || invalid
+    trace "timeout -s KILL 2"
+    shift 3
+    [ "$1" = rclone ] || invalid
+    exec "$@"
+    ;;
+  rclone)
+    [ "$#" -eq 6 ] && [ "$1" = lsd ] && [ "$2" = :s3: ] \
+      && [ "$3" = --retries ] && [ "$4" = 1 ] \
+      && [ "$5" = --low-level-retries ] && [ "$6" = 1 ] || invalid
+    [ "$RCLONE_CONFIG" = /dev/null ] \
+      && [ "$RCLONE_S3_PROVIDER" = Rclone ] \
+      && [ "$RCLONE_S3_ENDPOINT" = "$BOOT_S3_ENDPOINT" ] \
+      && [ "$RCLONE_S3_REGION" = auto ] \
+      && [ "$RCLONE_S3_ACCESS_KEY_ID" = ci-key ] \
+      && [ "$RCLONE_S3_SECRET_ACCESS_KEY" = ci-secret ] \
+      && [ "$RCLONE_S3_NO_CHECK_BUCKET" = true ] || invalid
+    attempt=$(grep -c '^probe ' "$BOOT_TRACE" || true)
+    IFS=,
+    set -- $S3_RESPONSES
+    if [ "$attempt" -ge "$#" ]; then attempt=$(($# - 1)); fi
+    shift "$attempt"
+    trace "probe $1"
+    case "$1" in
+      empty) exit 0 ;;
+      connection) exit 5 ;;
+      auth)
+        printf 'fixture client error with key %s\n' "$RCLONE_S3_SECRET_ACCESS_KEY" >&2
+        exit 7
+        ;;
+      service) exit 8 ;;
+      timeout) kill -KILL "$$" ;;
+      *) invalid ;;
+    esac
+    ;;
+  sleep)
+    [ "$#" -eq 1 ] && [ "$1" = 1 ] || invalid
+    trace "S3 backoff 1"
+    ;;
+  *) invalid ;;
+esac
 `;
 
 const stubs = String.raw`# Loaded by BASH_ENV to replace external effects of container-boot.sh.
@@ -54,9 +85,16 @@ docker-compose() {
     'up -d postgres agentes'|'down'|'run --rm agentes migrate') ;;
     'run --rm -T agentes telemetry') printf '{}\n' ;;
     'run -d --name '*) trace "start $4" ;;
-    'exec -T agentes bun -e '*)
-      [ "$#" -eq 7 ] || return 97
-      "$BOOT_NODE" --import "$BOOT_PROBE_STUBS" --input-type=module -e "$6" "$7"
+    'run --rm --no-deps -T --entrypoint sh backup -c '*)
+      [ "$#" -eq 9 ] || return 97
+      (
+        for key in S3_ENDPOINT S3_REGION S3_PROVIDER S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BACKUP_BUCKET; do
+          # Compose exports settings from the host environment or the fixture .env.
+          value=$(printenv "$key" || sed -n "s/^$key=//p" .env)
+          export "$key=$value"
+        done
+        PATH="$BOOT_PROBE_PATH:$PATH" /bin/sh -c "$9"
+      )
       ;;
     'run --rm backup now')
       local key
@@ -121,28 +159,35 @@ sleep() { :; }
 `;
 
 const cases = [
-  { name: "container boot uses fixture S3 settings despite inherited values", s3Responses: ["403"] },
+  { name: "container boot uses fixture S3 settings for a signed empty root listing", s3Responses: ["empty"] },
   {
     name: "container boot preserves backup failure when scratch deletion fails",
-    s3Responses: ["200"],
+    s3Responses: ["empty"],
     backupStatus: 37,
     scratchDeleteStatus: 41,
   },
   {
-    name: "container boot retries delayed S3 readiness before backup",
-    s3Responses: ["transport", "503", "403"],
+    name: "container boot retries S3 connection and auth failures before backup",
+    s3Responses: ["connection", "auth", "empty"],
   },
   {
-    name: "container boot skips backup and cleans up when S3 keeps returning 503",
-    s3Responses: ["503"],
+    name: "container boot skips backup and cleans up after persistent S3 auth failure",
+    s3Responses: ["auth"],
     attempts: 30,
-    readinessFailure: "HTTP 503",
+    readinessStatus: 7,
+    scratchDeleteStatus: 41,
   },
   {
-    name: "container boot skips backup and cleans up when S3 cannot be reached",
-    s3Responses: ["transport"],
+    name: "container boot skips backup and cleans up after persistent S3 service failure",
+    s3Responses: ["service"],
     attempts: 30,
-    readinessFailure: "fixture connection refused",
+    readinessStatus: 8,
+  },
+  {
+    name: "container boot skips backup and cleans up after exhausting S3 process timeouts",
+    s3Responses: ["timeout"],
+    attempts: 30,
+    readinessStatus: 137,
   },
 ];
 
@@ -150,7 +195,7 @@ for (const {
   name,
   s3Responses,
   attempts = s3Responses.length,
-  readinessFailure,
+  readinessStatus = 0,
   backupStatus = 0,
   scratchDeleteStatus = 0,
 } of cases) {
@@ -158,10 +203,14 @@ for (const {
     const directory = mkdtempSync(join(tmpdir(), "container-boot-test-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const bashEnv = join(directory, "stubs.bash");
-    const probeStubs = join(directory, "probe-stubs.mjs");
+    const probePath = join(directory, "probe");
     const traceFile = join(directory, "trace");
     writeFileSync(bashEnv, stubs);
-    writeFileSync(probeStubs, s3ProbeStubs);
+    mkdirSync(probePath);
+    writeFileSync(join(probePath, "fixture"), probeCommands, { mode: 0o755 });
+    for (const command of ["timeout", "rclone", "sleep"]) {
+      symlinkSync("fixture", join(probePath, command));
+    }
     writeFileSync(traceFile, "");
     writeFileSync(join(directory, "install.sh"), "fixture installer\n");
 
@@ -173,8 +222,8 @@ for (const {
         PATH: process.env.PATH,
         TMPDIR: directory,
         BASH_ENV: bashEnv,
-        BOOT_NODE: process.execPath,
-        BOOT_PROBE_STUBS: probeStubs,
+        BOOT_PROBE_PATH: probePath,
+        BOOT_S3_ENDPOINT: s3Endpoint,
         BOOT_TRACE: traceFile,
         BACKUP_STATUS: String(backupStatus),
         SCRATCH_DELETE_STATUS: String(scratchDeleteStatus),
@@ -192,7 +241,7 @@ for (const {
     });
 
     assert.ifError(result.error);
-    const expectedStatus = readinessFailure ? 1 : backupStatus;
+    const expectedStatus = readinessStatus || backupStatus;
     assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
     if (expectedStatus === 0) {
       assert.match(result.stdout, /container boot passed/);
@@ -202,24 +251,25 @@ for (const {
     if (scratchDeleteStatus !== 0) {
       assert.match(result.stderr, /fixture scratch deletion failed/);
     }
-    if (readinessFailure) {
+    assert.doesNotMatch(result.stdout + result.stderr, /ci-key|ci-secret|ambient-key|ambient-secret/);
+    if (readinessStatus) {
       assert.ok(
         result.stderr.includes(
-          `S3 fixture ${s3Endpoint} was not ready after ${attempts} attempts (last result: ${readinessFailure})`,
+          `S3 fixture was not ready after ${attempts} attempts (probe exit status: ${readinessStatus})`,
         ),
         result.stderr,
       );
     }
     const probeTrace = [];
     for (let attempt = 0; attempt < attempts; attempt++) {
-      if (attempt > 0) probeTrace.push("S3 backoff 1000");
+      if (attempt > 0) probeTrace.push("S3 backoff 1");
       const outcome = s3Responses[Math.min(attempt, s3Responses.length - 1)];
-      probeTrace.push(`probe ${s3Endpoint} ${outcome}`);
+      probeTrace.push("timeout -s KILL 2", `probe ${outcome}`);
     }
     assert.deepEqual(readFileSync(traceFile, "utf8").trim().split("\n"), [
       `start ${s3Container}`,
       ...probeTrace,
-      ...(readinessFailure
+      ...(readinessStatus
         ? []
         : [
             `S3_ENDPOINT=${s3Endpoint}`,

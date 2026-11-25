@@ -95,29 +95,35 @@ printf 'S3_ENDPOINT=%s\nS3_PROVIDER=Rclone\nS3_ACCESS_KEY_ID=ci-key\nS3_SECRET_A
   "$s3_endpoint" >> .env
 compose run -d --name "$s3_container" --entrypoint sh backup -c \
   'mkdir -p /tmp/s3/backups && exec rclone serve s3 --auth-key ci-key,ci-secret --addr :8080 /tmp/s3'
-# Probe the Docker-only endpoint from the running app. The HTTP and backoff budget is 30 × 2s + 29 × 1s.
+# Require an authenticated root listing, even when no buckets exist.
+# The operation and backoff budget is 30 × 2s + 29 × 1s.
 # shellcheck disable=SC2016
-compose exec -T agentes bun -e '
-  const endpoint = process.argv[1];
-  const attempts = 30;
-  let lastResult;
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const response = await fetch(endpoint, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
-      // The authenticated rclone fixture may forbid an anonymous request once it is serving S3.
-      if (response.ok || response.status === 403) {
-        console.log(`S3 fixture ready at ${endpoint} (HTTP ${response.status})`);
-        process.exit(0);
-      }
-      lastResult = `HTTP ${response.status}`;
-    } catch (error) {
-      lastResult = error.message;
-    }
-    if (attempt < attempts) await Bun.sleep(1_000);
-  }
-  console.error(`S3 fixture ${endpoint} was not ready after ${attempts} attempts (last result: ${lastResult})`);
-  process.exit(1);
-' "$s3_endpoint"
+compose run --rm --no-deps -T --entrypoint sh backup -c '
+  set -eu
+  export RCLONE_CONFIG=/dev/null
+  export RCLONE_S3_PROVIDER="${S3_PROVIDER:-Cloudflare}"
+  export RCLONE_S3_ENDPOINT="${S3_ENDPOINT:-}"
+  export RCLONE_S3_REGION="${S3_REGION:-auto}"
+  export RCLONE_S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-}"
+  export RCLONE_S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-}"
+  export RCLONE_S3_NO_CHECK_BUCKET=true
+
+  attempt=1
+  while :; do
+    if timeout -s KILL 2 rclone lsd :s3: --retries 1 --low-level-retries 1 > /dev/null 2>&1; then
+      echo "S3 fixture ready (attempt $attempt)"
+      exit 0
+    else
+      status=$?
+    fi
+    if [ "$attempt" -eq 30 ]; then
+      echo "S3 fixture was not ready after $attempt attempts (probe exit status: $status)" >&2
+      exit "$status"
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+'
 compose run --rm backup now
 name=$(compose run --rm -T backup list | awk '{print $NF}' | tail -1)
 compose run --rm -T backup fetch "$name" > ci.dump
