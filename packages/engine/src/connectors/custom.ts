@@ -56,6 +56,7 @@ import { oauthReturnTo } from "./oauth-return";
 import { seedToolPins } from "./pins";
 import { composioToolkitOf, composioToolName, type McpPreset, presetForServer, serverUrlShown } from "./presets";
 import { type McpServerInfo, refreshServerIcon } from "./server-icon";
+import { isTregMcpEndpoint, TREG_MCP_URL, tregExecutor, tregReadTool } from "./treg";
 
 const { connectorConnections, customTools, oauthStates, agentScopes, agents } = schema;
 
@@ -665,14 +666,27 @@ export async function syncCustomTools(deps: CustomDeps, c: ConnectorConnection) 
       });
     }
   }
-  const classes = await classifyTools(listed, {
-    orgId: c.orgId,
-    server: c.label,
-    judge: deps.judge,
-    readTools: preset?.readTools,
-    writeTools,
-    cached,
-  });
+  // A gateway's generic call can spend or mutate even when its remote hint says read-only.
+  const classes: Map<string, ToolClass> = isTregMcpEndpoint(c.serverUrl)
+    ? new Map(
+        listed.map((tool) => [
+          tool.name,
+          {
+            level: tregReadTool(tool.name) ? "read" : "approval",
+            source: "preset",
+            reason: tregReadTool(tool.name) ? "preset_read" : tregExecutor(tool.name) ? "spends_money" : "unknown",
+            sensitive: !tregReadTool(tool.name),
+          },
+        ]),
+      )
+    : await classifyTools(listed, {
+        orgId: c.orgId,
+        server: c.label,
+        judge: deps.judge,
+        readTools: preset?.readTools,
+        writeTools,
+        cached,
+      });
   const seen = new Set<string>();
   for (const tool of listed) {
     seen.add(tool.name);
@@ -754,7 +768,7 @@ export async function connectCustomServer(
   // A service through Composio signs in on Composio's page: its address is never fetched.
   if (composioToolkitOf(input.serverUrl.trim())) return beginComposioConnect(deps, actorId, orgId, input);
   const url = await assertPublicHttpsUrl(input.serverUrl.trim(), deps.resolveHost);
-  const serverUrl = url.toString();
+  const serverUrl = isTregMcpEndpoint(url.toString()) ? TREG_MCP_URL : url.toString();
   // Colab lists tools publicly but requires OAuth to use them. A successful probe is not a sign-in.
   if (url.hostname === "colaboratory.googleapis.com") {
     if (!isColabMcpEndpoint(serverUrl) || input.apiKey?.trim() || input.connectionId) {

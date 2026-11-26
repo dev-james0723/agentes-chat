@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import {
@@ -603,7 +604,7 @@ describe("grant endpoint binding", () => {
     });
     test(`${provider} ignores inherited alternate SDK endpoint in an isolated process`, async () => {
       // A subprocess receives only synthetic endpoint variables; the parent environment is never read or changed.
-      const modulePath = new URL("../src/index.ts", import.meta.url).pathname;
+      const modulePath = fileURLToPath(new URL("../src/index.ts", import.meta.url));
       const script = [
         `import { createOpenAIProvider, createAnthropicProvider } from ${JSON.stringify(modulePath)};`,
         "const urls = [];",

@@ -1,5 +1,6 @@
 import type { ConnectorCategory } from "./catalog";
 import { canonicalResource } from "./oauth-mcp";
+import { TREG_MCP_URL, TREG_READ_TOOLS } from "./treg";
 
 /**
  * Connector presets for official remote MCP servers. Most speak MCP
@@ -99,6 +100,15 @@ export const composioToolkitOf = (serverUrl: string | null | undefined) =>
   COMPOSIO_TOOLKIT_URL.exec(serverUrl ?? "")?.[1]?.toLowerCase() ?? null;
 
 export const MCP_PRESETS: readonly McpPreset[] = [
+  {
+    id: "treg",
+    category: "data",
+    label: "TREG",
+    description: "Discover and call external data, research and media tools with per-call pricing.",
+    icon: "plug",
+    serverUrl: TREG_MCP_URL,
+    readTools: TREG_READ_TOOLS,
+  },
   {
     id: "linear",
     category: "product",

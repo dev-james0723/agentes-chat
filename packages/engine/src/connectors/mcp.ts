@@ -6,6 +6,7 @@ import type { jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/t
 import { ARTIFACT_LIMITS, type ArtifactDeps, createFileArtifact, fileReach } from "../artifacts";
 import { recordAudit } from "../audit";
 import { connectorKeyOf } from "../connector-usage";
+import { ValidationError } from "../errors";
 import { cutText } from "../format";
 import { mergeDetailsOf } from "../founder-status";
 import { type GitHubAppAccess, githubCallAuth, githubListingHeaders } from "../git/github-call";
@@ -42,6 +43,17 @@ import {
 import { applyToolPins } from "./pins";
 import { presetForServer } from "./presets";
 import type { McpServerInfo } from "./server-icon";
+import {
+  isTregMcpEndpoint,
+  prepareTregCall,
+  TREG_MCP_URL,
+  TREG_TOOL_GUIDANCE,
+  tregExecutor,
+  tregReadTool,
+  tregReceipt,
+  tregResultFailed,
+} from "./treg";
+import { keepTregMedia, type TregInlineFile } from "./treg-media";
 
 /** A tool as an MCP server lists it. */
 export interface McpTool {
@@ -57,8 +69,10 @@ export interface McpTool {
 export interface McpCallResult {
   content: string;
   isError: boolean;
-  /** A Composio action's answer as Composio gave it (files and all), for `keepComposioFiles`. */
+  /** Structured MCP metadata, or a Composio action's full answer for `keepComposioFiles`. */
   data?: unknown;
+  /** TREG inline media, consumed by native artifact storage and never copied into run-step JSON. */
+  files?: TregInlineFile[];
 }
 
 /** An open MCP client session. Only the connector tool source uses it, behind the Tool Gateway. */
@@ -117,7 +131,13 @@ export async function mcpSessionOver(transport: Transport, serverUrl?: string): 
       const timeout = colabCallTimeoutMs(serverUrl, name);
       // One dispatch only: a Colab timeout can leave code running; the caller must reattach with the same UUID.
       const res = (await client.callTool({ name, arguments: args }, undefined, timeout ? { timeout } : undefined)) as {
-        content?: { type: string; text?: string; resource?: { text?: unknown } }[];
+        content?: {
+          type: string;
+          text?: string;
+          data?: string;
+          mimeType?: string;
+          resource?: { text?: unknown; blob?: string; mimeType?: string };
+        }[];
         isError?: boolean;
         structuredContent?: unknown;
       };
@@ -130,7 +150,21 @@ export async function mcpSessionOver(transport: Transport, serverUrl?: string): 
             : `[${c.type}]`,
       );
       if (parts.length === 0 && res.structuredContent !== undefined) parts.push(JSON.stringify(res.structuredContent));
-      return { content: parts.join("\n"), isError: res.isError === true };
+      const files: TregInlineFile[] = isTregMcpEndpoint(serverUrl)
+        ? (res.content ?? []).flatMap((c) => {
+            if ((c.type === "audio" || c.type === "image") && typeof c.data === "string")
+              return [{ data: c.data, mimeType: c.mimeType ?? "application/octet-stream" }];
+            if (c.type === "resource" && typeof c.resource?.blob === "string")
+              return [{ data: c.resource.blob, mimeType: c.resource.mimeType ?? "application/octet-stream" }];
+            return [];
+          })
+        : [];
+      return {
+        content: parts.join("\n"),
+        ...(files.length ? { files } : {}),
+        isError: res.isError === true,
+        ...(res.structuredContent !== undefined ? { data: res.structuredContent } : {}),
+      };
     },
     serverInfo: () => (client.getServerVersion() as McpServerInfo | undefined) ?? null,
     close: () => client.close(),
@@ -146,18 +180,20 @@ export function fixedEndpointMcpFetch(endpoint: string, base: FetchLike = fetch)
 }
 
 export const connectOverHttp: McpConnect = (connection, headers) => {
-  const preset = presetForServer(connection.serverUrl);
+  const treg = isTregMcpEndpoint(connection.serverUrl);
+  const endpoint = treg ? TREG_MCP_URL : connection.serverUrl;
+  const preset = presetForServer(endpoint);
   const guarded = outboundFetch({ ownRedirects: true });
   const http =
-    preset?.keyHeader && connection.serverUrl === preset.serverUrl
-      ? fixedEndpointMcpFetch(connection.serverUrl, outboundFetch())
+    (preset?.keyHeader && endpoint === preset.serverUrl) || treg
+      ? fixedEndpointMcpFetch(endpoint, outboundFetch())
       : guarded;
   return mcpSessionOver(
-    new StreamableHTTPClientTransport(new URL(connection.serverUrl), {
+    new StreamableHTTPClientTransport(new URL(endpoint), {
       requestInit: { headers },
       fetch: tolerantMcpFetch(http),
     }),
-    connection.serverUrl,
+    endpoint,
   );
 };
 
@@ -288,10 +324,15 @@ export function createConnectorToolSource(
     connection: ConnectorConnection,
     fn: (s: McpSession) => Promise<T>,
     auth?: Record<string, string>,
+    extraHeaders?: Record<string, string>,
   ): Promise<T> {
     const extra = isCustom(connection) ? undefined : CONNECTOR_CATALOG[connection.connector]?.headers;
     try {
-      const session = await connect(connection, { ...extra, ...(auth ?? (await connectionHeaders(deps, connection))) });
+      const session = await connect(connection, {
+        ...extra,
+        ...(auth ?? (await connectionHeaders(deps, connection))),
+        ...extraHeaders,
+      });
       try {
         return await fn(session);
       } finally {
@@ -378,19 +419,22 @@ export function createConnectorToolSource(
     const byName = new Map(listed.map((t) => [t.name, t]));
     const preset = presetForServer(connection.serverUrl)?.id;
     const composio = composioServiceOf(connection.serverUrl);
+    const treg = isTregMcpEndpoint(connection.serverUrl);
     const prefix = toolPrefixOfConnection(connection);
     return classified.flatMap((row): ToolDefinition[] => {
       const tool = byName.get(row.name);
-      const access = row.access as ToolAccess;
+      const access: ToolAccess = treg && !tregReadTool(row.name) ? "approval" : (row.access as ToolAccess);
       if (!tool) return [];
       const executor = tool.name === COMPOSIO_EXECUTOR;
       const sqlArg = composio ? null : sqlArgOf(tool, preset);
       // Our rules for a Composio action as they are now (its entry's `ask`, its tags at the pinned version), not only
       // as the row stored them at the last sync: an action they make ask asks on every connection at once.
       const asks = composio !== null && tool.destructiveHint === true;
-      const said = executor
-        ? [EXECUTOR_NOTE, tool.description].filter(Boolean).join(" ")
-        : (tool.description ?? tool.name);
+      const said = treg
+        ? [TREG_TOOL_GUIDANCE, tool.description].filter(Boolean).join(" ")
+        : executor
+          ? [EXECUTOR_NOTE, tool.description].filter(Boolean).join(" ")
+          : (tool.description ?? tool.name);
       return [
         {
           name: exposedToolName(prefix, tool.name),
@@ -409,11 +453,12 @@ export function createConnectorToolSource(
           // A sensitive tool never runs without approval, whatever is stored.
           sensitive: access === "approval" || row.sensitive || asks || COMPOSIO_ANY_ACTION.has(tool.name),
           // Its exact call may be approved ahead, except a tool that runs whatever its input says.
-          ahead: !COMPOSIO_ANY_ACTION.has(tool.name),
+          ahead: !COMPOSIO_ANY_ACTION.has(tool.name) && !(treg && tregExecutor(tool.name)),
           external: true, // whatever the server returns is third-party text
           // The executor names what each call does. A Composio action, and a custom server's own tool, is one action.
           // "Aprovar sempre" keeps either by the server's own name.
           rememberAs: tool.name,
+          ...(treg && tregExecutor(tool.name) ? { rememberTarget: () => null } : {}),
           ...(executor ? { actions: composioActions, readScope: customScope(connection.id, "read") } : {}),
           ...(sqlArg ? { sqlReads: { tool: tool.name, arg: sqlArg } } : {}),
           describe: (input) => {
@@ -426,13 +471,42 @@ export function createConnectorToolSource(
             };
           },
           execute: async (input, ctx) => {
+            if (treg && tool.name === "call_media" && !deps.artifacts)
+              throw new ValidationError("TREG media execution requires native file storage");
+            const prepared = treg ? prepareTregCall(tool.name, input, { ...ctx, connectionId: connection.id }) : null;
             let result: McpCallResult;
             try {
-              result = await withSession(connection, (s) => s.callTool(tool.name, input));
+              result = await withSession(
+                connection,
+                (s) => s.callTool(tool.name, prepared?.args ?? input),
+                undefined,
+                prepared?.headers,
+              );
             } catch (error) {
+              if (treg && tregExecutor(tool.name)) {
+                return {
+                  content:
+                    "The TREG call has an unknown outcome. It was not retried. Reconcile its call ID or TREG history before another execution; inline media may not be replayable.",
+                  isError: true,
+                  data: {
+                    connector: "custom",
+                    serverId: connection.id,
+                    tool: tool.name,
+                    treg: { executionStatus: "unknown", idempotencyKey: prepared?.idempotencyKey },
+                  },
+                };
+              }
               if (!composio) throw error;
               return composioFailure(deps, connection, error);
             }
+            const receipt = treg ? tregReceipt(result) : null;
+            const media = treg && result.files?.length ? await keepTregMedia(deps.artifacts, ctx, result.files) : null;
+            if (treg)
+              result = {
+                ...result,
+                content: [result.content, media?.content].filter(Boolean).join("\n"),
+                isError: result.isError || tregResultFailed(result) || media?.isError === true,
+              };
             if (composio && deps.composio && !result.isError) {
               const kept = await keepComposioFiles(
                 { client: deps.composio.client, artifacts: deps.artifacts, resolveHost: deps.resolveHost },
@@ -454,7 +528,22 @@ export function createConnectorToolSource(
             return {
               content: result.content,
               isError: result.isError,
-              data: { connector: "custom", serverId: connection.id, tool: tool.name, isError: result.isError },
+              data: {
+                connector: "custom",
+                serverId: connection.id,
+                tool: tool.name,
+                isError: result.isError,
+                ...(treg
+                  ? {
+                      treg: {
+                        ...receipt,
+                        ...(media ? { mediaArtifactIds: media.artifactIds } : {}),
+                        capUsd: prepared?.capUsd,
+                        idempotencyKey: prepared?.idempotencyKey,
+                      },
+                    }
+                  : {}),
+              },
             };
           },
         },
