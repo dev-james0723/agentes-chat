@@ -41,6 +41,7 @@ import { sniffModelImage } from "./avatars";
 import { deviceRoster, devicesForRequester, rosterFacts, secretsMayGo } from "./device-resolve";
 import { refusalData, ToolOffError } from "./errors";
 import { publishChannelEvent } from "./events";
+import { MEASURE_LIMITS, type Measured, measureCommand, parseMeasureOutput } from "./file-measure";
 import { copyToComputer } from "./file-pulls";
 import { readForModel } from "./file-reader";
 import { cutText, formatBytes, textOfBytes } from "./format";
@@ -668,6 +669,26 @@ export function createSandboxToolSource(
     const inFolder = pathInOwnFolder(path, ctx.agentId);
     const hit = held.find((f) => f === inFolder || inFolder === "" || f.startsWith(`${inFolder}/`));
     if (hit) throw new Error(`${path || "The workspace"} holds a secret (${hit}); it stays on the computer.`);
+  };
+
+  /**
+   * Each registered file's size and SHA-256, read on the computer (ADR 0213). macOS and Linux only (the check is a
+   * POSIX command); under the computer's command policy like any command, never approved on the agent's behalf.
+   */
+  const measureOnComputer = async (ctx: ToolContext, computer: ComputerHandle, paths: string[]) => {
+    const [machine] = await ctx.db
+      .select({ os: schema.machines.os })
+      .from(schema.machines)
+      .where(and(eq(schema.machines.orgId, ctx.orgId), eq(schema.machines.id, computer.machineId)));
+    if (machine?.os !== "darwin" && machine?.os !== "linux") return new Map<string, Measured>();
+    const result = await computer.provider.exec(computer.id, {
+      command: measureCommand(paths),
+      timeoutSeconds: MEASURE_LIMITS.seconds,
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    });
+    return result.exitCode === 0 && !result.timedOut
+      ? parseMeasureOutput(result.stdout, paths)
+      : new Map<string, Measured>();
   };
 
   const pathProp = { type: "string", minLength: 1, maxLength: 300, description: "Path inside the workspace" };
@@ -1888,7 +1909,13 @@ export function createSandboxToolSource(
         // What the agent made on its computer and what for (ADR 0197): only where there is a computer.
         ...(computer.kind === "none"
           ? []
-          : [registerFilesTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named }))]),
+          : [
+              registerFilesTool(
+                ctx.db,
+                (c, named) => run(c, async (h) => h.machineId, { computer: named }),
+                (c, named, paths) => run(c, (h) => measureOnComputer(c, h, paths), { computer: named }),
+              ),
+            ]),
       ]);
       if (!mission) return tools;
       return tools.map((t) => ({
