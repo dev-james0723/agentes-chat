@@ -50,7 +50,7 @@ export const runFiles = pgTable(
     /** The tool that saved it (ADR 0201: `browser_screenshot`, …), null for what the agent registered itself. Kept when the agent registers it again: it counts toward the run's capture budget. */
     capturedBy: text(),
     /**
-     * Where the file is in its life (ADR 0213): `created`, `writing`, `sealed` (its writer closed it), `released`
+     * Where the file is in its life (ADR 0214): `created`, `writing`, `sealed` (its writer closed it), `released`
      * (sealed and no reader or later stage holds it), `reserved` (one collector holds it for removal), `deleted`,
      * `review` (a person decides), `protected`, `kept`, `archived`, `relocated`, `failed` or `unknown`.
      */
@@ -125,11 +125,11 @@ export const fileCleanups = pgTable(
     orgId: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    /** The report it was approved from; none for a cleanup an authorized scope or a review decided (ADR 0213). */
+    /** The report it was approved from; none for a cleanup an authorized scope or a review decided (ADR 0214). */
     reportId: uuid().references(() => retentionReports.id, { onDelete: "cascade" }),
-    /** `approved` (a person, from a report), `auto` (an authorized scope, ADR 0213) or `review` (a person, from the review queue). */
+    /** `approved` (a person, from a report), `auto` (an authorized scope, ADR 0214) or `review` (a person, from the review queue). */
     source: text().notNull().default("approved"),
-    /** `shadow`: what would have been removed, nothing sent to the computer (ADR 0213). */
+    /** `shadow`: what would have been removed, nothing sent to the computer (ADR 0214). */
     shadow: boolean().notNull().default(false),
     /** The run that registered it: the approval is for that registration, not for whatever has that path later. */
     runId: uuid().notNull(),
@@ -160,7 +160,7 @@ export const fileCleanups = pgTable(
 );
 
 /**
- * Who uses a registered file now and who will later (ADR 0213): a writer (`write`), a reader (`read`) or a later
+ * Who uses a registered file now and who will later (ADR 0214): a writer (`write`), a reader (`read`) or a later
  * stage of the work that declared it needs it (`future`). A file with any open lease is never removed. A lease whose
  * heartbeat stopped is `expired`: that proves nothing about the file, which goes to review, never to removal.
  */
@@ -199,7 +199,7 @@ export const artifactLeases = pgTable(
   ],
 );
 
-/** Every change of a file's state, append only (ADR 0213): from, to, the version it made, who and why. */
+/** Every change of a file's state, append only (ADR 0214): from, to, the version it made, who and why. */
 export const artifactTransitions = pgTable(
   "artifact_transitions",
   {
@@ -226,7 +226,7 @@ export const artifactTransitions = pgTable(
 );
 
 /**
- * Where a person allowed scratch to be removed while work goes on, without approving each file (ADR 0213): one
+ * Where a person allowed scratch to be removed while work goes on, without approving each file (ADR 0214): one
  * computer, one folder (relative to the agents' workspace), and whether the collector only reports (`shadow`) or
  * removes (`enforce`). Only `scratch` and `derived` files inside it, sealed and released, are ever removed.
  */
@@ -255,7 +255,7 @@ export const storageScopes = pgTable(
   ],
 );
 
-/** A workspace's switch for continuous cleanup (ADR 0213): `enabled` false stops every removal at once. */
+/** A workspace's switch for continuous cleanup (ADR 0214): `enabled` false stops every removal at once. */
 export const storageGcSettings = pgTable("storage_gc_settings", {
   orgId: uuid()
     .primaryKey()
@@ -268,7 +268,7 @@ export const storageGcSettings = pgTable("storage_gc_settings", {
 });
 
 /**
- * A file the collector would not decide alone (ADR 0213), and what a person decided: `open`, `kept`, `protected`,
+ * A file the collector would not decide alone (ADR 0214), and what a person decided: `open`, `kept`, `protected`,
  * `archive` (asked for), `delete` (approved for removal, checked again on the computer), `restored` (a decision
  * undone). Every decision is kept in `history`.
  */

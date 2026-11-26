@@ -51,7 +51,7 @@ const item: StorageReviewItem = {
   },
 };
 
-describe("Storage Guardian (ADR 0213)", () => {
+describe("Storage Guardian (ADR 0214)", () => {
   test("shows the switch, separate figures, folders and the review queue; decisions go to the server", async () => {
     const state = seedState();
     state.storageGuardian = view;

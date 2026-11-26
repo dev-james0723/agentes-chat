@@ -7,7 +7,7 @@ afterEach(async () => {
   t = undefined;
 });
 
-test("Storage Guardian routes (ADR 0213): an owner reads the page, switches it off, and the queue starts empty", async () => {
+test("Storage Guardian routes (ADR 0214): an owner reads the page, switches it off, and the queue starts empty", async () => {
   const server = await createTestServer({ env: { ALLOW_SIGNUP: "true" } });
   t = server;
   const owner = browser(server);

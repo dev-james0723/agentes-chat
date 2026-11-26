@@ -37,7 +37,7 @@ import { connectedComputer } from "./machine-fixtures";
 
 /** Real files, a real shell and the script's own 2 s settle per cycle: these take seconds, more on a busy computer. */
 /**
- * Acceptance tests A–L for continuous cleanup (ADR 0213). The fake computer runs the real `CLEANUP_SCRIPT` with
+ * Acceptance tests A–L for continuous cleanup (ADR 0214). The fake computer runs the real `CLEANUP_SCRIPT` with
  * the real shell in a real temporary folder, so every "removed" and "kept" below is a file that is or is not on disk.
  */
 

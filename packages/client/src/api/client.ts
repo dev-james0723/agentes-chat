@@ -414,7 +414,7 @@ export interface CleanWorkspace {
   reports: CleanWorkspaceReport[];
 }
 
-/** Continuous cleanup (ADR 0213): figures from separate sources, never added together. */
+/** Continuous cleanup (ADR 0214): figures from separate sources, never added together. */
 export interface StorageGuardianView {
   enabled: boolean;
   modeOverride: string | null;

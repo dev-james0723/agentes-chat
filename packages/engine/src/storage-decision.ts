@@ -1,5 +1,5 @@
 /**
- * What to do with one registered file now (ADR 0213): a pure, deterministic function of facts the registry holds.
+ * What to do with one registered file now (ADR 0214): a pure, deterministic function of facts the registry holds.
  * No model takes part, and no fact here is a file's own word about itself. The rules run in a fixed order and the
  * first that applies decides; protection comes first and nothing later (storage pressure included) undoes it.
  *
@@ -38,7 +38,7 @@ export const LIFECYCLE_STATES = [
 export type LifecycleState = (typeof LIFECYCLE_STATES)[number];
 
 export type PressureLevel = "ok" | "low" | "critical" | "unknown";
-/** How hard the collector works (ADR 0213 §12). Never how much it protects. */
+/** How hard the collector works (ADR 0214 §12). Never how much it protects. */
 export type GcMode = "normal" | "elevated" | "critical" | "performance";
 
 export interface ArtifactFacts {
@@ -143,7 +143,7 @@ export function gcBudget(mode: GcMode) {
   }
 }
 
-/** The decision (ADR 0213 §7). First rule that applies wins. */
+/** The decision (ADR 0214 §7). First rule that applies wins. */
 export function decide(f: ArtifactFacts): Decision {
   const pathRefusal = protectedPath(f.path);
   if (pathRefusal) return { action: "PROTECT", code: "protected_path", reason: pathRefusal };

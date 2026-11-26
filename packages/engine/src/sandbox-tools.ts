@@ -1891,7 +1891,7 @@ export function createSandboxToolSource(
           ? []
           : [
               registerFilesTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named })),
-              // Seal, read, release and pin, so scratch is cleaned while the work goes on (ADR 0213).
+              // Seal, read, release and pin, so scratch is cleaned while the work goes on (ADR 0214).
               fileLifecycleTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named })),
             ]),
       ]);

@@ -324,7 +324,7 @@ export function cleanupCommand(
   notAfter: Date,
   maxBytes: number = CLEANUP_LIMITS.bytes,
   /**
-   * Continuous cleanup (ADR 0213): `quiet` is how long the file must have been unchanged (ten minutes by default;
+   * Continuous cleanup (ADR 0214): `quiet` is how long the file must have been unchanged (ten minutes by default;
    * shorter only for a file its writer sealed), `seconds` the round's time budget, `lowPriority` runs it under `nice`
    * so it yields to the agents' own work.
    */
@@ -443,7 +443,7 @@ export async function runFileCleanup(
       blocked.set(r.id, "No longer registered as scratch or rebuildable on that computer.");
       continue;
     }
-    // A pin, a person's decision or the collector's claim since the approval (ADR 0213) keeps it.
+    // A pin, a person's decision or the collector's claim since the approval (ADR 0214) keeps it.
     if (["protected", "kept", "review", "reserved"].includes(own.state)) {
       blocked.set(
         r.id,
@@ -463,7 +463,7 @@ export async function runFileCleanup(
     if (others.some((g) => g.updatedAt > report.createdAt))
       blocked.set(r.id, "Registered again after the work ended: something else may use it now.");
   }
-  // Anyone reading the file now, or a later stage that needs it (ADR 0213 leases, any registration of the path).
+  // Anyone reading the file now, or a later stage that needs it (ADR 0214 leases, any registration of the path).
   const held = await db.execute(sql`
     select distinct f.path, f.machine_id from ${schema.artifactLeases} l join ${runFiles} f on f.id = l.run_file_id
     where l.org_id = ${orgId} and l.status in ('open', 'expired') and f.path in (${sql.join(

@@ -973,7 +973,7 @@ export function createJobHandlers(deps: JobDeps): JobHandlers {
       if (typeof job.payload.reportId !== "string") throw new PermanentJobError("bad file cleanup payload");
       await runFileCleanup({ db: deps.db, hub: deps.sandbox?.machines?.hub ?? null }, orgOf(job), job.payload.reportId);
     },
-    // Continuous cleanup on one computer after agents' file events (ADR 0213): bounded, low priority, receipts.
+    // Continuous cleanup on one computer after agents' file events (ADR 0214): bounded, low priority, receipts.
     [STORAGE_GC_JOB]: async (job) => {
       if (typeof job.payload.machineId !== "string") throw new PermanentJobError("bad storage gc payload");
       await runStorageGc({ db: deps.db, hub: deps.sandbox?.machines?.hub ?? null }, orgOf(job), job.payload.machineId);

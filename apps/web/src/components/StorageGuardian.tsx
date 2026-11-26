@@ -12,7 +12,7 @@ import { useToast } from "@/lib/toast";
 const ACTIONS: StorageReviewAction[] = ["keep", "protect", "archive", "delete", "restore"];
 
 /**
- * Storage Guardian (ADR 0213): continuous cleanup's switch, the folders a person authorized, the review queue and
+ * Storage Guardian (ADR 0214): continuous cleanup's switch, the folders a person authorized, the review queue and
  * figures. Removed files, their registered size, the blocks measured on disk and the disk's free-space change are
  * shown apart, never added together.
  */

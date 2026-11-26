@@ -426,7 +426,7 @@ describe("approving and running a cleanup", () => {
     expect(run.id).not.toBe(next.id);
   });
 
-  test("a file pinned or kept after the approval is not removed (ADR 0213)", async () => {
+  test("a file pinned or kept after the approval is not removed (ADR 0214)", async () => {
     f = await setup({ machines: true });
     const fx = f;
     calls.length = 0;

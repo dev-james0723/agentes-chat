@@ -9,7 +9,7 @@ import {
 import { createRoute, z } from "@hono/zod-openapi";
 import { type AppDeps, body, createAppRouter, errors, json, OrgParams, requireSession, security } from "./context";
 
-/** Storage Guardian (ADR 0213): continuous cleanup's switch, authorized folders, review queue and figures. */
+/** Storage Guardian (ADR 0214): continuous cleanup's switch, authorized folders, review queue and figures. */
 const tags = ["Storage Guardian"];
 
 const Figures = z.object({
@@ -57,7 +57,7 @@ const View = z
   })
   .openapi("StorageGuardian", {
     description:
-      "Continuous cleanup (ADR 0213): its switch, each computer's disk and mode, the authorized folders, files by state and figures that are never added together.",
+      "Continuous cleanup (ADR 0214): its switch, each computer's disk and mode, the authorized folders, files by state and figures that are never added together.",
   });
 const ReviewItem = z.object({
   id: z.string(),

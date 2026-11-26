@@ -269,7 +269,7 @@ export function noticeView(
     case "talker_reply":
     case "run_stopped":
       return line("chat.notice.other", { name: names.author });
-    // Continuous cleanup's receipt (ADR 0213): the app's own words; the files are on the Storage page.
+    // Continuous cleanup's receipt (ADR 0214): the app's own words; the files are on the Storage page.
     case "cleanup_receipt":
       return line("chat.notice.cleanupReceipt", { name: names.author });
     default:

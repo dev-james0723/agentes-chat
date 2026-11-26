@@ -212,7 +212,7 @@ export function noticeText(
     // A person stopped one of its tasks (ADR 0128); the reason is that person's words.
     case "run_stopped":
       return `[A person stopped your task]: ${n.text}`;
-    // What continuous cleanup did with this run's files (ADR 0213): a receipt, never a request.
+    // What continuous cleanup did with this run's files (ADR 0214): a receipt, never a request.
     case "cleanup_receipt":
       return `[Storage Guardian receipt for your files]: ${n.text}`;
     case "follow_up": {

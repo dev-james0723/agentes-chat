@@ -20,7 +20,7 @@ import { pressureOf } from "./storage-pressure";
 import type { ToolContext, ToolDefinition } from "./tools/types";
 
 /**
- * Continuous cleanup while work goes on (ADR 0213), on top of ADR 0197's registry and ADR 0201's checks.
+ * Continuous cleanup while work goes on (ADR 0214), on top of ADR 0197's registry and ADR 0201's checks.
  *
  * Agents say when a file is complete (`seal`), who reads it (`read`), which later stage needs it (`future`) and when
  * they are done with it (`release`). After each such event a small job on that computer looks only at the files the
@@ -253,7 +253,7 @@ export async function lifecycleEvent(
   return { files: out };
 }
 
-/** The tool beside `register_files` (ADR 0213): tell the collector what is done, read, needed later or released. */
+/** The tool beside `register_files` (ADR 0214): tell the collector what is done, read, needed later or released. */
 export function fileLifecycleTool(
   db: Database,
   computerOf?: (ctx: ToolContext, computer: string | undefined) => Promise<string>,
@@ -689,7 +689,7 @@ export async function runStorageGc(
           ),
           timeoutSeconds: 60,
           stream: false,
-          // The person who authorized this folder (or approved this file in review) approved it (ADR 0213).
+          // The person who authorized this folder (or approved this file in review) approved it (ADR 0214).
           approved: true,
         });
         out = reply.exitCode === 0 ? parseCleanupOutput(reply.stdout) : null;
