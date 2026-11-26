@@ -1,5 +1,6 @@
 import { and, type Database, type Executor, eq, gte, inArray, isNull, lte, or, schema, sql } from "@agenteschat/db";
 import { refusalData, ValidationError } from "./errors";
+import type { Measured } from "./file-measure";
 import { missionOfRun } from "./mission-context";
 import { enqueue } from "./outbox";
 import type { ToolContext, ToolDefinition } from "./tools/types";
@@ -86,6 +87,8 @@ export async function registerRunFiles(
   db: Database,
   who: { orgId: string; agentId: string; runId: string; machineId?: string | null },
   files: RunFileInput[],
+  /** What the computer itself measured (ADR 0213): it wins over what the agent typed. */
+  measured?: Map<string, Measured>,
 ) {
   if (!Array.isArray(files) || files.length === 0) throw new ValidationError("List at least one file.");
   if (files.length > MAX_FILES_PER_CALL) throw new ValidationError(`At most ${MAX_FILES_PER_CALL} files a call.`);
@@ -93,8 +96,9 @@ export async function registerRunFiles(
     const path = cleanRunPath(f.path);
     const role = RUN_FILE_ROLES.includes(f.role as RunFileRole) ? (f.role as RunFileRole) : "unknown";
     const kind = RUN_FILE_KINDS.includes(f.kind as RunFileKind) ? (f.kind as RunFileKind) : kindOfPath(path);
-    const size = Number.isSafeInteger(f.size) && (f.size as number) >= 0 ? (f.size as number) : null;
-    const sha256 = typeof f.sha256 === "string" && /^[a-f0-9]{64}$/.test(f.sha256) ? f.sha256 : null;
+    const read = measured?.get(path);
+    const size = read ? read.size : Number.isSafeInteger(f.size) && (f.size as number) >= 0 ? (f.size as number) : null;
+    const sha256 = read?.sha256 ?? (typeof f.sha256 === "string" && /^[a-f0-9]{64}$/.test(f.sha256) ? f.sha256 : null);
     const note = typeof f.note === "string" && f.note.trim() ? f.note.trim().slice(0, 300) : null;
     const machineId = who.machineId ?? null;
     return {
@@ -138,6 +142,11 @@ export function registerFilesTool(
   db: Database,
   /** The computer the files are on, as the other computer tools pick it (`computer` names another device). */
   computerOf?: (ctx: ToolContext, computer: string | undefined) => Promise<string>,
+  /**
+   * Reads each file's size and SHA-256 on that computer (ADR 0213). Best effort: whatever it can't read stays as
+   * the agent gave it.
+   */
+  measure?: (ctx: ToolContext, computer: string | undefined, paths: string[]) => Promise<Map<string, Measured>>,
 ): ToolDefinition {
   return {
     name: "register_files",
@@ -182,16 +191,23 @@ export function registerFilesTool(
       try {
         const named = typeof input.computer === "string" && input.computer.trim() ? input.computer.trim() : undefined;
         const machineId = computerOf ? await computerOf(ctx, named) : named ? null : await machineOfRun(db, ctx);
+        const given = Array.isArray(input.files) ? (input.files as RunFileInput[]) : [];
+        const paths = [...new Set(given.map((f) => cleanRunPath(f.path)))];
+        const measured =
+          measure && machineId && paths.length > 0
+            ? await measure(ctx, named, paths).catch(() => new Map<string, Measured>())
+            : new Map<string, Measured>();
         const rows = await registerRunFiles(
           db,
           { orgId: ctx.orgId, agentId: ctx.agentId, runId: ctx.runId, machineId },
           input.files as RunFileInput[],
+          measured,
         );
         const counts = new Map<string, number>();
         for (const r of rows) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
         const summary = [...counts].map(([role, n]) => `${n} ${role}`).join(", ");
         return {
-          content: `Registered ${rows.length} file(s): ${summary}. Nothing was moved or deleted.`,
+          content: `Registered ${rows.length} file(s): ${summary}.${measured.size > 0 ? ` Measured ${measured.size} on the computer (size and SHA-256).` : ""} Nothing was moved or deleted.`,
           data: { files: rows },
         };
       } catch (error) {
