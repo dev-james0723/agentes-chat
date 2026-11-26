@@ -269,7 +269,7 @@ function attachmentsOf(deps: AppsToolDeps, orgId: string, m: Pick<Message, "meta
 }
 
 /** Identify the caller's original send and the agent's original direct reply, never a joined run. */
-async function directReply(db: Database, p: AppPrincipal, message: Message, run: RunRow, reply: Message) {
+export async function directReply(db: Database, p: AppPrincipal, message: Message, run: RunRow, reply: Message) {
   if (
     run.triggerMessageId !== message.id ||
     run.replyMessageId !== reply.id ||

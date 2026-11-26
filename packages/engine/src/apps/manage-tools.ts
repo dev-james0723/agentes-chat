@@ -29,6 +29,7 @@ import {
   updateSkill,
   validateSkill,
 } from "../skills";
+import { appExerciseInput, readAppExercise } from "./app-exercise";
 import type { AppPrincipal } from "./grants";
 import {
   assignmentInput,
@@ -56,6 +57,7 @@ export const APP_MANAGE_TOOL_NAMES = [
   "update_agent_instructions",
   "update_agent",
   "list_skills",
+  "read_app_exercise",
   "read_skill_evidence",
   "assign_skill",
   "install_github_skill",
@@ -397,6 +399,21 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
     }),
   );
 
+  tool(
+    "read_app_exercise",
+    {
+      scope: "manage",
+      title: "Read native app exercise evidence",
+      description:
+        "Check an original task for a successful native action and newly observed result on the requested machine and app. Returns bounded digests and identity metadata.",
+      input: appExerciseInput,
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => readAppExercise(deps.db, p, args),
+  );
   tool(
     "read_skill_evidence",
     {

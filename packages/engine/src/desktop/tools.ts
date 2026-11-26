@@ -33,6 +33,7 @@ import {
   screenStepOf,
   type TargetCache,
 } from "../screen";
+import { screenExercise } from "../screen/app-exercise";
 import { captureGate } from "../storage-pressure";
 import type { JsonSchema } from "../tools/json-schema";
 import { accessWithNeeds, grantedScopeKeys, isAllowed, toolAccess } from "../tools/scopes";
@@ -414,6 +415,7 @@ export function createDesktopToolSource(deps: DesktopToolDeps): ToolSource {
       };
     }
     // A step that ran and only failed its check was done: not an error (it must not be done again).
+    if (!f.failed) Object.assign(data, screenExercise(linked.machineId, "desktop", report));
     const nothingDone = report.steps.every((s) => s.status !== "done" && !s.ran);
     return { content, ...(f.failed && nothingDone ? { isError: true } : {}), data };
   }
