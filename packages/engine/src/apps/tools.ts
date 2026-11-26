@@ -56,6 +56,7 @@ export interface AppsToolDeps {
   context?: ContextDeps;
   /** Where skills keep their files (`create_skill`). */
   blobs?: BlobStoreResolver;
+  skillSources?: Pick<import("../skills").SkillDeps, "fetch" | "resolveHost" | "github">;
   /** Wakes the in-process workers after a send (the agent starts sooner than at the next poll). */
   wakeWorkers?: () => void;
   /** Unknown failures, for the error reporter; their text never reaches the app. */

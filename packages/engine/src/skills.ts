@@ -4,6 +4,7 @@ import { getAgent } from "./agents";
 import { recordAudit } from "./audit";
 import { mapInBatches } from "./batches";
 import { activeConnections, type ConnectorDeps } from "./connectors/connections";
+import { sha256 } from "./crypto";
 import {
   ConflictError,
   type ErrorParams,
@@ -20,6 +21,8 @@ import { assertStorageRoom } from "./limits";
 import { assertPublicHttpsUrl, type ResolveHost } from "./net-guard";
 import { can, requirePermission } from "./organizations";
 import { inflateZipEntry, listZip, type ZipListing } from "./zip";
+
+export const SKILL_LINK_READ_LIMIT = { limit: 60, windowMs: 3600_000 };
 
 const { skills, skillFiles, agentSkills } = schema;
 
@@ -577,11 +580,14 @@ export async function saveSkill(
     defaultForNewAgents?: boolean;
     /** Refuse an existing name, including a soft-deleted one. */
     createOnly?: boolean;
+    requireAllFiles?: boolean;
   },
 ): Promise<SkillDetail> {
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
   validateSkill(input);
   const files = await planFiles(deps, orgId, input.files ?? []);
+  if (input.requireAllFiles && files.files.some((file) => file.status === "ignored"))
+    throw new ValidationError("The complete selected package cannot be stored within native file limits.");
   // Publish the version only with all its file rows; a concurrent text edit must not copy a half-written import.
   return deps.db.transaction(async (tx) => {
     const db = tx as unknown as Database;
@@ -1104,6 +1110,22 @@ export interface SkillSkipped {
   params?: ErrorParams;
 }
 
+/** Read a single pinned selection without upserting by name. The installer verifies preconditions before saving. */
+export async function readSelectedSkillPackage(
+  deps: SkillDeps,
+  actorId: string,
+  orgId: string,
+  url: string,
+  path: string,
+  name: string,
+) {
+  await requirePermission(deps.db, actorId, orgId, "manage_agents");
+  const link = await readGithubLink(deps, orgId, url);
+  const parsed = link.skillAt(path);
+  if (parsed.name !== name) throw new ConflictError("Selected package has a different name.");
+  return parsed;
+}
+
 /**
  * What a GitHub link holds: the repository, how it was read, and the skill folders at or below the link (a file's:
  * its folder's).
@@ -1390,7 +1412,12 @@ export async function updateSkill(
   actorId: string,
   orgId: string,
   id: string,
-  input: { description?: string; body?: string; defaultForNewAgents?: boolean },
+  input: {
+    description?: string;
+    body?: string;
+    defaultForNewAgents?: boolean;
+    expected?: { version: number; bodyHash: string };
+  },
 ) {
   await requirePermission(deps.db, actorId, orgId, "manage_agents");
   return deps.db.transaction(async (tx) => {
@@ -1401,6 +1428,8 @@ export async function updateSkill(
       .where(and(eq(skills.id, id), eq(skills.orgId, orgId), isNull(skills.deletedAt)))
       .for("update");
     if (!s) throw new NotFoundError("Skill not found");
+    if (input.expected && (s.version !== input.expected.version || sha256(s.body) !== input.expected.bodyHash))
+      throw new ConflictError("Skill version or body changed.");
     if (input.description === undefined && input.body === undefined && input.defaultForNewAgents !== undefined) {
       const [row] = await db
         .update(skills)

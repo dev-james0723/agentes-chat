@@ -17,6 +17,7 @@ import {
   restoreSkill,
   revertSkillChange,
   SKILL_LIMITS,
+  SKILL_LINK_READ_LIMIT,
   type SkillDeps,
   saveSkill,
   setAgentSkills,
@@ -177,17 +178,14 @@ const SkillListItem = Skill.extend({
 }).openapi("SkillListItem");
 
 /** Reading a link downloads the repository's archive (up to 50 MB): to list its skills, install or update one. */
-const LINK_READS = { limit: 60, windowMs: 3600_000 };
 
 /**
  * Skills in Markdown (`SKILL.md`, ADR 0020): install by zip, GitHub URL or by
  * hand (admins, `manage_agents`), and turn them on per agent. No code runs:
  * scripts are listed as ignored.
  */
-export function skillRoutes(deps: AppDeps) {
-  const { db } = deps;
-  const app = createAppRouter(deps);
-  app.use("/organizations/*", requireSession(deps.auth));
+export function skillSourceDeps(deps: AppDeps) {
+  const db = deps.db;
   // Private repositories are read with the workspace's GitHub: the GitHub App's token for the repository, else the
   // GitHub connection's. Tokens stay here.
   const github = {
@@ -202,20 +200,26 @@ export function skillRoutes(deps: AppDeps) {
       return githubAppOf(deps);
     },
   };
+  return { fetch: deps.extras?.http, resolveHost: deps.extras?.resolveHost, github };
+}
+
+export function skillRoutes(deps: AppDeps) {
+  const { db } = deps;
+  const app = createAppRouter(deps);
+  app.use("/organizations/*", requireSession(deps.auth));
+  const sources = skillSourceDeps(deps);
   const skills = (): SkillDeps => {
     const blobs = deps.extras?.artifacts?.blobs;
     if (!blobs) throw new Error("storage is not configured on this server");
     return {
       db,
       blobs,
-      fetch: deps.extras?.http,
-      resolveHost: deps.extras?.resolveHost,
-      github,
+      ...sources,
       pubsub: deps.adapters.pubsub,
     };
   };
   const linkReadAllowed = async (userId: string) =>
-    (await deps.adapters.rateLimiter.consume(`skill-link:${userId}`, LINK_READS)).allowed;
+    (await deps.adapters.rateLimiter.consume(`skill-link:${userId}`, SKILL_LINK_READ_LIMIT)).allowed;
   const tooManyReads = "Too many skill links read. Try again later.";
 
   app.openapi(

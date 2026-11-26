@@ -20,6 +20,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { requestLimitIp } from "../http/client-ip";
 import type { AppDeps } from "./app/context";
+import { skillSourceDeps } from "./app/skills";
 
 /**
  * agentes.chat as a remote MCP server for AI apps (ADR 0119): the discovery documents, this server's own OAuth 2.1
@@ -221,6 +222,7 @@ function mcpHandler(deps: AppDeps, version: string) {
       gifs: deps.adapters.gifs,
       context: deps.extras?.context,
       blobs: deps.extras?.artifacts?.blobs,
+      skillSources: skillSourceDeps(deps),
       wakeWorkers: deps.wakeWorkers,
       report: (error, context) => deps.log?.error("mcp tool failed", { ...context, error }),
       onRefused: (error) => deps.log?.warn("mcp request refused", { error }),
