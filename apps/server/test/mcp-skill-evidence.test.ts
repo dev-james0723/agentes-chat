@@ -104,6 +104,19 @@ async function fixture(privateRoom = false) {
   return { args, call, b, app, orgId, agentId, trigger, run, reply, skill };
 }
 
+/** The onboarding API returns the owner's existing unfinished workspace until it is completed. */
+async function foreignWorkspace(f: Awaited<ReturnType<typeof fixture>>) {
+  const finished = await f.b(`/api/app/organizations/${f.orgId}/onboarding`, {
+    method: "PATCH",
+    json: { finished: true },
+  });
+  expect(finished.status).toBe(200);
+  const other = await seedOrg(f.b);
+  expect(other.orgId).not.toBe(f.orgId);
+  const app = await connectApp(t, f.b, other.orgId, manage);
+  return { ...other, app };
+}
+
 test("manage evidence is native, caller-bound, and projects only approved fields", async () => {
   const f = await fixture();
   const actual = await f.call(f.args);
@@ -143,9 +156,8 @@ test("manage evidence is native, caller-bound, and projects only approved fields
 
 test("rejects foreign records, mismatched agent, ambiguous IDs, oversized requests and edited replies", async () => {
   const f = await fixture();
-  const second = await seedOrg(f.b);
-  const other = await connectApp(t, f.b, second.orgId, manage);
-  expect((await f.call(f.args, other.access)).isError).toBe(true);
+  const other = await foreignWorkspace(f);
+  expect((await f.call(f.args, other.app.access)).isError).toBe(true);
   const otherAgent = (await callTool(t, f.app.access, "create_agent", { name: "Alternate" })).structuredContent?.id;
   expect(typeof otherAgent).toBe("string");
   expect((await f.call({ ...f.args, agent_ids: [otherAgent] })).isError).toBe(true);
@@ -249,8 +261,20 @@ test("assignment-only reads stay scoped and never read adoption reply text", asy
     runs: {},
   });
   expect(Object.keys(result.structuredContent?.runs ?? {})).toHaveLength(0);
-  const other = await seedOrg(f.b);
-  const foreign = await connectApp(t, f.b, other.orgId, manage);
-  expect((await f.call(args, foreign.access)).isError).toBe(true);
+  const other = await foreignWorkspace(f);
+  const ownSkill = await callTool(t, other.app.access, "create_skill", {
+    name: "control-skill",
+    description: "Exercise the workspace-scoped read",
+    markdown: "Read the selected record.",
+    agent: other.agentId,
+  });
+  const ownId = ownSkill.structuredContent?.id;
+  expect(typeof ownId).toBe("string");
+  const local = { skill_id: ownId, agent_ids: [other.agentId] };
+  expect((await f.call(local, other.app.access)).structuredContent?.skill).toMatchObject({ id: ownId });
+  // Only the skill UUID changes. The other workspace's authenticated grant and agent remain valid.
+  const denied = await f.call({ ...local, skill_id: f.skill.id }, other.app.access);
+  expect(denied.isError).toBe(true);
+  expect(denied.structuredContent).toBeUndefined();
   expect((await f.call({ ...f.args })).isError).toBe(true);
 });
