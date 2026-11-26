@@ -20,6 +20,7 @@ export const NOTICE_KINDS = [
   "run_stopped",
   "github_event",
   "work_follow_up",
+  "cleanup_receipt",
 ] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
@@ -268,6 +269,9 @@ export function noticeView(
     case "talker_reply":
     case "run_stopped":
       return line("chat.notice.other", { name: names.author });
+    // Continuous cleanup's receipt (ADR 0214): the app's own words; the files are on the Storage page.
+    case "cleanup_receipt":
+      return line("chat.notice.cleanupReceipt", { name: names.author });
     default:
       kind satisfies never;
       return line("chat.notice.other", { name: names.author });

@@ -12271,6 +12271,60 @@
   },
   "storage": {
     "title": "Stockage",
+    "guardian": {
+      "title": "Gardien du stockage",
+      "intro": "Nettoie les fichiers temporaires des agents pendant qu’ils travaillent : seulement les brouillons qu’ils ont terminés et que plus personne n’utilise, dans les dossiers que vous autorisez. Les livrables, les preuves et tout ce qui est incertain restent. Les fichiers incertains vous attendent plus bas.",
+      "on": "Nettoyage pendant que les agents travaillent",
+      "off": "Désactivé : rien n’est supprimé",
+      "turnOff": "Désactiver",
+      "turnOn": "Activer",
+      "holdBack": "Se retenir quand les agents ont besoin de l’ordinateur",
+      "resume": "Ne plus se retenir",
+      "figures": "Ce qui a été nettoyé",
+      "unlinked": "Fichiers supprimés",
+      "logical": "Leur taille enregistrée",
+      "allocated": "Blocs de disque mesurés avant suppression",
+      "freeDelta_one": "Variation de l’espace libre sur {{count}} tour mesuré (disque entier)",
+      "freeDelta_many": "Variation de l’espace libre sur {{count}} tours mesurés (disque entier)",
+      "freeDelta_other": "Variation de l’espace libre sur {{count}} tours mesurés (disque entier)",
+      "shadow": "Le mode ombre aurait supprimé",
+      "shadowValue_one": "{{count}} fichier, {{size}}",
+      "shadowValue_many": "{{count}} fichiers, {{size}}",
+      "shadowValue_other": "{{count}} fichiers, {{size}}",
+      "moved": "Déplacés",
+      "movedValue": "{{archived}} archivés, {{relocated}} déplacés ailleurs",
+      "computers": "Ordinateurs",
+      "mode": {
+        "normal": "Habituel",
+        "elevated": "Peu d’espace : un peu plus de nettoyage",
+        "critical": "Presque plein : plus de nettoyage, la même protection",
+        "performance": "En retrait pour les agents"
+      },
+      "folders": "Dossiers autorisés",
+      "foldersIntro": "Seuls les fichiers de ces dossiers sont nettoyés sans vous demander. Commencez par le mode ombre : il montre ce qui partirait et ne supprime rien.",
+      "computer": "Ordinateur",
+      "folder": "Dossier, relatif à l’espace de travail des agents",
+      "addFolder": "Autoriser le dossier",
+      "removeFolder": "Retirer",
+      "scopeMode": {
+        "shadow": "Ombre : rapport seulement",
+        "enforce": "Nettoyer"
+      },
+      "review": "À examiner",
+      "reviewCount_one": "{{count}} fichier vous attend",
+      "reviewCount_many": "{{count}} fichiers vous attendent",
+      "reviewCount_other": "{{count}} fichiers vous attendent",
+      "reviewNone": "Rien n’attend de décision.",
+      "action": {
+        "keep": "Garder",
+        "protect": "Protéger",
+        "archive": "Archiver",
+        "delete": "Supprimer",
+        "restore": "Annuler la décision"
+      },
+      "receipts": "Derniers reçus",
+      "shadowReceipt": "Serait supprimé (ombre)"
+    },
     "clean": {
       "title": "Nettoyer l’espace de travail",
       "intro": "Ce que les tâches terminées ont laissé sur les ordinateurs des agents. Les livrables, les preuves et tout ce qui n’est pas expliqué restent. Vous choisissez quels fichiers temporaires nettoyer.",
@@ -16343,6 +16397,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Coût par réussite vérifiée",
+      "intro": "30 derniers jours. Une réussite est une tâche dont une personne a coché les critères d'acceptation et que personne n'a rouverte depuis. Chaque exécution compte dans le coût.",
+      "perSuccess": "{{cost}} par réussite",
+      "unknown": "Coût inconnu",
+      "noSuccess": "Aucune réussite vérifiée pour l'instant",
+      "line": "{{runs}} exécutions · {{successes}} vérifiées · {{failed}} en échec · {{retries}} nouvelles tentatives"
+    },
     "signedOut": "Déconnecté",
     "whose": "De {{name}}",
     "serves": {
@@ -16415,14 +16477,6 @@
       "oldSub": "Utilisation d'avant l'enregistrement du compte",
       "ofMonth": "{{percent}} du mois",
       "shareLabel": "{{source}} : {{percent}} du mois"
-    },
-    "costPerSuccess": {
-      "title": "Coût par réussite vérifiée",
-      "intro": "30 derniers jours. Une réussite est une tâche dont une personne a coché les critères d'acceptation et que personne n'a rouverte depuis. Chaque exécution compte dans le coût.",
-      "perSuccess": "{{cost}} par réussite",
-      "unknown": "Coût inconnu",
-      "noSuccess": "Aucune réussite vérifiée pour l'instant",
-      "line": "{{runs}} exécutions · {{successes}} vérifiées · {{failed}} en échec · {{retries}} nouvelles tentatives"
     }
   },
   "budget": {
@@ -16652,6 +16706,7 @@
       "other": "Avis pour {{name}}",
       "wakeSkipped": "La mention de {{name}} n'a pas atteint {{agents}}",
       "wakeSkippedAnon": "La mention de {{name}} n’a atteint aucun autre agent",
+      "cleanupReceipt": "Storage Guardian a nettoyé les fichiers temporaires de {{name}}",
       "wakeSkippedAudience": "Seules certaines personnes peuvent appeler {{agents}}, et ce travail de {{name}} ne vient d’aucune d’elles. Quelqu’un qui peut appeler {{agents}} peut lui transmettre la demande.",
       "wakeSkippedCallable": "Les réglages de {{name}} ne lui permettent pas d’appeler {{agents}} (un autre projet, ou hors de sa liste d’agents à appeler). La personne qui s’occupe de {{name}} peut changer cela sur la page de l’agent.",
       "github": {

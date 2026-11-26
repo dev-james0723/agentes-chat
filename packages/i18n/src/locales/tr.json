@@ -11784,6 +11784,57 @@
   },
   "storage": {
     "title": "Depolama",
+    "guardian": {
+      "title": "Depolama koruyucusu",
+      "intro": "Ajanlar çalışırken geçici dosyalarını temizler: yalnızca işi bitmiş ve artık kimsenin kullanmadığı taslak dosyalar, senin izin verdiğin klasörlerde. Teslimler, kanıtlar ve belirsiz her şey kalır. Belirsiz dosyalar aşağıda seni bekler.",
+      "on": "Ajanlar çalışırken temizliyor",
+      "off": "Kapalı: hiçbir şey silinmiyor",
+      "turnOff": "Kapat",
+      "turnOn": "Aç",
+      "holdBack": "Ajanlar bilgisayara ihtiyaç duyarken geri dur",
+      "resume": "Geri durmayı bırak",
+      "figures": "Neler temizlendi",
+      "unlinked": "Silinen dosyalar",
+      "logical": "Kayıtlı boyutları",
+      "allocated": "Silmeden önce ölçülen disk blokları",
+      "freeDelta_one": "{{count}} ölçülen turda boş alan değişimi (tüm disk)",
+      "freeDelta_other": "{{count}} ölçülen turda boş alan değişimi (tüm disk)",
+      "shadow": "Gölge mod şunları silerdi",
+      "shadowValue_one": "{{count}} dosya, {{size}}",
+      "shadowValue_other": "{{count}} dosya, {{size}}",
+      "moved": "Taşındı",
+      "movedValue": "{{archived}} arşivlendi, {{relocated}} başka yere taşındı",
+      "computers": "Bilgisayarlar",
+      "mode": {
+        "normal": "Olağan",
+        "elevated": "Yer az: biraz daha fazla temizleniyor",
+        "critical": "Neredeyse dolu: daha fazla temizleniyor, koruma aynı",
+        "performance": "Ajanlar için geri duruyor"
+      },
+      "folders": "İzin verilen klasörler",
+      "foldersIntro": "Yalnızca bu klasörlerdeki dosyalar sana sormadan temizlenir. Gölge modla başla: neyin gideceğini gösterir ve hiçbir şeyi silmez.",
+      "computer": "Bilgisayar",
+      "folder": "Klasör, ajanların çalışma alanına göre",
+      "addFolder": "Klasöre izin ver",
+      "removeFolder": "Geri çek",
+      "scopeMode": {
+        "shadow": "Gölge: yalnızca bildir",
+        "enforce": "Temizle"
+      },
+      "review": "İnceleme",
+      "reviewCount_one": "{{count}} dosya seni bekliyor",
+      "reviewCount_other": "{{count}} dosya seni bekliyor",
+      "reviewNone": "Karar bekleyen bir şey yok.",
+      "action": {
+        "keep": "Sakla",
+        "protect": "Koru",
+        "archive": "Arşivle",
+        "delete": "Sil",
+        "restore": "Kararı geri al"
+      },
+      "receipts": "Son makbuzlar",
+      "shadowReceipt": "Silinirdi (gölge)"
+    },
     "clean": {
       "title": "Çalışma alanını temizle",
       "intro": "Biten görevlerin ajanların bilgisayarlarında bıraktıkları. Teslimler, kanıtlar ve amacı belli olmayan her şey kalır. Hangi geçici dosyaların temizleneceğini sen seçersin.",
@@ -15780,6 +15831,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Doğrulanmış başarı başına maliyet",
+      "intro": "Son 30 gün. Başarı, kabul ölçütlerini bir kişinin işaretlediği ve o zamandan beri kimsenin yeniden açmadığı görevdir. Her çalıştırma maliyete dahildir.",
+      "perSuccess": "Başarı başına {{cost}}",
+      "unknown": "Maliyet bilinmiyor",
+      "noSuccess": "Henüz doğrulanmış başarı yok",
+      "line": "{{runs}} çalıştırma · {{successes}} doğrulandı · {{failed}} başarısız · {{retries}} yeniden deneme"
+    },
     "signedOut": "Oturum kapatıldı",
     "whose": "{{name}} hesabı",
     "serves": {
@@ -15844,14 +15903,6 @@
       "oldSub": "Hesap kaydedilmeden önceki kullanım",
       "ofMonth": "Ayın {{percent}} kadarı",
       "shareLabel": "{{source}}: ayın {{percent}} kadarı"
-    },
-    "costPerSuccess": {
-      "title": "Doğrulanmış başarı başına maliyet",
-      "intro": "Son 30 gün. Başarı, kabul ölçütlerini bir kişinin işaretlediği ve o zamandan beri kimsenin yeniden açmadığı görevdir. Her çalıştırma maliyete dahildir.",
-      "perSuccess": "Başarı başına {{cost}}",
-      "unknown": "Maliyet bilinmiyor",
-      "noSuccess": "Henüz doğrulanmış başarı yok",
-      "line": "{{runs}} çalıştırma · {{successes}} doğrulandı · {{failed}} başarısız · {{retries}} yeniden deneme"
     }
   },
   "budget": {
@@ -16063,6 +16114,7 @@
       "other": "{{name}} için bildirim",
       "wakeSkipped": "{{name}} ajanının bahsetmesi {{agents}} ajanına ulaşmadı",
       "wakeSkippedAnon": "{{name}} adlı ajanın bahsetmesi başka bir ajana ulaşmadı",
+      "cleanupReceipt": "Storage Guardian, {{name}} adlı ajanın geçici dosyalarını temizledi",
       "wakeSkippedAudience": "{{agents}} ajanını yalnızca bazı kişiler çağırabilir ve {{name}} adlı ajanın bu işi onlardan birinden gelmedi. {{agents}} ajanını çağırabilen biri isteği iletebilir.",
       "wakeSkippedCallable": "{{name}} adlı ajanın ayarları {{agents}} ajanını çağırmasına izin vermiyor (başka bir proje ya da çağırabileceği ajanlar listesinde değil). {{name}} ile ilgilenen kişi bunu ajanın sayfasından değiştirebilir.",
       "github": {

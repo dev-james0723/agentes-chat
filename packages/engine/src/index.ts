@@ -309,6 +309,17 @@ export * from "./skills";
 export * from "./speech-settings";
 export * from "./standing";
 export * from "./storage";
+export * from "./storage-decision";
+export {
+  decideStorageReview,
+  type ReviewAction,
+  removeStorageScope,
+  STORAGE_GC_JOB,
+  setStorageGc,
+  setStorageScope,
+  storageGuardianView,
+  storageReview,
+} from "./storage-guardian";
 export * from "./storage-pressure";
 export * from "./streams";
 export * from "./stretch";

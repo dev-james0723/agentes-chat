@@ -12119,6 +12119,59 @@ export const ptBR = {
   },
   storage: {
     title: "Armazenamento",
+    guardian: {
+      title: "Guardião do armazenamento",
+      intro:
+        "Limpa os arquivos temporários dos agentes enquanto trabalham: só o rascunho que terminaram e que ninguém usa mais, nas pastas que você autoriza. Entregas, evidências e o que for incerto ficam. O incerto espera por você aqui embaixo.",
+      on: "Limpando enquanto os agentes trabalham",
+      off: "Desligado: nada é removido",
+      turnOff: "Desligar",
+      turnOn: "Ligar",
+      holdBack: "Segurar enquanto os agentes precisam do computador",
+      resume: "Parar de segurar",
+      figures: "O que foi limpo",
+      unlinked: "Arquivos removidos",
+      logical: "Tamanho registrado deles",
+      allocated: "Blocos de disco medidos antes da remoção",
+      freeDelta_one: "Mudança de espaço livre em {{count}} rodada medida (disco inteiro)",
+      freeDelta_other: "Mudança de espaço livre em {{count}} rodadas medidas (disco inteiro)",
+      shadow: "O modo sombra teria removido",
+      shadowValue_one: "{{count}} arquivo, {{size}}",
+      shadowValue_other: "{{count}} arquivos, {{size}}",
+      moved: "Movidos",
+      movedValue: "{{archived}} arquivados, {{relocated}} realocados",
+      computers: "Computadores",
+      mode: {
+        normal: "Padrão",
+        elevated: "Pouco espaço: limpando um pouco mais",
+        critical: "Quase cheio: limpando mais, protegendo igual",
+        performance: "Segurado para os agentes",
+      },
+      folders: "Pastas autorizadas",
+      foldersIntro:
+        "Só arquivos dentro destas pastas são limpos sem te perguntar. Comece pela sombra: mostra o que sairia e não remove nada.",
+      computer: "Computador",
+      folder: "Pasta, relativa ao espaço de trabalho dos agentes",
+      addFolder: "Autorizar pasta",
+      removeFolder: "Retirar",
+      scopeMode: {
+        shadow: "Sombra: só relata",
+        enforce: "Limpar",
+      },
+      review: "Revisão",
+      reviewCount_one: "{{count}} arquivo espera por você",
+      reviewCount_other: "{{count}} arquivos esperam por você",
+      reviewNone: "Nada espera uma decisão.",
+      action: {
+        keep: "Manter",
+        protect: "Proteger",
+        archive: "Arquivar",
+        delete: "Apagar",
+        restore: "Desfazer decisão",
+      },
+      receipts: "Últimos recibos",
+      shadowReceipt: "Removeria (sombra)",
+    },
     clean: {
       title: "Limpar o workspace",
       intro:
@@ -16298,6 +16351,7 @@ export const ptBR = {
       other: "Aviso para {{name}}",
       wakeSkipped: "A menção de {{name}} não chamou {{agents}}",
       wakeSkippedAnon: "A menção de {{name}} não chamou outro agente",
+      cleanupReceipt: "O Storage Guardian limpou os arquivos temporários de {{name}}",
       wakeSkippedAudience:
         "Só algumas pessoas podem chamar {{agents}}, e este trabalho de {{name}} não veio de nenhuma delas. Alguém que pode chamar {{agents}} passa o pedido adiante.",
       wakeSkippedCallable:

@@ -414,6 +414,66 @@ export interface CleanWorkspace {
   reports: CleanWorkspaceReport[];
 }
 
+/** Continuous cleanup (ADR 0214): figures from separate sources, never added together. */
+export interface StorageGuardianView {
+  enabled: boolean;
+  modeOverride: string | null;
+  computers: {
+    id: string;
+    name: string;
+    level: "ok" | "low" | "critical" | "unknown";
+    freeGb: number | null;
+    use: number | null;
+    mode: "normal" | "elevated" | "critical" | "performance";
+  }[];
+  scopes: { id: string; machineId: string; root: string; mode: string }[];
+  states: Record<string, number>;
+  figures: {
+    unlinked: number;
+    logicalBytes: number;
+    allocatedBytes: number;
+    freeDeltaBytes: number;
+    measuredRounds: number;
+    shadowFiles: number;
+    shadowBytes: number;
+    relocated: number;
+    archived: number;
+    openReview: number;
+  };
+  recent: {
+    path: string;
+    status: string;
+    source: string;
+    shadow: boolean;
+    reason: string | null;
+    bytes: number | null;
+    freeBefore: number | null;
+    freeAfter: number | null;
+    executedAt: string | null;
+  }[];
+}
+export interface StorageReviewItem {
+  id: string;
+  status: string;
+  code: string;
+  reason: string;
+  history: { at: string; by: string; action: string }[];
+  createdAt: string;
+  file: {
+    id: string;
+    path: string;
+    kind: string;
+    role: string;
+    state: string;
+    size: number | null;
+    sha256: string | null;
+    agentId: string;
+    machineId: string | null;
+    capturedBy: string | null;
+  };
+}
+export type StorageReviewAction = "keep" | "protect" | "archive" | "delete" | "restore";
+
 export interface ApiClient {
   system: {
     health(): Promise<Health>;
@@ -1800,6 +1860,25 @@ export interface ApiClient {
     restore(orgId: string, id: string): Promise<ArtifactDetail | undefined>;
     /** Out of the trash for good, now. */
     purge(orgId: string, id: string): Promise<void>;
+  };
+  storageGuardian: {
+    get(orgId: string): Promise<StorageGuardianView>;
+    /** The kill switch, and holding cleanup back while agents need the computer. */
+    settings(
+      orgId: string,
+      input: { enabled?: boolean; modeOverride?: "performance" | null },
+    ): Promise<{ enabled: boolean; modeOverride: string | null }>;
+    addScope(
+      orgId: string,
+      input: { machineId: string; root: string; mode?: "shadow" | "enforce" },
+    ): Promise<{ id: string; root: string; mode: string }>;
+    removeScope(orgId: string, scopeId: string): Promise<void>;
+    review(orgId: string): Promise<StorageReviewItem[]>;
+    decide(
+      orgId: string,
+      ids: string[],
+      action: StorageReviewAction,
+    ): Promise<{ results: { id: string; ok: boolean; note?: string }[] }>;
   };
   cleanWorkspace: {
     get(orgId: string): Promise<CleanWorkspace>;

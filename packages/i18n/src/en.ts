@@ -12073,6 +12073,59 @@ export const en = {
   },
   storage: {
     title: "Storage",
+    guardian: {
+      title: "Storage Guardian",
+      intro:
+        "Cleans agents' temporary files while they work: only scratch they finished and nobody still uses, in folders you authorize. Deliverables, evidence and anything uncertain stay. Uncertain files wait for you below.",
+      on: "Cleaning as agents work",
+      off: "Switched off: nothing is removed",
+      turnOff: "Switch off",
+      turnOn: "Switch on",
+      holdBack: "Hold back while agents need the computer",
+      resume: "Stop holding back",
+      figures: "What was cleaned",
+      unlinked: "Files removed",
+      logical: "Their registered size",
+      allocated: "Disk blocks measured before removal",
+      freeDelta_one: "Free-space change over {{count}} measured round (whole disk)",
+      freeDelta_other: "Free-space change over {{count}} measured rounds (whole disk)",
+      shadow: "Shadow mode would have removed",
+      shadowValue_one: "{{count}} file, {{size}}",
+      shadowValue_other: "{{count}} files, {{size}}",
+      moved: "Moved",
+      movedValue: "{{archived}} archived, {{relocated}} relocated",
+      computers: "Computers",
+      mode: {
+        normal: "Normal",
+        elevated: "Space is short: cleaning a little more",
+        critical: "Nearly full: cleaning more, protecting the same",
+        performance: "Held back for the agents",
+      },
+      folders: "Authorized folders",
+      foldersIntro:
+        "Only files inside these folders are cleaned without asking you. Start with shadow: it shows what would go and removes nothing.",
+      computer: "Computer",
+      folder: "Folder, relative to the agents' workspace",
+      addFolder: "Authorize folder",
+      removeFolder: "Withdraw",
+      scopeMode: {
+        shadow: "Shadow: report only",
+        enforce: "Clean",
+      },
+      review: "Review",
+      reviewCount_one: "{{count}} file waits for you",
+      reviewCount_other: "{{count}} files wait for you",
+      reviewNone: "Nothing waits for a decision.",
+      action: {
+        keep: "Keep",
+        protect: "Protect",
+        archive: "Archive",
+        delete: "Delete",
+        restore: "Undo decision",
+      },
+      receipts: "Latest receipts",
+      shadowReceipt: "Would remove (shadow)",
+    },
     clean: {
       title: "Clean workspace",
       intro:
@@ -16302,6 +16355,7 @@ export const en = {
       wakeSkipped: "{{name}}'s mention didn't reach {{agents}}",
       /** The same, on an older line that didn't keep whom. */
       wakeSkippedAnon: "{{name}}'s mention didn't reach another agent",
+      cleanupReceipt: "Storage Guardian cleaned up {{name}}'s temporary files",
       /** What "Show" opens under it: why, for people (only some people may call those agents), and the way out. */
       wakeSkippedAudience:
         "Only some people may call {{agents}}, and this work of {{name}} didn't come from one of them. Someone who may call {{agents}} can pass the request on.",

@@ -33,7 +33,8 @@ export type NoticeKind =
   | "work_check_in"
   | "run_stopped"
   | "github_event"
-  | "work_follow_up";
+  | "work_follow_up"
+  | "cleanup_receipt";
 
 /**
  * Notices only for the agent they are for: another agent's note, the late result of a wait it stopped waiting on, what
@@ -68,7 +69,7 @@ export const agentOnlyNoticeSql = (meta: SQL): SQL =>
  * English. Conversation previews, unread counts, a thread's activity, notifications and search skip them, like the
  * agent-only ones.
  */
-export const QUIET_NOTICES: readonly NoticeKind[] = ["run_stopped", "follow_up", "wake_skipped"];
+export const QUIET_NOTICES: readonly NoticeKind[] = ["run_stopped", "follow_up", "wake_skipped", "cleanup_receipt"];
 
 /** Agent-only or quiet (`QUIET_NOTICES`): never news, never found. */
 export const isQuietNotice = (meta: Record<string, unknown> | null | undefined) =>
@@ -86,6 +87,7 @@ export const SELF_REPORT_NOTICES: readonly NoticeKind[] = [
   "work_check_in",
   "run_stopped",
   "talker_reply",
+  "cleanup_receipt",
 ];
 
 /** Agent-only or quiet, in SQL, on a message's `meta`: left out of previews, unread counts and thread activity. */
@@ -210,6 +212,9 @@ export function noticeText(
     // A person stopped one of its tasks (ADR 0128); the reason is that person's words.
     case "run_stopped":
       return `[A person stopped your task]: ${n.text}`;
+    // What continuous cleanup did with this run's files (ADR 0214): a receipt, never a request.
+    case "cleanup_receipt":
+      return `[Storage Guardian receipt for your files]: ${n.text}`;
     case "follow_up": {
       const at = n.refs?.at ?? "";
       if (n.refs?.wake)

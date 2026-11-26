@@ -11911,6 +11911,57 @@
   },
   "storage": {
     "title": "Opslag",
+    "guardian": {
+      "title": "Opslagbewaker",
+      "intro": "Ruimt de tijdelijke bestanden van agents op terwijl ze werken: alleen kladbestanden die klaar zijn en die niemand nog gebruikt, in mappen die jij toestaat. Opleveringen, bewijs en alles wat onzeker is blijven. Onzekere bestanden wachten hieronder op je.",
+      "on": "Ruimt op terwijl agents werken",
+      "off": "Uitgeschakeld: er wordt niets verwijderd",
+      "turnOff": "Uitschakelen",
+      "turnOn": "Inschakelen",
+      "holdBack": "Inhouden zolang agents de computer nodig hebben",
+      "resume": "Niet meer inhouden",
+      "figures": "Wat is opgeruimd",
+      "unlinked": "Verwijderde bestanden",
+      "logical": "Hun geregistreerde grootte",
+      "allocated": "Schijfblokken gemeten voor verwijdering",
+      "freeDelta_one": "Verandering in vrije ruimte over {{count}} gemeten ronde (hele schijf)",
+      "freeDelta_other": "Verandering in vrije ruimte over {{count}} gemeten rondes (hele schijf)",
+      "shadow": "Schaduwmodus zou hebben verwijderd",
+      "shadowValue_one": "{{count}} bestand, {{size}}",
+      "shadowValue_other": "{{count}} bestanden, {{size}}",
+      "moved": "Verplaatst",
+      "movedValue": "{{archived}} gearchiveerd, {{relocated}} elders neergezet",
+      "computers": "Apparaten",
+      "mode": {
+        "normal": "Normaal",
+        "elevated": "Weinig ruimte: iets meer opruimen",
+        "critical": "Bijna vol: meer opruimen, evenveel beschermen",
+        "performance": "Ingehouden voor de agents"
+      },
+      "folders": "Toegestane mappen",
+      "foldersIntro": "Alleen bestanden in deze mappen worden opgeruimd zonder het je te vragen. Begin met schaduw: die laat zien wat zou verdwijnen en verwijdert niets.",
+      "computer": "Apparaat",
+      "folder": "Map, relatief aan de werkruimte van de agents",
+      "addFolder": "Map toestaan",
+      "removeFolder": "Intrekken",
+      "scopeMode": {
+        "shadow": "Schaduw: alleen melden",
+        "enforce": "Opruimen"
+      },
+      "review": "Beoordelen",
+      "reviewCount_one": "{{count}} bestand wacht op je",
+      "reviewCount_other": "{{count}} bestanden wachten op je",
+      "reviewNone": "Er wacht niets op een besluit.",
+      "action": {
+        "keep": "Bewaren",
+        "protect": "Beschermen",
+        "archive": "Archiveren",
+        "delete": "Verwijderen",
+        "restore": "Besluit terugdraaien"
+      },
+      "receipts": "Laatste bonnen",
+      "shadowReceipt": "Zou verwijderen (schaduw)"
+    },
     "clean": {
       "title": "Werkruimte opruimen",
       "intro": "Wat afgeronde taken op de computers van agents hebben achtergelaten. Opleveringen, bewijs en alles zonder uitleg blijven. Jij kiest welke tijdelijke bestanden worden opgeruimd.",
@@ -15907,6 +15958,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Kosten per geverifieerd succes",
+      "intro": "Afgelopen 30 dagen. Een succes is een taak waarvan een persoon de acceptatiecriteria heeft afgevinkt en die sindsdien niemand heeft heropend. Elke run telt mee in de kosten.",
+      "perSuccess": "{{cost}} per succes",
+      "unknown": "Kosten onbekend",
+      "noSuccess": "Nog geen geverifieerd succes",
+      "line": "{{runs}} runs · {{successes}} geverifieerd · {{failed}} mislukt · {{retries}} nieuwe pogingen"
+    },
     "signedOut": "Uitgelogd",
     "whose": "Van {{name}}",
     "serves": {
@@ -15971,14 +16030,6 @@
       "oldSub": "Gebruik van voordat het account werd vastgelegd",
       "ofMonth": "{{percent}} van de maand",
       "shareLabel": "{{source}}: {{percent}} van de maand"
-    },
-    "costPerSuccess": {
-      "title": "Kosten per geverifieerd succes",
-      "intro": "Afgelopen 30 dagen. Een succes is een taak waarvan een persoon de acceptatiecriteria heeft afgevinkt en die sindsdien niemand heeft heropend. Elke run telt mee in de kosten.",
-      "perSuccess": "{{cost}} per succes",
-      "unknown": "Kosten onbekend",
-      "noSuccess": "Nog geen geverifieerd succes",
-      "line": "{{runs}} runs · {{successes}} geverifieerd · {{failed}} mislukt · {{retries}} nieuwe pogingen"
     }
   },
   "budget": {
@@ -16201,6 +16252,7 @@
       "other": "Melding voor {{name}}",
       "wakeSkipped": "De vermelding van {{name}} bereikte {{agents}} niet",
       "wakeSkippedAnon": "De vermelding van {{name}} bereikte geen andere agent",
+      "cleanupReceipt": "Storage Guardian heeft de tijdelijke bestanden van {{name}} opgeruimd",
       "wakeSkippedAudience": "Alleen bepaalde mensen mogen {{agents}} aanroepen, en dit werk van {{name}} kwam van geen van hen. Iemand die {{agents}} mag aanroepen, kan het verzoek doorgeven.",
       "wakeSkippedCallable": "De instellingen van {{name}} staan niet toe dat het {{agents}} aanroept (een ander project, of niet op de lijst van agents die het mag aanroepen). Wie voor {{name}} zorgt, kan dat aanpassen op de pagina van de agent.",
       "github": {

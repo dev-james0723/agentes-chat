@@ -104,14 +104,14 @@ export async function approveCleanup(
 }
 
 /** What the computer answers for each file. `later`: over this round's byte budget, for the next job. */
-interface ScriptResult {
+export interface ScriptResult {
   path: string;
   status: "done" | "skipped" | "blocked" | "later";
   reason?: string;
   identity?: Record<string, unknown>;
   bytes?: number;
 }
-interface ScriptOutput {
+export interface ScriptOutput {
   freeBefore: number;
   freeAfter: number;
   results: ScriptResult[];
@@ -239,8 +239,11 @@ def check(f):
         if not stat.S_ISREG(st.st_mode): raise Refuse("not a regular file")
         if st.st_dev != dev: raise Refuse("on another disk")
         if st.st_nlink != 1: raise Refuse("has other names (hard links)")
-        if time.time() - st.st_mtime < 600: raise Refuse("changed in the last ten minutes")
-        if st.st_mtime > req["notAfter"]: raise Refuse("changed after the work ended: something else may use it now")
+        quiet = req.get("quiet", 600)
+        if time.time() - st.st_mtime < quiet: raise Refuse("changed in the last ten minutes" if quiet == 600 else "changed in the last %d seconds" % quiet)
+        if "notAfter" in f:
+            if st.st_mtime > f["notAfter"]: raise Refuse("changed after it was sealed: something else may use it now")
+        elif st.st_mtime > req["notAfter"]: raise Refuse("changed after the work ended: something else may use it now")
         name = real_name(dfd, parts[-1], st)
         identity = {"dev": st.st_dev, "ino": st.st_ino, "size": st.st_size, "mtimeNs": st.st_mtime_ns}
         if f.get("size") is not None and f["size"] != st.st_size: raise Refuse("its size changed since it was registered")
@@ -317,21 +320,30 @@ export function shellWord(s: string) {
  * the shell sees only letters, digits, `+`, `/` and `=`.
  */
 export function cleanupCommand(
-  files: { path: string; size?: number | null; sha256?: string | null }[],
+  files: { path: string; size?: number | null; sha256?: string | null; notAfter?: Date | null }[],
   notAfter: Date,
   maxBytes: number = CLEANUP_LIMITS.bytes,
+  /**
+   * Continuous cleanup (ADR 0214): `quiet` is how long the file must have been unchanged (ten minutes by default;
+   * shorter only for a file its writer sealed), `seconds` the round's time budget, `lowPriority` runs it under `nice`
+   * so it yields to the agents' own work.
+   */
+  options: { quiet?: number; seconds?: number; lowPriority?: boolean } = {},
 ) {
   const payload = {
-    seconds: CLEANUP_LIMITS.scriptSeconds,
+    seconds: options.seconds ?? CLEANUP_LIMITS.scriptSeconds,
     notAfter: Math.floor(notAfter.getTime() / 1000),
     maxBytes,
+    ...(options.quiet !== undefined ? { quiet: Math.max(30, options.quiet) } : {}),
     files: files.map((f) => ({
       path: f.path,
       ...(typeof f.size === "number" ? { size: f.size } : {}),
       ...(f.sha256 ? { sha256: f.sha256 } : {}),
+      ...(f.notAfter ? { notAfter: Math.floor(f.notAfter.getTime() / 1000) } : {}),
     })),
   };
-  return `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+  const python = `python3 -I -c ${shellWord(CLEANUP_SCRIPT)} ${Buffer.from(JSON.stringify(payload)).toString("base64")}`;
+  return options.lowPriority ? `nice -n 19 ${python}` : python;
 }
 
 export function parseCleanupOutput(stdout: string): ScriptOutput | null {
@@ -382,6 +394,7 @@ export async function runFileCleanup(
       and(
         eq(fileCleanups.orgId, orgId),
         eq(fileCleanups.reportId, reportId),
+        eq(fileCleanups.source, "approved"),
         or(
           inArray(fileCleanups.status, ["approved", "unknown"]),
           and(eq(fileCleanups.status, "running"), lt(fileCleanups.executedAt, new Date(Date.now() - STALE_CLAIM_MS))),
@@ -430,6 +443,14 @@ export async function runFileCleanup(
       blocked.set(r.id, "No longer registered as scratch or rebuildable on that computer.");
       continue;
     }
+    // A pin, a person's decision or the collector's claim since the approval (ADR 0214) keeps it.
+    if (["protected", "kept", "review", "reserved"].includes(own.state)) {
+      blocked.set(
+        r.id,
+        `Since approved, it was ${own.state === "reserved" ? "claimed by continuous cleanup" : own.state}.`,
+      );
+      continue;
+    }
     const others = same.filter((g) => g.runId !== r.runId && (g.machineId === r.machineId || g.machineId === null));
     const kept = others.find((g) => g.role !== "scratch" && g.role !== "derived");
     if (kept) {
@@ -442,6 +463,20 @@ export async function runFileCleanup(
     if (others.some((g) => g.updatedAt > report.createdAt))
       blocked.set(r.id, "Registered again after the work ended: something else may use it now.");
   }
+  // Anyone reading the file now, or a later stage that needs it (ADR 0214 leases, any registration of the path).
+  const held = await db.execute(sql`
+    select distinct f.path, f.machine_id from ${schema.artifactLeases} l join ${runFiles} f on f.id = l.run_file_id
+    where l.org_id = ${orgId} and l.status in ('open', 'expired') and f.path in (${sql.join(
+      claimed.map((r) => sql`${r.path}`),
+      sql`, `,
+    )})`);
+  const heldRows = (held as unknown as { rows: { path: string; machine_id: string | null }[] }).rows ?? [];
+  for (const r of claimed)
+    if (
+      !blocked.has(r.id) &&
+      heldRows.some((h) => h.path === r.path && (h.machine_id === r.machineId || h.machine_id === null))
+    )
+      blocked.set(r.id, "An agent is using it or a later step needs it.");
   for (const [id, reason] of blocked) await finish(db, [id], { status: "blocked", reason, executedAt: new Date() });
   const regOf = new Map(regs.map((g) => [`${g.runId}:${g.path}`, g]));
   const live = claimed.filter((r) => !blocked.has(r.id));
@@ -615,7 +650,13 @@ export async function pendingCleanups(db: Database, orgId: string) {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(fileCleanups)
-    .where(and(eq(fileCleanups.orgId, orgId), notInArray(fileCleanups.status, ["done", "skipped", "blocked"])));
+    .where(
+      and(
+        eq(fileCleanups.orgId, orgId),
+        eq(fileCleanups.source, "approved"),
+        notInArray(fileCleanups.status, ["done", "skipped", "blocked"]),
+      ),
+    );
   return row?.n ?? 0;
 }
 

@@ -65,7 +65,7 @@ import type { AudienceChoice } from "../lib/who-sees";
 import type { WikiAccess } from "../lib/wiki";
 import type { RealtimeConnection } from "../realtime/connection";
 import { readUnknownMembers, setOrgDeletion } from "../realtime/machines";
-import type { ApiClient } from "./client";
+import type { ApiClient, StorageReviewAction } from "./client";
 import { type AgentReactionEffect, useAgentReaction, useApi, useCardVia } from "./context";
 import { ApiError } from "./http";
 import { keys } from "./keys";
@@ -3801,6 +3801,44 @@ export const useWorkspaceLimits = (orgId: string, enabled = true) => {
   const api = useApi();
   return useQuery({ queryKey: keys.limits(orgId), queryFn: () => api.orgs.limits(orgId), enabled });
 };
+
+export const useStorageGuardian = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.storageGuardian(orgId), queryFn: () => api.storageGuardian.get(orgId), enabled });
+};
+
+export const useStorageReview = (orgId: string, enabled = true) => {
+  const api = useApi();
+  return useQuery({ queryKey: keys.storageReview(orgId), queryFn: () => api.storageGuardian.review(orgId), enabled });
+};
+
+/** Every Storage Guardian change refreshes the page's figures and its review queue. */
+export function useStorageGuardianActions(orgId: string) {
+  const api = useApi();
+  const qc = useQueryClient();
+  const done = () => qc.invalidateQueries({ queryKey: keys.storageGuardian(orgId) });
+  return {
+    settings: useMutation({
+      mutationFn: (input: { enabled?: boolean; modeOverride?: "performance" | null }) =>
+        api.storageGuardian.settings(orgId, input),
+      onSuccess: done,
+    }),
+    addScope: useMutation({
+      mutationFn: (input: { machineId: string; root: string; mode?: "shadow" | "enforce" }) =>
+        api.storageGuardian.addScope(orgId, input),
+      onSuccess: done,
+    }),
+    removeScope: useMutation({
+      mutationFn: (scopeId: string) => api.storageGuardian.removeScope(orgId, scopeId),
+      onSuccess: done,
+    }),
+    decide: useMutation({
+      mutationFn: (input: { ids: string[]; action: StorageReviewAction }) =>
+        api.storageGuardian.decide(orgId, input.ids, input.action),
+      onSuccess: done,
+    }),
+  };
+}
 
 export const useCleanWorkspace = (orgId: string, enabled = true) => {
   const api = useApi();

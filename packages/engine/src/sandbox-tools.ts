@@ -107,6 +107,7 @@ import {
 import { friendlyLabel, requestSecretTool } from "./secret-request-tool";
 import { MAKE_KEY_TOOL, REQUEST_SECRET_TOOL, secretFilePaths } from "./secrets";
 import { agentSkillByName, type SkillDeps, skillFilesOf, skillFilesOver, skillFolderFiles } from "./skills";
+import { fileLifecycleTool } from "./storage-guardian";
 import { maskSecrets } from "./tool-detail";
 import { MAX_RESULT_CHARS } from "./tools/gateway";
 import { WHY_MAX_CHARS } from "./tools/run-policy";
@@ -1888,7 +1889,11 @@ export function createSandboxToolSource(
         // What the agent made on its computer and what for (ADR 0197): only where there is a computer.
         ...(computer.kind === "none"
           ? []
-          : [registerFilesTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named }))]),
+          : [
+              registerFilesTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named })),
+              // Seal, read, release and pin, so scratch is cleaned while the work goes on (ADR 0214).
+              fileLifecycleTool(ctx.db, (c, named) => run(c, async (h) => h.machineId, { computer: named })),
+            ]),
       ]);
       if (!mission) return tools;
       return tools.map((t) => ({

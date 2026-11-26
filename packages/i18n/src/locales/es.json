@@ -12200,6 +12200,60 @@
   },
   "storage": {
     "title": "Almacenamiento",
+    "guardian": {
+      "title": "Guardián del almacenamiento",
+      "intro": "Limpia los archivos temporales de los agentes mientras trabajan: solo lo provisional que ya terminaron y que nadie sigue usando, en las carpetas que autorizas. Las entregas, las pruebas y lo dudoso se quedan. Los archivos dudosos te esperan aquí abajo.",
+      "on": "Limpiando mientras los agentes trabajan",
+      "off": "Apagado: no se quita nada",
+      "turnOff": "Apagar",
+      "turnOn": "Encender",
+      "holdBack": "Contenerse mientras los agentes necesitan el ordenador",
+      "resume": "Dejar de contenerse",
+      "figures": "Lo que se limpió",
+      "unlinked": "Archivos quitados",
+      "logical": "Su tamaño registrado",
+      "allocated": "Bloques de disco medidos antes de quitarlos",
+      "freeDelta_one": "Cambio de espacio libre en {{count}} ronda medida (todo el disco)",
+      "freeDelta_many": "Cambio de espacio libre en {{count}} rondas medidas (todo el disco)",
+      "freeDelta_other": "Cambio de espacio libre en {{count}} rondas medidas (todo el disco)",
+      "shadow": "El modo sombra habría quitado",
+      "shadowValue_one": "{{count}} archivo, {{size}}",
+      "shadowValue_many": "{{count}} archivos, {{size}}",
+      "shadowValue_other": "{{count}} archivos, {{size}}",
+      "moved": "Movidos",
+      "movedValue": "{{archived}} archivados, {{relocated}} reubicados",
+      "computers": "Ordenadores",
+      "mode": {
+        "normal": "Habitual",
+        "elevated": "Poco espacio: limpiando un poco más",
+        "critical": "Casi lleno: limpiando más, protegiendo igual",
+        "performance": "En pausa para los agentes"
+      },
+      "folders": "Carpetas autorizadas",
+      "foldersIntro": "Solo los archivos dentro de estas carpetas se limpian sin preguntarte. Empieza con el modo sombra: muestra lo que se iría y no quita nada.",
+      "computer": "Ordenador",
+      "folder": "Carpeta, relativa al espacio de trabajo de los agentes",
+      "addFolder": "Autorizar carpeta",
+      "removeFolder": "Retirar",
+      "scopeMode": {
+        "shadow": "Sombra: solo informa",
+        "enforce": "Limpiar"
+      },
+      "review": "Revisión",
+      "reviewCount_one": "{{count}} archivo te espera",
+      "reviewCount_many": "{{count}} archivos te esperan",
+      "reviewCount_other": "{{count}} archivos te esperan",
+      "reviewNone": "Nada espera una decisión.",
+      "action": {
+        "keep": "Conservar",
+        "protect": "Proteger",
+        "archive": "Archivar",
+        "delete": "Borrar",
+        "restore": "Deshacer decisión"
+      },
+      "receipts": "Últimos recibos",
+      "shadowReceipt": "Se quitaría (sombra)"
+    },
     "clean": {
       "title": "Limpiar el espacio de trabajo",
       "intro": "Lo que dejaron las tareas terminadas en los ordenadores de los agentes. Las entregas, las pruebas y lo que no tiene explicación se quedan. Tú eliges qué archivos temporales limpiar.",
@@ -16272,6 +16326,14 @@
     }
   },
   "usageViews": {
+    "costPerSuccess": {
+      "title": "Costo por éxito verificado",
+      "intro": "Últimos 30 días. Un éxito es una tarea cuyos criterios de aceptación marcó una persona y que nadie reabrió desde entonces. Cada ejecución cuenta en el costo.",
+      "perSuccess": "{{cost}} por éxito",
+      "unknown": "Costo desconocido",
+      "noSuccess": "Aún no hay éxitos verificados",
+      "line": "{{runs}} ejecuciones · {{successes}} verificadas · {{failed}} fallidas · {{retries}} reintentos"
+    },
     "signedOut": "Sesión cerrada",
     "whose": "De {{name}}",
     "serves": {
@@ -16344,14 +16406,6 @@
       "oldSub": "Uso de antes de que se registrara la cuenta",
       "ofMonth": "{{percent}} del mes",
       "shareLabel": "{{source}}: {{percent}} del mes"
-    },
-    "costPerSuccess": {
-      "title": "Costo por éxito verificado",
-      "intro": "Últimos 30 días. Un éxito es una tarea cuyos criterios de aceptación marcó una persona y que nadie reabrió desde entonces. Cada ejecución cuenta en el costo.",
-      "perSuccess": "{{cost}} por éxito",
-      "unknown": "Costo desconocido",
-      "noSuccess": "Aún no hay éxitos verificados",
-      "line": "{{runs}} ejecuciones · {{successes}} verificadas · {{failed}} fallidas · {{retries}} reintentos"
     }
   },
   "budget": {
@@ -16570,6 +16624,7 @@
       "other": "Aviso para {{name}}",
       "wakeSkipped": "La mención de {{name}} no llegó a {{agents}}",
       "wakeSkippedAnon": "La mención de {{name}} no llegó a otro agente",
+      "cleanupReceipt": "Storage Guardian limpió los archivos temporales de {{name}}",
       "wakeSkippedAudience": "Solo algunas personas pueden llamar a {{agents}}, y este trabajo de {{name}} no vino de ninguna de ellas. Alguien que pueda llamar a {{agents}} puede pasarle el pedido.",
       "wakeSkippedCallable": "La configuración de {{name}} no le deja llamar a {{agents}} (otro proyecto, o fuera de su lista de agentes a los que puede llamar). Quien se ocupa de {{name}} puede cambiarlo en la página del agente.",
       "github": {
