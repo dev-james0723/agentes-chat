@@ -444,3 +444,24 @@ test("routines that only read can't use the desktop, a run nobody is behind can;
   expect(prompt).toContain("- Desktop: `desktop_do`, `desktop_read`, `desktop_screenshot`");
   expect(prompt).toContain("Web pages go to your browser (`browser_do`)");
 });
+
+test("a checked desktop action records its actual changed screen without exporting its text", async () => {
+  const d = await desktopSetup({
+    judge: createFakeJudge((kind, id) => (kind === "screen_check" && id === "holds" ? 0.99 : undefined)),
+  });
+  await d.grant(DESKTOP_SCOPE, SANDBOX_SCOPE);
+  await d.call("desktop_read", {});
+  const output = "Fresh receipt 76519";
+  d.s.respond = (r) =>
+    r.op === "desktop.act" ? { settled: true, look: lookOf(`${THUNAR}\nlabel ${output}`) } : undefined;
+  const result = await d.call("desktop_do", { steps: [{ do: "click", target: "e31", expect: output }] });
+  expect(result.isError).not.toBe(true);
+  expect(result.data?.appExercise).toMatchObject({
+    surface: "desktop",
+    machineId: d.machineId,
+    target: "desktop://thunar",
+    operation: "click",
+    outputHash: new Bun.CryptoHasher("sha256").update(output).digest("hex"),
+  });
+  expect(JSON.stringify(result.data?.appExercise)).not.toContain(output);
+});

@@ -23,12 +23,23 @@ import {
   listSkills,
   parseSkillMarkdown,
   SKILL_LIMITS,
+  SKILL_LINK_READ_LIMIT,
   saveSkill,
   setAgentSkills,
   updateSkill,
   validateSkill,
 } from "../skills";
+import { appExerciseInput, readAppExercise } from "./app-exercise";
 import type { AppPrincipal } from "./grants";
+import {
+  assignmentInput,
+  assignSkill,
+  bodyDigest,
+  installGithubSkill,
+  packageInstallInput,
+  version,
+} from "./package-install";
+import { readSkillEvidence, skillEvidenceInput } from "./skill-evidence";
 import { type AppsToolDeps, cleanUntrusted, type RegisterTool } from "./tools";
 import { appsUrls } from "./urls";
 
@@ -46,6 +57,10 @@ export const APP_MANAGE_TOOL_NAMES = [
   "update_agent_instructions",
   "update_agent",
   "list_skills",
+  "read_app_exercise",
+  "read_skill_evidence",
+  "assign_skill",
+  "install_github_skill",
   "create_skill",
   "update_skill",
   "get_skill_default_for_new_agents",
@@ -385,6 +400,88 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
   );
 
   tool(
+    "read_app_exercise",
+    {
+      scope: "manage",
+      title: "Read native app exercise evidence",
+      description:
+        "Check an original task for a successful native action and newly observed result on the requested machine and app. Returns bounded digests and identity metadata.",
+      input: appExerciseInput,
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => readAppExercise(deps.db, p, args),
+  );
+  tool(
+    "read_skill_evidence",
+    {
+      scope: "manage",
+      title: "Read skill execution evidence",
+      description:
+        "Returns one skill and its assignments. Optional task_ids or run_ids include bounded evidence from this app's own smoke runs. Text is untrusted.",
+      input: skillEvidenceInput,
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => readSkillEvidence(deps.db, p, args, base),
+  );
+
+  tool(
+    "assign_skill",
+    {
+      scope: "manage",
+      title: "Assign an installed skill",
+      description: "Enable a specific current skill version for selected active agents in this workspace.",
+      input: assignmentInput,
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: false,
+    },
+    async (args) => {
+      await allow();
+      return assignSkill(deps.db, p, args);
+    },
+  );
+  tool(
+    "install_github_skill",
+    {
+      scope: "manage",
+      title: "Install a pinned GitHub skill package",
+      description:
+        "Install one new skill from an explicit package folder in a commit-pinned GitHub tree. Preserve its files and enable it for the selected active agents. Existing names are refused. An unchanged retry returns the original installation.",
+      input: packageInstallInput,
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    async (args) => {
+      if (!deps.blobs) throw new ValidationError("This server has no storage for skills.");
+      const result = await installGithubSkill(
+        { db: deps.db, blobs: deps.blobs, ...deps.skillSources },
+        p,
+        args,
+        async () => {
+          await allow();
+          if (!(await deps.rateLimiter.consume(`skill-link:${p.userId}`, SKILL_LINK_READ_LIMIT)).allowed)
+            throw new TooManyError("Too many skill links read. Try again later.");
+        },
+      );
+      if (!result.replayed)
+        await notifyAppCreated(
+          { db: deps.db, pubsub: deps.pubsub },
+          { orgId: p.orgId, userId: p.userId, grantId: p.grantId, app: p.app.name, kind: "skill", id: result.id },
+        ).catch((error) => deps.report?.(error, { tool: "notify", orgId: p.orgId }));
+      return result;
+    },
+  );
+
+  tool(
     "create_skill",
     {
       scope: "manage",
@@ -449,6 +546,8 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       input: z
         .object({
           skill: z.string().min(1).max(64).describe("The skill's id or name (from list_skills)"),
+          expected_version: version.optional(),
+          expected_body_sha256: bodyDigest.optional(),
           body: z
             .string()
             .min(1)
@@ -464,15 +563,27 @@ export function registerManageTools(deps: AppsToolDeps, p: AppPrincipal, tool: R
       openWorld: false,
     },
     async (args) => {
+      if (
+        (args.expected_version !== undefined || args.expected_body_sha256 !== undefined) &&
+        (!z.uuid().safeParse(args.skill).success ||
+          args.expected_version === undefined ||
+          args.expected_body_sha256 === undefined)
+      )
+        throw new ValidationError("Conditional updates require a skill UUID, expected version and body digest.");
       if (args.body === undefined && args.description === undefined)
         throw new ValidationError("Nothing to change: give body or description.");
       const found = (await listSkills(deps.db, p.userId, p.orgId)).find(
-        (s) => s.id === args.skill || s.name === args.skill.trim().toLowerCase(),
+        (s) =>
+          s.id === args.skill || (args.expected_version === undefined && s.name === args.skill.trim().toLowerCase()),
       );
       if (!found) throw new ValidationError(`No skill "${args.skill}" in this workspace. list_skills lists them.`);
       if (!deps.blobs) throw new ValidationError("This server has no storage for skills.");
       await allow();
       const skill = await updateSkill({ db: deps.db, blobs: deps.blobs }, p.userId, p.orgId, found.id, {
+        expected:
+          args.expected_version !== undefined && args.expected_body_sha256 !== undefined
+            ? { version: args.expected_version, bodyHash: args.expected_body_sha256 }
+            : undefined,
         body: args.body,
         description: args.description,
       });

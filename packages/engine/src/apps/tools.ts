@@ -56,6 +56,7 @@ export interface AppsToolDeps {
   context?: ContextDeps;
   /** Where skills keep their files (`create_skill`). */
   blobs?: BlobStoreResolver;
+  skillSources?: Pick<import("../skills").SkillDeps, "fetch" | "resolveHost" | "github">;
   /** Wakes the in-process workers after a send (the agent starts sooner than at the next poll). */
   wakeWorkers?: () => void;
   /** Unknown failures, for the error reporter; their text never reaches the app. */
@@ -267,6 +268,46 @@ function attachmentsOf(deps: AppsToolDeps, orgId: string, m: Pick<Message, "meta
   }));
 }
 
+/** Identify the caller's original send and the agent's original direct reply, never a joined run. */
+export async function directReply(db: Database, p: AppPrincipal, message: Message, run: RunRow, reply: Message) {
+  if (
+    run.triggerMessageId !== message.id ||
+    run.replyMessageId !== reply.id ||
+    run.channelId !== message.channelId ||
+    reply.channelId !== message.channelId ||
+    reply.authorType !== "agent" ||
+    reply.authorAgentId !== run.agentId ||
+    reply.agentRunId !== run.id ||
+    reply.editedAt ||
+    reply.deletedAt
+  )
+    return undefined;
+
+  // The trigger may have been edited while wait_for_reply was waiting for the run.
+  const [original] = await db
+    .select({ id: appSends.messageId })
+    .from(appSends)
+    .innerJoin(messages, eq(messages.id, appSends.messageId))
+    .where(
+      and(
+        eq(appSends.orgId, p.orgId),
+        eq(appSends.grantId, p.grantId),
+        eq(appSends.userId, p.userId),
+        eq(appSends.messageId, message.id),
+        eq(appSends.channelId, message.channelId),
+        eq(appSends.agentId, run.agentId),
+        eq(messages.orgId, p.orgId),
+        eq(messages.channelId, message.channelId),
+        eq(messages.authorType, "person"),
+        eq(messages.authorUserId, p.userId),
+        isNull(messages.editedAt),
+        isNull(messages.deletedAt),
+      ),
+    )
+    .limit(1);
+  return original ? { task_id: message.id, run_id: run.id, agent_id: run.agentId, reply_id: reply.id } : undefined;
+}
+
 /** Where a run stands, as the app reads it. An unknown status is `failed`, never a reason to keep polling. */
 async function taskState(deps: AppsToolDeps, p: AppPrincipal, message: Message, run: RunRow | null) {
   if (!run) {
@@ -283,7 +324,13 @@ async function taskState(deps: AppsToolDeps, p: AppPrincipal, message: Message, 
       return { status: "still_running" as TaskStatus, run };
     case "done": {
       const reply = await agentMessage(deps.db, p.orgId, run);
-      return { status: "done" as TaskStatus, run, ...(reply ? { reply: replyOf(deps, p.orgId, reply) } : {}) };
+      const direct = reply ? await directReply(deps.db, p, message, run, reply) : undefined;
+      return {
+        status: "done" as TaskStatus,
+        run,
+        ...(reply ? { reply: replyOf(deps, p.orgId, reply) } : {}),
+        ...(direct ? { direct_reply: direct } : {}),
+      };
     }
     case "waiting_input": {
       // Also held, with nobody to answer, while its computer is away or its AI provider is down: it carries on

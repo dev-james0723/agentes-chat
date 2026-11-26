@@ -54,6 +54,7 @@ import {
   screenStepOf,
   type TargetCache,
 } from "../screen";
+import { screenExercise } from "../screen/app-exercise";
 import { requestSecretTool } from "../secret-request-tool";
 import { REQUEST_SECRET_TOOL, SITE_SECRET_TTL_TEXT, siteSecretGone } from "../secrets";
 import { toolDetail } from "../tool-detail";
@@ -1222,6 +1223,7 @@ export function createBrowserToolSource(deps: BrowserToolDeps): ToolSource & { r
       };
     }
     // A step that ran and only failed its check was done: not an error (it must not be done again).
+    if (!f.failed) Object.assign(data, screenExercise(linked.status.machineId, "browser", report));
     const nothingDone = report.steps.every((s) => s.status !== "done" && !s.ran);
     // Page reports are bounded observations/diffs, not the complete rendered page or its HTML (ADR 0196).
     return { content, ...(f.failed && nothingDone ? { isError: true } : {}), resultTruncated: true, data };
