@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createFakeEmailSender, createMemoryRateLimiter, type EmailSender } from "@agenteschat/adapters";
 import { eq, inArray, schema } from "@agenteschat/db";
 import {
@@ -25,6 +25,7 @@ import { addMember, type Fixture, SECRET, setup } from "./fixtures";
 
 let f: Fixture | undefined;
 afterEach(async () => {
+  setSystemTime();
   await f?.close();
   f = undefined;
 });
@@ -397,6 +398,8 @@ describe("asking with the code", () => {
 
 describe("approving a proven request", () => {
   test("a confirmed account with the address joins; no account, or an address nobody proved, gets an invitation", async () => {
+    // The queued job reads the wall clock; keep it on the fixture timeline, after the inline requests.
+    setSystemTime(at(2 * MIN));
     const token = await start();
     const bia = await person("u_bia", "bia@example.com", true);
     await ask(token, { email: "bia@example.com", code: await send(token, "bia@example.com") });
