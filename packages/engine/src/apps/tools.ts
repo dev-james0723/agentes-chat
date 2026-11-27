@@ -34,6 +34,7 @@ import type { Talker } from "../talker";
 import { listWorkingRuns } from "../working";
 import type { AppPrincipal } from "./grants";
 import { type APP_MANAGE_TOOL_NAMES, registerManageTools } from "./manage-tools";
+import { registerSourceTaskTools } from "./source-task";
 import { type AppScope, appsUrls } from "./urls";
 
 const { agentRuns, appSends, approvals, messages, users, agents, channels } = schema;
@@ -72,6 +73,8 @@ export const APP_TOOL_NAMES = [
   "list_channels",
   "read_conversation",
   "list_recent_tasks",
+  "ensure_source_task",
+  "read_source_task",
 ] as const;
 
 const WAIT_MAX_S = 45;
@@ -459,6 +462,7 @@ async function taskOutput(
   const { run, ...rest } = state as typeof state & { run?: RunRow };
   return {
     task_id: message.id,
+    thread_id: message.threadId,
     ...rest,
     agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle } : null,
     channel: channel ? { id: channel.id, name: channel.kind === "dm" ? null : channel.name, kind: channel.kind } : null,
@@ -991,6 +995,7 @@ export function buildAppsMcpServer(deps: AppsToolDeps, p: AppPrincipal, version:
     },
   );
 
+  registerSourceTaskTools(deps, p, tool);
   registerManageTools(deps, p, tool);
   return server;
 }

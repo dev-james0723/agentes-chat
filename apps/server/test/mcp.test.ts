@@ -161,7 +161,7 @@ describe("protocol", () => {
     const { b, orgId } = await setup();
     const app = await connectApp(t, b, orgId, { access: "read" });
     expect((await listTools(app.access)).map((x) => x.name)).toEqual(
-      APP_TOOL_NAMES.filter((n) => n !== "send_to_agent"),
+      APP_TOOL_NAMES.filter((n) => n !== "send_to_agent" && n !== "ensure_source_task"),
     );
   });
 
