@@ -628,6 +628,8 @@ export const helpId: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: kanal yang bisa kamu baca.",
               "`read_conversation`: pesan terbaru di kanal, utas, atau tugas.",
               "`list_recent_tasks`: tugas yang kamu kirim dari aplikasi dan apa yang sedang dikerjakan agen.",
+              "`ensure_source_task`: membuat atau menggunakan kembali tugas bawaan untuk sumber tersimpan di ruang kerja ini. Memerlukan izin mengirim tugas; tidak mengirim pesan atau memberi izin pemasangan.",
+              "`read_source_task`: membaca hubungan sumber tersimpan dengan tugas dan percakapannya jika Anda memiliki akses, tanpa membuat tugas.",
             ],
           },
           "Aplikasi bertindak atas namamu dan hanya melihat apa yang kamu lihat. Aplikasi tidak pernah menyetujui tindakan agen: saat agen berhenti untuk meminta persetujuan, balasannya memberi tahu hal itu dengan tautan, dan orang yang memutuskan di agentes.chat. Aplikasi juga tidak mengubah pengaturan, anggota, atau izin.",

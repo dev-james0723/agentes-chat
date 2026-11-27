@@ -625,6 +625,8 @@ export const helpPtBR: Record<HelpSlug, HelpDocument> = {
               "`list_channels`: os canais que você lê.",
               "`read_conversation`: as mensagens recentes de um canal, de uma thread ou de uma tarefa.",
               "`list_recent_tasks`: as tarefas que você mandou pelos apps e o que os agentes estão fazendo agora.",
+              "`ensure_source_task`: cria ou reutiliza a tarefa nativa de uma fonte salva neste workspace. Exige acesso para enviar tarefas; não envia mensagens nem autoriza instalação.",
+              "`read_source_task`: lê o vínculo da fonte salva com sua tarefa e conversa, se você tiver acesso, sem criar uma tarefa.",
             ],
           },
           "O app age como você e vê só o que você vê. Ele nunca aprova ações dos agentes: quando um agente para e pede aprovação, a resposta diz isso e traz o link, e uma pessoa decide no agentes.chat. Ele também não muda configurações, membros ou permissões.",

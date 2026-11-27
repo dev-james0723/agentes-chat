@@ -632,6 +632,8 @@ export const helpEs: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: los canales que lees.",
               "`read_conversation`: los mensajes recientes de un canal, un hilo o una tarea.",
               "`list_recent_tasks`: las tareas que enviaste desde apps y lo que los agentes están haciendo ahora.",
+              "`ensure_source_task`: crea o reutiliza la tarea nativa de una fuente guardada en este espacio de trabajo. Requiere permiso para enviar tareas; no envía mensajes ni autoriza instalaciones.",
+              "`read_source_task`: lee el vínculo de la fuente guardada con su tarea y conversación si tienes acceso, sin crear una tarea.",
             ],
           },
           "La app actúa en tu nombre y solo ve lo que tú ves. Nunca aprueba las acciones de los agentes: cuando un agente se detiene para pedir aprobación, la respuesta lo dice con un enlace, y una persona decide en agentes.chat. Tampoco cambia la configuración, los miembros ni los permisos.",

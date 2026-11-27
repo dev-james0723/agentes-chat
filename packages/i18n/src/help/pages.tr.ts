@@ -630,6 +630,8 @@ export const helpTr: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: okuduğunuz kanallar.",
               "`read_conversation`: bir kanalın, bir ileti dizisinin ya da bir görevin son mesajları.",
               "`list_recent_tasks`: uygulamalardan gönderdiğiniz görevler ve ajanların şu anda yaptıkları.",
+              "`ensure_source_task`: bu çalışma alanında kayıtlı bir kaynak için yerel görevi oluşturur veya yeniden kullanır. Görev gönderme izni gerektirir; mesaj göndermez ve kurulum yetkisi vermez.",
+              "`read_source_task`: erişiminiz varsa kayıtlı kaynağın görev ve konuşma bağlantısını okur; görev oluşturmaz.",
             ],
           },
           "Uygulama sizin adınıza hareket eder ve yalnızca sizin gördüklerinizi görür. Ajanların işlemlerini asla onaylamaz: bir ajan onay istemek için durduğunda yanıt bunu bir bağlantıyla söyler ve kararı agentes.chat'te bir kişi verir. Ayarları, üyeleri ya da izinleri de değiştirmez.",

@@ -632,6 +632,8 @@ export const helpFr: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels` : les canaux que vous lisez.",
               "`read_conversation` : les messages récents d’un canal, d’un fil ou d’une tâche.",
               "`list_recent_tasks` : les tâches que vous avez envoyées depuis des apps et ce que font les agents en ce moment.",
+              "`ensure_source_task` : crée ou réutilise la tâche native d’une source enregistrée dans cet espace de travail. Nécessite le droit d’envoyer des tâches ; n’envoie aucun message et n’autorise aucune installation.",
+              "`read_source_task` : lit le lien entre la source enregistrée, sa tâche et sa conversation si vous y avez accès, sans créer de tâche.",
             ],
           },
           "L’app agit en votre nom et ne voit que ce que vous voyez. Elle n’approuve jamais les actions des agents : quand un agent s’arrête pour demander une approbation, la réponse l’indique avec un lien, et une personne décide dans agentes.chat. Elle ne modifie pas non plus les paramètres, les membres ou les permissions.",

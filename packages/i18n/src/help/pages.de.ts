@@ -632,6 +632,8 @@ export const helpDe: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: die Kanäle, die du liest.",
               "`read_conversation`: letzte Nachrichten eines Kanals, eines Threads oder einer Aufgabe.",
               "`list_recent_tasks`: die Aufgaben, die du aus Apps geschickt hast, und was Agenten gerade tun.",
+              "`ensure_source_task`: erstellt die native Aufgabe für eine gespeicherte Quelle in diesem Workspace oder verwendet sie erneut. Erfordert die Berechtigung zum Senden von Aufgaben; sendet keine Nachricht und erteilt keine Installationsfreigabe.",
+              "`read_source_task`: liest die Verknüpfung der gespeicherten Quelle mit ihrer Aufgabe und Unterhaltung, wenn du darauf zugreifen darfst, ohne eine Aufgabe anzulegen.",
             ],
           },
           "Die App handelt in deinem Namen und sieht nur, was du siehst. Sie gibt nie Aktionen von Agenten frei: Wenn ein Agent anhält, um eine Freigabe zu erbitten, sagt die Antwort das mit einem Link, und ein Mensch entscheidet in agentes.chat. Einstellungen, Mitglieder oder Berechtigungen ändert sie auch nicht.",

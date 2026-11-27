@@ -630,6 +630,8 @@ export const helpIt: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: i canali che leggi.",
               "`read_conversation`: i messaggi recenti di un canale, di un thread o di un’attività.",
               "`list_recent_tasks`: le attività che hai mandato dalle app e quello che gli agenti stanno facendo ora.",
+              "`ensure_source_task`: crea o riutilizza l’attività nativa di una fonte salvata in questo spazio di lavoro. Richiede il permesso di inviare attività; non invia messaggi né autorizza installazioni.",
+              "`read_source_task`: legge il collegamento della fonte salvata con la sua attività e conversazione, se hai accesso, senza creare un’attività.",
             ],
           },
           "L’app agisce a nome tuo e vede solo quello che vedi tu. Non approva mai le azioni degli agenti: quando un agente si ferma per chiedere un’approvazione, la risposta lo dice con un link, e una persona decide in agentes.chat. Non cambia nemmeno impostazioni, membri o permessi.",

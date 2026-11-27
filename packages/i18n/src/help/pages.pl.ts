@@ -624,6 +624,8 @@ export const helpPl: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: kanały, które czytasz.",
               "`read_conversation`: ostatnie wiadomości kanału, wątku albo zadania.",
               "`list_recent_tasks`: zadania wysłane przez ciebie z aplikacji i to, czym agenci zajmują się teraz.",
+              "`ensure_source_task`: tworzy lub ponownie wykorzystuje natywne zadanie zapisanej treści w tym obszarze roboczym. Wymaga uprawnienia do wysyłania zadań; nie wysyła wiadomości ani nie zezwala na instalację.",
+              "`read_source_task`: odczytuje powiązanie zapisanej treści z zadaniem i rozmową, jeśli masz dostęp, bez tworzenia zadania.",
             ],
           },
           "Aplikacja działa jako ty i widzi tylko to, co widzisz ty. Nigdy nie zatwierdza działań agentów: gdy agent zatrzymuje się, żeby poprosić o zatwierdzenie, odpowiedź mówi o tym i zawiera link, a decyzję podejmuje człowiek w agentes.chat. Nie zmienia też ustawień, członków ani uprawnień.",

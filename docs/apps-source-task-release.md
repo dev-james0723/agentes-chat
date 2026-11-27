@@ -1,14 +1,18 @@
 # Canonical source-task release handoff
 
-This release preparation preserves the source-task implementation at `b87c7aed6fc6138e6e1e280252a1cc2c2c36c782`, based on the existing skill and app evidence candidate `700205967c8e45618f11ec2fb05417dbbd223a38`. The implementation contract is in [apps-source-task.md](apps-source-task.md). A documentation-only qualification commit does not change those runtime or test files.
+This release preparation preserves the native source-task behavior at `b87c7aed6fc6138e6e1e280252a1cc2c2c36c782`, based on the existing skill and app evidence candidate `700205967c8e45618f11ec2fb05417dbbd223a38`. The implementation contract is in [apps-source-task.md](apps-source-task.md). Qualification also aligns every translated help list with the registered tools and fixes the clock of a mixed inline/queued invitation test; production permissions and invitation expiry are unchanged.
 
 ## Exact-source qualification
 
-Run the existing `scripts/delivery/local-ci-full.mjs` on the exact qualification commit in a fresh disposable checkout. The runner must verify the same remote non-default branch before and after all 22 required stages. Use the existing `scripts/ci-lock.sh` host lock, at least 30 GiB of free disk, the repository toolchain, an environment without production credentials, and only the dedicated `colima-agentes-ci` Docker daemon. A stopped CI daemon may be started through its existing profile; neither production Docker nor the paused Social Intelligence service is a CI target.
+Run the existing `scripts/delivery/local-ci-full.mjs` on the exact qualification commit in a fresh disposable checkout. The runner must verify the same remote non-default branch before and after all 22 required stages. Use the installed atomic host admission used by `agentes-ci-parallel` for legacy checkouts, at least 30 GiB of free disk, the repository toolchain, an environment without production credentials, and only the dedicated `colima-agentes-ci` Docker daemon. A stopped CI daemon may be started through its existing profile; neither production Docker nor the paused Social Intelligence service is a CI target.
 
 Store the original logs, each log digest, unsigned receipt, tool/resource preflight, process identity, candidate image identity and handoff under a separate exact-head artifact directory. Preserve the original `700205967` receipt, source review, image and activation helper. Historical success is not a current-head result. A partial or failed run remains partial or failed; no status is published by this preparation.
 
 The ordinary branch push must not start GitHub Actions. This qualification commit carries `[skip ci]` for a later protected PR update; do not remove that marker or dispatch Actions. Keep the existing PR unchanged until the new source, qualification and release helper have been independently reviewed.
+
+## Qualification history
+
+The full run for `8fb2ab43eabc4012677e1985c5694048b82f7191` found the missing localized canonical tool names and a date-dependent invitation fixture. That fixture pinned inline requests to October 27 while its queued handler used the real wall clock after the link had expired. The owned run was stopped, and its original partial receipt, failures and process-cleanup evidence remain preserved. The successor must pass a fresh complete run; results from different heads are not combined into a passing receipt.
 
 ## Protected release and activation
 

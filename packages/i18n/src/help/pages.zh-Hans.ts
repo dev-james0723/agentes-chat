@@ -612,6 +612,8 @@ export const helpZhHans: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`：你能阅读的频道。",
               "`read_conversation`：频道、话题或任务中的最近消息。",
               "`list_recent_tasks`：你从应用发出的任务，以及智能体正在做的事。",
+              "`ensure_source_task`：在此工作区中创建或复用已保存来源的原生任务。需要发送任务的权限；不会发送消息或授权安装。",
+              "`read_source_task`：在你有访问权限时读取已保存来源与任务及对话的关联，不会创建任务。",
             ],
           },
           "应用以你的身份行事，只能看到你能看到的内容。它永远不会审批智能体的操作：当智能体停下来请求审批时，回复中会说明并附上链接，由人在 agentes.chat 中做决定。它也不会更改设置、成员或权限。",

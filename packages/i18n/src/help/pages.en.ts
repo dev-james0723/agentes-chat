@@ -621,6 +621,8 @@ export const helpEn: Record<HelpSlug, HelpDocument> = {
               "`list_channels`: the channels you read.",
               "`read_conversation`: recent messages of a channel, a thread or a task.",
               "`list_recent_tasks`: the tasks you sent from apps and what agents are doing now.",
+              "`ensure_source_task`: creates or reuses the native task for a saved source in this workspace. Requires task-sending access; it does not send a message or authorize installation.",
+              "`read_source_task`: reads the saved source's task and conversation link when you have access, without creating a task.",
             ],
           },
           "The app acts as you and sees only what you see. It never approves agents' actions: when an agent stops to ask for approval, the reply says so with a link, and a person decides in agentes.chat. It doesn't change settings, members or permissions either.",

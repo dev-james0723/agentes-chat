@@ -628,6 +628,8 @@ export const helpNl: Partial<Record<HelpSlug, HelpDocument>> = {
               "`list_channels`: de kanalen die jij leest.",
               "`read_conversation`: recente berichten van een kanaal, een thread of een taak.",
               "`list_recent_tasks`: de taken die je vanuit apps stuurde en waar agents nu mee bezig zijn.",
+              "`ensure_source_task`: maakt de native taak voor een opgeslagen bron in deze werkruimte aan of hergebruikt die. Vereist toestemming om taken te versturen; verstuurt geen bericht en geeft geen toestemming voor installatie.",
+              "`read_source_task`: leest de koppeling tussen de opgeslagen bron, de taak en het gesprek als je toegang hebt, zonder een taak aan te maken.",
             ],
           },
           "De app handelt namens jou en ziet alleen wat jij ziet. Hij keurt nooit acties van agents goed: als een agent stopt om goedkeuring te vragen, zegt het antwoord dat met een link, en beslist een mens in agentes.chat. Hij verandert ook geen instellingen, leden of rechten.",
